@@ -1,0 +1,31 @@
+# examples/council-kit/council_member.envelope.yaml
+# Each council LLM sees this envelope: scoped permissions, structured output.
+generated_by: council-kit-member
+task: "Evaluate KB contribution for inclusion"
+stakes: medium
+permissions:
+  shell: false
+  network: true
+  network_hosts: ["kb.internal"]
+  file_read: ["~/council/contribution/**", "~/council/reference-docs/**"]
+  file_write: []
+invariants:
+  - type: read_only
+    description: "council members must not write files"
+    expr:
+      op: forall_steps
+      pred:
+        op: not_equals
+        path: type
+        value: file_write
+postconditions:
+  - type: structured_approval
+    description: "output must be structured approval JSON"
+    expr:
+      op: alias
+      name: structured_approval
+      args: {}
+fallback:
+  strategy: tier2_recompute
+  model: anthropic/claude-sonnet-4-20250514
+  include_refinement: true

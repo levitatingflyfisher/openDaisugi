@@ -1,0 +1,22 @@
+<mujoco model="contact_at_rest">
+  <!-- Minimal fixture for deterministic contact-guard tests. The arm's tip
+       box overlaps the static wall box at qpos=0, so ncon > 0 from the first
+       physics step. -->
+  <compiler angle="radian"/>
+  <option timestep="0.002" gravity="0 0 0"/>
+  <worldbody>
+    <body name="arm" pos="0 0 0">
+      <joint name="j1" type="hinge" axis="0 0 1" range="-3.14 3.14"/>
+      <geom name="tip" type="box" size="0.05 0.05 0.05" pos="0.1 0 0"
+            contype="1" conaffinity="1"/>
+    </body>
+    <body name="wall" pos="0.1 0 0">
+      <geom name="wall_geom" type="box" size="0.05 0.05 0.05"
+            contype="1" conaffinity="1"/>
+    </body>
+    <body name="end_effector" pos="0.1 0 0"/>
+  </worldbody>
+  <actuator>
+    <position name="a1" joint="j1" kp="50"/>
+  </actuator>
+</mujoco>

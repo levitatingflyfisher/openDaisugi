@@ -1,0 +1,32 @@
+{
+  "scenario_1_clean_three_plates": {
+    "label": "scenario_1_clean_three_plates",
+    "verify_ok": true,
+    "run_status": "succeeded",
+    "integrity_passed": true,
+    "receipts": 15,
+    "expected_steps": 15,
+    "executor": "DishWashMuJoCoExecutor",
+    "model_ids": []
+  },
+  "scenario_2_missing_return_to_dock": {
+    "label": "scenario_2_missing_return_to_dock",
+    "verify_ok": false,
+    "violations": [
+      {
+        "stage": "predicate",
+        "message": "invariant 'every_plate_wash_ends_with_return_to_dock' violated"
+      }
+    ]
+  },
+  "scenario_3_motion_delegation_attempt": {
+    "label": "scenario_3_motion_delegation_attempt",
+    "verify_ok": false,
+    "violations": [
+      {
+        "stage": "permissions",
+        "message": "Step 's0' requests delegation to 'haiku' but envelope stakes='physical'; physical-stakes plans cannot be LLM-delegated"
+      }
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "scenario_1_clean": {
+    "label": "scenario_1_clean",
+    "verify_ok": true,
+    "run_status": "succeeded",
+    "integrity_passed": true,
+    "receipts": 3,
+    "expected_steps": 3,
+    "executor": "MockVLAExecutor",
+    "sample_actions_executed": 15,
+    "sample_final_ee_xyz": [
+      0.5996418840969875,
+      0.013795966211227546,
+      0.0
+    ]
+  },
+  "scenario_2_out_of_bounds": {
+    "label": "scenario_2_out_of_bounds",
+    "verify_ok": false,
+    "violations": [
+      {
+        "stage": "z3",
+        "message": "Step 's0' target (5.0, 0.0, 0.0) outside workspace bounds ((-0.4, -0.4, -0.1), (0.4, 0.6, 0.1))"
+      }
+    ]
+  },
+  "scenario_3_motion_delegation_attempt": {
+    "label": "scenario_3_motion_delegation_attempt",
+    "verify_ok": false,
+    "violations": [
+      {
+        "stage": "permissions",
+        "message": "Step 's0' requests delegation to 'haiku' but envelope stakes='physical'; physical-stakes plans cannot be LLM-delegated"
+      }
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "scenario_1_clean": {
+    "label": "scenario_1_clean",
+    "verify_ok": true,
+    "run_status": "succeeded",
+    "integrity_passed": true,
+    "receipts": 6,
+    "expected_steps": 6,
+    "decision": "accept"
+  },
+  "scenario_2_pii_flagged": {
+    "label": "scenario_2_pii_flagged",
+    "verify_ok": false,
+    "violations": [
+      {
+        "stage": "predicate",
+        "message": "invariant 'no_pii_in_reviews' violated"
+      }
+    ]
+  },
+  "scenario_3_quorum_missed": {
+    "label": "scenario_3_quorum_missed",
+    "verify_ok": true,
+    "run_status": "succeeded",
+    "integrity_passed": true,
+    "receipts": 6,
+    "expected_steps": 6,
+    "decision": "reject"
+  }
+}

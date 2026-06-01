@@ -1,0 +1,7 @@
+{"type": "custom-title", "title": "some session", "timestamp": "2026-04-21T10:00:00Z"}
+{"type": "user", "message": {"role": "user", "content": "Refactor the config loader"}, "uuid": "u1"}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Reading config.py"}, {"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "src/config.py"}}, {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "pytest tests/test_config.py"}}, {"type": "tool_use", "id": "t3", "name": "Write", "input": {"file_path": "src/config.py", "content": "x"}}]}, "uuid": "a1"}
+{"type": "file-history-snapshot", "uuid": "s1"}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "file"}]}, "uuid": "u2"}
+{"type": "system", "content": "reminder"}
+{"type": "agent-name", "name": "general"}

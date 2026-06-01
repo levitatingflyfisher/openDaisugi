@@ -1,0 +1,9 @@
+{
+  "name": "openclaw-opendaisugi",
+  "version": "0.28.0",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.mjs"],
+    "compat": { "pluginApi": ">=2026.3.24-beta.2" }
+  }
+}
