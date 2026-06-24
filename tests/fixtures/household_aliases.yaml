@@ -1,0 +1,23 @@
+# tests/fixtures/household_aliases.yaml
+# Household-tier aliases shared across all household agents.
+aliases:
+  - name: only_send_to_approved_contacts
+    params: [contacts]
+    tier: household
+    description: outbound messages must target approved contacts only
+    expr:
+      op: forall_steps
+      pred:
+        op: implies
+        a: { op: in_set, path: type, values: [email_send, imessage_send] }
+        b: { op: in_set, path: metadata.to, values: "$contacts" }
+  - name: curriculum_uses_only_owned_items
+    params: [inventory]
+    tier: household
+    description: curriculum steps must only reference items in the physical inventory
+    expr:
+      op: forall_steps
+      pred:
+        op: implies
+        a: { op: equals, path: type, value: curriculum_reference }
+        b: { op: in_set, path: metadata.item, values: "$inventory" }

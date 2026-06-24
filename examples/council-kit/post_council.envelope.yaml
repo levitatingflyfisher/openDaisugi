@@ -1,0 +1,35 @@
+# examples/council-kit/post_council.envelope.yaml
+# Final structural gate before a council-approved contribution commits to KB.
+generated_by: council-kit-post
+task: "Final structural gate before KB commit"
+stakes: medium
+permissions:
+  shell: false
+  network: false
+  file_read: ["~/council/approved/**"]
+  file_write: ["~/kb/**"]
+invariants:
+  - type: no_secrets
+    expr:
+      op: alias
+      name: no_secrets
+      args: {}
+  - type: no_pii
+    expr:
+      op: alias
+      name: no_pii_regex
+      args: {}
+  - type: has_approval_record
+    description: "contribution must carry an approve_count >= 2"
+    expr:
+      op: forall_steps
+      pred:
+        op: numeric_range
+        path: metadata.approve_count
+        min: 2
+        max: 100
+postconditions: []
+fallback:
+  strategy: tier2_recompute
+  model: anthropic/claude-sonnet-4-20250514
+  include_refinement: true

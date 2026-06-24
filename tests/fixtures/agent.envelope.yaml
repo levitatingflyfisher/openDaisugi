@@ -1,0 +1,41 @@
+# tests/fixtures/agent.envelope.yaml
+# Robin — Chief of Staff (scheduling, iMessage, email drafts). Demo envelope.
+generated_by: agent-kit-robin
+task: "Scheduling and communications coordination"
+stakes: medium
+permissions:
+  shell: false
+  network: true
+  network_hosts:
+    - api.apple.com
+    - imap.gmail.com
+  file_read: ["~/Calendar/**", "~/Messages/**", "~/EmailDrafts/**"]
+  file_write: ["~/EmailDrafts/**"]
+invariants:
+  - type: never_impersonates
+    description: "Robin may never sign outbound communications as Ada Lin"
+    expr:
+      op: alias
+      name: never_impersonates
+      args: { principal: "Ada Lin" }
+  - type: email_drafts_only
+    description: "email steps must target the drafts directory, not outbox"
+    expr:
+      op: forall_steps
+      pred:
+        op: implies
+        a: { op: equals, path: type, value: email_send }
+        b: { op: matches, path: metadata.to_folder, regex: "^drafts(/|$)" }
+postconditions:
+  - type: body_no_impersonation
+    description: "generated body must not end with Ada's signature"
+    expr:
+      op: forall_steps
+      pred:
+        op: not_matches
+        path: metadata.body
+        regex: "(?i)(—|-)\\s*ada(\\s+lin)?\\s*$"
+fallback:
+  strategy: tier2_recompute
+  model: anthropic/claude-sonnet-4-20250514
+  include_refinement: true

@@ -1,0 +1,1 @@
+../../src/opendaisugi/skills/opendaisugi-checklist/SKILL.md

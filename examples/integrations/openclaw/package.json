@@ -1,0 +1,16 @@
+{
+  "name": "opendaisugi-openclaw-demo",
+  "version": "0.1.0",
+  "description": "OpenClaw Node.js client example — uses MCP to call openDaisugi runtime-assurance.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "demo": "node demo_scenario.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

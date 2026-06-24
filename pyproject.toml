@@ -1,0 +1,83 @@
+[project]
+name = "opendaisugi"
+version = "0.31.1"
+description = "Runtime assurance library: envelope generation, static verification, supervised execution, and journaling for agent actions."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "OpenDaisugi Contributors" }]
+license = { text = "MIT" }
+dependencies = [
+    "pydantic>=2.5,<3",
+    "z3-solver>=4.13",
+    "networkx>=3.2",
+    # instructor and litellm release frequently with breaking 2.0 betas already
+    # in flight; constrain upper bounds so a fresh `pip install opendaisugi`
+    # can't silently pick up a major-version break.
+    "instructor>=1.4,<2",
+    "litellm>=1.50,<2",
+    "pyyaml>=6.0",
+    "typer>=0.12,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "pytest-asyncio>=0.23",
+    "build>=1.2",
+    "twine>=5.0",
+    # v0.28.5: include the test surface that's nominally light. [search]
+    # pulls sentence-transformers (~80MB torch slice) which the pathway-
+    # store / distiller tests need; without it 7 tests fail at import.
+    # [mcp] is small and lights up another ~50 tests via test_mcp_server.
+    # Heavy extras (lora=torch+peft+trl, robotics=mujoco) stay opt-in.
+    "opendaisugi[search]",
+    "opendaisugi[mcp]",
+    "opendaisugi[sign]",
+]
+search = [
+    "numpy>=1.26",
+    "sentence-transformers>=2.7",
+]
+mcp = [
+    "mcp>=1.27",
+]
+robotics = [
+    "mujoco>=3.0,<4.0",
+    "numpy>=1.24",
+]
+lora = [
+    "torch>=2.1",
+    "transformers>=4.44",
+    "peft>=0.11",
+    "trl>=0.9",
+    "bitsandbytes>=0.43",
+    "datasets>=2.19",
+    "accelerate>=0.30",
+]
+sign = [
+    "cryptography>=42.0",
+]
+
+[project.scripts]
+daisugi = "opendaisugi.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/opendaisugi"]
+artifacts = [
+    "src/opendaisugi/skills/**/*.md",
+    "src/opendaisugi/install_assets/**/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --strict-markers"
+asyncio_mode = "auto"
+markers = [
+    "calibration: runs against the real LLM API; requires ANTHROPIC_API_KEY",
+    "smoke: end-to-end prompt sanity via `claude -p`; requires DAISUGI_SMOKE=1",
+]

@@ -1,0 +1,35 @@
+# examples/council-kit/pre_council.envelope.yaml
+# Deterministic structural gate run BEFORE any council LLM sees a contribution.
+generated_by: council-kit-pre
+task: "Structural pre-screening of KB contributions"
+stakes: medium
+permissions:
+  shell: false
+  network: false
+  file_read: ["~/council/inbox/**"]
+  file_write: ["~/council/inbox/**"]  # contributions are staged here for scanning
+invariants:
+  - type: no_secrets
+    expr:
+      op: alias
+      name: no_secrets
+      args: {}
+  - type: no_pii
+    expr:
+      op: alias
+      name: no_pii_regex
+      args: {}
+  - type: size_bounded
+    description: "contribution must be under 500 KB"
+    expr:
+      op: forall_steps
+      pred:
+        op: numeric_range
+        path: metadata.content_size_bytes
+        min: 0
+        max: 512000
+postconditions: []
+fallback:
+  strategy: tier2_recompute
+  model: anthropic/claude-sonnet-4-20250514
+  include_refinement: true
