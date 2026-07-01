@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.32.0 — 2026-07-01 — Orchestrator: run a prompt end to end, safely and budgeted
+
+The forward-looking counterpart to the backward-looking Gardener. `tend()` distills
+past traces into pathways; the **Orchestrator** turns one prompt into a verified
+plan into a final answer, routing each step to the cheapest capable model under a
+live token budget. Reuses the existing runtime-assurance spine — the plan is
+verified before it runs and each step is re-verified at execution time.
+
+Pipeline: `prompt → Tier-0 pathway reuse → decompose → size → supervised execute → synthesize`.
+
+- **Decomposer** (`decompose`) — an LLM authors a typed-step DAG; `check_dag` proves
+  structural validity always, and when an envelope is supplied `verify()` gates the
+  whole plan so an out-of-policy decomposition raises rather than executing.
+- **Per-step model sizer** (`model_sizer`) — turns routing's per-*task* difficulty
+  seed into a per-*step* heuristic (step-type floor + prompt-text difficulty for
+  reasoning steps + dependency fan-in) connected to a configurable cheap→strong
+  `ModelLadder`. Picks the cheapest *capable* rung, then downgrades under budget.
+- **Live budget** (`BudgetTracker`, `BudgetAwareDelegatingExecutor`) — token
+  accounting that gates routing **during** the run: each step re-sizes against the
+  tracker's current remaining budget and records actual `usage`, unlike
+  `accounting.tier_stats` which only reports spend after the fact.
+- **Synthesizer** (`synthesize`) — collects step outputs into the final answer via
+  an LLM, always falling back to a deterministic concatenation (budget spent, no
+  client, or call failure) so orchestration never errors at the finish line.
+- **New step types + executors** — `TaskStep` (pure-reasoning leaf), `SkillStep`
+  (delegation proved via `envelope_subsumes` on an optional `contract_envelope`),
+  `MCPStep` (gated by a new deny-by-default `Permission.mcp_allowlist`). `verify()`
+  gives each a real checkable surface — they cannot verify vacuously. `SkillExecutor`
+  and a pluggable-transport `MCPExecutor` execute them.
+- **Surface** — `Daisugi.orchestrate(prompt, budget_tokens=…, …)` and the
+  `opendaisugi.Orchestrator` composition root. Every LLM stage takes an injectable
+  client so the pipeline is fully unit-testable without a live model.
+
+Judgment calls made under autonomy (revisit): TaskStep outputs are consumed only by
+the synthesizer — openDaisugi never splices a step's output into a downstream command
+string, which removes the prompt-injection→privileged-execution path by construction;
+MCP execution ships as step-type + executor + transport protocol with live wiring
+deferred; Tier-0 reuse uses the raw distilled template (LLM plan-adaptation deferred).
+
 ## v0.31.1 — 2026-06-24 — Trustable, configurable model resolution
 
 `opendaisugi.model_registry` + `daisugi models`: resolve an open model from the

@@ -158,6 +158,42 @@ from opendaisugi.contracts import (
 )
 from opendaisugi.subagent import DelegationDenied, SafeSubagent
 
+# v0.32.0: forward-looking orchestration layer
+from opendaisugi.models import MCPStep, SkillStep, TaskStep
+from opendaisugi.budget import BudgetExceeded, BudgetReport, BudgetTracker, StepCost
+from opendaisugi.model_sizer import (
+    DEFAULT_LADDER,
+    ModelLadder,
+    ModelRung,
+    StepSizing,
+    estimate_step_difficulty,
+    size_plan,
+    size_step,
+)
+from opendaisugi.decomposer import (
+    DecomposedPlan,
+    DecomposedStep,
+    DecompositionError,
+    decompose,
+)
+from opendaisugi.synthesizer import (
+    StepOutput,
+    SynthesisResult,
+    collect_outputs,
+    synthesize,
+)
+from opendaisugi.orchestration_executors import (
+    MCPExecutor,
+    MCPTransport,
+    SkillExecutor,
+    SkillHandler,
+)
+from opendaisugi.orchestrator import (
+    BudgetAwareDelegatingExecutor,
+    OrchestrationResult,
+    Orchestrator,
+)
+
 # v0.15.0: real ed25519 signing (optional, requires [sign] extra)
 try:
     from opendaisugi.signing import (
@@ -348,6 +384,48 @@ class Daisugi:
         )
         return await distiller.tend()
 
+    async def orchestrate(
+        self,
+        prompt: str,
+        *,
+        envelope: Envelope | None = None,
+        budget_tokens: int | None = None,
+        stakes: Literal["low", "medium", "high"] = "medium",
+        skill_handlers: "dict | None" = None,
+        mcp_transport=None,
+        ladder: "ModelLadder | None" = None,
+        strict: bool | None = None,
+    ) -> "OrchestrationResult":
+        """Run ``prompt`` end to end: decompose → size → execute → synthesize.
+
+        The forward-looking counterpart to :meth:`tend`. When ``envelope`` is
+        None one is generated for the prompt (the authorization boundary the
+        decomposed plan must verify against) at the given ``stakes``. The
+        orchestrator reuses this facade's pathway store (Tier-0 reuse for repeat
+        prompts) and journal, and routes each step to the cheapest capable model
+        under ``budget_tokens`` (None = unbudgeted).
+        """
+        from opendaisugi.orchestrator import Orchestrator
+
+        if envelope is None:
+            envelope = await self.generate_envelope(prompt, stakes=stakes)
+        orch = Orchestrator(
+            ladder=ladder if ladder is not None else DEFAULT_LADDER,
+            skill_handlers=skill_handlers,
+            mcp_transport=mcp_transport,
+            pathway_store=self.pathway_store,
+            journal=self.journal,
+            decompose_model=self.model,
+            z3_timeout_ms=self.z3_timeout_ms,
+            pathway_threshold=self._pathway_threshold,
+        )
+        return await orch.orchestrate(
+            prompt,
+            envelope=envelope,
+            budget_tokens=budget_tokens,
+            strict=strict if strict is not None else self._strict,
+        )
+
     async def find_pathway(
         self, task: str, *, threshold: float | None = None
     ) -> "PathwayMatch | None":
@@ -451,7 +529,7 @@ def __getattr__(name: str):
     raise AttributeError(f"module 'opendaisugi' has no attribute {name!r}")
 
 
-__version__ = "0.31.1"
+__version__ = "0.32.0"
 
 __all__ = [
     "__version__",
@@ -601,4 +679,34 @@ __all__ = [
     "generate_keypair",
     "sign_contract",
     "verify_signature_raw",
+    # v0.32.0: forward-looking orchestration layer
+    "TaskStep",
+    "SkillStep",
+    "MCPStep",
+    "BudgetTracker",
+    "BudgetReport",
+    "BudgetExceeded",
+    "StepCost",
+    "ModelLadder",
+    "ModelRung",
+    "StepSizing",
+    "DEFAULT_LADDER",
+    "estimate_step_difficulty",
+    "size_plan",
+    "size_step",
+    "decompose",
+    "DecomposedPlan",
+    "DecomposedStep",
+    "DecompositionError",
+    "synthesize",
+    "collect_outputs",
+    "SynthesisResult",
+    "StepOutput",
+    "SkillExecutor",
+    "MCPExecutor",
+    "SkillHandler",
+    "MCPTransport",
+    "Orchestrator",
+    "OrchestrationResult",
+    "BudgetAwareDelegatingExecutor",
 ]
