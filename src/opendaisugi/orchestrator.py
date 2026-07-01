@@ -151,7 +151,9 @@ class Orchestrator:
         if match is None:
             return None, envelope, False
         _log.info("orchestrate.reuse_pathway", extra={"pathway_id": match.pathway.id})
-        return match.pathway.plan_template, match.pathway.envelope, True
+        # Deep-copy the template: sizing mutates preferred_model on steps, and the
+        # store's template is shared/cached — mutating it would corrupt it.
+        return match.pathway.plan_template.model_copy(deep=True), match.pathway.envelope, True
 
     async def orchestrate(
         self,
