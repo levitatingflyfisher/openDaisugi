@@ -194,6 +194,17 @@ from opendaisugi.orchestrator import (
     Orchestrator,
 )
 
+# v0.33.0: verified swarm tasking (airspace deconfliction via envelope algebra)
+from opendaisugi.swarm import (
+    SwarmConflict,
+    SwarmVerdict,
+    aabb_disjoint,
+    aabb_intersection,
+    partition_airspace,
+    partition_and_assign,
+    verify_swarm_tasking,
+)
+
 # v0.15.0: real ed25519 signing (optional, requires [sign] extra)
 try:
     from opendaisugi.signing import (
@@ -554,7 +565,7 @@ def __getattr__(name: str):
     raise AttributeError(f"module 'opendaisugi' has no attribute {name!r}")
 
 
-__version__ = "0.32.0"
+__version__ = "0.33.0"
 
 __all__ = [
     "__version__",
@@ -734,4 +745,12 @@ __all__ = [
     "Orchestrator",
     "OrchestrationResult",
     "BudgetAwareDelegatingExecutor",
+    # v0.33.0: verified swarm tasking
+    "verify_swarm_tasking",
+    "partition_and_assign",
+    "partition_airspace",
+    "aabb_disjoint",
+    "aabb_intersection",
+    "SwarmVerdict",
+    "SwarmConflict",
 ]

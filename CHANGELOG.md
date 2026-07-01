@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.33.0 — 2026-07-01 — Verified swarm tasking (airspace deconfliction)
+
+`opendaisugi.swarm`: the deferred multi-robot deconfliction primitive, and the
+"tasking envelopes between swarms" story. openDaisugi already proves *containment*
+(`envelope_subsumes` — a delegated scope fits inside its parent, fail-closed). Swarms
+need the other half — *disjointness*: a proof no two robots were handed overlapping
+airspace. That's the one new primitive (an AABB separating-axis test, distinct from
+subsumption).
+
+- **`verify_swarm_tasking(total, assignments, margin=…)`** — one call certifies a
+  fleet: every drone's envelope is subsumed by the coordinator (delegation) AND every
+  pair of `workspace_bounds` is disjoint by at least `margin` (deconfliction). Returns
+  a `SwarmVerdict` with the concrete overlap region for any conflict; fail-closed on a
+  drone that declares no bounds.
+- **`partition_and_assign(total, drone_ids, axis=, margin=)`** — split a coordinator's
+  operational volume into disjoint sectors (with a separation gap), one envelope per
+  drone, deconflicted by construction and still subsumed.
+- **`aabb_disjoint` / `aabb_intersection` / `partition_airspace`** — the analytic
+  geometry underneath.
+- Composes into **swarm-of-swarms**: delegation is vertical (nested `envelope_subsumes`),
+  deconfliction is horizontal (sibling disjointness). Runnable, physics-free demo in
+  `examples/swarm-tasking/` — leads with the rejections (over-broad delegation,
+  overlapping sectors, out-of-sector waypoints, comms-loss reassignment gated on proof).
+
+HONEST SCOPE (see the example README): this is plan/volume-level, **analytic geometry
+(not Z3-backed), 3D space not 4D spacetime, and not a flight-safety certificate** —
+waypoint-in-box ≠ path-in-box, disjoint boxes ≠ collision-free (set `margin ≥
+vehicle-radius + position-uncertainty`). Complementary to certified geofencing (NASA
+PolyCARP), tactical avoidance (DAIDALUS/ORCA), and operational deconfliction (ASTM
+F3548-21), not a replacement. Informed by an online research pass; the differentiator
+is the *composition* (subsumption + disjointness + plan-gating as one authored artifact
+that gates LLM-authored plans), not the geometry.
+
+Also in this release (from live-testing v0.32 on our own setup via the `claude -p`
+backend): run TaskSteps in a neutral CWD so project context can't contaminate the LLM
+call; honor `json_mode` on the claude-code backend (prose TaskSteps); a generous
+per-step timeout for LLM steps; and ground the decomposer in the real skill/MCP
+inventory so it can't emit a step for a capability that has no executor.
+
 ## v0.32.0 — 2026-07-01 — Orchestrator: run a prompt end to end, safely and budgeted
 
 The forward-looking counterpart to the backward-looking Gardener. `tend()` distills
