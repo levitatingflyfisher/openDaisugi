@@ -408,11 +408,32 @@ class Daisugi:
         and synthesize calls are overhead, not drawn from it).
         """
         from opendaisugi.orchestrator import Orchestrator
+        from opendaisugi.model_sizer import build_ladder
 
         if envelope is None:
             envelope = await self.generate_envelope(prompt, stakes=stakes)
+
+        # Thread a configured local Tier-1 model into the ladder's local rung so
+        # easy reasoning routes to it (token saving); its endpoint is passed to the
+        # task executor so the call actually reaches the local server. Absent a
+        # local model, the ladder has no local rung and easy tasks fall back to the
+        # cheapest cloud model — never a placeholder.
+        endpoint_overrides: dict = {}
+        if ladder is not None:
+            resolved_ladder = ladder
+        else:
+            local_model = getattr(self._tier1, "model", None)
+            resolved_ladder = build_ladder(local_model)
+            base_url = getattr(self._tier1, "base_url", None)
+            if local_model and base_url:
+                override = {"api_base": base_url}
+                api_key = getattr(self._tier1, "api_key", None)
+                if api_key:
+                    override["api_key"] = api_key
+                endpoint_overrides[local_model] = override
+
         orch = Orchestrator(
-            ladder=ladder if ladder is not None else DEFAULT_LADDER,
+            ladder=resolved_ladder,
             skill_handlers=skill_handlers,
             mcp_transport=mcp_transport,
             pathway_store=self.pathway_store,
@@ -420,6 +441,7 @@ class Daisugi:
             decompose_model=self.model,
             z3_timeout_ms=self.z3_timeout_ms,
             pathway_threshold=self._pathway_threshold,
+            endpoint_overrides=endpoint_overrides,
         )
         return await orch.orchestrate(
             prompt,

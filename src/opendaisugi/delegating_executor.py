@@ -90,12 +90,17 @@ class DelegatingExecutor:
         max_retries: int = 2,
         backend: str | None = None,
         json_mode: bool = True,
+        endpoint_overrides: "dict[str, dict[str, Any]] | None" = None,
     ) -> None:
         self.default_model = default_model
         self.prompt_template = prompt_template or self._default_prompt
         self.response_schema = response_schema
         self.max_retries = max_retries
         self.backend = backend
+        # v0.32: per-model litellm kwargs (api_base/api_key) so a local rung's
+        # model actually reaches its endpoint. Applied only to the matching model
+        # id, so cloud rungs in the same executor are untouched.
+        self.endpoint_overrides = dict(endpoint_overrides or {})
         # v0.32: evidence steps (v0.19) want JSON; a natural-language TaskStep
         # wants free text. json_mode=False drops the response_format so the model
         # answers the subtask in prose instead of being forced into a JSON object.
@@ -128,6 +133,7 @@ class DelegatingExecutor:
         # Direct litellm call (not instructor) — we want the raw text content;
         # response_schema validation runs in our retry loop, not via instructor.
         extra = {"response_format": {"type": "json_object"}} if self.json_mode else {}
+        extra.update(self.endpoint_overrides.get(model, {}))
         result = completion(
             model=model,
             messages=[{"role": "user", "content": prompt}],

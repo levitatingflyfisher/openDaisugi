@@ -46,11 +46,12 @@ def test_easy_step_sizes_to_a_cheap_rung_hard_to_frontier():
     assert isinstance(easy, StepSizing)
 
 
-def test_plain_reasoning_task_routes_to_free_local_model():
-    # The token-saving default: an un-signaled reasoning subtask goes to the
-    # local (free) rung, not a cloud model.
+def test_plain_reasoning_task_routes_to_cheapest_available():
+    # With no local model configured, an un-signaled reasoning subtask routes to
+    # the cheapest REAL model (cheap cloud) — never a placeholder. When a local
+    # model IS configured it routes local (see test_local_rung_wiring).
     sized = size_step(TaskStep(id="t1", prompt="summarize the meeting notes into three bullets"))
-    assert sized.tier == "local"
+    assert sized.tier == "cheap"
 
 
 def test_budget_pressure_downgrades_model():

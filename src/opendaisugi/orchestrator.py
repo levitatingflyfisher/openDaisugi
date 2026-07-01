@@ -33,7 +33,7 @@ from opendaisugi.executor import ExecutorResult
 from opendaisugi.decomposer import _DEFAULT_MODEL as _DEFAULT_DECOMPOSE_MODEL, decompose
 from opendaisugi.delegating_executor import DelegatingExecutor
 from opendaisugi.executor import default_executors
-from opendaisugi.model_sizer import DEFAULT_LADDER, ModelLadder, StepSizing, size_plan, size_step
+from opendaisugi.model_sizer import DEFAULT_LADDER, ModelLadder, StepSizing, build_ladder, size_plan, size_step
 from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.orchestration_executors import MCPExecutor, MCPTransport, SkillExecutor, SkillHandler
 from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
@@ -166,6 +166,7 @@ class Orchestrator:
         backend: str | None = None,
         z3_timeout_ms: int = 500,
         pathway_threshold: float = DEFAULT_PATHWAY_THRESHOLD,
+        endpoint_overrides: "dict[str, dict[str, Any]] | None" = None,
     ) -> None:
         self.ladder = ladder
         self.skill_handlers = dict(skill_handlers or {})
@@ -177,6 +178,9 @@ class Orchestrator:
         self.backend = backend
         self.z3_timeout_ms = z3_timeout_ms
         self.pathway_threshold = pathway_threshold
+        # Per-model litellm kwargs (api_base/api_key) threaded into the task
+        # executor so a local rung's model reaches its endpoint.
+        self.endpoint_overrides = dict(endpoint_overrides or {})
 
     async def _maybe_reuse(
         self, prompt: str, envelope: Envelope
@@ -252,6 +256,7 @@ class Orchestrator:
 
         task_executor = BudgetAwareDelegatingExecutor(
             tracker=tracker, ladder=self.ladder, backend=self.backend,
+            endpoint_overrides=self.endpoint_overrides,
         )
         executors = default_executors()
         executors["task"] = task_executor

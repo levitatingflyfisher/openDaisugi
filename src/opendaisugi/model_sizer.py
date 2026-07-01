@@ -28,8 +28,6 @@ from opendaisugi.routing import (
 
 # Placeholder id for a locally-hosted Tier-1 model. Deployments override the
 # ladder (or just this rung) with the concrete local model from ``local_setup``.
-DEFAULT_LOCAL_MODEL = "openai/local-model"
-
 # Step-type difficulty floors. Mechanical actions don't need a smart model;
 # skill reuse is the cheapest thing there is; a reasoning task starts mid and is
 # refined upward by its prompt text.
@@ -97,17 +95,36 @@ class ModelLadder:
         return None
 
 
-# Default 3-rung ladder: local (cheapest) → cheap cloud → frontier. Token
-# estimates mirror accounting._ESTIMATED_TOKENS_PER_CALL's order of magnitude.
-# The local rung caps at 0.35 so a plain reasoning TaskStep (base difficulty 0.3)
-# routes to the free local model — that is the token-saving default; a task only
-# escalates once its prompt carries hard-difficulty signals (see _STEP_TYPE_BASE
-# and routing._HARD_SIGNALS).
-DEFAULT_LADDER = ModelLadder([
-    ModelRung(name="local", model=DEFAULT_LOCAL_MODEL, max_difficulty=0.35, est_tokens=1200),
-    ModelRung(name="cheap", model=_DEFAULT_CHEAP_MODEL, max_difficulty=0.65, est_tokens=2000),
-    ModelRung(name="frontier", model=_DEFAULT_FRONTIER_MODEL, max_difficulty=1.0, est_tokens=4500),
-])
+def build_ladder(
+    local_model: str | None = None,
+    *,
+    cheap_model: str = _DEFAULT_CHEAP_MODEL,
+    frontier_model: str = _DEFAULT_FRONTIER_MODEL,
+) -> ModelLadder:
+    """Build a cheap→strong ladder, prepending a local rung iff a real local
+    model id is supplied.
+
+    Token estimates mirror ``accounting._ESTIMATED_TOKENS_PER_CALL``'s order of
+    magnitude. The local rung caps at 0.35 so a plain reasoning TaskStep (base
+    difficulty 0.3) routes to the free local model — the token-saving path — while
+    a task only escalates once its prompt carries hard-difficulty signals (see
+    ``_STEP_TYPE_BASE`` and ``routing._HARD_SIGNALS``).
+
+    **Without a configured local model the local rung is omitted entirely** so the
+    default never routes to a non-existent placeholder — an easy task falls back to
+    the cheapest real (cloud) model. Token saving via a local model is opt-in:
+    configure a Tier-1 provider (``daisugi setup``) and its model is threaded here.
+    """
+    rungs: list[ModelRung] = []
+    if local_model:
+        rungs.append(ModelRung(name="local", model=local_model, max_difficulty=0.35, est_tokens=1200))
+    rungs.append(ModelRung(name="cheap", model=cheap_model, max_difficulty=0.65, est_tokens=2000))
+    rungs.append(ModelRung(name="frontier", model=frontier_model, max_difficulty=1.0, est_tokens=4500))
+    return ModelLadder(rungs)
+
+
+# Safe default: cheap + frontier only. No local placeholder — see build_ladder.
+DEFAULT_LADDER = build_ladder()
 
 
 def estimate_step_difficulty(step) -> float:
@@ -192,7 +209,7 @@ def size_plan(
 
 __all__ = [
     "DEFAULT_LADDER",
-    "DEFAULT_LOCAL_MODEL",
+    "build_ladder",
     "ModelLadder",
     "ModelRung",
     "StepSizing",
