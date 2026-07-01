@@ -43,6 +43,23 @@ from opendaisugi.synthesizer import _DEFAULT_MODEL as _DEFAULT_SYNTH_MODEL, Synt
 _log = logging.getLogger("opendaisugi.orchestrator")
 
 
+def _task_step_prompt(step) -> str:
+    """Prompt a TaskStep with its own subtask (free-form answer).
+
+    Each task step answers its subtask independently; the synthesizer integrates
+    all step outputs into the final answer. (Threading a step's upstream outputs
+    into its prompt is a future enhancement — it needs the Supervisor to pass
+    prior receipts; deferred to keep the injection boundary simple.)
+    """
+    prompt = getattr(step, "prompt", None)
+    if prompt:
+        return (
+            f"{prompt}\n\n"
+            "Complete this subtask and respond with a direct, complete answer."
+        )
+    return step.model_dump_json()
+
+
 class BudgetAwareDelegatingExecutor(DelegatingExecutor):
     """A DelegatingExecutor whose model choice is gated by a live budget.
 
@@ -68,9 +85,17 @@ class BudgetAwareDelegatingExecutor(DelegatingExecutor):
         *,
         tracker: BudgetTracker,
         ladder: ModelLadder = DEFAULT_LADDER,
+        prompt_template=None,
+        json_mode: bool = False,
         **kwargs: Any,
     ) -> None:
-        super().__init__(**kwargs)
+        # A TaskStep is a natural-language subtask: prompt with the subtask text
+        # (free-form answer), not the DelegatingExecutor evidence-JSON default.
+        super().__init__(
+            prompt_template=prompt_template or _task_step_prompt,
+            json_mode=json_mode,
+            **kwargs,
+        )
         self.tracker = tracker
         self.ladder = ladder
         self._pending_sizing: StepSizing | None = None

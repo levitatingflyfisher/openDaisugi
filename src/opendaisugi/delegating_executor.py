@@ -89,12 +89,17 @@ class DelegatingExecutor:
         response_schema: type | None = None,
         max_retries: int = 2,
         backend: str | None = None,
+        json_mode: bool = True,
     ) -> None:
         self.default_model = default_model
         self.prompt_template = prompt_template or self._default_prompt
         self.response_schema = response_schema
         self.max_retries = max_retries
         self.backend = backend
+        # v0.32: evidence steps (v0.19) want JSON; a natural-language TaskStep
+        # wants free text. json_mode=False drops the response_format so the model
+        # answers the subtask in prose instead of being forced into a JSON object.
+        self.json_mode = json_mode
         self.last = _LastInvocation()
         # Set by _call_litellm_sync as a side channel; folded into self.last
         # after each call so patched _call (returning a bare str) leaves it None.
@@ -122,12 +127,13 @@ class DelegatingExecutor:
         from litellm import completion
         # Direct litellm call (not instructor) — we want the raw text content;
         # response_schema validation runs in our retry loop, not via instructor.
+        extra = {"response_format": {"type": "json_object"}} if self.json_mode else {}
         result = completion(
             model=model,
             messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
             timeout=timeout_s,
             max_tokens=max_tokens,
+            **extra,
         )
         self._last_usage = _extract_total_tokens(result)
         return result.choices[0].message.content or ""

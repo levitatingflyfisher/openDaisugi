@@ -46,6 +46,13 @@ def test_easy_step_sizes_to_a_cheap_rung_hard_to_frontier():
     assert isinstance(easy, StepSizing)
 
 
+def test_plain_reasoning_task_routes_to_free_local_model():
+    # The token-saving default: an un-signaled reasoning subtask goes to the
+    # local (free) rung, not a cloud model.
+    sized = size_step(TaskStep(id="t1", prompt="summarize the meeting notes into three bullets"))
+    assert sized.tier == "local"
+
+
 def test_budget_pressure_downgrades_model():
     hard = TaskStep(id="t2", prompt="prove this concurrency algorithm is deadlock-free and optimize the schema")
     # Unbudgeted: routes to frontier.

@@ -99,9 +99,13 @@ class ModelLadder:
 
 # Default 3-rung ladder: local (cheapest) → cheap cloud → frontier. Token
 # estimates mirror accounting._ESTIMATED_TOKENS_PER_CALL's order of magnitude.
+# The local rung caps at 0.35 so a plain reasoning TaskStep (base difficulty 0.3)
+# routes to the free local model — that is the token-saving default; a task only
+# escalates once its prompt carries hard-difficulty signals (see _STEP_TYPE_BASE
+# and routing._HARD_SIGNALS).
 DEFAULT_LADDER = ModelLadder([
-    ModelRung(name="local", model=DEFAULT_LOCAL_MODEL, max_difficulty=0.2, est_tokens=1200),
-    ModelRung(name="cheap", model=_DEFAULT_CHEAP_MODEL, max_difficulty=0.5, est_tokens=2000),
+    ModelRung(name="local", model=DEFAULT_LOCAL_MODEL, max_difficulty=0.35, est_tokens=1200),
+    ModelRung(name="cheap", model=_DEFAULT_CHEAP_MODEL, max_difficulty=0.65, est_tokens=2000),
     ModelRung(name="frontier", model=_DEFAULT_FRONTIER_MODEL, max_difficulty=1.0, est_tokens=4500),
 ])
 
