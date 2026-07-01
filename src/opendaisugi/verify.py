@@ -317,7 +317,100 @@ def check_permissions(plan: ActionPlan, envelope: Envelope) -> list[Violation]:
                             detail={"step": step.id, "path": step.path},
                         )
                     )
+            case "mcp":
+                # v0.32: MCP tool call. Deny-by-default — the ``server/tool`` key
+                # must match an entry in ``mcp_allowlist`` (literal or glob). An
+                # empty allowlist admits nothing, so an MCPStep never verifies
+                # vacuously against an envelope that didn't name its tool.
+                key = f"{step.server}/{step.tool}"
+                if not _head_allowed(key, perms.mcp_allowlist):
+                    violations.append(
+                        Violation(
+                            stage="permissions",
+                            message=(
+                                f"Step '{step.id}' MCP tool '{key}' "
+                                f"not in mcp_allowlist {perms.mcp_allowlist}"
+                            ),
+                            detail={"step": step.id, "mcp_tool": key},
+                        )
+                    )
+            # task/skill steps carry no permission-stage surface here: a TaskStep
+            # is a contained pure-reasoning leaf (gated by _check_delegation_safety),
+            # and a SkillStep's surface is the subsumption stage
+            # (check_skill_delegations), not this per-step permission match.
 
+    return violations
+
+
+def check_skill_delegations(
+    plan: ActionPlan,
+    envelope: Envelope,
+    *,
+    strict: bool,
+    timeout_ms: int = 2000,
+    warnings_out: list[str] | None = None,
+) -> list[Violation]:
+    """Prove every SkillStep's contract is subsumed by the caller's envelope.
+
+    A SkillStep names a skill and (optionally) carries the skill's published
+    ``contract_envelope``. The delegation is safe iff the caller's envelope
+    subsumes that contract — every action the skill can legally take is already
+    admissible for the caller. Z3 answers this symbolically and, on failure,
+    hands back the concrete step the skill could emit that violates policy.
+
+    An opaque SkillStep (no ``contract_envelope``) declares no surface: under
+    strict mode that is a hard rejection (a high-stakes caller refuses to
+    delegate to something it cannot bound); under lenient mode it is surfaced as
+    a warning and allowed. Mirrors the opaque-invariant policy in
+    ``_check_predicate_item``.
+    """
+    skill_steps = [s for s in plan.steps if getattr(s, "type", None) == "skill"]
+    if not skill_steps:
+        return []
+    from opendaisugi.subsumption import envelope_subsumes  # local: avoid import cycle
+
+    violations: list[Violation] = []
+    for step in skill_steps:
+        contract_env = getattr(step, "contract_envelope", None)
+        if contract_env is None:
+            msg = (
+                f"Step '{step.id}' invokes opaque skill '{step.skill_id}' with no "
+                f"contract_envelope; delegation cannot be proved subsumed"
+            )
+            if strict:
+                violations.append(Violation(
+                    stage="delegation",
+                    message=msg + " (strict mode rejects)",
+                    detail={"step": step.id, "skill_id": step.skill_id, "reason": "opaque_skill"},
+                    suggested_remediation=(
+                        "attach the skill's published contract_envelope so subsumption "
+                        "can be proved, or lower stakes below high to allow it"
+                    ),
+                ))
+            elif warnings_out is not None:
+                warnings_out.append(msg + " (allowed under lenient mode)")
+            continue
+        sub = envelope_subsumes(
+            envelope, contract_env, timeout_ms=timeout_ms, strict=strict
+        )
+        if not sub.holds:
+            if sub.counterexample is not None:
+                why = (
+                    f"skill admits {sub.counterexample.step.command!r} but caller "
+                    f"rejects via {sub.counterexample.outer_violation}"
+                )
+            elif sub.reasons:
+                why = "; ".join(sub.reasons)
+            else:
+                why = "no counterexample produced"
+            violations.append(Violation(
+                stage="delegation",
+                message=(
+                    f"Step '{step.id}' skill '{step.skill_id}' contract is not "
+                    f"subsumed by the caller's envelope: {why}"
+                ),
+                detail={"step": step.id, "skill_id": step.skill_id, "reason": "not_subsumed"},
+            ))
     return violations
 
 
@@ -362,6 +455,16 @@ def verify(
 
     # Stage 1: permissions
     violations.extend(check_permissions(plan, envelope))
+    if violations:
+        return _result(plan, envelope, violations, warnings, t0)
+
+    # Stage 1b (v0.32): skill-delegation subsumption. Each SkillStep's contract
+    # envelope must be subsumed by the caller's — proved via Z3, opaque skills
+    # gated by strict. Its own stage so check_permissions stays Z3-free.
+    violations.extend(check_skill_delegations(
+        plan, envelope, strict=effective_strict,
+        timeout_ms=z3_timeout_ms, warnings_out=warnings,
+    ))
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
 
@@ -435,6 +538,16 @@ def verify_step(
         return _result(plan, envelope, violations, warnings, t0)
 
     violations.extend(check_permissions(plan, envelope))
+    if violations:
+        return _result(plan, envelope, violations, warnings, t0)
+
+    # Skill-delegation subsumption is step-local (the SkillStep carries its own
+    # contract), so it belongs on the per-step hot path too. strict is resolved
+    # from the envelope here since verify_step takes no strict kwarg.
+    violations.extend(check_skill_delegations(
+        plan, envelope, strict=resolve_strict(None, envelope),
+        timeout_ms=z3_timeout_ms, warnings_out=warnings,
+    ))
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
 
