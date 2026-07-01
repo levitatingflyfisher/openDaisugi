@@ -135,6 +135,34 @@ async def test_orchestrate_reuses_pathway_when_matched():
     assert result.final_answer == "REUSED"
 
 
+async def test_budget_gates_routing_across_steps_during_run():
+    # Two hard task steps that each want the frontier (~4500 est). With a 5000
+    # budget, step 1 runs at the frontier and spends it; step 2 — sized live
+    # against what's left — must downgrade. This is during-run gating, not a
+    # static up-front decision.
+    hard = "prove this concurrency algorithm is deadlock-free and race-free under partition"
+    env = Envelope(generated_by="t", task="demo", permissions=Permission(), stakes="low")
+    orch = Orchestrator()
+    with patch("opendaisugi.delegating_executor.DelegatingExecutor._call", return_value="{}"):
+        result = await orch.orchestrate(
+            "do two hard things",
+            envelope=env,
+            budget_tokens=5000,
+            decompose_client=_decompose_client(
+                DecomposedStep(id="t1", type="task", prompt=hard),
+                DecomposedStep(id="t2", type="task", prompt=hard, depends_on=["t1"]),
+            ),
+            synth_client=_synth_client("done"),
+        )
+    frontier_model = DEFAULT_LADDER.rungs[-1].model
+    by_model = result.budget.by_model
+    # step 1 got the frontier; step 2 was downgraded off it once the budget ran low.
+    assert by_model.get(frontier_model, 0) > 0
+    non_frontier_spend = sum(v for m, v in by_model.items() if m != frontier_model)
+    assert non_frontier_spend > 0
+    assert result.budget.step_count == 2
+
+
 async def test_orchestrate_rejects_out_of_policy_decomposition():
     from opendaisugi.decomposer import DecompositionError
     orch = Orchestrator()
