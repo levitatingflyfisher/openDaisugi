@@ -1291,6 +1291,81 @@ def route_cmd(
     typer.echo(f"  why:        {advice.reason}")
 
 
+@app.command("orchestrate")
+def orchestrate_cmd(
+    prompt: str = typer.Argument(..., help="The prompt to run end to end."),
+    envelope_path: Path = typer.Option(
+        None, "--envelope", "-e",
+        help="Envelope YAML (authorization boundary). If omitted, one is generated for the prompt.",
+    ),
+    budget: int = typer.Option(
+        None, "--budget", "-b",
+        help="Token budget for the run (gates routing during execution). Omit for unbudgeted.",
+    ),
+    model: str = typer.Option(
+        "anthropic/claude-sonnet-4-20250514", "--model",
+        help="Model used to decompose the prompt (and generate the envelope if none is given).",
+    ),
+    stakes: str = typer.Option("medium", "--stakes", help="Stakes for a generated envelope: low|medium|high."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data dir (pathway store + journal)."),
+    json_output: bool = typer.Option(False, "--json", help="Emit the orchestration result as JSON."),
+) -> None:
+    """Run PROMPT end to end: decompose → size → supervised execute → synthesize.
+
+    The decomposed plan is verified against the envelope before it runs and each
+    step is re-verified at execution time; each step routes to the cheapest capable
+    model within the token budget. Repeat prompts may reuse a distilled pathway.
+    """
+    from opendaisugi import Daisugi
+
+    if stakes not in _VALID_STAKES:
+        typer.echo(f"Invalid --stakes {stakes!r}; choose from {sorted(_VALID_STAKES)}.", err=True)
+        raise typer.Exit(code=2)
+
+    envelope = None
+    if envelope_path is not None:
+        envelope = Envelope(**yaml.safe_load(envelope_path.read_text()))
+
+    d = Daisugi(model=model, data_dir=data_dir)
+    try:
+        result = asyncio.run(d.orchestrate(
+            prompt, envelope=envelope, budget_tokens=budget, stakes=stakes,
+        ))
+    except EnvelopeGenerationError as e:
+        typer.echo(f"Envelope generation failed: {e}", err=True)
+        raise typer.Exit(code=1)
+    except Exception as e:  # decomposition/out-of-policy/other — surface cleanly
+        typer.echo(f"Orchestration failed: {type(e).__name__}: {e}", err=True)
+        raise typer.Exit(code=1)
+
+    if json_output:
+        payload = {
+            "prompt": result.prompt,
+            "status": result.status,
+            "final_answer": result.final_answer,
+            "reused_pathway": result.reused_pathway,
+            "used_llm_synthesis": result.used_llm_synthesis,
+            "budget": asdict(result.budget),
+            "sizings": [asdict(s) for s in result.sizings],
+            "plan": result.plan.model_dump(mode="json"),
+        }
+        typer.echo(json.dumps(payload, indent=2, default=str))
+    else:
+        typer.echo(result.final_answer)
+        typer.echo("")
+        typer.echo(f"— orchestration ({result.status}"
+                   + (", reused pathway" if result.reused_pathway else "") + ") —")
+        for s in result.sizings:
+            typer.echo(f"  {s.step_id}: difficulty={s.difficulty:.2f} → {s.tier} ({s.model})"
+                       + ("  [downgraded]" if s.downgraded else ""))
+        b = result.budget
+        spent = f"{b.spent}" + (f"/{b.total}" if b.total is not None else "")
+        typer.echo(f"  budget: {spent} tokens spent across {b.step_count} model call(s)")
+
+    if result.status != "succeeded":
+        raise typer.Exit(code=1)
+
+
 @app.command("models")
 def models_cmd(
     repo: str = typer.Argument(
