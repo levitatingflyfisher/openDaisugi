@@ -47,6 +47,13 @@ class Permission(BaseModel):
     network_hosts: list[str] = Field(default_factory=list, description="If non-empty, restrict NetworkStep URLs to these hosts. Empty list = any host (when network=True).")
     shell: bool = False
     shell_allowlist: list[str] = Field(default_factory=list, description="Allowed shell commands when shell=True")
+    # v0.32: MCP tool allowlist for MCPStep. Entries are ``server/tool`` (glob-able,
+    # e.g. ``github/*``). Deny-by-default: an empty list admits NO MCP tool, so an
+    # MCPStep only verifies against an envelope that explicitly names its tool.
+    mcp_allowlist: list[str] = Field(
+        default_factory=list,
+        description="Allowed MCP tools as 'server/tool' (glob-able) for MCPStep. Empty = none permitted.",
+    )
     max_execution_time_s: int = 30
     max_output_size_mb: int = 10
 
@@ -355,12 +362,66 @@ class VLAStep(StepBase):
     timeout_s: float = 5.0
 
 
+@step_type
+class TaskStep(StepBase):
+    """A natural-language subtask delegated to an LLM. v0.32 orchestration.
+
+    The workhorse of a decomposed prompt: the orchestrator sizes each TaskStep
+    to a model (via ``preferred_model``) and runs it through an LLM-backed
+    executor. It is a **pure-reasoning leaf** — it carries no capability field
+    (no command/path/url), so it structurally cannot touch the shell, disk, or
+    network. Its output is consumed only by the synthesizer; openDaisugi never
+    splices a step's output into a downstream command string, which removes the
+    prompt-injection → privileged-execution path by construction. Physical-stakes
+    envelopes refuse delegation outright (verify._check_delegation_safety).
+    """
+
+    type: Literal["task"] = "task"
+    prompt: str
+
+
+@step_type
+class SkillStep(StepBase):
+    """Invoke a named skill / distilled pathway. v0.32 orchestration.
+
+    The "repeated prompts via skills" half. ``skill_id`` names the skill; the
+    orchestrator resolves it to a distilled pathway or contract at run time.
+    ``contract_envelope`` is the skill's published envelope: when present, verify
+    proves ``envelope_subsumes(current, contract_envelope)`` so the skill can
+    only do what the caller's envelope already permits (delegation, proved). When
+    absent the skill is opaque — strict mode rejects it, non-strict surfaces it.
+    Typed as :class:`Envelope` (not :class:`~opendaisugi.contracts.Contract`) to
+    avoid the contracts.py↔models.py import cycle; the envelope is the part
+    subsumption reasons about.
+    """
+
+    type: Literal["skill"] = "skill"
+    skill_id: str
+    skill_input: dict[str, Any] = Field(default_factory=dict)
+    contract_envelope: "Envelope | None" = None
+
+
+@step_type
+class MCPStep(StepBase):
+    """Invoke a tool on an MCP server. v0.32 orchestration.
+
+    ``server``/``tool`` name the call; verify checks ``f"{server}/{tool}"`` against
+    ``Permission.mcp_allowlist`` (glob-able, deny-by-default). Execution is via a
+    pluggable transport so no live MCP client is a hard dependency.
+    """
+
+    type: Literal["mcp"] = "mcp"
+    server: str
+    tool: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 # ActionStep is a type alias (discriminated union) — not a class.
 # Pydantic dispatches to the right subclass based on the ``type`` field.
 ActionStep = Annotated[
     ShellStep | FileReadStep | FileWriteStep | NetworkStep
     | JointMoveStep | CartesianMoveStep | GripperStep | SimulationResetStep
-    | VLAStep,
+    | VLAStep | TaskStep | SkillStep | MCPStep,
     Field(discriminator="type"),
 ]
 
