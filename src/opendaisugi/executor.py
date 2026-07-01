@@ -84,6 +84,12 @@ class DryRunExecutor:
                 msg = f"[dry-run] would file_write: {step.path} ({nbytes} bytes)"
             case "network":
                 msg = f"[dry-run] would network: GET {step.url}"
+            case "task":
+                msg = f"[dry-run] would task (delegate to LLM): {step.prompt!r}"
+            case "skill":
+                msg = f"[dry-run] would skill: {step.skill_id} input={step.skill_input!r}"
+            case "mcp":
+                msg = f"[dry-run] would mcp: {step.server}/{step.tool} args={step.arguments!r}"
             case _:  # pragma: no cover - unreachable; Pydantic rejects at parse time
                 msg = f"[dry-run] unknown step kind: {step.type!r}"
         return ExecutorResult(rc=0, stdout=msg, duration_ms=0.0, timed_out=False)
@@ -115,6 +121,12 @@ class FakeExecutor:
                 return step.path
             case "network":
                 return step.url
+            case "task":
+                return step.prompt
+            case "skill":
+                return step.skill_id
+            case "mcp":
+                return f"{step.server}/{step.tool}"
             case _:  # pragma: no cover - discriminator guards this
                 raise TypeError(f"FakeExecutor: unknown step kind {step.type!r}")
 

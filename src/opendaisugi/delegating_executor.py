@@ -37,6 +37,25 @@ _log = logging.getLogger("opendaisugi.delegating_executor")
 class _LastInvocation:
     model: str | None = None
     attempts: int = 0
+    # v0.32: total tokens reported by the backend for the last call, when it
+    # exposes usage (litellm ``result.usage.total_tokens``). None when the
+    # backend reports no usage (claude-code subprocess) or the call was mocked.
+    # The budget-aware executor reads this to record actual spend.
+    tokens: int | None = None
+
+
+def _extract_total_tokens(result: object) -> int | None:
+    """Pull ``usage.total_tokens`` off a litellm result, tolerant of shape."""
+    usage = getattr(result, "usage", None)
+    if usage is None:
+        return None
+    total = getattr(usage, "total_tokens", None)
+    if total is None and isinstance(usage, dict):
+        total = usage.get("total_tokens")
+    try:
+        return int(total) if total is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 class DelegatingExecutor:
@@ -77,6 +96,9 @@ class DelegatingExecutor:
         self.max_retries = max_retries
         self.backend = backend
         self.last = _LastInvocation()
+        # Set by _call_litellm_sync as a side channel; folded into self.last
+        # after each call so patched _call (returning a bare str) leaves it None.
+        self._last_usage: int | None = None
 
     @staticmethod
     def _default_prompt(step: StepBase) -> str:
@@ -107,6 +129,7 @@ class DelegatingExecutor:
             timeout=timeout_s,
             max_tokens=max_tokens,
         )
+        self._last_usage = _extract_total_tokens(result)
         return result.choices[0].message.content or ""
 
     def _call_claude_code_sync(
@@ -145,10 +168,14 @@ class DelegatingExecutor:
 
         for attempt in range(1, self.max_retries + 2):
             self.last = _LastInvocation(model=model, attempts=attempt)
+            self._last_usage = None
             try:
                 content = self._call(
                     model, prompt,
                     timeout_s=timeout_s, max_tokens=max_tokens,
+                )
+                self.last = _LastInvocation(
+                    model=model, attempts=attempt, tokens=self._last_usage,
                 )
             except Exception as exc:  # noqa: BLE001 — translate at boundary
                 last_error = str(translate_llm_error(exc))
