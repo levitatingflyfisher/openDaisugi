@@ -126,6 +126,43 @@ def _to_step(s: DecomposedStep) -> StepBase:
     return step
 
 
+def _inventory_block(
+    available_skills: "list[str] | None",
+    available_mcp_tools: "list[str] | None",
+) -> str:
+    """Instruction grounding the decomposer in the capabilities that actually
+    exist, so it can't invent skill_ids / MCP tools that have no executor.
+
+    Returns '' when both are None (unconstrained — direct callers). When either
+    is a list (even empty), the decomposer is told exactly what it may use; an
+    empty inventory means 'task steps only'.
+    """
+    if available_skills is None and available_mcp_tools is None:
+        return ""
+    skills = available_skills or []
+    tools = available_mcp_tools or []
+    if not skills and not tools:
+        return (
+            "No skills or MCP tools are available in this environment. Decompose "
+            "using ONLY 'task' steps (natural-language subtasks); do NOT emit "
+            "'skill' or 'mcp' steps.\n\n"
+        )
+    lines = []
+    lines.append(
+        "Available skills — use a 'skill' step ONLY with one of these exact "
+        f"skill_id values: {', '.join(skills) if skills else '(none)'}."
+    )
+    lines.append(
+        "Available MCP tools — use an 'mcp' step ONLY with one of these exact "
+        f"server/tool values: {', '.join(tools) if tools else '(none)'}."
+    )
+    lines.append(
+        "Do NOT invent skill_ids or MCP tools that are not listed above. For "
+        "everything else, use 'task' steps.\n"
+    )
+    return "\n".join(lines) + "\n"
+
+
 async def decompose(
     prompt: str,
     *,
@@ -135,8 +172,16 @@ async def decompose(
     max_retries: int = 2,
     envelope: Envelope | None = None,
     z3_timeout_ms: int = 500,
+    available_skills: "list[str] | None" = None,
+    available_mcp_tools: "list[str] | None" = None,
 ) -> ActionPlan:
     """Decompose ``prompt`` into a verified :class:`ActionPlan`.
+
+    ``available_skills`` / ``available_mcp_tools`` ground the decomposition: when
+    provided (even as empty lists) the LLM is told exactly which skills/MCP tools
+    exist and forbidden from inventing others — an empty inventory yields a
+    task-only plan. This prevents the model from emitting a ``skill`` step for a
+    skill that has no registered handler (which would fail at execution).
 
     Raises :class:`DecompositionError` if the LLM output can't be assembled into
     a structurally valid DAG, or (when ``envelope`` is given) if the plan is not
@@ -145,6 +190,7 @@ async def decompose(
     """
     if client is None:
         client = _llm.get_instructor_client(model=model, backend=backend)
+    user_content = _inventory_block(available_skills, available_mcp_tools) + prompt
     try:
         decomposed: DecomposedPlan = await client.chat.completions.create(
             model=model,
@@ -152,7 +198,7 @@ async def decompose(
             response_model=DecomposedPlan,
             messages=[
                 {"role": "system", "content": DECOMPOSER_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": user_content},
             ],
         )
     except Exception as e:  # noqa: BLE001 — normalize at the boundary

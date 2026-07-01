@@ -86,3 +86,43 @@ async def test_envelope_gate_rejects_out_of_policy_plan():
     with pytest.raises(DecompositionError) as ei:
         await decompose("x", client=_FakeClient(result), envelope=env)
     assert "verify" in str(ei.value).lower() or "policy" in str(ei.value).lower()
+
+
+class _CapturingClient:
+    """Captures the messages sent to the decomposer and returns a canned plan."""
+    def __init__(self, result):
+        self.result = result
+        self.messages = None
+        outer = self
+
+        class _Completions:
+            async def create(self, **kwargs):
+                outer.messages = kwargs["messages"]
+                return outer.result
+
+        self.chat = type("C", (), {"completions": _Completions()})()
+
+
+async def test_empty_inventory_instructs_task_only():
+    client = _CapturingClient(_dp(DecomposedStep(id="t1", type="task", prompt="x")))
+    await decompose("do a thing", client=client, available_skills=[], available_mcp_tools=[])
+    user_msg = client.messages[-1]["content"]
+    assert "ONLY 'task' steps" in user_msg
+    assert "do a thing" in user_msg
+
+
+async def test_inventory_lists_available_skills_and_tools():
+    client = _CapturingClient(_dp(DecomposedStep(id="t1", type="task", prompt="x")))
+    await decompose("do a thing", client=client,
+                    available_skills=["tidy-inbox"], available_mcp_tools=["github/create_issue"])
+    user_msg = client.messages[-1]["content"]
+    assert "tidy-inbox" in user_msg
+    assert "github/create_issue" in user_msg
+    assert "Do NOT invent" in user_msg
+
+
+async def test_no_inventory_is_unconstrained():
+    client = _CapturingClient(_dp(DecomposedStep(id="t1", type="task", prompt="x")))
+    await decompose("do a thing", client=client)  # neither list passed
+    user_msg = client.messages[-1]["content"]
+    assert user_msg == "do a thing"  # no inventory block prepended

@@ -159,6 +159,7 @@ class Orchestrator:
         ladder: ModelLadder = DEFAULT_LADDER,
         skill_handlers: dict[str, SkillHandler] | None = None,
         mcp_transport: MCPTransport | None = None,
+        available_mcp_tools: list[str] | None = None,
         pathway_store: Any | None = None,
         journal: Any | None = None,
         decompose_model: str = _DEFAULT_DECOMPOSE_MODEL,
@@ -175,6 +176,9 @@ class Orchestrator:
         self.step_timeout_s = step_timeout_s
         self.skill_handlers = dict(skill_handlers or {})
         self.mcp_transport = mcp_transport
+        # The transport is opaque (no introspectable tool list), so the caller
+        # declares which server/tool values the decomposer may emit.
+        self.available_mcp_tools = list(available_mcp_tools) if available_mcp_tools is not None else None
         self.pathway_store = pathway_store
         self.journal = journal
         self.decompose_model = decompose_model
@@ -242,6 +246,8 @@ class Orchestrator:
 
         plan, run_envelope, reused = await self._maybe_reuse(prompt, envelope)
         if not reused:
+            # Ground the decomposer in what can actually run: only skills with a
+            # registered handler, and (if the caller declared them) MCP tools.
             plan = await decompose(
                 prompt,
                 model=self.decompose_model,
@@ -249,6 +255,8 @@ class Orchestrator:
                 backend=self.backend,
                 envelope=envelope,
                 z3_timeout_ms=self.z3_timeout_ms,
+                available_skills=list(self.skill_handlers),
+                available_mcp_tools=self.available_mcp_tools,
             )
             run_envelope = envelope
 
