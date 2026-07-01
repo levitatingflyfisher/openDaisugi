@@ -37,7 +37,14 @@ Judgment calls made under autonomy (revisit): TaskStep outputs are consumed only
 the synthesizer — openDaisugi never splices a step's output into a downstream command
 string, which removes the prompt-injection→privileged-execution path by construction;
 MCP execution ships as step-type + executor + transport protocol with live wiring
-deferred; Tier-0 reuse uses the raw distilled template (LLM plan-adaptation deferred).
+deferred; Tier-0 reuse uses the raw distilled template (LLM plan-adaptation deferred);
+task steps run their subtask independently (per-step upstream-output threading deferred).
+
+NOTE: the whole pipeline is unit-verified with injected/fake LLM clients and the shell
+path runs for real, but a live end-to-end run against a real model was NOT performed in
+this build (same environment boundary as the v0.31.1 llamafile download). The real-model
+path (TaskStep prose prompting, non-JSON completion, local-rung routing) is
+correct-by-construction and unit-tested, not yet exercised against a live API.
 
 ## v0.31.1 — 2026-06-24 — Trustable, configurable model resolution
 
