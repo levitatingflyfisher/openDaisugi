@@ -19,6 +19,42 @@ from typing import Literal
 logging.getLogger("opendaisugi").addHandler(logging.NullHandler())
 _log = logging.getLogger("opendaisugi.facade")
 
+from opendaisugi import integrations
+from opendaisugi.accounting import TierStats, classify_tier, tier_stats
+from opendaisugi.agentic_executor import AgenticExecutor
+from opendaisugi.aliases import Alias, AliasRegistry
+from opendaisugi.approval import ApprovalDecision, ApprovalStrategy
+from opendaisugi.benchmark import (
+    PairedResult,
+    RunMetric,
+    meets_stage4_bar,
+    run_paired_benchmark,
+    summarize,
+    tasks_hash,
+)
+from opendaisugi.budget import BudgetExceeded, BudgetReport, BudgetTracker, StepCost
+from opendaisugi.config import Config, load_config, save_config
+from opendaisugi.contracts import (
+    Contract,
+    DelegationDecision,
+    verify_delegation,
+)
+from opendaisugi.decomposer import (
+    DecomposedPlan,
+    DecomposedStep,
+    DecompositionError,
+    decompose,
+)
+from opendaisugi.defaults import DEFAULT_LOW_STAKES_ENVELOPE
+from opendaisugi.distiller import Distiller, TendReport
+from opendaisugi.envelope import (
+    ENVELOPE_PROMPT_VERSION,
+    CalibrationReport,
+    generate_envelope,
+    run_calibration,
+)
+from opendaisugi.envelope import generate_envelope as _generate_envelope
+from opendaisugi.envelope_cache import EnvelopeCache, make_cache_key
 from opendaisugi.exceptions import (
     EnvelopeGenerationError,
     LowStakesNotConfigured,
@@ -28,17 +64,19 @@ from opendaisugi.exceptions import (
     TaskTooLongError,
     VerificationTimeout,
 )
-from opendaisugi.defaults import DEFAULT_LOW_STAKES_ENVELOPE
-from opendaisugi.thinking import ThinkingBudget
-from opendaisugi.envelope_cache import EnvelopeCache, make_cache_key
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD, PathwayStore
-from opendaisugi.pathway_bundle import (
-    PathwayBundle, pathway_to_bundle, bundle_to_pathway,
-    UntrustedSignerError, InvalidSignatureError, UnsignedBundleError,
+from opendaisugi.executor import (
+    DryRunExecutor,
+    ExecutorResult,
+    FakeExecutor,
+    StepExecutor,
+    SubprocessExecutor,
 )
-from opendaisugi.distiller import Distiller, TendReport
-from opendaisugi.pathway import CompiledPathway, PathwayMatch
-from opendaisugi.accounting import TierStats, classify_tier, tier_stats
+from opendaisugi.fallback import (
+    FallbackHandler,
+    FallbackOutcome,
+    HaltHandler,
+    RecomputeHandler,
+)
 from opendaisugi.gardener import (
     ABResult,
     GardenerConfig,
@@ -54,11 +92,12 @@ from opendaisugi.gardener import (
     regression_check,
     run_gardener,
 )
-from opendaisugi.tier1 import (
-    ClaudeCodeTier1Provider,
-    LiteLLMTier1Provider,
-    OllamaTier1Provider,
-    Tier1Provider,
+from opendaisugi.inheritance import EnvelopeInheritanceError, verify_inheritance
+from opendaisugi.journal import (
+    Journal,
+    JournalStats,
+    ReplayResult,
+    TraceRecord,
 )
 from opendaisugi.lora import (
     DatasetStats,
@@ -66,21 +105,22 @@ from opendaisugi.lora import (
     emit_jsonl,
     iter_training_examples,
 )
-from opendaisugi import integrations
-from opendaisugi.portability import (
-    BUNDLE_SCHEMA_VERSION,
-    ImportResult,
-    PathwayImportError,
-    export as export_pathway,
-    import_pathway,
-    parse_bundle,
+from opendaisugi.model_sizer import (
+    DEFAULT_LADDER,
+    ModelLadder,
+    ModelRung,
+    StepSizing,
+    estimate_step_difficulty,
+    size_plan,
+    size_step,
 )
-from opendaisugi.inheritance import EnvelopeInheritanceError, verify_inheritance
+
+# v0.32.0: forward-looking orchestration layer
 from opendaisugi.models import (
     ActionPlan,
     ActionStep,
+    AgenticStep,
     CartesianMoveStep,
-    VLAStep,
     Envelope,
     FallbackStrategy,
     FileReadStep,
@@ -88,55 +128,54 @@ from opendaisugi.models import (
     GripperStep,
     Invariant,
     JointMoveStep,
+    MCPStep,
     NetworkStep,
     Permission,
     Postcondition,
     ShellStep,
     SimulationResetStep,
+    SkillStep,
+    TaskStep,
     Trace,
     VerificationResult,
     Violation,
+    VLAStep,
 )
-from opendaisugi.config import Config, load_config, save_config
-from opendaisugi.verify import verify
-from opendaisugi.verify import verify as _verify
-from opendaisugi.envelope import (
-    CalibrationReport,
-    ENVELOPE_PROMPT_VERSION,
-    generate_envelope,
-    run_calibration,
+from opendaisugi.orchestration_executors import (
+    MCPExecutor,
+    MCPTransport,
+    SkillExecutor,
+    SkillHandler,
 )
-from opendaisugi.envelope import generate_envelope as _generate_envelope
-from opendaisugi.journal import (
-    Journal,
-    JournalStats,
-    ReplayResult,
-    TraceRecord,
+from opendaisugi.orchestrator import (
+    BudgetAwareDelegatingExecutor,
+    OrchestrationResult,
+    Orchestrator,
 )
 from opendaisugi.parsers import Episode, ParseResult
-from opendaisugi.approval import ApprovalDecision, ApprovalStrategy
-from opendaisugi.executor import (
-    DryRunExecutor,
-    ExecutorResult,
-    FakeExecutor,
-    StepExecutor,
-    SubprocessExecutor,
+from opendaisugi.pathway import CompiledPathway, PathwayMatch
+from opendaisugi.pathway_bundle import (
+    InvalidSignatureError,
+    PathwayBundle,
+    UnsignedBundleError,
+    UntrustedSignerError,
+    bundle_to_pathway,
+    pathway_to_bundle,
 )
-from opendaisugi.run_session import RunSession, RunStatus, StepOutcome
-from opendaisugi.supervisor import Supervisor
-from opendaisugi.refinement import RefinementLog, RefinementRecord
-from opendaisugi.fallback import (
-    FallbackHandler,
-    FallbackOutcome,
-    HaltHandler,
-    RecomputeHandler,
+from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD, PathwayStore
+from opendaisugi.portability import (
+    BUNDLE_SCHEMA_VERSION,
+    ImportResult,
+    PathwayImportError,
+    import_pathway,
+    parse_bundle,
+)
+from opendaisugi.portability import (
+    export as export_pathway,
 )
 
 # v0.9.0 meta-DSL exports
 from opendaisugi.predicate import Expression, LengthRange, parse_expression
-from opendaisugi.aliases import Alias, AliasRegistry
-from opendaisugi.system_aliases import load_system_aliases
-from opendaisugi.stage2 import verify_completed_step
 
 # v0.11.0: real Z3 compilation + skills-as-contracts
 from opendaisugi.predicate_z3 import (
@@ -145,18 +184,44 @@ from opendaisugi.predicate_z3 import (
     evaluate_predicate,
     verify_predicate_z3,
 )
+from opendaisugi.refinement import RefinementLog, RefinementRecord
 from opendaisugi.regex_to_z3 import UnsupportedRegexError
+from opendaisugi.run_session import RunSession, RunStatus, StepOutcome
+from opendaisugi.stage2 import verify_completed_step
+from opendaisugi.subagent import DelegationDenied, SafeSubagent
 from opendaisugi.subsumption import (
     Counterexample,
     SubsumptionResult,
     envelope_subsumes,
 )
-from opendaisugi.contracts import (
-    Contract,
-    DelegationDecision,
-    verify_delegation,
+from opendaisugi.supervisor import Supervisor
+
+# v0.33.0: verified swarm tasking (airspace deconfliction via envelope algebra)
+from opendaisugi.swarm import (
+    SwarmConflict,
+    SwarmVerdict,
+    aabb_disjoint,
+    aabb_intersection,
+    partition_airspace,
+    partition_and_assign,
+    verify_swarm_tasking,
 )
-from opendaisugi.subagent import DelegationDenied, SafeSubagent
+from opendaisugi.synthesizer import (
+    StepOutput,
+    SynthesisResult,
+    collect_outputs,
+    synthesize,
+)
+from opendaisugi.system_aliases import load_system_aliases
+from opendaisugi.thinking import ThinkingBudget
+from opendaisugi.tier1 import (
+    ClaudeCodeTier1Provider,
+    LiteLLMTier1Provider,
+    OllamaTier1Provider,
+    Tier1Provider,
+)
+from opendaisugi.verify import verify
+from opendaisugi.verify import verify as _verify
 
 # v0.15.0: real ed25519 signing (optional, requires [sign] extra)
 try:
@@ -348,6 +413,73 @@ class Daisugi:
         )
         return await distiller.tend()
 
+    async def orchestrate(
+        self,
+        prompt: str,
+        *,
+        envelope: Envelope | None = None,
+        budget_tokens: int | None = None,
+        stakes: Literal["low", "medium", "high"] = "medium",
+        skill_handlers: "dict | None" = None,
+        mcp_transport=None,
+        ladder: "ModelLadder | None" = None,
+        strict: bool | None = None,
+        strict_budget: bool = False,
+    ) -> "OrchestrationResult":
+        """Run ``prompt`` end to end: decompose → size → execute → synthesize.
+
+        The forward-looking counterpart to :meth:`tend`. When ``envelope`` is
+        None one is generated for the prompt (the authorization boundary the
+        decomposed plan must verify against) at the given ``stakes``. The
+        orchestrator reuses this facade's pathway store (Tier-0 reuse for repeat
+        prompts) and journal, and routes each executed step to the cheapest
+        capable model under ``budget_tokens`` (None = unbudgeted; the decompose
+        and synthesize calls are overhead, not drawn from it).
+        """
+        from opendaisugi.model_sizer import build_ladder
+        from opendaisugi.orchestrator import Orchestrator
+
+        if envelope is None:
+            envelope = await self.generate_envelope(prompt, stakes=stakes)
+
+        # Thread a configured local Tier-1 model into the ladder's local rung so
+        # easy reasoning routes to it (token saving); its endpoint is passed to the
+        # task executor so the call actually reaches the local server. Absent a
+        # local model, the ladder has no local rung and easy tasks fall back to the
+        # cheapest cloud model — never a placeholder.
+        endpoint_overrides: dict = {}
+        if ladder is not None:
+            resolved_ladder = ladder
+        else:
+            local_model = getattr(self._tier1, "model", None)
+            resolved_ladder = build_ladder(local_model)
+            base_url = getattr(self._tier1, "base_url", None)
+            if local_model and base_url:
+                override = {"api_base": base_url}
+                api_key = getattr(self._tier1, "api_key", None)
+                if api_key:
+                    override["api_key"] = api_key
+                endpoint_overrides[local_model] = override
+
+        orch = Orchestrator(
+            ladder=resolved_ladder,
+            skill_handlers=skill_handlers,
+            mcp_transport=mcp_transport,
+            pathway_store=self.pathway_store,
+            journal=self.journal,
+            decompose_model=self.model,
+            z3_timeout_ms=self.z3_timeout_ms,
+            pathway_threshold=self._pathway_threshold,
+            endpoint_overrides=endpoint_overrides,
+        )
+        return await orch.orchestrate(
+            prompt,
+            envelope=envelope,
+            budget_tokens=budget_tokens,
+            strict=strict if strict is not None else self._strict,
+            strict_budget=strict_budget,
+        )
+
     async def find_pathway(
         self, task: str, *, threshold: float | None = None
     ) -> "PathwayMatch | None":
@@ -451,7 +583,7 @@ def __getattr__(name: str):
     raise AttributeError(f"module 'opendaisugi' has no attribute {name!r}")
 
 
-__version__ = "0.31.1"
+__version__ = "0.34.2"
 
 __all__ = [
     "__version__",
@@ -601,4 +733,52 @@ __all__ = [
     "generate_keypair",
     "sign_contract",
     "verify_signature_raw",
+    # v0.32.0: forward-looking orchestration layer
+    "TaskStep",
+    "SkillStep",
+    "MCPStep",
+    "BudgetTracker",
+    "BudgetReport",
+    "BudgetExceeded",
+    "StepCost",
+    "ModelLadder",
+    "ModelRung",
+    "StepSizing",
+    "DEFAULT_LADDER",
+    "estimate_step_difficulty",
+    "size_plan",
+    "size_step",
+    "decompose",
+    "DecomposedPlan",
+    "DecomposedStep",
+    "DecompositionError",
+    "synthesize",
+    "collect_outputs",
+    "SynthesisResult",
+    "StepOutput",
+    "SkillExecutor",
+    "MCPExecutor",
+    "SkillHandler",
+    "MCPTransport",
+    "Orchestrator",
+    "OrchestrationResult",
+    "BudgetAwareDelegatingExecutor",
+    # v0.36.0: tool-using delegation inside the envelope (roadmap Stage 2)
+    "AgenticStep",
+    "AgenticExecutor",
+    # v0.39.0: distillation-fidelity benchmark harness (roadmap Stage 4)
+    "RunMetric",
+    "PairedResult",
+    "run_paired_benchmark",
+    "summarize",
+    "tasks_hash",
+    "meets_stage4_bar",
+    # v0.33.0: verified swarm tasking
+    "verify_swarm_tasking",
+    "partition_and_assign",
+    "partition_airspace",
+    "aabb_disjoint",
+    "aabb_intersection",
+    "SwarmVerdict",
+    "SwarmConflict",
 ]

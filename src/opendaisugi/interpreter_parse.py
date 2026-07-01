@@ -33,9 +33,9 @@ _OPAQUE_INTERPRETERS: Final[frozenset[str]] = frozenset({
 })
 
 _XARGS_VALUE_FLAGS: Final[frozenset[str]] = frozenset({
-    "-n", "-I", "-P", "-L", "-d", "-E", "-s",
+    "-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a",
     "--max-args", "--replace", "--max-procs", "--max-lines",
-    "--delimiter", "--eof", "--max-chars",
+    "--delimiter", "--eof", "--max-chars", "--arg-file",
 })
 
 _FIND_EXEC_FLAGS: Final[frozenset[str]] = frozenset({
@@ -98,13 +98,32 @@ def parse_interpreter(command: str) -> InterpreterPayload | None:
 def _parse_shell_c(head: str, tokens: list[str]) -> InterpreterPayload:
     """``sh -c "SCRIPT"`` — SCRIPT is another shell command.
 
-    ``sh script.sh`` (no ``-c``) executes a script file; not a bypass
-    vector because verify reasons about the command string we see, and
-    the file's contents aren't in the plan. Return empty inners.
+    Also handles CLUSTERED short flags (``sh -ec``, ``bash -lc``, ``-euxc``) and
+    the attached-argument form (``sh -cSCRIPT``). POSIX shells accept these, so an
+    exact ``== "-c"`` match let ``sh -ec "curl evil"`` slip past verification (the
+    embedded command was never extracted or re-checked). Over-detection here is
+    the safe direction: a spurious inner command just gets re-verified.
+
+    ``sh script.sh`` (no ``-c``) executes a script file; not a bypass vector
+    because verify reasons about the command string we see, and the file's
+    contents aren't in the plan. Return empty inners.
     """
-    for i in range(1, len(tokens) - 1):
-        if tokens[i] == "-c":
+    for i in range(1, len(tokens)):
+        tok = tokens[i]
+        # A single-dash short-flag cluster (not a long ``--`` option) containing 'c'.
+        if len(tok) < 2 or tok[0] != "-" or tok[1] == "-" or "c" not in tok:
+            continue
+        cluster = tok[1:]
+        cpos = cluster.find("c")
+        # Chars before 'c' must look like clustered short flags (letters).
+        if cluster[:cpos] and not cluster[:cpos].isalpha():
+            continue
+        attached = cluster[cpos + 1:]
+        if attached:  # ``-cSCRIPT`` / ``-ecSCRIPT`` — command attached to the token
+            return InterpreterPayload(head=head, inner_commands=[attached])
+        if i + 1 < len(tokens):  # ``-c SCRIPT`` / ``-ec SCRIPT`` — next token
             return InterpreterPayload(head=head, inner_commands=[tokens[i + 1]])
+        return InterpreterPayload(head=head)
     return InterpreterPayload(head=head)
 
 

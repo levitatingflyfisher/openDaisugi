@@ -20,9 +20,9 @@ from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from opendaisugi.refinement import RefinementRecord  # noqa: F401
     from opendaisugi.journal import Journal  # noqa: F401
     from opendaisugi.pathway_store import PathwayStore  # noqa: F401
+    from opendaisugi.refinement import RefinementRecord  # noqa: F401
     from opendaisugi.tier1 import Tier1Provider  # noqa: F401
 
 from opendaisugi import llm as _llm

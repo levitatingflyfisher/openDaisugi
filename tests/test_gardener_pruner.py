@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from opendaisugi.gardener import PruneConfig, PruneReport, prune
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 from opendaisugi.pathway import CompiledPathway

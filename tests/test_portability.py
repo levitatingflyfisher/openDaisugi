@@ -54,6 +54,26 @@ def _pathway(id_: str = "pathway_abc12345") -> CompiledPathway:
     )
 
 
+def test_export_md_renders_orchestration_step_detail():
+    # A pathway containing orchestration step types must not export blank details.
+    from opendaisugi.models import MCPStep, SkillStep, TaskStep
+    env = Envelope(generated_by="t", task="x", permissions=Permission())
+    plan = ActionPlan(source="tmpl", task="x", steps=[
+        TaskStep(id="t1", prompt="analyze the quarterly numbers"),
+        SkillStep(id="k1", skill_id="tidy-inbox", depends_on=["t1"]),
+        MCPStep(id="m1", server="github", tool="create_issue", depends_on=["k1"]),
+    ])
+    pw = CompiledPathway(
+        id="pathway_orch1234", task_description="x", task_embedding=[0.1],
+        embedding_model="stub", envelope=env, plan_template=plan,
+        source_trace_ids=["t1"], distilled_at=time.time(),
+    )
+    md = export(pw, "md")
+    assert "analyze the quarterly numbers" in md
+    assert "tidy-inbox" in md
+    assert "github/create_issue" in md
+
+
 # ─────────────────── JSON round-trip ───────────────────
 
 

@@ -302,3 +302,64 @@ def test_redirect_and_newline_metachars_rejected(command):
     violations = check_permissions(plan, env)
     assert len(violations) == 1
     assert "metacharacter" in violations[0].message
+
+
+def test_verify_rejects_non_http_network_scheme():
+    from opendaisugi.models import ActionPlan, Envelope, NetworkStep, Permission
+    from opendaisugi.verify import verify
+    env = Envelope(generated_by="t", task="x", permissions=Permission(network=True, network_hosts=[]))
+    for url in ["file:///etc/passwd", "ftp://evil.com/x", "data:text/plain,x"]:
+        p = ActionPlan(source="t", task="x", steps=[NetworkStep(id="s", url=url)])
+        assert not verify(p, env).ok, url
+    # a normal http(s) URL still verifies
+    ok = ActionPlan(source="t", task="x", steps=[NetworkStep(id="s", url="https://api.example.com/data")])
+    assert verify(ok, env).ok
+
+
+def test_unknown_custom_step_type_rejected_under_strict():
+    # A custom @step_type with an external effect and no permission surface must
+    # fail closed under strict mode (high/physical stakes), not pass silently.
+    from typing import Literal
+
+    from opendaisugi.models import ActionPlan, Envelope, Permission, StepBase, step_type
+    from opendaisugi.verify import verify
+
+    @step_type
+    class _DraftEmailStep(StepBase):
+        type: Literal["_sgcm_draft_email"] = "_sgcm_draft_email"
+        to: str = "x@example.com"
+
+    plan = ActionPlan(source="t", task="x", steps=[_DraftEmailStep(id="s")])
+    # low stakes (non-strict) → passes (trust mode)
+    low = Envelope(generated_by="t", task="x", permissions=Permission(), stakes="low")
+    assert verify(plan, low).ok
+    # high stakes (strict) → rejected
+    high = Envelope(generated_by="t", task="x", permissions=Permission(), stakes="high")
+    r = verify(plan, high)
+    assert not r.ok
+    assert any("unverifiable step type" in v.message for v in r.violations)
+    # explicit strict override also rejects at low stakes
+    assert not verify(plan, low, strict=True).ok
+
+
+def test_custom_step_allowlist_permits_under_strict():
+    # A kit's registered custom step types are permitted under strict when the
+    # envelope declares them in custom_step_allowlist (VC-4 stays fail-closed for
+    # UNlisted custom types). Regression: my VC-4 fix had broken the dishwash kit.
+    from typing import Literal
+
+    from opendaisugi.models import ActionPlan, Envelope, Permission, StepBase, step_type
+    from opendaisugi.verify import verify
+
+    @step_type
+    class _KitMotionStep(StepBase):
+        type: Literal["_sgcm_kit_motion"] = "_sgcm_kit_motion"
+
+    plan = ActionPlan(source="t", task="x", steps=[_KitMotionStep(id="s")])
+    # not declared → rejected under strict (physical stakes)
+    denied = Envelope(generated_by="t", task="x", permissions=Permission(), stakes="physical")
+    assert not verify(plan, denied).ok
+    # declared in the envelope's custom_step_allowlist → permitted under strict
+    allowed = Envelope(generated_by="t", task="x", stakes="physical",
+                       permissions=Permission(custom_step_allowlist=["_sgcm_kit_motion"]))
+    assert verify(plan, allowed).ok

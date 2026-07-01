@@ -2,7 +2,7 @@
 
 import pytest
 
-from opendaisugi import Daisugi, EnvelopeCache, EnvelopeInheritanceError
+from opendaisugi import Daisugi
 from opendaisugi.models import Envelope, Permission
 
 

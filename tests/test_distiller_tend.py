@@ -1,7 +1,6 @@
 """Integration test for Distiller.tend() full pipeline."""
 
 import sqlite3
-import time
 
 import numpy as np
 import pytest
@@ -70,8 +69,8 @@ async def test_tend_creates_pathway_from_cluster(tmp_path, monkeypatch):
     monkeypatch.setattr(distiller, "_embed_plan_structures", lambda sigs: np.ones((len(sigs), 4)))
 
     # Stub LLM generalization + improvement with deterministic returns.
-    from opendaisugi.distiller import GeneralizedTemplate
     from opendaisugi import distiller as dist_mod
+    from opendaisugi.distiller import GeneralizedTemplate
 
     env_tmpl = Envelope(
         generated_by="distilled", task="T",

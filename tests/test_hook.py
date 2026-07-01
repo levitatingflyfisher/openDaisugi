@@ -101,6 +101,20 @@ def test_infer_envelope_no_shell_when_no_shell_calls():
     assert env.permissions.shell is False
 
 
+def test_infer_envelope_admits_observed_mcp_calls():
+    """Contract: the inferred envelope admits everything observed. Now that
+    MCP calls are captured, their server/tool must land in mcp_allowlist —
+    otherwise captures_to_trace would produce a failing trace for a call that
+    really happened."""
+    records = [
+        {"step_type": "mcp", "mcp_server": "github", "mcp_tool": "create_issue"},
+        {"step_type": "mcp", "mcp_server": "slack", "mcp_tool": "post_message"},
+    ]
+    env = infer_envelope(records, task="t")
+    assert "github/create_issue" in env.permissions.mcp_allowlist
+    assert "slack/post_message" in env.permissions.mcp_allowlist
+
+
 def test_captures_to_trace_roundtrip(tmp_path: Path):
     """Capture → infer envelope → build plan → verify → journal.log."""
     # Capture a small session

@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from opendaisugi.step_vocabulary import (
-    CanonicalKeys,
     assert_step_matches_vocabulary,
     load_canonical_keys,
 )

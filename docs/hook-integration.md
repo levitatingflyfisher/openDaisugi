@@ -15,6 +15,11 @@ The hook `daisugi hook record --format <host>` reads a JSON tool-call payload
 from stdin and prints the host's allow contract on stdout (`{"continue": true}`
 for Claude, `{}` for Hermes/OpenClaw). It never blocks.
 
+> **Want the hook to actually deny calls?** That is the *call-time gate* —
+> the same seam with the opposite failure policy (fail-closed, verified
+> per call against a registered envelope). See **[Gate a live
+> session](gate.md)**; this document covers only the passive capture path.
+
 ## Claude Code
 
 Add to `~/.claude/settings.json`:

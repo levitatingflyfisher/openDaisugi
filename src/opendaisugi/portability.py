@@ -27,7 +27,6 @@ from typing import Literal
 
 import yaml
 
-from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.pathway import CompiledPathway
 from opendaisugi.pathway_store import PathwayStore
 from opendaisugi.verify import verify
@@ -107,12 +106,33 @@ def _export_skill(pathway: CompiledPathway) -> str:
     return f"---\n{head}---\n\n{body}"
 
 
+def _step_detail(step) -> str:
+    """A short identifying label of what a step does, per kind.
+
+    Covers the orchestration step types (task/skill/mcp) so journaled
+    orchestration runs distilled into pathways don't export a blank detail.
+    """
+    kind = getattr(step, "type", "")
+    if kind == "task":
+        return getattr(step, "prompt", "") or ""
+    if kind == "skill":
+        return getattr(step, "skill_id", "") or ""
+    if kind == "mcp":
+        return f"{getattr(step, 'server', '')}/{getattr(step, 'tool', '')}"
+    return (
+        getattr(step, "command", None)
+        or getattr(step, "path", None)
+        or getattr(step, "url", "")
+        or ""
+    )
+
+
 def _export_mermaid(pathway: CompiledPathway) -> str:
     """Plan DAG as a Mermaid flowchart with permission summary."""
     lines = ["```mermaid", "flowchart TD"]
     for step in pathway.plan_template.steps:
         label = f"{step.id}<br/>{step.type}"
-        detail = getattr(step, "command", None) or getattr(step, "path", None) or getattr(step, "url", "")
+        detail = _step_detail(step)
         if detail:
             label += f"<br/><code>{_mermaid_escape(str(detail))}</code>"
         lines.append(f"    {step.id}[{label}]")
@@ -165,7 +185,7 @@ def _export_md(pathway: CompiledPathway) -> str:
             parts.append(f"  - `{pc.type}` → path={pc.path} expected={pc.expected}")
     parts.extend(["", "## Plan template", ""])
     for step in plan.steps:
-        detail = getattr(step, "command", None) or getattr(step, "path", None) or getattr(step, "url", "")
+        detail = _step_detail(step)
         parts.append(f"- `{step.id}` ({step.type}): `{detail}`")
         if step.depends_on:
             parts.append(f"  - depends on: {', '.join(step.depends_on)}")
@@ -181,7 +201,7 @@ def _export_smtlib(pathway: CompiledPathway) -> str:
     needed for verification.
     """
     import z3
-    from opendaisugi.z3_checks import check_envelope_self_consistency
+
 
     # Re-encode the self-consistency checks into a fresh solver and sexpr
     # it out. We don't use the z3_checks helper directly because it

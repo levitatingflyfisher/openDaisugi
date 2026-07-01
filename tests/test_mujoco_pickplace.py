@@ -24,7 +24,6 @@ from opendaisugi.models import (
     SimulationResetStep,
 )
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "mjcf" / "two_joint_arm.xml"
 
 

@@ -1,11 +1,13 @@
 """v0.27.x — version and docs checks."""
 from __future__ import annotations
+
 import pathlib
+
 import opendaisugi
 
 
 def test_version_is_current():
-    assert opendaisugi.__version__.startswith("0.31.")
+    assert opendaisugi.__version__.startswith("0.34.")
 
 
 def test_feature_status_marks_vacuity_shipped():

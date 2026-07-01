@@ -156,8 +156,9 @@ def test_subsumption_blocks_command_substitution_substring():
     # that pass the head check, fail concrete verify on $(, and the
     # subsumption proof would falsely approve. We assert subsumption
     # rejects when the metachar gate disagrees with verify.
-    from opendaisugi.subsumption import _encode_shell_admission
     import z3
+
+    from opendaisugi.subsumption import _encode_shell_admission
     s = z3.String("cmd")
     perms = Permission(shell=True, shell_allowlist=["cat"])
     admission = _encode_shell_admission(perms, s)
@@ -171,8 +172,9 @@ def test_subsumption_blocks_command_substitution_substring():
 
 def test_subsumption_blocks_redirect_substring():
     """Same invariant for `>` and `<` — added v0.28.2."""
-    from opendaisugi.subsumption import _encode_shell_admission
     import z3
+
+    from opendaisugi.subsumption import _encode_shell_admission
     s = z3.String("cmd")
     perms = Permission(shell=True, shell_allowlist=["cat"])
     admission = _encode_shell_admission(perms, s)
@@ -183,3 +185,87 @@ def test_subsumption_blocks_redirect_substring():
         assert solver.check() == z3.unsat, (
             f"admission must forbid {ch!r} anywhere — verify rejects it concretely"
         )
+
+
+# --------------------- file/network/mcp subsumption (SGCM review VC-1) ---------------------
+
+def _penv(**perm):
+    from opendaisugi.models import Envelope, Permission
+    return Envelope(generated_by="t", task="x", permissions=Permission(**perm))
+
+
+def test_subsumption_rejects_inner_file_write_outside_outer():
+    caller = _penv(file_write=["/tmp/**"])
+    skill = _penv(file_write=["/etc/**"])
+    assert not envelope_subsumes(caller, skill).holds  # /etc not covered by /tmp
+
+
+def test_subsumption_allows_inner_file_write_subset():
+    caller = _penv(file_write=["/tmp/**"])
+    skill = _penv(file_write=["/tmp/sub/x"])
+    assert envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_rejects_inner_network_host_outside_outer():
+    caller = _penv(network=True, network_hosts=["api.internal"])
+    skill = _penv(network=True, network_hosts=["evil.com"])
+    assert not envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_rejects_inner_any_host_under_restricted_outer():
+    caller = _penv(network=True, network_hosts=["api.internal"])  # restricted
+    skill = _penv(network=True, network_hosts=[])                 # any host
+    assert not envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_allows_network_host_subset():
+    caller = _penv(network=True, network_hosts=["a.com", "b.com"])
+    skill = _penv(network=True, network_hosts=["a.com"])
+    assert envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_rejects_inner_mcp_outside_outer():
+    caller = _penv(mcp_allowlist=["safe/*"])
+    skill = _penv(mcp_allowlist=["dangerous/*"])
+    assert not envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_rejects_the_full_vc1_scenario():
+    caller = _penv(shell=True, shell_allowlist=["echo"], file_write=["/tmp/**"],
+                  network=True, network_hosts=["api.internal"], mcp_allowlist=["safe/*"])
+    skill = _penv(shell=True, shell_allowlist=["echo"], file_write=["/etc/**", "/home/**"],
+                 network=True, network_hosts=["evil.com"], mcp_allowlist=["dangerous/*"])
+    assert not envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_still_holds_for_identical_envelopes():
+    e = _penv(shell=True, shell_allowlist=["echo"], file_read=["/data/**"],
+             file_write=["/tmp/**"], network=True, network_hosts=["a.com"], mcp_allowlist=["gh/*"])
+    assert envelope_subsumes(e, e).holds
+
+
+# --------------------- soft-node polarity (SGCM review VC-3) ---------------------
+
+def test_outer_soft_deny_rule_not_dropped_under_unsupported_regex():
+    # r'\b' (word boundary) is UnsupportedRegexError → the NotMatches compiles to
+    # a SOFT node. The old code pinned outer-only soft nodes to False, which under
+    # the negation made the deny-rule term True and silently DROPPED it → holds=True.
+    soft_deny = Invariant(
+        type="no_sudo", description="forbid sudo",
+        expr={"op": "forall_steps", "pred": {
+            "op": "not_matches", "path": "command", "regex": r".*\bsudo\b.*"}},
+    )
+    outer = _env(["echo", "sudo"], invariants=[soft_deny])
+    inner = _env(["echo", "sudo"])  # no such deny → inner can run sudo
+    r = envelope_subsumes(outer, inner)
+    assert not r.holds  # must fail-closed, not silently approve
+
+
+def test_shared_soft_invariant_still_subsumes():
+    soft = Invariant(
+        type="x", description="d",
+        expr={"op": "forall_steps", "pred": {
+            "op": "not_matches", "path": "command", "regex": r".*\bsudo\b.*"}},
+    )
+    e = _env(["echo"], invariants=[soft])
+    assert envelope_subsumes(e, e).holds  # shared soft node → subsumes

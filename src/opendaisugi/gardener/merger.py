@@ -105,6 +105,17 @@ def merge(
             if b.id in removed:
                 continue
 
+            # Only compare embeddings from the SAME model/version — a cross-space
+            # comparison is meaningless (garbage similarity that can spuriously
+            # exceed the threshold → the loser is deleted and folded into an
+            # unrelated winner) or crashes on a dimension mismatch. This is the
+            # same hazard PathwayStore.find() guards against.
+            if (a.embedding_model, a.embedding_model_version) != (
+                b.embedding_model, b.embedding_model_version
+            ):
+                continue
+            if len(a.task_embedding) != len(b.task_embedding):
+                continue  # defensive: never let a dimension mismatch crash merge
             sim = cosine_similarity(a.task_embedding, b.task_embedding)
             if sim < cfg.similarity_threshold:
                 continue

@@ -75,6 +75,7 @@ class GitPathwayStore(PathwayStore):
         publisher: str = "opendaisugi-instance",
         require_signed: bool = True,
         offline_ok: bool = True,
+        trusted_signers_path: str | Path | None = None,
     ) -> None:
         self.repo_path = Path(repo_path)
         if not self.repo_path.exists():
@@ -95,6 +96,16 @@ class GitPathwayStore(PathwayStore):
             Path(cache_db_path).parent.mkdir(parents=True, exist_ok=True)
         super().__init__(cache_db_path)
 
+        # SECURITY: the trust anchor must NOT be the in-repo trusted-signers.json —
+        # `git pull` updates that file from the same remote whose bundles it gates,
+        # so an attacker who can push adds their own key + a malicious bundle and it
+        # verifies (circular trust). Default to a LOCAL, git-untracked file next to
+        # the cache; pass ``trusted_signers_path`` for an explicit out-of-band anchor.
+        self._trusted_signers_override = (
+            Path(trusted_signers_path) if trusted_signers_path is not None else None
+        )
+        self._local_trust_default = Path(cache_db_path).parent / self.TRUSTED_SIGNERS_FILE
+
         # Materialize any bundles already in the local clone (no pull yet).
         self._materialize_local_bundles()
 
@@ -104,16 +115,27 @@ class GitPathwayStore(PathwayStore):
 
     @property
     def _trusted_signers_path(self) -> Path:
-        return self.repo_path / self.TRUSTED_SIGNERS_FILE
+        """The LOCAL, out-of-band trust anchor — never the in-repo (pulled) file."""
+        return self._trusted_signers_override or self._local_trust_default
 
     def _load_trusted_signers(self) -> set[str]:
-        """Load the trusted-signers JSON file.
+        """Load the trusted-signers JSON file from the LOCAL anchor.
 
         Returns the set of base64 public keys. Empty set if the file
         doesn't exist or is unparseable (caller's risk: with no trusted
         signers and ``require_signed=True``, every pull is rejected).
         """
         if not self._trusted_signers_path.exists():
+            # If the (remote-controlled) in-repo file exists but no local anchor is
+            # configured, warn — trust is NOT taken from it, so signed bundles will
+            # be rejected until a local anchor is set up.
+            if (self.repo_path / self.TRUSTED_SIGNERS_FILE).exists():
+                _log.warning(
+                    "git_pathway_store.in_repo_trust_ignored",
+                    extra={"hint": "trusted-signers.json in the registry is remote-"
+                                   "controlled and is NOT used as a trust anchor; "
+                                   "set trusted_signers_path to a local file"},
+                )
             return set()
         try:
             data = json.loads(self._trusted_signers_path.read_text(encoding="utf-8"))

@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -170,9 +169,11 @@ def bundle_to_pathway(
     - If signature is present, verifies it cryptographically; raises
       ``InvalidSignatureError`` on mismatch.
 
-    Pass ``require_signed=False`` and ``trusted_pubkey_b64s=None`` for
-    unsigned dev-mode round-trips. Production consumers should leave both
-    at their defaults.
+    Pass ``require_signed=False`` and ``trusted_pubkey_b64s=None`` for unsigned
+    dev-mode round-trips ONLY. A signed bundle is verified against the caller's
+    ``trusted_pubkey_b64s`` — never against its own embedded key alone: with no
+    trusted set, any attacker-generated keypair would 'verify', so a signed bundle
+    with ``trusted_pubkey_b64s=None`` is REJECTED (fail-closed).
     """
     if bundle.signature_b64 is None:
         if require_signed:
@@ -185,8 +186,15 @@ def bundle_to_pathway(
             f"bundle {bundle.bundle_hash[:12]} carries a signature but "
             f"no signer pubkey to verify against"
         )
-    if trusted_pubkey_b64s is not None and \
-            bundle.signer_pubkey_b64 not in trusted_pubkey_b64s:
+    if trusted_pubkey_b64s is None:
+        # A signature verified only against the bundle's OWN embedded key proves
+        # nothing (any keypair self-verifies). Require a trust anchor.
+        raise UntrustedSignerError(
+            f"bundle {bundle.bundle_hash[:12]} is signed but no trusted_pubkey_b64s "
+            f"was supplied to verify against; refusing (a self-supplied key proves "
+            f"nothing)"
+        )
+    if bundle.signer_pubkey_b64 not in trusted_pubkey_b64s:
         raise UntrustedSignerError(
             f"bundle {bundle.bundle_hash[:12]} signed by "
             f"{bundle.signer_pubkey_b64[:16]}…; not in trusted-signers list"

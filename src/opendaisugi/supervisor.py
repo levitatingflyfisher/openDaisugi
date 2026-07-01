@@ -17,6 +17,7 @@ import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from opendaisugi.aliases import AliasRegistry
 from opendaisugi.approval import ApprovalStrategy, default_strategy
 from opendaisugi.dag import topological_order
 from opendaisugi.executor import ExecutorResult, StepExecutor, default_executors
@@ -25,7 +26,6 @@ from opendaisugi.journal import Journal
 from opendaisugi.models import ActionPlan, Envelope, Receipt, compute_evidence_hash
 from opendaisugi.refinement import RefinementRecord
 from opendaisugi.run_session import RunSession, RunStatus, StepOutcome
-from opendaisugi.aliases import AliasRegistry
 from opendaisugi.verify import verify, verify_step
 
 _log = logging.getLogger("opendaisugi.supervisor")
@@ -193,6 +193,32 @@ class Supervisor:
                                 error=None,
                             ))
                             step = record.recomputed_step
+                            # The recomputed replacement is LLM-authored and must
+                            # pass the same per-step gate as any other step before
+                            # it can reach the executor — RecomputeHandler verified a
+                            # bare singleton without the supervisor's strict setting.
+                            # If the replacement is itself out of policy, halt (don't
+                            # execute it, and don't loop into another recompute).
+                            recheck = verify_step(
+                                step.model_copy(update={"depends_on": []}),
+                                envelope, z3_timeout_ms=self._z3_timeout_ms,
+                            )
+                            if not recheck.ok:
+                                _log.warning(
+                                    "run.recomputed_step_rejected",
+                                    extra={"run_id": run_id, "step_id": step.id,
+                                           "violations": len(recheck.violations)},
+                                )
+                                session.steps.append(StepOutcome(
+                                    step_id=step.id, status="rejected_halted",
+                                    approved_by=None, rc=None, stdout="",
+                                    duration_ms=0.0, started_at=_now_iso(),
+                                    error=(f"recomputed step rejected: "
+                                           f"{recheck.violations[0].message}"
+                                           if recheck.violations else "recomputed step rejected"),
+                                ))
+                                session.status = RunStatus.HALTED_BY_SIMPLEX
+                                break
 
                     try:
                         decision = self._approval.decide(step, envelope)
@@ -343,7 +369,18 @@ class Supervisor:
                     error=f"executor error: {e}",
                 )
         status = "succeeded" if result.rc == 0 and not result.timed_out else "failed"
-        error = "timed out" if result.timed_out else None
+        # A failed step must carry WHY. The reason lives in result.stdout (an
+        # executor's stderr is merged there, and DelegatingExecutor puts its
+        # exhausted-retries message there) — surfacing it means a "failed" status
+        # is never reason-less. (Previously error stayed None on any non-timeout
+        # failure, so callers/CLI/JSON saw "failed" with no explanation.)
+        if result.timed_out:
+            error = "timed out"
+        elif result.rc != 0:
+            detail = (result.stdout or "").strip()
+            error = f"exit {result.rc}: {detail[:500]}" if detail else f"exit {result.rc}"
+        else:
+            error = None
         return StepOutcome(
             step_id=step.id,
             status=status,
@@ -387,8 +424,17 @@ class Supervisor:
         if session.status == RunStatus.SUCCEEDED:
             expected = {s.id for s in plan.steps}
         elif session.status == RunStatus.FAILED and session.failed_step_id is not None:
+            # Expected receipts = the EXECUTION-order prefix up to the failing step.
+            # Steps execute in topological order, not declaration order — iterating
+            # plan.steps here raised spurious integrity failures (a step that ran
+            # after the failure in topo order but appears earlier in the list) and
+            # could mask a genuine skip. Use the same order the supervisor ran.
             expected = set()
-            for s in plan.steps:
+            try:
+                ordered = topological_order(plan)
+            except ValueError:
+                ordered = plan.steps  # cyclic plan shouldn't reach here; be safe
+            for s in ordered:
                 expected.add(s.id)
                 if s.id == session.failed_step_id:
                     break

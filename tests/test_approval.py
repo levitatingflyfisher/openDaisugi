@@ -13,7 +13,7 @@ from opendaisugi.approval import (
     default_strategy,
 )
 from opendaisugi.exceptions import NotTerminalError
-from opendaisugi.models import FileWriteStep, ShellStep, Envelope, Permission
+from opendaisugi.models import Envelope, FileWriteStep, Permission, ShellStep
 
 
 def _env(allowlist: list[str] | None = None) -> Envelope:

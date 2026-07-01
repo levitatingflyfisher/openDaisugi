@@ -1,5 +1,482 @@
 # Changelog
 
+## v0.39.0 — 2026-07-23 — The distillation-fidelity ruler (roadmap Stage 4 harness)
+
+Stage 4 asks the oldest question in the scorecard — does distillation actually
+pay? — and it *deliberately waits* on real tool-using transcripts and a local
+model for its numbers. This release builds the **ruler**, tested and ready, so
+the moment a local-model runner is wired in the measurement is a run, not a
+build.
+
+- **`opendaisugi.benchmark`**: seeded, content-addressed **paired runs** of each
+  task cold (no pathway) and warm (pathway available), cold/warm sharing a seed
+  so the only difference is pathway warmth. `summarize()` reports token / latency
+  deltas (warm − cold) with **t-based 95% confidence intervals** (honest for the
+  small samples Stage 4 uses — not a normal-approx that would understate them),
+  outcome rates, and the **safety-direction check**: warm runs must not attempt
+  *more* denied or violating actions than cold — a faster-but-looser pathway is
+  not a win. `meets_stage4_bar()` enforces the ≥20-tasks × ≥5-repeats bar so a
+  thin, flattering sample can't be published as settled.
+- Execution is an **injected runner** (`runner(task, *, warm, seed)`), so the
+  harness is verified offline with a deterministic fake runner and the real
+  numbers come from a local-model-backed runner (the piece still open, by the
+  stage's design). A `None` return drops that run rather than crashing. **No
+  numbers are claimed** until a real model is wired in.
+- Exported from the package surface; roadmap Stage-4 + feature-status carry the
+  "ruler built, run pending a local model" status.
+
+## v0.38.0 — 2026-07-23 — One-command onboarding + harness/trust honesty (roadmap Stages 5–7)
+
+Closes the implementable remainder of the roadmap and resolves Stage 1's one
+open sub-problem (where an existing session's envelope comes from).
+
+- **`daisugi gate quickstart`** — one command → a working shadow-mode gate over
+  the current project, plus the whole shadow → report → enforce → disarm flow
+  printed to copy-paste. **`daisugi gate init`** generates and registers a
+  reviewable **starter envelope** (`starter_envelope`: read/write the workspace,
+  a conservative shell head allowlist, no network) — the drafted-then-reviewed
+  answer to "where does the envelope come from?", not a blank file or a
+  dangerous blanket-allow. Tutorial:
+  `docs/tutorials/protect-your-existing-session.md` (the gap the docs hub named).
+- **Shadow fail-open fixed.** The `|| exit 2` process-boundary guard was being
+  applied to *shadow* settings too — so a crashed shadow gate would map to a
+  blocking deny, the exact "shadow must never break the host" regression. Now
+  enforce-only. (Found by previewing the quickstart output.)
+- **Enforcement class stated first (Stage 5).** `integrations.md` opens with a
+  per-harness table: Claude Code = **hard, contract-tested**; Hermes/OpenClaw =
+  **unverified**, treat as observation until a live contract test exists. The
+  passive journaling path stays first-class where observation is all that is
+  honest.
+- **README leads with the gate (Stage 6).** A "Gate an agent you're already
+  running" section up top with the quickstart one-liner and the verbatim
+  recorded denial from `examples/injection-denied/`.
+- **Trust surface in one place (Stage 7).** `security-model.md` gains a
+  supply-chain & reproducibility section: public green CI with the adversarial
+  suite as a required step, content-addressed re-runnable evals, pinned deps,
+  allowlist-based commit-pinned model resolution, no telemetry — and the honest
+  open gap that **release artifacts are not yet signed** (pathway bundles are).
+- Roadmap Stages 5/6/7 carry status notes distinguishing what has committed
+  evidence from the measurement/signing pieces still open.
+
+## v0.37.0 — 2026-07-23 — The evidence problem: adversarial merge gate + spec (roadmap Stage 3)
+
+"Fail-closed" stops being an assertion we make about attacks we imagined and
+becomes a number anyone can reproduce.
+
+- **The adversarial corpus** (`opendaisugi.adversarial`): 13 attack cases
+  across 7 categories (credential-read, compound-shell, out-of-pattern-shell,
+  undeclared-mcp, hook-rewrite, scheme-smuggle, unknown-tool) and 9 benign
+  cases, each run through the real gate decision core offline. Deterministic
+  and content-addressed → a rerun is a rerun, so any attack the gate fails to
+  deny is by definition a bug. Per-attack provenance (`source` / `adaptation`)
+  is recorded — the corpus adapts known injection patterns, it is not solely
+  self-authored.
+- **The merge gate** (`tests/test_adversarial.py`, an explicit named CI step):
+  every attack must be denied (attack-denial 1.00); no *unexpected* benign
+  false positive may appear. Both error directions are first-class — the
+  false-positive rate (0.33) is published, and it is *entirely* the known,
+  budgeted FPs (compound `&&` commands, host tools the classifier doesn't map),
+  reported not hidden.
+- **`daisugi gate audit`** publishes the rates, the per-category breakdown, and
+  the comparison arms: no-gate 0.00 attack-denial, a representative literal-glob
+  matcher 0.46 (it catches path attacks but misses the compound-shell /
+  scheme-smuggle / MCP classes), solver-backed gate 1.00. The claim is
+  comparative, not absolute.
+- **MCP calls are now classified** (`mcp__<server>__<tool>` → `MCPStep` checked
+  against `mcp_allowlist`). Previously the gate blanket-denied every MCP call as
+  an unknown tool, making the allowlist dead on the gate path and
+  "undeclared-MCP denied" a vacuous test; now allowed MCP is admitted and
+  undeclared MCP denied — the real distinction. `infer_envelope` admits observed
+  MCP calls too, keeping captures→trace honest.
+- **Yellow paper §8 — two checkpoints.** The formal account of what a call-time
+  gate can and cannot guarantee: it is an execution monitor enforcing a
+  prefix-closed (= safety) property — every executed action is in the envelope,
+  a real guarantee — while (A) structural/liveness properties need a plan that
+  call-time doesn't have, and hyperproperties (information-flow) are outside the
+  monitor class; and (B) in-envelope ≠ trajectory-benign (a worked read-then-
+  exfil example). Threat model, conditioned guarantee, named fail-open edges,
+  and the Simplex lineage flagged as strictly weaker. §7 cross-links it.
+- **The recorded live denial**: `examples/injection-denied/` (runnable demo +
+  captured transcript) — a real sub-agent attempts an out-of-envelope read and
+  the gate denies it, proof-backed reason on screen, value withheld from the
+  model. The live counterpart to the deterministic corpus.
+
+Still open in Stage 3 (named in the roadmap, not papered over): the live
+layer's *stochastic bait-taking* rate reported with confidence intervals,
+separate from whether-the-gate-denies. The live deny behavior is pinned;
+running the model at N for intervals is not done.
+
+## v0.36.2 — 2026-07-23 — Pin the gate's envelope; don't key auth on payload input
+
+Hardening found while scoping the Stage-3 adversarial corpus. The gate
+selected its envelope by the `session_id` in each hook payload — so a payload
+claiming another registered session's id was checked against *that* session's
+envelope, which may be more permissive. Harmless when the host is the sole
+writer of `session_id`, but authorization keyed on caller-influenceable input
+is the wrong shape, and it is exactly the kind of thing the Stage-3 suite
+must measure rather than assume away.
+
+- **`gate_and_contract(..., pin_session=...)`** and the `daisugi gate
+  settings --session <id>` / `gate.main --session` surface fix which
+  registered envelope is used, ignoring the payload's claim. The pin lives in
+  the hook command, which the agent cannot rewrite. The shadow log now keeps
+  `payload_session_id` alongside the pinned `session_id`, so a report can show
+  a mismatch.
+- **`AgenticExecutor` pins its sub-agents to `default`** automatically — a
+  sub-agent's payload can no longer name a different registered session.
+- Documented in `docs/how-to/gate.md` (the "Pinning the envelope" note).
+
+Unpinned remains the default for the bare passive/observation path (the
+report note explains the trade-off); enforce deployments should pin.
+
+## v0.36.1 — 2026-07-22 — Fail closed when the gate process itself dies
+
+A fail-open in the v0.35.0 gate, found by review and reproduced against the
+real CLI before fixing. On Claude Code any hook exit that is not 2 is
+non-blocking — so a gate that **crashed** (exit 1) or a package that **failed
+to import** silently ALLOWED the call. An operator in enforce mode with a
+broken install was wide open and had no way to tell. Reproduced live: an
+unwrapped exit-1 hook lets the sentinel read straight through.
+
+Fixed in two layers, because neither covers the other:
+- `main()` traps `BaseException` — which `gate_and_contract`'s
+  `except Exception` misses (e.g. re-raised out of the verify thread) — and
+  returns 2 in enforce mode.
+- The command emitted by `daisugi gate settings` now ends in `|| exit 2`,
+  mapping every nonzero-non-2 exit to a deny at the **process** boundary.
+  This is the only layer that can cover an import failure, where `main()`
+  never runs. Verified live that the idiom fires for external commands
+  (`python -m …`) and blocks a genuine missing-module invocation.
+  **Hand-written hook commands must keep the suffix** — documented in
+  `docs/how-to/gate.md`.
+
+Not applied to the hermes/openclaw formats, whose deny is stdout JSON; their
+crash-time behavior remains part of the documented *unverified* enforcement
+class (roadmap Stage 5).
+
+## v0.36.0 — 2026-07-22 — Sub-agents that can act, inside the envelope (roadmap Stage 2)
+
+The delegation ban becomes a delegation *boundary*. `TaskStep` stays a
+pure-reasoning leaf; the new **`AgenticStep`** is the tool-using delegation
+type, and it never rides TaskStep's exemption.
+
+- **`AgenticStep`** (`type="agentic"`, fields `prompt` / `workspace` /
+  `tools` / `max_turns`) joins the step union and the verifier's known-type
+  set. Its permission arm (`verify._check_agentic_step`) is the static outer
+  wall: every requested host tool must map to a capability the caller's
+  envelope grants (`Bash`→shell, `Read`/`Glob`/`Grep`→file_read,
+  `Write`/`Edit`/`MultiEdit`→file_write, `WebFetch`/`WebSearch`→network),
+  the workspace must be inside the envelope's `file_read` globs, an unknown
+  tool denies by default, and an empty tool list is rejected ("that's a
+  TaskStep"). Physical-stakes envelopes refuse agentic delegation outright.
+- **`AgenticExecutor`** (`opendaisugi.agentic_executor`) runs the sub-agent
+  with defense in depth: `--allowedTools` computed as envelope ∩ request (an
+  unbacked tool never reaches the argv), plus the call-time gate in enforce
+  mode wired into the sub-agent's own `--settings`, registered in a private
+  gate root *outside* the workspace so the sub-agent cannot rewrite its own
+  wall. `is_error`, spawn failure, and a missing workspace surface as failed
+  steps — never swallowed. `capture=True` mirrors gate-allowed calls into
+  passive-capture format so delegated runs feed the captures → to-trace →
+  journal distillation pipeline (denied calls never mirror — they didn't
+  happen).
+- **Live proof** (`tests/test_agentic_live.py`, opt-in
+  `DAISUGI_CLAUDE_CODE_INTEGRATION=1`): a real delegated sub-agent attempts
+  an out-of-envelope read and the inner-wall gate denies it (secret withheld,
+  permission reason logged); a benign in-workspace read succeeds as the
+  causality control.
+- The gate gains a `--captures-root` passthrough (mirrors allowed calls) so
+  any gated session — not only agentic ones — can feed distillation.
+
+## v0.35.0 — 2026-07-22 — The call-time gate (ADR-0007, roadmap Stage 1)
+
+The hook seam gains its enforce-mode counterpart: a **call-time tool gate**
+that synthesizes each live tool call into a one-step plan and proves it
+inside the session's registered envelope *before it runs*. Plan verification
+covers plans the library is handed; the gate covers the agent you are
+already running.
+
+- **`opendaisugi.gate`** — deny-by-default decision core. Unknown tool,
+  unparseable payload, internal exception, or slow verifier ALL deny in
+  enforce mode; each failure path is pinned by a test. Runs the full
+  `verify()` pipeline per call (not `verify_step` — plan-level strict checks
+  are never skipped at the boundary) with `strict=None`, so strictness comes
+  from the envelope's stakes and is never relaxed at the gate. An inner
+  verify timeout denies *before* any host's fail-open outer hook timeout can
+  fire.
+- **Shadow by default, one-flag enforce.** Shadow mode evaluates and logs
+  every call (`~/.opendaisugi/gate/shadow/*.jsonl`) but always allows —
+  observation, not protection, and documented as such. `--enforce` flips.
+  Failure policy is mode-selected: enforce fails closed, shadow never breaks
+  the host; capture mode (`daisugi hook record`) is untouched and still
+  never blocks.
+- **Session envelope channel.** `daisugi gate register <envelope>` binds an
+  envelope per session (or as the default fallback). Enforce mode with no
+  registered envelope denies, and the message names both exits (register /
+  disarm).
+- **One-command kill switch.** `daisugi gate disarm` — a plain CLI command
+  that does not itself pass through the gate — makes the gate allow
+  everything until `daisugi gate arm`.
+- **Shadow report + offline replay.** `daisugi gate report` summarizes
+  would-denies verbatim and flags the two known over-denial classes
+  (compound-command metachar denials, unrecognized host tools) as
+  false-positive candidates. `daisugi gate replay <captures> --envelope <e>`
+  runs a passively captured session through the gate offline — the
+  envelope-tuning loop before anyone trusts enforce.
+- **Live host contract, proven not assumed.** `tests/test_hook_gate_contract.py`
+  (opt-in `DAISUGI_CLAUDE_CODE_INTEGRATION=1`) now includes the real shipped
+  gate denying a real `Read` inside a real headless `claude -p` run — secret
+  withheld from the model, proof-backed reason in the shadow log. Verified
+  live on claude 2.1.204. Measured full round trip 559–670 ms per call,
+  import-dominated; `gate settings` therefore wires hosts to the lean
+  `python -m opendaisugi.gate` entry (argparse only).
+- **Hermes block shape hardened.** The passive-era single-key
+  `{"decision": "block"}` may be wrong per Hermes docs (`action`); the block
+  contract is unverifiable here, so the hook now emits BOTH keys —
+  whichever the host honors, it blocks. Hermes/OpenClaw enforcement remains
+  **unverified** (roadmap Stage 5) and the docs say so.
+- Docs: `docs/how-to/gate.md` (shadow → report → enforce → disarm, latency
+  numbers, per-host enforcement class stated first), feature-status rows for
+  the hook + gate, cross-link from `hook-integration.md`.
+
+## v0.34.2 — 2026-07-02 — claude -p flag passthrough + failed-step reasons
+
+Two fixes for running the orchestrator on the `claude -p` (Claude Code) backend:
+
+- **Forward flags to `claude -p`.** There was no way to pass
+  `--dangerously-skip-permissions`, `--allowedTools`, or any other Claude Code
+  flag through the backend, so in environments where `claude -p` requires
+  interactive permission approval it couldn't act — every affected step failed and
+  the run reported `failed`. Set `DAISUGI_CLAUDE_ARGS` (shlex-parsed) to forward
+  flags to EVERY `claude -p` call site — e.g.
+  `DAISUGI_CLAUDE_ARGS='--dangerously-skip-permissions'` or
+  `DAISUGI_CLAUDE_ARGS='--allowedTools "Bash(ls:*) Read"'`. Opt-in; unset = no
+  change. Also routed `ClaudeCodeTier1Provider` through the shared injection-safe
+  argv builder (fixing its old prompt-after-`-p` / `--model <v>` construction so it
+  too honors the env flags).
+- **A failed step now says why.** `StepOutcome.error` was left `None` on any
+  non-timeout failure, so a `failed` status came with no explanation (the reason
+  was buried in the step's captured output). It now carries `exit <rc>: <reason>`,
+  and the `run` / `orchestrate` CLIs (text and `--json`) surface per-step failure
+  reasons — so "failed" is never reason-less. NOTE: the run-status aggregation was
+  verified correct (a genuinely-errored step drives `failed`; a succeeded step is
+  never mislabeled) — this was an observability gap, not a status bug.
+
+## v0.34.1 — 2026-07-02 — Security hardening, part 2 (DoS bounds)
+
+Follow-up to v0.34.0 closing the two availability findings that were deferred there:
+- **EB-3:** `SubprocessExecutor` buffered the whole of a command's stdout via
+  `communicate()` before applying the size cap, so a permitted-but-noisy command
+  (`cat /dev/zero`, `yes`) could exhaust memory. Now read in a bounded reader thread
+  (stderr is merged, so a single reader can't deadlock) and SIGKILL the process group
+  the instant the cap is hit — memory is bounded and the run returns promptly instead
+  of spinning to the timeout. Group-kill/grandchild-reaping discipline is preserved.
+- **EB-4:** `NetworkExecutor`'s `timeout_s` was only the per-recv socket timeout, so a
+  slow-drip server (a byte before each timeout) could hold the executor far past
+  `step_timeout_s`. Reads are now bounded against an overall wall-clock deadline.
+
+Still tracked, lower severity: the envelope-improvement breadth gate (M7, needs a
+permission-union primitive; partially mitigated by v0.34.0's template-verification),
+and a few LOW items. M9 (llm_check on error) was reviewed and confirmed already
+fail-closed (`satisfied=False`); its `errored` flag is telemetry only.
+
+## v0.34.0 — 2026-07-02 — Security hardening (SGCM multi-agent review)
+
+**Upgrading from 0.33.x — some fixes are intentionally fail-closed and change
+behavior.** If a previously-working flow starts rejecting after upgrade, this is
+why (and each is the correct, safer default):
+- **Shared git registries** (`GitPathwayStore`): the trust anchor is no longer the
+  in-repo `trusted-signers.json` (it was remotely controlled). Configure a LOCAL,
+  out-of-band anchor — pass `trusted_signers_path=…` (or drop a JSON file next to
+  the cache). Until you do, signed pulls reject with a warning. This is the most
+  likely upgrade surprise.
+- **Live MCP `run_plan(dry_run=False)`** no longer auto-approves; set
+  `DAISUGI_APPROVE=always` (or an allowlist) to opt into live execution. Dry-run is
+  unchanged.
+- **Signed pathway bundles** (`bundle_to_pathway`) now require a `trusted_pubkey_b64s`
+  anchor — a signed bundle with `None` is rejected (it was verified against its own
+  embedded key). Unsigned dev round-trips (`require_signed=False`) are unchanged.
+- **Delegation contracts**: an unsigned contract is denied when `trusted_signers` is
+  supplied.
+- **Strict mode / physical stakes** are stricter: unknown custom `@step_type`s and
+  robotics invariants declared without their backing bounds now fail closed.
+
+A whole-codebase adversarial review (7 parallel review agents + independent
+verification of every finding) closed a set of fail-opens and exploitable holes.
+All findings were reproduced before fixing and are covered by regression tests.
+
+**CRITICAL (the verification core — its whole job is to not fail open):**
+- `envelope_subsumes` encoded ONLY shell + invariants, so `verify_delegation`
+  approved a skill contract permitting `file_write=['/etc/**']`, `network=['evil.com']`,
+  or dangerous MCP tools under a caller that allowed none of them. Now file/network/MCP
+  scope is subsumed too (Z3 witness search for globs, host set-subset), fail-closed.
+- `sh -ec "curl evil"` / `bash -lc` / `-euxc` / `-cSCRIPT` clustered shell flags
+  escaped the `-c` interpreter-payload check (matched by exact token equality), so the
+  embedded command bypassed the allowlist. Clustered flags are now parsed.
+
+**HIGH:**
+- `NetworkStep(url='file:///etc/passwd')` passed verify and read a local file (urllib
+  honors file://) — schemes are now restricted to http(s) in verify and the executor.
+- Symlink path escape: FileReadExecutor had no symlink guard and FileWriteExecutor's
+  realpath check was circular. Both now re-check the *resolved* target against the
+  permitted globs.
+- Outer soft deny-rules (unsupported-regex/LLMCheck) were dropped under negation
+  (pinned False → `Not(False)=True`) — now fail-closed.
+- `verify_inheritance` (the sole tightening proof at envelope generation) ignored
+  robotics/MCP/stakes — a child could relax velocity 10×, expand its workspace, add
+  MCP tools, or downgrade physical→low. Now checked.
+- Orchestrator pathway reuse ran under the pathway's own (broader) envelope, ignoring
+  the caller's stated boundary — now verified against the caller's envelope.
+- `strict_budget` overrun discarded the completed step, dropped its spend, and let
+  synthesis keep spending — now counts the spend, keeps the result, stops cleanly.
+- `daisugi install` silently reset a malformed `settings.json`/Hermes config to `{}`,
+  wiping the user's permission rules — now skip-and-warn.
+- The git-registry trust anchor was pulled from the same remote it authenticated
+  (circular) — now a local, out-of-band anchor.
+- Swarm deconfliction accepted a negative margin (masking overlap) and malformed
+  (inverted/non-finite) AABBs — now fail-closed. `claude -p` argv is injection-safe
+  (`--model=` + `--` separator).
+
+**MEDIUM:** MCP `run_plan` live execution now requires the operator's approval opt-in
+(confused-deputy bypass); an unsigned contract is denied when `trusted_signers` is
+supplied; a signed pathway bundle with no trust anchor is rejected (was verified
+against its own key); `git registry init` rejects `ext::`/`fd::` RCE URLs; unknown
+custom `@step_type` and unbacked robotics invariants fail closed under strict; duplicate
+step ids and execution-order integrity are fixed; recomputed fallback steps are
+re-verified; the metered token count includes cache tokens and rejects `is_error`
+turns; async `claude -p` subprocesses are reaped on timeout; gardener merge only
+compares same-embedding-space pathways; a distilled `plan_template` is verified against
+its envelope before storing.
+
+KNOWN / deferred (lower severity, need care): subprocess/network output DoS bounds
+(EB-3/EB-4), the envelope-improvement pass's breadth gate (M7), llm_check `errored`
+telemetry on claude-code (M9), and a few LOW items are tracked but not in this release.
+
+## v0.33.2 — 2026-07-01 — exact cost on the Claude Code subscription; cost is opt-in
+
+The budget's dollar figure is now **exact**, not estimated, on the `claude-code`
+backend — and cost display is opt-in.
+
+- **Exact cost with no API key.** `claude -p --output-format json` returns Claude
+  Code's own `total_cost_usd` + token `usage`. The delegating executor now uses that
+  metered call for prose (TaskStep) execution, so `BudgetTracker` records the *real*
+  cost and token count. Confirmed live: a run reported `measured_cost_usd=$0.0238`
+  where the old heuristic estimate said `$0.0011` — ~20× off, which is exactly why
+  the estimate wasn't trustworthy. `BudgetReport.measured_cost_usd` is the exact
+  figure (None when no backend reported one → falls back to `approx_cost_usd`).
+- **Cost is opt-in.** `daisugi orchestrate` no longer prints a dollar figure by
+  default; pass `--cost` to see it (labeled *exact* on claude-code, *estimated* on
+  litellm). The token/routing summary still shows.
+- Honest caveat: each `claude -p` subprocess reloads Claude Code's full system prompt
+  (cache-creation tokens), so per-call cost is dominated by that overhead (~2¢/call
+  even for a one-line answer). The numbers are exact; the *subprocess* backend is just
+  expensive per step. The Claude Agent SDK (which can reuse context) is the amortizing
+  path — and it also runs on a Claude Code subscription.
+
+## v0.33.1 — 2026-07-01 — orchestrate CLI fixes + approximate cost
+
+Fixes from feedback after v0.33.0 shipped.
+
+- **`daisugi orchestrate` was unusable without an API key.** It lacked the `--llm`
+  flag every other LLM command has, so it could only use the litellm backend and
+  died without `ANTHROPIC_API_KEY`. Added `--llm litellm|claude-code` (sets
+  `OPENDAISUGI_LLM_BACKEND`); the CLI now runs end to end on `claude -p` — verified:
+  a real answer with correct per-step routing. Also fixed the `Optional` typing on
+  `--budget`/`--envelope` and added a `__main__` guard so `python -m opendaisugi.cli`
+  works (was a silent no-op).
+- **Budget reframed as approximate.** The token counts are heuristic (and the
+  `claude -p` backend reports no usage at all), so the budget is a routing signal +
+  a ballpark, not a meter. Added `BudgetTracker.approx_cost_usd()` /
+  `BudgetReport.approx_cost_usd` from a blended `$/Mtok` price table (overridable);
+  the CLI prints `≈ $X (approximate)`.
+- Test isolation: an in-process CLI test with `--llm claude-code` leaked
+  `OPENDAISUGI_LLM_BACKEND` into later tests (fired real `claude -p` calls, 7
+  failures + 8× slower suite); an autouse conftest fixture now snapshots/restores it.
+
+## v0.33.0 — 2026-07-01 — Verified swarm tasking (airspace deconfliction)
+
+`opendaisugi.swarm`: the deferred multi-robot deconfliction primitive, and the
+"tasking envelopes between swarms" story. openDaisugi already proves *containment*
+(`envelope_subsumes` — a delegated scope fits inside its parent, fail-closed). Swarms
+need the other half — *disjointness*: a proof no two robots were handed overlapping
+airspace. That's the one new primitive (an AABB separating-axis test, distinct from
+subsumption).
+
+- **`verify_swarm_tasking(total, assignments, margin=…)`** — one call certifies a
+  fleet: every drone's envelope is subsumed by the coordinator (delegation) AND every
+  pair of `workspace_bounds` is disjoint by at least `margin` (deconfliction). Returns
+  a `SwarmVerdict` with the concrete overlap region for any conflict; fail-closed on a
+  drone that declares no bounds.
+- **`partition_and_assign(total, drone_ids, axis=, margin=)`** — split a coordinator's
+  operational volume into disjoint sectors (with a separation gap), one envelope per
+  drone, deconflicted by construction and still subsumed.
+- **`aabb_disjoint` / `aabb_intersection` / `partition_airspace`** — the analytic
+  geometry underneath.
+- Composes into **swarm-of-swarms**: delegation is vertical (nested `envelope_subsumes`),
+  deconfliction is horizontal (sibling disjointness). Runnable, physics-free demo in
+  `examples/swarm-tasking/` — leads with the rejections (over-broad delegation,
+  overlapping sectors, out-of-sector waypoints, comms-loss reassignment gated on proof).
+
+HONEST SCOPE (see the example README): this is plan/volume-level, **analytic geometry
+(not Z3-backed), 3D space not 4D spacetime, and not a flight-safety certificate** —
+waypoint-in-box ≠ path-in-box, disjoint boxes ≠ collision-free (set `margin ≥
+vehicle-radius + position-uncertainty`). Complementary to certified geofencing (NASA
+PolyCARP), tactical avoidance (DAIDALUS/ORCA), and operational deconfliction (ASTM
+F3548-21), not a replacement. Informed by an online research pass; the differentiator
+is the *composition* (subsumption + disjointness + plan-gating as one authored artifact
+that gates LLM-authored plans), not the geometry.
+
+Also in this release (from live-testing v0.32 on our own setup via the `claude -p`
+backend): run TaskSteps in a neutral CWD so project context can't contaminate the LLM
+call; honor `json_mode` on the claude-code backend (prose TaskSteps); a generous
+per-step timeout for LLM steps; and ground the decomposer in the real skill/MCP
+inventory so it can't emit a step for a capability that has no executor.
+
+## v0.32.0 — 2026-07-01 — Orchestrator: run a prompt end to end, safely and budgeted
+
+The forward-looking counterpart to the backward-looking Gardener. `tend()` distills
+past traces into pathways; the **Orchestrator** turns one prompt into a verified
+plan into a final answer, routing each step to the cheapest capable model under a
+live token budget. Reuses the existing runtime-assurance spine — the plan is
+verified before it runs and each step is re-verified at execution time.
+
+Pipeline: `prompt → Tier-0 pathway reuse → decompose → size → supervised execute → synthesize`.
+
+- **Decomposer** (`decompose`) — an LLM authors a typed-step DAG; `check_dag` proves
+  structural validity always, and when an envelope is supplied `verify()` gates the
+  whole plan so an out-of-policy decomposition raises rather than executing.
+- **Per-step model sizer** (`model_sizer`) — turns routing's per-*task* difficulty
+  seed into a per-*step* heuristic (step-type floor + prompt-text difficulty for
+  reasoning steps + dependency fan-in) connected to a configurable cheap→strong
+  `ModelLadder`. Picks the cheapest *capable* rung, then downgrades under budget.
+- **Live budget** (`BudgetTracker`, `BudgetAwareDelegatingExecutor`) — token
+  accounting that gates routing **during** the run: each step re-sizes against the
+  tracker's current remaining budget and records actual `usage`, unlike
+  `accounting.tier_stats` which only reports spend after the fact.
+- **Synthesizer** (`synthesize`) — collects step outputs into the final answer via
+  an LLM, always falling back to a deterministic concatenation (budget spent, no
+  client, or call failure) so orchestration never errors at the finish line.
+- **New step types + executors** — `TaskStep` (pure-reasoning leaf), `SkillStep`
+  (delegation proved via `envelope_subsumes` on an optional `contract_envelope`),
+  `MCPStep` (gated by a new deny-by-default `Permission.mcp_allowlist`). `verify()`
+  gives each a real checkable surface — they cannot verify vacuously. `SkillExecutor`
+  and a pluggable-transport `MCPExecutor` execute them.
+- **Surface** — `Daisugi.orchestrate(prompt, budget_tokens=…, …)` and the
+  `opendaisugi.Orchestrator` composition root. Every LLM stage takes an injectable
+  client so the pipeline is fully unit-testable without a live model.
+
+Judgment calls made under autonomy (revisit): TaskStep outputs are consumed only by
+the synthesizer — openDaisugi never splices a step's output into a downstream command
+string, which removes the prompt-injection→privileged-execution path by construction;
+MCP execution ships as step-type + executor + transport protocol with live wiring
+deferred; Tier-0 reuse uses the raw distilled template (LLM plan-adaptation deferred);
+task steps run their subtask independently (per-step upstream-output threading deferred).
+
+NOTE: the whole pipeline is unit-verified with injected/fake LLM clients and the shell
+path runs for real, but a live end-to-end run against a real model was NOT performed in
+this build (same environment boundary as the v0.31.1 llamafile download). The real-model
+path (TaskStep prose prompting, non-JSON completion, local-rung routing) is
+correct-by-construction and unit-tested, not yet exercised against a live API.
+
 ## v0.31.1 — 2026-06-24 — Trustable, configurable model resolution
 
 `opendaisugi.model_registry` + `daisugi models`: resolve an open model from the

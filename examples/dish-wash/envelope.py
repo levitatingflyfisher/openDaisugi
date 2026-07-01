@@ -23,6 +23,13 @@ def build_envelope() -> Envelope:
             network=False,
             max_execution_time_s=600,
             max_output_size_mb=1,
+            # Declare this kit's own registered @step_type primitives so they are
+            # permitted under strict mode (stakes='physical' turns strict on; an
+            # undeclared custom step type is otherwise rejected fail-closed).
+            custom_step_allowlist=[
+                "approach_dish", "locate_rim", "begin_scrub",
+                "rinse_with_hose", "return_to_dock",
+            ],
         ),
         stakes="physical",
         invariants=[

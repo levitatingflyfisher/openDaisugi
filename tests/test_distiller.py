@@ -16,7 +16,7 @@ def test_plan_structure_signature_canonical():
     """v0.24: same step-type sequence produces same signature regardless of
     task wording, step ids, or step field values."""
     from opendaisugi.distiller import plan_structure_signature
-    from opendaisugi.models import ActionPlan, ShellStep, FileReadStep
+    from opendaisugi.models import ActionPlan, FileReadStep, ShellStep
     a = ActionPlan(source="x", task="wash dishes", steps=[
         ShellStep(id="a1", command="echo a"),
         FileReadStep(id="a2", path="/etc/hosts", depends_on=["a1"]),
@@ -31,7 +31,7 @@ def test_plan_structure_signature_canonical():
 
 def test_plan_structure_signature_distinguishes_different_shapes():
     from opendaisugi.distiller import plan_structure_signature
-    from opendaisugi.models import ActionPlan, ShellStep, FileReadStep
+    from opendaisugi.models import ActionPlan, FileReadStep, ShellStep
     shell_then_read = ActionPlan(source="x", task="t", steps=[
         ShellStep(id="s1", command="echo"),
         FileReadStep(id="s2", path="/x", depends_on=["s1"]),
@@ -48,6 +48,7 @@ def test_distiller_clusters_cross_wording_when_structure_matches(tmp_path, monke
     different task wording cluster under the default structure_weight=0.5
     where they would NOT under v0.23 task-only embedding."""
     import numpy as np
+
     from opendaisugi.distiller import Distiller
     from opendaisugi.journal import Journal
     from opendaisugi.pathway_store import PathwayStore
@@ -288,7 +289,7 @@ def test_extract_pitfalls_preserves_order_of_first_occurrence():
 @pytest.mark.asyncio
 async def test_generalize_template_calls_llm_and_returns_pair(monkeypatch):
     from opendaisugi import distiller as dist_mod
-    from opendaisugi.distiller import _generalize_template, GeneralizedTemplate
+    from opendaisugi.distiller import GeneralizedTemplate, _generalize_template
     from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 
     env = Envelope(generated_by="test", task="T", permissions=Permission(shell=True))
@@ -329,7 +330,7 @@ async def test_generalize_template_calls_llm_and_returns_pair(monkeypatch):
     assert "shell command 'rm' not allowed" in joined
 
 
-from opendaisugi.distiller import _validate_envelope, _improve_envelope
+from opendaisugi.distiller import _improve_envelope, _validate_envelope
 
 
 def test_validate_envelope_scores_test_plans():

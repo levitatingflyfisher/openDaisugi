@@ -1,6 +1,8 @@
 """v0.27.0 — vacuity verdicts gate alias registration and invariant compilation."""
 from __future__ import annotations
+
 import pytest
+
 from opendaisugi.aliases import Alias, AliasRegistry, VacuousAliasError
 from opendaisugi.models import ActionPlan, Envelope, Invariant, Permission, ShellStep
 from opendaisugi.predicate import parse_expression

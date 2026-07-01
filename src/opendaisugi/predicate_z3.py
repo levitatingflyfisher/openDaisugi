@@ -46,8 +46,8 @@ from opendaisugi.predicate import (
     NumericRange,
     Or,
 )
-from opendaisugi.regex_to_z3 import UnsupportedRegexError, translate as translate_regex
-
+from opendaisugi.regex_to_z3 import UnsupportedRegexError
+from opendaisugi.regex_to_z3 import translate as translate_regex
 
 _MISSING = object()
 

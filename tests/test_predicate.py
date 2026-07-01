@@ -14,10 +14,8 @@ from opendaisugi.predicate import (
     InSet,
     Matches,
     Not,
-    NotEquals,
     NumericRange,
     Or,
-    Expression,
     parse_expression,
 )
 

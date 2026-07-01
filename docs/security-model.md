@@ -215,6 +215,45 @@ Features that typically complicate compliance reviews:
 - The library is MIT-licensed. See `LICENSE` and `pyproject.toml` for
   the authoritative grant.
 
+## Supply-chain & reproducibility — why a stranger should run this (roadmap Stage 7)
+
+A security layer asks for more trust than any other dependency: it sits
+between an agent and everything the agent touches. The base answer is that the
+code is open and small enough to read. Beyond reading the source, the checkable
+trust surface — meant to be auditable in an afternoon:
+
+- **Public CI, green on every push, with the adversarial suite as a required
+  step.** `.github/workflows/ci.yml` runs lint + the full suite and an explicit
+  *Adversarial merge gate* step (`tests/test_adversarial.py` + `daisugi gate
+  audit`). Any attack the gate fails to deny fails the build.
+- **Re-runnable, content-addressed evaluation.** The adversarial corpus is
+  deterministic and carries a stable content address (`corpus_hash`); `daisugi
+  gate audit` reproduces the published attack-denial and false-positive rates
+  on anyone's machine, and a rerun is a rerun. Distilled pathway bundles are
+  content-addressed too (`PathwayBundle`).
+- **Pinned, small dependency surface.** Runtime deps are declared in
+  `pyproject.toml`; optional extras (torch, mujoco, sentence-transformers) are
+  opt-in and not pulled by the core.
+- **Allowlist-based, commit-pinned model resolution.** Local/remote model
+  resolution goes through a trusted-org allowlist with list-first lookup and
+  commit pinning (`model_registry`) rather than fetching arbitrary refs.
+- **No telemetry of any kind.** The library emits nothing over the network on
+  its own behalf. The only egress is the LLM calls you configure (envelope
+  generation, distillation, delegation); runtime *verification* and the
+  call-time *gate* never call out.
+- **What is and is not signed — stated honestly.** Distilled pathway bundles
+  are cryptographically signed and verified against a trusted-signer registry
+  (`opendaisugi.signing`, ed25519). **Release artifacts (the PyPI/sdist
+  package) are not yet signed** — that is the open item on this stage; until it
+  lands, install from a pinned git ref you have read, not from an unpinned
+  index.
+
+The one-line honest summary: everything that decides *allow/deny* is
+deterministic, offline, content-addressed, and re-runnable by you; the trust
+you must still extend is to the checker's own correctness (it is tested, not
+machine-proven — [yellow paper §7](spec/yellow-paper.md)) and to the release
+channel until artifact signing lands.
+
 ## License
 
 MIT. See `LICENSE`. The license governs the code, not envelopes or

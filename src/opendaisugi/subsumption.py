@@ -45,7 +45,7 @@ from opendaisugi.models import (
     ShellStep,
 )
 from opendaisugi.predicate import ExistsStep, ForallSteps, parse_expression
-from opendaisugi.predicate_z3 import _Scope, _compile_scalar
+from opendaisugi.predicate_z3 import _compile_scalar, _Scope
 
 
 @dataclass
@@ -140,6 +140,96 @@ def _encode_shell_admission(
         *[z3.Not(z3.Contains(cmd_var, z3.StringVal(s))) for s in substrings],
     )
     return z3.And(head_ok, no_meta)
+
+
+def _patterns_subsume(
+    inner_patterns: list[str], outer_patterns: list[str], *, label: str, timeout_ms: int
+) -> str | None:
+    """None if every value inner admits, outer admits too; else a reason string.
+
+    For glob-list permissions (file_read/file_write/mcp_allowlist) with
+    deny-by-default (empty list ⟹ admits nothing). Uses Z3 to search for a
+    witness value inner admits but outer forbids. **Fail-closed**: an empty
+    inner is trivially subsumed, but a solver ``unknown`` (timeout) or an
+    exotic outer glob that can't be encoded soundly is treated as NOT proven
+    → a violation, never an optimistic pass.
+    """
+    if not inner_patterns:
+        return None  # inner admits nothing on this axis
+    # An exotic outer glob would encode as True (permissive) — that would be a
+    # fail-open. Refuse to rely on it: if any outer pattern isn't soundly
+    # encodable, we can't prove containment → fail closed.
+    if any(_glob_unsupported(g) for g in outer_patterns):
+        return (f"{label}: outer declares a glob shape that cannot be soundly "
+                f"encoded ({[g for g in outer_patterns if _glob_unsupported(g)]}); "
+                f"cannot prove subsumption → denied")
+    solver = z3.Solver()
+    solver.set("timeout", timeout_ms)
+    v = z3.String("v")
+    inner_ok = z3.Or(*[_glob_to_z3(v, g) for g in inner_patterns])
+    outer_ok = (z3.Or(*[_glob_to_z3(v, g) for g in outer_patterns])
+                if outer_patterns else z3.BoolVal(False))
+    solver.add(inner_ok, z3.Not(outer_ok))
+    result = solver.check()
+    if result == z3.sat:
+        witness = solver.model()[v]
+        return f"{label}: inner admits {witness} which outer forbids"
+    if result != z3.unsat:  # unknown / timeout → can't prove → deny
+        return f"{label}: could not prove subsumption (solver {result}) → denied"
+    return None
+
+
+def _glob_unsupported(glob: str) -> bool:
+    """True if ``_glob_to_z3`` would fall back to its permissive True encoding."""
+    if glob == "**" or glob.endswith("/**") or "*" not in glob:
+        return False
+    if glob.startswith("*") and "*" not in glob[1:]:
+        return False
+    return glob.count("*") != 1
+
+
+def _network_scope_violation(outer: Permission, inner: Permission) -> str | None:
+    """None if inner's network scope is within outer's, else a reason.
+
+    Host matching is exact (mirrors ``verify.check_permissions``). Empty
+    ``network_hosts`` with ``network=True`` means 'any host'.
+    """
+    if not inner.network:
+        return None  # inner uses no network
+    if not outer.network:
+        return "network: inner uses network but outer forbids it"
+    if not outer.network_hosts:
+        return None  # outer admits any host → any inner scope is within it
+    # outer is restricted to a host set
+    if not inner.network_hosts:
+        return ("network: inner admits any host but outer restricts to "
+                f"{outer.network_hosts}")
+    outer_set = {h.lower() for h in outer.network_hosts}
+    extra = [h for h in inner.network_hosts if h.lower() not in outer_set]
+    if extra:
+        return f"network: inner hosts {extra} not in outer allowlist {outer.network_hosts}"
+    return None
+
+
+def _permission_scope_violation(
+    outer: Permission, inner: Permission, *, timeout_ms: int
+) -> str | None:
+    """Fail-closed subsumption of file/network/mcp permissions (v0.33.3).
+
+    ``envelope_subsumes`` historically encoded only shell + invariants, so an
+    inner envelope permitting broader file_read/file_write/network/mcp scope than
+    the outer was silently 'subsumed' — the core delegation-safety hole. This
+    proves each of those axes is contained too.
+    """
+    for label, inner_p, outer_p in (
+        ("file_read", inner.file_read, outer.file_read),
+        ("file_write", inner.file_write, outer.file_write),
+        ("mcp_allowlist", inner.mcp_allowlist, outer.mcp_allowlist),
+    ):
+        reason = _patterns_subsume(inner_p, outer_p, label=label, timeout_ms=timeout_ms)
+        if reason is not None:
+            return reason
+    return _network_scope_violation(outer, inner)
 
 
 def _compile_invariants(
@@ -317,6 +407,21 @@ def envelope_subsumes(
             duration_ms=(time.monotonic() - t0) * 1000,
         )
 
+    # File / network / MCP subsumption (v0.33.3). The Z3 admission formula below
+    # encodes only shell + invariants, so these axes must be checked here or an
+    # inner envelope with broader file/network/mcp scope than the outer would be
+    # silently 'subsumed' — the core delegation-safety hole. Fail-closed.
+    scope_violation = _permission_scope_violation(
+        outer.permissions, inner.permissions, timeout_ms=timeout_ms
+    )
+    if scope_violation is not None:
+        return SubsumptionResult(
+            holds=False,
+            counterexample=None,
+            reasons=[f"permission scope subsumption failed (fail-closed): {scope_violation}"],
+            duration_ms=(time.monotonic() - t0) * 1000,
+        )
+
     # Interpreter policy check runs before Z3. Strict mode short-circuits
     # when inner admits an interpreter — Z3 can't reason about interpreter
     # arguments anyway, so there's no value in running the SAT query.
@@ -415,12 +520,29 @@ def envelope_subsumes(
     # code optimistically bound outer to True, which silently approved
     # subsumption when outer had a stricter LLMCheck than inner.
     inner_soft_set = set(soft_inner)
+    outer_soft_unique_names = [n for n in soft_outer if n not in inner_soft_set]
+    # Fail-closed on outer-only soft constraints. The old approach pinned them to
+    # False ("pessimistic"), but that was fail-OPEN under negation: an outer
+    # deny-rule using an unsupported regex (NotMatches r'\bsudo\b') compiles to
+    # Not(soft); pinning soft=False makes the term True and SILENTLY DROPS the
+    # deny-rule → holds=True. An outer constraint the inner doesn't share means
+    # inner may be broader in either polarity, so subsumption can't be proven.
+    if outer_soft_unique_names:
+        return SubsumptionResult(
+            holds=False,
+            counterexample=None,
+            unverified_invariants=sorted(
+                set(inner_opaque) | set(outer_opaque) | set(outer_strict_blocking)
+                | {f"soft:{n}" for n in outer_soft_unique_names}
+            ),
+            reasons=[
+                f"outer has unverifiable soft constraints not shared by inner "
+                f"({sorted(outer_soft_unique_names)}); cannot prove subsumption (fail-closed)"
+            ],
+            duration_ms=(time.monotonic() - t0) * 1000,
+        )
     for name in soft_inner:
         solver.add(z3.Bool(name) == z3.BoolVal(True))
-    for name in soft_outer:
-        if name in inner_soft_set:
-            continue
-        solver.add(z3.Bool(name) == z3.BoolVal(False))
 
     solver.add(inner_admits)
     solver.add(z3.Not(outer_admits))

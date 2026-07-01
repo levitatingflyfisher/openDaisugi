@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from opendaisugi.journal import Journal
-    from opendaisugi.pathway import PathwayMatch
+    from opendaisugi.pathway import CompiledPathway, PathwayMatch
     from opendaisugi.pathway_store import PathwayStore
 
 from opendaisugi._search import _MODEL_NAME as _EMBEDDING_MODEL_NAME
@@ -153,7 +153,7 @@ def _cluster_with_centroids(
             clusters.append([i])
             centroids.append(v.copy())
 
-    return list(zip(clusters, centroids))
+    return list(zip(clusters, centroids, strict=True))
 
 
 def _cluster_by_similarity(
@@ -516,6 +516,20 @@ class Distiller:
             len(cluster_traces), len(train_records), len(test_records),
             len(pitfalls), score,
         )
+        # The stored pathway's core invariant is plan_template ⊆ envelope. The
+        # template is LLM-generalized, so verify it against the intersected envelope
+        # before storing — otherwise an inconsistent pathway is later served as a
+        # Tier-0 cache hit and adapt_plan's fallback returns it unverified.
+        from opendaisugi.verify import verify as _verify_plan
+        tmpl_ok = _verify_plan(generalized.plan_template, intersected_envelope)
+        if not tmpl_ok.ok:
+            warnings.append(
+                "distilled plan_template does not verify against its envelope "
+                f"({tmpl_ok.violations[0].message if tmpl_ok.violations else 'unknown'}); "
+                "dropping cluster"
+            )
+            return None
+
         try:
             structure_sig = plan_structure_signature(generalized.plan_template)
         except Exception:

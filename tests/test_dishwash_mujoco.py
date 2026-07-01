@@ -20,16 +20,15 @@ sys.path.insert(0, str(_KIT))
 
 # These imports must come AFTER the sys.path insertion + after the
 # importorskip so test collection doesn't fail on hosts without mujoco.
+import step_types  # noqa: E402, F401  (registers @step_type)
+from envelope import build_envelope  # noqa: E402
+from mujoco_executor import DishWashMuJoCoExecutor  # noqa: E402
+from plan import build_plan  # noqa: E402
+
 from opendaisugi.approval import CallbackStrategy  # noqa: E402
 from opendaisugi.journal import Journal  # noqa: E402
 from opendaisugi.run_session import RunStatus  # noqa: E402
 from opendaisugi.supervisor import Supervisor  # noqa: E402
-
-import step_types  # noqa: E402, F401  (registers @step_type)
-from envelope import build_envelope  # noqa: E402
-from plan import build_plan  # noqa: E402
-from mujoco_executor import DishWashMuJoCoExecutor  # noqa: E402
-
 
 _MJCF = Path(__file__).parent / "fixtures" / "mjcf" / "two_joint_arm.xml"
 

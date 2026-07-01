@@ -1,7 +1,7 @@
 """Dynamic step-type registration (v0.18 L5)."""
 from typing import Literal
 
-from opendaisugi.models import StepBase, step_type, get_step_type_registry
+from opendaisugi.models import StepBase, get_step_type_registry, step_type
 
 
 def test_register_and_retrieve_custom_step_type():
@@ -71,7 +71,7 @@ def test_step_type_collision_raises_by_default():
 
 def test_step_type_override_replaces_explicitly():
     """Callers who really want to replace a registered type pass override=True."""
-    from opendaisugi.models import STEP_TYPE_REGISTRY, ShellStep
+    from opendaisugi.models import STEP_TYPE_REGISTRY
     original = STEP_TYPE_REGISTRY["shell"]
     try:
         @step_type(override=True)
@@ -95,14 +95,14 @@ def test_step_type_idempotent_reregistration_of_same_class():
 
 def test_coerce_step_dispatches_dict_to_subclass():
     """coerce_step is the shared helper used by ActionPlan and RefinementRecord."""
-    from opendaisugi.models import coerce_step, ShellStep
+    from opendaisugi.models import ShellStep, coerce_step
     out = coerce_step({"id": "s1", "type": "shell", "command": "echo hi"})
     assert isinstance(out, ShellStep)
     assert out.command == "echo hi"
 
 
 def test_coerce_step_passes_through_already_instantiated():
-    from opendaisugi.models import coerce_step, ShellStep
+    from opendaisugi.models import ShellStep, coerce_step
     s = ShellStep(id="s1", command="echo hi")
     assert coerce_step(s) is s
 

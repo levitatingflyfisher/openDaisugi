@@ -2,8 +2,6 @@
 
 import time
 
-import pytest
-
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 from opendaisugi.pathway import CompiledPathway, PathwayMatch
 

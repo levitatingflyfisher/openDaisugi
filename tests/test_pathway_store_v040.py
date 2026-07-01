@@ -5,8 +5,6 @@ from __future__ import annotations
 import sqlite3
 import time
 
-import pytest
-
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 from opendaisugi.pathway import CompiledPathway
 from opendaisugi.pathway_store import PathwayStore

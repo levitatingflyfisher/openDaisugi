@@ -1,11 +1,11 @@
 """CLI: `daisugi models` — discover/resolve a trustworthy, commit-pinned local model."""
 
-import json
+
+from typer.testing import CliRunner
 
 import opendaisugi.model_registry as mr
 from opendaisugi.cli import app
 from opendaisugi.model_registry import ModelRef, UntrustedSource
-from typer.testing import CliRunner
 
 runner = CliRunner()
 

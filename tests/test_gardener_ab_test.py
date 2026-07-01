@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from opendaisugi.gardener import ABResult, ab_test
+from opendaisugi.gardener import ab_test
 from opendaisugi.models import (
     ActionPlan,
     Envelope,

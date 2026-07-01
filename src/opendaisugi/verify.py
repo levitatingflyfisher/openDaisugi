@@ -33,7 +33,6 @@ from opendaisugi.z3_checks import (
     check_plan_invariants,
 )
 
-
 _log = logging.getLogger("opendaisugi.verify")
 
 _SHELL_METACHAR_RE = re.compile(r"[;|&`<>\n\r]|\$\(")
@@ -71,7 +70,7 @@ def _extract_shell_head(stripped: str) -> str | None:
     if stripped.startswith("#"):
         return None
     tokens = stripped.split()
-    for i, tok in enumerate(tokens):
+    for tok in tokens:
         if _ENV_ASSIGN_RE.match(tok):
             continue
         return tok
@@ -124,7 +123,7 @@ def _head_allowed(head: str, allowlist: list[str]) -> bool:
         pat_segs = pat.split("/")
         if len(head_segs) != len(pat_segs):
             continue
-        if all(fnmatch.fnmatchcase(h, p) for h, p in zip(head_segs, pat_segs)):
+        if all(fnmatch.fnmatchcase(h, p) for h, p in zip(head_segs, pat_segs, strict=True)):
             return True
     return False
 
@@ -246,12 +245,101 @@ def _match_glob(p: PurePosixPath, path: str, glob: str) -> bool:
         return False
 
 
-def check_permissions(plan: ActionPlan, envelope: Envelope) -> list[Violation]:
+# Built-in step types that HAVE a verification story: a permission-stage case
+# below, a dedicated Z3/robotics handler (joint_move/cartesian_move/gripper/
+# sim_reset/vla via z3_checks + robot-capability subsumption), or gating
+# elsewhere (task = contained leaf; skill = check_skill_delegations). Any type
+# NOT here is a custom @step_type with no verification story — an unknown effect.
+_KNOWN_STEP_TYPES: frozenset[str] = frozenset({
+    "shell", "network", "file_read", "file_write", "mcp", "task", "skill",
+    "agentic",
+    "joint_move", "cartesian_move", "gripper", "sim_reset", "vla",
+})
+
+
+# Host tool name → the Permission capability that must back it before an
+# AgenticStep may request it. Deny-by-default: a requested tool not in this
+# map is a violation, mirroring the gate's unknown-tool denial.
+_AGENTIC_TOOL_CAPABILITIES: dict[str, str] = {
+    "Bash": "shell",
+    "Read": "file_read",
+    "Glob": "file_read",
+    "Grep": "file_read",
+    "Write": "file_write",
+    "Edit": "file_write",
+    "MultiEdit": "file_write",
+    "WebFetch": "network",
+    "WebSearch": "network",
+}
+
+
+def _check_agentic_step(step, perms: Permission) -> list[Violation]:
+    """Permission arm for AgenticStep (roadmap Stage 2) — the static outer
+    wall of its defense in depth. Each requested host tool must map to a
+    capability the envelope grants; the workspace must be readable under the
+    envelope's globs; an unknown or empty tool request fails closed. The
+    dynamic inner wall (the call-time gate in the sub-agent's own hook
+    config) is the executor's job, not this check's.
+    """
+    violations: list[Violation] = []
+    if not step.tools:
+        violations.append(Violation(
+            stage="permissions",
+            message=(
+                f"Step '{step.id}' is agentic but requests no tools — a "
+                f"tool-less delegated subtask is a TaskStep (pure reasoning); "
+                f"use that instead"
+            ),
+            detail={"step": step.id},
+        ))
+        return violations
+    if not _path_matches_any(step.workspace, perms.file_read):
+        violations.append(Violation(
+            stage="permissions",
+            message=(
+                f"Step '{step.id}' agentic workspace '{step.workspace}' is not "
+                f"inside the envelope's file_read globs {perms.file_read} — a "
+                f"sub-agent must be able to read its own working directory"
+            ),
+            detail={"step": step.id, "workspace": step.workspace},
+        ))
+    for tool in step.tools:
+        cap = _AGENTIC_TOOL_CAPABILITIES.get(tool)
+        if cap is None:
+            violations.append(Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step.id}' requests host tool '{tool}' which has "
+                    f"no capability mapping — denied by default"
+                ),
+                detail={"step": step.id, "tool": tool},
+            ))
+            continue
+        granted = getattr(perms, cap)
+        if not granted:  # False for bools, [] for glob lists — both deny
+            violations.append(Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step.id}' requests host tool '{tool}' but the "
+                    f"envelope grants no {cap} capability"
+                ),
+                detail={"step": step.id, "tool": tool, "capability": cap},
+            ))
+    return violations
+
+
+def check_permissions(
+    plan: ActionPlan, envelope: Envelope, *, strict: bool = False
+) -> list[Violation]:
     """Check that every step in the plan is permitted by the envelope.
 
     Stage 1 of the verification pipeline. Uses simple set/string/glob
     operations — no Z3 required. Returns an empty list if all steps
     are permitted.
+
+    Under ``strict`` mode (default-on for high/physical stakes) an UNKNOWN step
+    type — a custom ``@step_type`` with no permission surface or handler — is
+    rejected: an unverifiable effect cannot be admitted in a high-stakes plan.
     """
     violations: list[Violation] = []
     perms = envelope.permissions
@@ -280,7 +368,24 @@ def check_permissions(plan: ActionPlan, envelope: Envelope) -> list[Violation]:
                             detail={"step": step.id},
                         )
                     )
-                elif perms.network_hosts:
+                    continue
+                # Scheme allowlist — urllib honors file://, ftp://, data: too, so
+                # a NetworkStep(url='file:///etc/passwd') would read a local file,
+                # bypassing file_read permissions. Only http(s) is a network fetch.
+                scheme = (urlparse(step.url).scheme or "").lower()
+                if scheme not in ("http", "https"):
+                    violations.append(
+                        Violation(
+                            stage="permissions",
+                            message=(
+                                f"Step '{step.id}' network URL scheme '{scheme}' not allowed "
+                                f"(only http/https); got {step.url!r}"
+                            ),
+                            detail={"step": step.id, "scheme": scheme, "url": step.url},
+                        )
+                    )
+                    continue
+                if perms.network_hosts:
                     host = urlparse(step.url).hostname or ""
                     if host not in {h.lower() for h in perms.network_hosts}:
                         violations.append(
@@ -317,7 +422,129 @@ def check_permissions(plan: ActionPlan, envelope: Envelope) -> list[Violation]:
                             detail={"step": step.id, "path": step.path},
                         )
                     )
+            case "mcp":
+                # v0.32: MCP tool call. Deny-by-default — the ``server/tool`` key
+                # must match an entry in ``mcp_allowlist`` (literal or glob). An
+                # empty allowlist admits nothing, so an MCPStep never verifies
+                # vacuously against an envelope that didn't name its tool.
+                key = f"{step.server}/{step.tool}"
+                if not _head_allowed(key, perms.mcp_allowlist):
+                    violations.append(
+                        Violation(
+                            stage="permissions",
+                            message=(
+                                f"Step '{step.id}' MCP tool '{key}' "
+                                f"not in mcp_allowlist {perms.mcp_allowlist}"
+                            ),
+                            detail={"step": step.id, "mcp_tool": key},
+                        )
+                    )
+            case "agentic":
+                violations.extend(_check_agentic_step(step, perms))
+            # task/skill steps carry no permission-stage surface here: a TaskStep
+            # is a contained pure-reasoning leaf (gated by _check_delegation_safety),
+            # and a SkillStep's surface is the subsumption stage
+            # (check_skill_delegations), not this per-step permission match.
+            case _:
+                # Unknown custom @step_type: no permission surface, no handler.
+                # Fail closed under strict mode (an unverifiable effect can't run
+                # in a high-stakes plan); pass under non-strict (the trust mode).
+                # A kit declares its own domain step types in the envelope's
+                # custom_step_allowlist to opt them in under strict.
+                if (
+                    strict
+                    and step.type not in _KNOWN_STEP_TYPES
+                    and step.type not in perms.custom_step_allowlist
+                ):
+                    violations.append(
+                        Violation(
+                            stage="permissions",
+                            message=(
+                                f"Step '{step.id}' has unverifiable step type "
+                                f"'{step.type}' (no permission surface or handler); "
+                                f"rejected under strict mode"
+                            ),
+                            detail={"step": step.id, "type": step.type},
+                        )
+                    )
 
+    return violations
+
+
+def check_skill_delegations(
+    plan: ActionPlan,
+    envelope: Envelope,
+    *,
+    strict: bool,
+    timeout_ms: int = 2000,
+    warnings_out: list[str] | None = None,
+) -> list[Violation]:
+    """Prove every SkillStep's contract is subsumed by the caller's envelope.
+
+    A SkillStep names a skill and (optionally) carries the skill's published
+    ``contract_envelope``. The delegation is safe iff the caller's envelope
+    subsumes that contract — every action the skill can legally take is already
+    admissible for the caller. Z3 answers this symbolically and, on failure,
+    hands back the concrete step the skill could emit that violates policy.
+
+    An opaque SkillStep (no ``contract_envelope``) declares no surface: under
+    strict mode that is a hard rejection (a high-stakes caller refuses to
+    delegate to something it cannot bound); under lenient mode it is surfaced as
+    a warning and allowed. Mirrors the opaque-invariant policy in
+    ``_check_predicate_item``.
+    """
+    skill_steps = [s for s in plan.steps if getattr(s, "type", None) == "skill"]
+    if not skill_steps:
+        return []
+    # Local imports avoid the contracts.py↔models.py↔verify.py cycle. A SkillStep
+    # IS a delegation, so its non-opaque check is exactly verify_delegation — reuse
+    # it rather than re-deriving subsumption + counterexample formatting (and get
+    # its signature / unverified-invariant handling for free).
+    from opendaisugi.contracts import Contract, verify_delegation
+
+    violations: list[Violation] = []
+    for step in skill_steps:
+        contract_env = getattr(step, "contract_envelope", None)
+        if contract_env is None:
+            msg = (
+                f"Step '{step.id}' invokes opaque skill '{step.skill_id}' with no "
+                f"contract_envelope; delegation cannot be proved subsumed"
+            )
+            if strict:
+                violations.append(Violation(
+                    stage="delegation",
+                    message=msg + " (strict mode rejects)",
+                    detail={"step": step.id, "skill_id": step.skill_id, "reason": "opaque_skill"},
+                    suggested_remediation=(
+                        "attach the skill's published contract_envelope so subsumption "
+                        "can be proved, or lower stakes below high to allow it"
+                    ),
+                ))
+            elif warnings_out is not None:
+                warnings_out.append(msg + " (allowed under lenient mode)")
+            continue
+        contract = Contract(
+            contract_id=f"skillstep:{step.id}",
+            skill_id=step.skill_id,
+            envelope=contract_env,
+        )
+        decision = verify_delegation(
+            envelope, contract, strict=strict, timeout_ms=timeout_ms
+        )
+        if not decision.allowed:
+            violations.append(Violation(
+                stage="delegation",
+                message=(
+                    f"Step '{step.id}' skill '{step.skill_id}' delegation refused: "
+                    f"{decision.reason}"
+                ),
+                detail={"step": step.id, "skill_id": step.skill_id, "reason": "not_subsumed"},
+            ))
+        elif decision.unverified_invariants and warnings_out is not None:
+            warnings_out.append(
+                f"Step '{step.id}' skill '{step.skill_id}' has unverified invariants: "
+                f"{sorted(decision.unverified_invariants)}"
+            )
     return violations
 
 
@@ -361,7 +588,17 @@ def verify(
         return _result(plan, envelope, violations, warnings, t0)
 
     # Stage 1: permissions
-    violations.extend(check_permissions(plan, envelope))
+    violations.extend(check_permissions(plan, envelope, strict=effective_strict))
+    if violations:
+        return _result(plan, envelope, violations, warnings, t0)
+
+    # Stage 1b (v0.32): skill-delegation subsumption. Each SkillStep's contract
+    # envelope must be subsumed by the caller's — proved via Z3, opaque skills
+    # gated by strict. Its own stage so check_permissions stays Z3-free.
+    violations.extend(check_skill_delegations(
+        plan, envelope, strict=effective_strict,
+        timeout_ms=z3_timeout_ms, warnings_out=warnings,
+    ))
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
 
@@ -434,7 +671,17 @@ def verify_step(
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
 
-    violations.extend(check_permissions(plan, envelope))
+    violations.extend(check_permissions(plan, envelope, strict=resolve_strict(None, envelope)))
+    if violations:
+        return _result(plan, envelope, violations, warnings, t0)
+
+    # Skill-delegation subsumption is step-local (the SkillStep carries its own
+    # contract), so it belongs on the per-step hot path too. strict is resolved
+    # from the envelope here since verify_step takes no strict kwarg.
+    violations.extend(check_skill_delegations(
+        plan, envelope, strict=resolve_strict(None, envelope),
+        timeout_ms=z3_timeout_ms, warnings_out=warnings,
+    ))
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
 
@@ -462,6 +709,24 @@ def verify_step(
     return _result(plan, envelope, violations, warnings, t0)
 
 
+def _robotics_backing_missing(type_name: str, perms: Permission) -> str | None:
+    """Return the name of the missing backing Permission for a recognized robotics
+    invariant, or None if its data is present (or it's not a robotics invariant).
+
+    The z3 trajectory handler silently no-ops when its backing data is absent, so
+    a declared robotics invariant with no backing is an unenforced (vacuous) guard.
+    """
+    # Only flag the genuinely-vacuous cases: an undefined workspace, or a
+    # 'bounded' velocity claim with no bound. obstacles=[] legitimately means
+    # 'nothing to avoid' (trivially satisfied) and joint_limits={} means 'defer
+    # to the MJCF-declared limits' — neither is an unenforced guard.
+    if type_name == "end_effector_in_workspace" and perms.workspace_bounds is None:
+        return "workspace_bounds"
+    if type_name == "velocity_bounded" and perms.velocity_limit is None:
+        return "velocity_limit"
+    return None
+
+
 def _normalize_expr(raw):
     if raw is None:
         return None
@@ -485,6 +750,20 @@ def _check_delegation_safety(
         return []
     violations: list[Violation] = []
     for step in plan.steps:
+        # An AgenticStep is inherently delegated (a tool-using sub-agent),
+        # so physical stakes refuse it outright — with or without a
+        # preferred_model hint.
+        if getattr(step, "type", None) == "agentic":
+            violations.append(Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step.id}' is an agentic delegation but envelope "
+                    f"stakes='physical'; physical-stakes plans cannot be "
+                    f"LLM-delegated"
+                ),
+                detail={"step": step.id, "stakes": "physical"},
+            ))
+            continue
         if getattr(step, "preferred_model", None):
             violations.append(Violation(
                 stage="permissions",
@@ -532,6 +811,23 @@ def _check_predicate_item(
     # any other opaque type) declares a safety property nothing discharges, and
     # under strict mode that must be a loud rejection, not a silent pass.
     if expr is None:
+        # A recognized robotics invariant is 'discharged elsewhere' by the z3
+        # trajectory handler — but that handler NO-OPS when its backing
+        # Permission data is absent (workspace_bounds/velocity_limit/...). So a
+        # declared-but-unbacked robotics invariant is silently vacuous even at
+        # physical stakes: reject it (fail-closed) rather than trust an unenforced
+        # guard.
+        backing_reason = _robotics_backing_missing(type_name, envelope.permissions) if label == "invariant" else None
+        if backing_reason is not None:
+            return [Violation(
+                stage="predicate",
+                message=(
+                    f"invariant '{type_name}' is declared but its backing permission "
+                    f"({backing_reason}) is absent; the check no-ops and the invariant "
+                    f"is unenforced — add the bound or remove the invariant"
+                ),
+                detail={label: type_name, "reason": "robotics_invariant_unbacked"},
+            )]
         discharged_elsewhere = (
             (label == "invariant" and type_name in RECOGNIZED_OPAQUE_TYPES)
             # v0.28.3: stage2 has concrete handlers for exit_code /

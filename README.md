@@ -1,5 +1,7 @@
 # opendaisugi
 
+[![CI](https://github.com/levitatingflyfisher/openDaisugi/actions/workflows/ci.yml/badge.svg)](https://github.com/levitatingflyfisher/openDaisugi/actions/workflows/ci.yml)
+
 > A restricted predicate algebra authorable by agents, compiling to SMT-LIB2
 > that Z3 solves. We verify plans authored by LLMs at runtime.
 
@@ -8,6 +10,82 @@ verify proposed action plans against it via Z3, and log replayable traces.
 Skills can be treated as contracts — one agent can delegate to another
 (including LoRA-tuned smaller models) with a mechanical proof that the
 delegation is safe.
+
+## Vision
+
+**Separate what is _allowed_ from what is _decided._** What's decided comes from a
+black box (an LLM, a neural policy, a VLA) — capable and fundamentally unverifiable.
+What's allowed comes from a space of checkable calculations. The key move: an LLM
+closes the verification loop not by becoming verifiable, but by *generating*
+verifiable constraints — the envelope — which a deterministic layer then enforces.
+It's [Runtime Assurance](https://en.wikipedia.org/wiki/Runtime_assurance) (Simplex,
+verified envelopes) pointed somewhere it never has been: LLM agents and robot
+foundation models.
+
+→ **[VISION.md](VISION.md)** for the full north star — the invariants that must
+stay true, and an honest scorecard of what's built vs. aspirational.
+→ **[docs/](docs/README.md)** for the [Diátaxis](https://diataxis.fr/)-organized
+docs (tutorials · how-to · reference · explanation).
+
+### Gate an agent you're already running
+
+One command puts a fail-closed gate in front of a live Claude Code session:
+every tool call is proven inside an envelope *before it runs*, shadow-mode
+first, one flag to enforce.
+
+```bash
+daisugi gate quickstart      # → a working shadow-mode gate in minutes
+```
+
+It is not a demo. A real delegated sub-agent asked to read a file outside its
+envelope is denied by the gate, the value withheld from the model, the reason
+proof-backed — captured verbatim in
+[`examples/injection-denied/`](examples/injection-denied/):
+
+```
+DENIED Read '/.../infra/deploy_region.txt'
+  reason: permissions: file_read path '/.../infra/deploy_region.txt'
+          not permitted by file_read ['/.../workspace/**']
+```
+
+The same 13-attack corpus that gates this project's own merges is one command:
+`daisugi gate audit` (denial 1.00; false-positive rate published, not hidden).
+Start here: **[Protect an agent you're already running](docs/tutorials/protect-your-existing-session.md)**.
+
+### See it: runtime assurance for a robot swarm
+
+![Property-security patrol — openDaisugi gating a (mock) VLA swarm in MuJoCo](docs/assets/property-patrol.gif)
+
+Three drones patrol a property, one sector each. A black-box policy (a stand-in for a
+VLA like π0 / SmolVLA) proposes each drone's next move; openDaisugi verifies it live
+against the drone's sector envelope + swarm deconfliction — **green** accepted,
+**amber** an out-of-sector proposal refused and pulled back (Simplex fallback),
+**red** a proposal held because it closed on a peer. No drone can leave its sector and
+no two can collide, *proven every tick before motion*, whatever the policy proposes.
+Runnable: [`examples/property-patrol/`](examples/property-patrol/) (the gate, CPU,
+zero deps) + `mujoco_render.py` (this recording).
+
+And delegation — *a message that carries authority is a delegation*, verified before anyone acts:
+
+![Comms-loss reassignment — a survivor's authority expands to cover a downed peer, verified](docs/assets/comms-delegation.gif)
+
+`drone_mid` loses comms; the coordinator expands `drone_west`'s authority to cover the
+gap — **accepted** only after `verify_swarm_tasking` re-proves it's still contained
+*and* deconflicted; the "hand it to both neighbors" alternative flashes the overlap
+**red — rejected before any drone moves**. Four such scenarios (hierarchy · hand-off ·
+comms-loss · cross-swarm) in [`examples/swarm-comms-delegation/`](examples/swarm-comms-delegation/).
+
+And sixteen kinds of refusal at once — each tile a *real* `verify()` rejection of a
+different unsafe action (keep-in · no-fly · deconflict · delegation · formation ·
+moving keep-out · geofence · reassignment · cross-swarm · nested delegation · slalom ·
+hand-off · leash · restricted airspace · corridor merge · a "must return to base"
+*invariant*):
+
+![Sixteen runtime-assurance scenarios, each a real openDaisugi rejection](docs/assets/gallery-grid.gif)
+
+Every gate is proven *before* a single frame is rendered — the renderer asserts each
+scenario accepts the safe case and refuses the unsafe one first. See
+[`examples/gallery/`](examples/gallery/).
 
 **Status (v0.27.0):** verification-core is sound — strict mode (default-on
 at `stakes` high/physical) rejects opaque invariants and postconditions that
@@ -152,6 +230,39 @@ await sub.run(plan)          # every plan re-verified against the scope; dry-run
 grants. `tier1` is the local model (free-ish tokens) the subagent reasons with;
 SafeSubagent is the runtime safety gate. See `examples/safe-local-subagent/`.
 This is plan-level runtime assurance, not an OS sandbox.
+
+### Run a whole prompt end to end — the Orchestrator (v0.32.0+)
+
+`tend()` looks backward (traces → distilled skills). The **Orchestrator** looks
+forward: one prompt → a verified typed-step DAG → each step routed to the cheapest
+capable model under a token budget → a synthesized final answer. Repeat prompts
+reuse a distilled pathway.
+
+```python
+from opendaisugi import Daisugi
+
+dai = Daisugi()
+result = await dai.orchestrate(
+    "summarize the open PRs and draft a standup note",
+    budget_tokens=20_000,          # gates routing DURING the run, not after
+)
+print(result.final_answer)
+for s in result.sizings:           # per-step: difficulty → model
+    print(s.step_id, s.difficulty, s.tier, s.model)
+print(result.budget.spent, "tokens")
+```
+
+Or from the CLI: `daisugi orchestrate "…" --budget 20000`. The decomposed plan is
+verified against an envelope before it runs and each step is re-verified at
+execution time — the orchestrator adds routing and assembly *on top of* the
+assurance guarantees. Pieces are composable too: `decompose()`, `size_plan()`,
+`BudgetTracker`, `synthesize()`. New step types `TaskStep` / `SkillStep` /
+`MCPStep` each carry a real verify surface (skills prove subsumption; MCP tools
+gate against a deny-by-default `mcp_allowlist`). `AgenticStep` (v0.36) is the
+tool-using delegation type: unlike TaskStep's pure-reasoning leaf, it runs a
+sub-agent with real tools — bounded by the parent envelope via a computed
+`--allowedTools` wall *and* the call-time gate wired into the sub-agent's own
+hook config (`AgenticExecutor`).
 
 ---
 
@@ -308,6 +419,17 @@ async def main():
 
 ---
 
+## Architecture
+
+How it all fits together — the verify→supervise→journal→distill spine, the two
+loops, the consumption surfaces, and the module map, with diagrams.
+
+→ **[docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md)**
+
+The *why* behind the load-bearing decisions (fail-closed, Z3-over-heuristics,
+envelope-as-contract, layer-not-harness, the Python runtime, the `claude -p`
+backend) lives in **[docs/adr/](docs/adr/)**.
+
 ## Concepts
 
 How opendaisugi actually works — envelopes, the predicate algebra, Z3
@@ -417,6 +539,12 @@ Concrete scenarios where runtime assurance earns its keep:
 ```bash
 # Generate an envelope.
 daisugi generate-envelope "Read /data/sales.csv and print the row count"
+
+# Run a whole prompt end to end (decompose → size → execute → synthesize).
+daisugi orchestrate "summarize the sales csv and draft a one-line takeaway" --budget 20000
+
+# Recommend the cheapest viable model/tier for a task.
+daisugi route "refactor the auth module"
 
 # Verify a plan against an envelope.
 daisugi verify plan.yaml --envelope envelope.yaml

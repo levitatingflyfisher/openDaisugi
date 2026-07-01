@@ -15,7 +15,6 @@ pytest.importorskip("mcp")
 from opendaisugi import Daisugi  # noqa: E402
 from opendaisugi.mcp_server import build_server  # noqa: E402
 
-
 ENVELOPE = {
     "generated_by": "openclaw-demo",
     "task": "Send email on Ada's behalf",

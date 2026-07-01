@@ -27,6 +27,24 @@ def check_dag(plan: ActionPlan) -> list[Violation]:
     """Run all DAG structural checks on a plan. Returns a list of violations."""
     violations: list[Violation] = []
 
+    # Duplicate step ids — the graph node set and topological_order's step_by_id
+    # dict both collapse duplicates, so only one of two same-id steps executes,
+    # and the set-based integrity check can't see the dropped step. Reject up front.
+    seen: set[str] = set()
+    dupes: list[str] = []
+    for step in plan.steps:
+        if step.id in seen and step.id not in dupes:
+            dupes.append(step.id)
+        seen.add(step.id)
+    for dup in dupes:
+        violations.append(Violation(
+            stage="dag",
+            message=f"duplicate step id '{dup}' — step ids must be unique",
+            detail={"step": dup},
+        ))
+    if violations:
+        return violations  # graph checks below are meaningless with duplicate ids
+
     # Missing dependency detection — must run before building the graph,
     # since nx.add_edge silently creates missing nodes.
     step_ids = {s.id for s in plan.steps}

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from opendaisugi.envelope_cache import EnvelopeCache, make_cache_key as _make_cache_key
+from opendaisugi.envelope_cache import EnvelopeCache
+from opendaisugi.envelope_cache import make_cache_key as _make_cache_key
 from opendaisugi.models import Envelope, Permission
 
 

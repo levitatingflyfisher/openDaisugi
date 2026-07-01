@@ -5,7 +5,11 @@ import yaml
 from pydantic import ValidationError
 
 from opendaisugi.models import (
-    ActionPlan, FileReadStep, FileWriteStep, NetworkStep, ShellStep,
+    ActionPlan,
+    FileReadStep,
+    FileWriteStep,
+    NetworkStep,
+    ShellStep,
 )
 
 

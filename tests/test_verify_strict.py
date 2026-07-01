@@ -1,5 +1,6 @@
 """v0.27.0 — strict-mode resolution from stakes."""
 from __future__ import annotations
+
 from opendaisugi.models import ActionPlan, Envelope, Invariant, Permission, ShellStep
 from opendaisugi.verify import resolve_strict, verify
 

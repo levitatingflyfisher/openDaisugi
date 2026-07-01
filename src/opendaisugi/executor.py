@@ -24,8 +24,10 @@ import secrets
 import signal
 import socket
 import subprocess
+import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -46,6 +48,18 @@ class ExecutorResult:
     stdout: str
     duration_ms: float
     timed_out: bool
+
+
+def truncate_output(text: str, max_output_bytes: int) -> str:
+    """Cap ``text`` at ``max_output_bytes`` UTF-8 bytes with a truncation marker.
+
+    Encodes once. Returns ``text`` unchanged when it already fits. Shared by the
+    step-type executors so the truncation idiom lives in one place.
+    """
+    encoded = text.encode()
+    if len(encoded) <= max_output_bytes:
+        return text
+    return encoded[:max_output_bytes].decode(errors="replace") + "\n... [truncated]"
 
 
 @runtime_checkable
@@ -84,6 +98,12 @@ class DryRunExecutor:
                 msg = f"[dry-run] would file_write: {step.path} ({nbytes} bytes)"
             case "network":
                 msg = f"[dry-run] would network: GET {step.url}"
+            case "task":
+                msg = f"[dry-run] would task (delegate to LLM): {step.prompt!r}"
+            case "skill":
+                msg = f"[dry-run] would skill: {step.skill_id} input={step.skill_input!r}"
+            case "mcp":
+                msg = f"[dry-run] would mcp: {step.server}/{step.tool} args={step.arguments!r}"
             case _:  # pragma: no cover - unreachable; Pydantic rejects at parse time
                 msg = f"[dry-run] unknown step kind: {step.type!r}"
         return ExecutorResult(rc=0, stdout=msg, duration_ms=0.0, timed_out=False)
@@ -115,6 +135,12 @@ class FakeExecutor:
                 return step.path
             case "network":
                 return step.url
+            case "task":
+                return step.prompt
+            case "skill":
+                return step.skill_id
+            case "mcp":
+                return f"{step.server}/{step.tool}"
             case _:  # pragma: no cover - discriminator guards this
                 raise TypeError(f"FakeExecutor: unknown step kind {step.type!r}")
 
@@ -133,8 +159,52 @@ class FakeExecutor:
         raise KeyError(f"FakeExecutor has no result for key {key!r}")
 
 
+def _glob_base(glob: str) -> str:
+    """The concrete directory prefix of a permission glob (before any wildcard)."""
+    positions = [glob.find(c) for c in "*?[" if glob.find(c) != -1]
+    if not positions:
+        return glob  # exact path, no wildcard
+    prefix = glob[: min(positions)]
+    base = prefix.rsplit("/", 1)[0]
+    return base or "/"
+
+
+def _resolved_path_escape(target: str, globs: list[str]) -> str | None:
+    """Reason if ``target``'s realpath is NOT within any permitted glob's resolved
+    base (a symlink escape), else None.
+
+    The runtime companion to verify's lexical glob check: verify is I/O-free and
+    can't resolve symlinks, so ``/allowed/link -> /etc/passwd`` passes the lexical
+    check; here (with filesystem access) we resolve the target and confirm it stays
+    under a permitted base. A permitted base that is itself a symlink resolves too,
+    so legitimately-symlinked permitted dirs (e.g. /var/log) are not false-rejected.
+    """
+    target_real = os.path.realpath(target)
+    for g in globs:
+        base_real = os.path.realpath(_glob_base(g))
+        # rstrip the separator before re-appending it, so a base that resolves
+        # to the filesystem root ("/") yields the prefix "/" rather than "//":
+        # without this, a "/**" or "**" grant (base "/") matched nothing
+        # (`startswith("//")` is false for every normal path), so a plan that
+        # passed plan-time verify was ALWAYS refused here as a bogus symlink
+        # escape — a plan-time/run-time inconsistency.
+        base_prefix = base_real.rstrip(os.sep) + os.sep
+        if target_real == base_real or target_real.startswith(base_prefix):
+            return None
+    return (f"resolved path {target_real!r} is outside permitted globs {globs} "
+            f"(symlink escape)")
+
+
 class FileReadExecutor:
     """Reads ``step.path`` in chunks, truncating at ``max_output_bytes``."""
+
+    def __init__(self) -> None:
+        self._allowed_globs: list[str] | None = None
+
+    def configure_from_envelope(self, envelope) -> None:
+        """Capture the envelope's file_read globs so run() can re-check the
+        *resolved* target path against them (symlink-escape defense)."""
+        self._allowed_globs = list(envelope.permissions.file_read)
 
     def run(
         self,
@@ -148,6 +218,13 @@ class FileReadExecutor:
                 f"FileReadExecutor cannot run step of type {type(step).__name__}"
             )
         start = time.monotonic()
+        if self._allowed_globs is not None:
+            escape = _resolved_path_escape(step.path, self._allowed_globs)
+            if escape is not None:
+                return ExecutorResult(
+                    rc=2, stdout=f"file_read refused: {escape}",
+                    duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+                )
         try:
             with open(step.path, "rb") as f:
                 buf = bytearray()
@@ -182,7 +259,17 @@ class FileWriteExecutor:
     resolve the final path's realpath and verify it still lives under the
     parent's realpath — defense-in-depth against symlink swaps in the
     parent dir after verify's glob check.
+
+    When configured with the envelope (via configure_from_envelope), it also
+    re-checks the *resolved* target path against the permitted file_write globs,
+    catching ancestor-symlink escapes verify's lexical check can't see.
     """
+
+    def __init__(self) -> None:
+        self._allowed_globs: list[str] | None = None
+
+    def configure_from_envelope(self, envelope) -> None:
+        self._allowed_globs = list(envelope.permissions.file_write)
 
     def run(
         self,
@@ -196,6 +283,13 @@ class FileWriteExecutor:
                 f"FileWriteExecutor cannot run step of type {type(step).__name__}"
             )
         start = time.monotonic()
+        if self._allowed_globs is not None:
+            escape = _resolved_path_escape(step.path, self._allowed_globs)
+            if escape is not None:
+                return ExecutorResult(
+                    rc=2, stdout=f"file_write refused: {escape}",
+                    duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+                )
         parent = os.path.dirname(step.path) or "."
         tmp_path = ""
         try:
@@ -292,13 +386,49 @@ class NetworkExecutor:
                 f"NetworkExecutor cannot run step of type {type(step).__name__}"
             )
         start = time.monotonic()
-        opener = urllib.request.build_opener(_NoRedirect)
+        # Defense in depth (verify already gates this): urllib's default opener
+        # honors file://, ftp://, data: — refuse anything but http(s) so a
+        # NetworkStep can never read a local file or reach a non-network scheme.
+        scheme = urllib.parse.urlparse(step.url).scheme.lower()
+        if scheme not in ("http", "https"):
+            return ExecutorResult(
+                rc=2,
+                stdout=f"refused non-http(s) URL scheme {scheme!r}: {step.url}",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+                timed_out=False,
+            )
+        # Build an opener with ONLY http/https handlers — never File/FTP/Data.
+        opener = urllib.request.OpenerDirector()
+        for handler in (
+            urllib.request.HTTPHandler(),
+            urllib.request.HTTPSHandler(),
+            urllib.request.HTTPDefaultErrorHandler(),
+            urllib.request.HTTPErrorProcessor(),
+            _NoRedirect(),
+        ):
+            opener.add_handler(handler)
         req = urllib.request.Request(
             step.url, headers=step.headers, method="GET",
         )
         try:
+            # Wall-clock bound: `timeout_s` is only the per-recv SOCKET timeout, and
+            # resp.read() makes many recvs — a slow-drip server that sends a byte
+            # before each timeout could hold the executor far past step_timeout_s.
+            # Read in bounded chunks against an overall deadline.
+            deadline = start + timeout_s
             with opener.open(req, timeout=timeout_s) as resp:
-                raw = resp.read(max_output_bytes + 1)
+                chunks: list[bytes] = []
+                total = 0
+                while total <= max_output_bytes:
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(f"network read exceeded {timeout_s}s wall clock")
+                    want = min(65536, max_output_bytes + 1 - total)
+                    chunk = resp.read(want)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    total += len(chunk)
+                raw = b"".join(chunks)
             if len(raw) > max_output_bytes:
                 stdout = raw[:max_output_bytes].decode("utf-8", errors="replace")
                 stdout += "\n... [truncated]"
@@ -367,43 +497,88 @@ class SubprocessExecutor:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        # Read stdout in a bounded thread so a permitted-but-noisy command
+        # (`cat /dev/zero`, `yes`) can't exhaust memory: `communicate()` buffers
+        # the WHOLE output before the size cap is applied. stderr is merged into
+        # stdout (single pipe), so a lone reader thread can't deadlock. When the
+        # cap is hit the reader stops; the process then blocks on a full pipe and
+        # is killed below, so it can't run unbounded.
+        holder: dict = {"out": b"", "truncated": False}
+
+        def _reader() -> None:
+            buf = bytearray()
+            try:
+                while len(buf) < max_output_bytes:
+                    chunk = proc.stdout.read(min(65536, max_output_bytes - len(buf)))
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                else:
+                    # Cap hit, not EOF. Kill the group NOW: otherwise the process
+                    # blocks on the full pipe and the main thread's proc.wait()
+                    # spins until the whole timeout elapses instead of returning
+                    # promptly. SIGKILL the group so grandchildren die too.
+                    holder["truncated"] = True
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+            except (ValueError, OSError):
+                pass
+            holder["out"] = bytes(buf)
+
+        reader = threading.Thread(target=_reader, daemon=True)
+        reader.start()
+
         timed_out = False
         try:
-            out_bytes, _ = proc.communicate(timeout=timeout_s)
+            proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             timed_out = True
-            out_bytes = self._teardown(proc)
+            self._kill_group(proc)
         except KeyboardInterrupt:
-            self._teardown(proc)
+            self._kill_group(proc)
             raise
+        # If output hit the cap, the process may be blocked writing to a full pipe;
+        # if it's still alive, kill the group so it can't keep running.
+        if proc.poll() is None:
+            self._kill_group(proc)
+        reader.join(timeout=2)
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+
         duration_ms = (time.monotonic() - start) * 1000.0
         rc = proc.returncode if proc.returncode is not None else -1
-
-        stdout = (out_bytes or b"").decode(errors="replace")
-        if len(stdout.encode()) > max_output_bytes:
-            stdout = stdout.encode()[:max_output_bytes].decode(errors="replace") + "\n... [truncated]"
+        stdout = holder["out"].decode(errors="replace")
+        if holder["truncated"]:
+            stdout += "\n... [truncated]"
         return ExecutorResult(
             rc=rc, stdout=stdout, duration_ms=duration_ms, timed_out=timed_out,
         )
 
     @staticmethod
-    def _teardown(proc: subprocess.Popen) -> bytes:
-        """Escalate SIGTERM → SIGKILL to the process group and drain output."""
+    def _kill_group(proc: subprocess.Popen) -> None:
+        """Escalate SIGTERM → SIGKILL to the whole process group (reaps shell
+        grandchildren, which ``start_new_session=True`` puts in proc's group)."""
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except ProcessLookupError:
-            pass
+            return
         try:
-            out_bytes, _ = proc.communicate(timeout=2)
-            return out_bytes or b""
+            proc.wait(timeout=2)
+            return
         except subprocess.TimeoutExpired:
             pass
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        out_bytes, _ = proc.communicate()
-        return out_bytes or b""
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def default_executors() -> dict[str, StepExecutor]:

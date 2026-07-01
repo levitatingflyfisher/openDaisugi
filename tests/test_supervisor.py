@@ -1,11 +1,10 @@
 """Unit tests for Supervisor using FakeExecutor for determinism."""
 
-import pytest
 
 from opendaisugi.approval import AllowlistBypassStrategy, DenyStrategy
 from opendaisugi.executor import ExecutorResult, FakeExecutor
 from opendaisugi.journal import Journal
-from opendaisugi.models import ActionPlan, ShellStep, Envelope, Permission
+from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 from opendaisugi.run_session import RunStatus
 from opendaisugi.supervisor import Supervisor
 

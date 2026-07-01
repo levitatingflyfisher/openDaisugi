@@ -1,8 +1,6 @@
 """Build dish-wash ActionPlans from plate-wash sub-DAGs."""
 from __future__ import annotations
 
-from opendaisugi.models import ActionPlan
-
 from step_types import (
     ApproachDish,
     BeginScrub,
@@ -10,6 +8,8 @@ from step_types import (
     ReturnToDock,
     RinseWithHose,
 )
+
+from opendaisugi.models import ActionPlan
 
 
 def _plate_wash_steps(dish_index: int, base_id: int) -> list:

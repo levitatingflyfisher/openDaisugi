@@ -9,7 +9,11 @@ import pytest
 pytest.importorskip("mujoco")
 
 from opendaisugi.models import (
-    ActionPlan, Envelope, Invariant, Permission, VLAStep,
+    ActionPlan,
+    Envelope,
+    Invariant,
+    Permission,
+    VLAStep,
 )
 
 
@@ -18,8 +22,8 @@ def _workspace_invariant():
         type="end_effector_in_workspace", description="bounded reach",
         enforce=True, expr=None,
     )
-from opendaisugi.vla_executor import MockVLAExecutor, VLAExecutorBase
 from opendaisugi.verify import verify
+from opendaisugi.vla_executor import MockVLAExecutor, VLAExecutorBase
 
 _MJCF = Path(__file__).parent / "fixtures" / "mjcf" / "two_joint_arm.xml"
 
@@ -154,6 +158,7 @@ def test_transformers_executor_with_mocked_predict():
     import sys
     import types
     from unittest.mock import MagicMock, patch
+
     import numpy as np
 
     from opendaisugi.vla_executor import TransformersVLAExecutor

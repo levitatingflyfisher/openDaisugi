@@ -43,7 +43,11 @@ def test_semantic_search_orders_by_cosine_similarity(tmp_path, monkeypatch):
     """Positive path — mocks SentenceTransformer to avoid model download."""
     pytest.importorskip("numpy")
     from opendaisugi.models import (
-        ActionPlan, ShellStep, Envelope, Permission, VerificationResult,
+        ActionPlan,
+        Envelope,
+        Permission,
+        ShellStep,
+        VerificationResult,
     )
 
     j = Journal(data_dir=tmp_path)

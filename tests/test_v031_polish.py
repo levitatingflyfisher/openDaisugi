@@ -8,15 +8,14 @@ from unittest import mock
 
 import numpy as np
 import pytest
-
 from typer.testing import CliRunner
 
 from opendaisugi import Daisugi
 from opendaisugi.cli import app
 from opendaisugi.distiller import (
+    _MAX_PITFALLS,
     Distiller,
     TendReport,
-    _MAX_PITFALLS,
     _cluster_by_similarity,
     _cluster_with_centroids,
 )
@@ -24,7 +23,6 @@ from opendaisugi.journal import Journal
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep, VerificationResult
 from opendaisugi.pathway import CompiledPathway
 from opendaisugi.pathway_store import PathwayStore
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -258,8 +256,8 @@ async def test_distilled_pathway_has_embedding_provenance(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_pitfalls_capped_with_truncation_marker(tmp_path, monkeypatch):
-    from opendaisugi.refinement import RefinementLog, RefinementRecord
     from opendaisugi.models import Violation
+    from opendaisugi.refinement import RefinementLog, RefinementRecord
 
     journal = Journal(data_dir=tmp_path)
     store = PathwayStore(tmp_path / "pathways.db")

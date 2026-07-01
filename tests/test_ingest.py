@@ -1,16 +1,16 @@
 """Tests for opendaisugi.ingest — episode ingest pipeline."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from opendaisugi.ingest import (
-    ingest_episodes,
     IngestSummary,
-    EpisodeResult,
     _trace_id_for,
+    ingest_episodes,
 )
 from opendaisugi.journal import Journal
-from opendaisugi.models import ShellStep, Envelope, Permission
+from opendaisugi.models import Envelope, Permission, ShellStep
 from opendaisugi.parsers import Episode, ParseResult
 
 

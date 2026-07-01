@@ -1,7 +1,8 @@
 """Unit tests for fallback handlers."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from opendaisugi.fallback import FallbackOutcome, HaltHandler, RecomputeHandler
 from opendaisugi.models import (

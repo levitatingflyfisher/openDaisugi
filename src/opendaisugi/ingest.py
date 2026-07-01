@@ -5,14 +5,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from opendaisugi.envelope import generate_envelope
 from opendaisugi.journal import Journal
 from opendaisugi.models import ActionPlan
-from opendaisugi.parsers import ParseResult, Episode
+from opendaisugi.parsers import Episode, ParseResult
 from opendaisugi.verify import verify
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from opendaisugi.tier1 import Tier1Provider

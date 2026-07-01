@@ -14,7 +14,6 @@ import pytest
 
 from opendaisugi.tier1 import ClaudeCodeTier1Provider, Tier1Provider
 
-
 _VALID_ENVELOPE_JSON = json.dumps({
     "generated_by": "claude-code-tier1",
     "task": "demo",
@@ -93,6 +92,7 @@ async def test_timeout_terminates_subprocess() -> None:
     class _HangProc:
         returncode = None
         terminated = False
+        killed = False
 
         async def communicate(self):
             await asyncio.sleep(10)
@@ -100,6 +100,12 @@ async def test_timeout_terminates_subprocess() -> None:
 
         def terminate(self):
             self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+        async def wait(self):
+            return 0
 
     hang = _HangProc()
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=hang)):

@@ -98,16 +98,7 @@ def test_all_list_contains_journal_exports():
 
 def test_v010_supervisor_exports():
     from opendaisugi import (
-        ApprovalDecision,
-        ApprovalStrategy,
-        DryRunExecutor,
-        ExecutorResult,
-        FakeExecutor,
-        RunSession,
         RunStatus,
-        StepExecutor,
-        StepOutcome,
-        SubprocessExecutor,
         Supervisor,
     )
     assert Supervisor is not None
@@ -186,11 +177,7 @@ def test_v013_exports_present():
     assert hasattr(opendaisugi, "StakesInheritanceWarning")
     assert hasattr(opendaisugi, "ThinkingBudget")
     from opendaisugi import (
-        DEFAULT_LOW_STAKES_ENVELOPE,
         LowStakesNotConfigured,
-        ModelLadderExhausted,
-        StakesInheritanceWarning,
-        ThinkingBudget,
     )
     assert LowStakesNotConfigured is not None
 
@@ -221,12 +208,7 @@ def test_v020_exports_present():
     assert hasattr(opendaisugi, "HaltHandler")
     assert hasattr(opendaisugi, "RecomputeHandler")
     from opendaisugi import (
-        FallbackHandler,
-        FallbackOutcome,
         HaltHandler,
-        RecomputeHandler,
-        RefinementLog,
-        RefinementRecord,
     )
     assert HaltHandler is not None
 

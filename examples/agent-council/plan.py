@@ -1,9 +1,9 @@
 """Build an ActionPlan for the agent-council kit."""
 from __future__ import annotations
 
-from opendaisugi.models import ActionPlan
-
 from step_types import AgentReview, AggregateVotes, CommitOrReject, SubmitContribution
+
+from opendaisugi.models import ActionPlan
 
 
 def build_plan(

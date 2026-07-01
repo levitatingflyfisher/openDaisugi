@@ -13,7 +13,8 @@ from opendaisugi.models import (
     SimulationResetStep,
 )
 from opendaisugi.pathway import CompiledPathway
-from opendaisugi.portability import export as export_pathway, parse_bundle
+from opendaisugi.portability import export as export_pathway
+from opendaisugi.portability import parse_bundle
 
 
 def _robot_pathway() -> CompiledPathway:

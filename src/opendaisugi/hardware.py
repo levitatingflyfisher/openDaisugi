@@ -146,7 +146,6 @@ def recommend_model(profile: HardwareProfile) -> ModelRecommendation:
     else:  # pragma: no cover - inf sentinel guarantees a match
         size_class, params_b_max, est = _TIERS[-1][1], _TIERS[-1][2], _TIERS[-1][3]
 
-    cpu_only = not profile.has_discrete_gpu
     where = (
         f"{profile.vram_gb:g}GB VRAM ({profile.gpu_name})" if profile.has_discrete_gpu
         else f"{profile.ram_gb:g}GB RAM (CPU inference — expect slower generation; "

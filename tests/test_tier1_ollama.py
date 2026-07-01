@@ -1,9 +1,8 @@
 """Tests for OllamaTier1Provider (v0.23)."""
-from unittest.mock import patch, AsyncMock
 
 import pytest
 
-from opendaisugi.tier1 import OllamaTier1Provider, LiteLLMTier1Provider
+from opendaisugi.tier1 import LiteLLMTier1Provider, OllamaTier1Provider
 
 
 def test_ollama_defaults_to_localhost_no_api_key():

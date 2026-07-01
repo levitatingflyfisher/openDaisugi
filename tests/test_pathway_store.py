@@ -3,8 +3,6 @@
 import sqlite3
 import time
 
-import pytest
-
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 from opendaisugi.pathway import CompiledPathway
 from opendaisugi.pathway_store import PathwayStore
@@ -156,6 +154,7 @@ def test_v028_4_find_filters_out_stale_embedding_rows(tmp_path):
     queries in incompatible spaces, silently surfacing wrong matches.
     """
     import numpy as np
+
     from opendaisugi._search import _MODEL_NAME
     from opendaisugi.distiller import _EMBEDDING_MODEL_VERSION
 

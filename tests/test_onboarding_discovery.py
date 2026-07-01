@@ -8,8 +8,6 @@ pathways without the user hand-listing files.
 
 import os
 
-import pytest
-
 from opendaisugi.onboarding import (
     DiscoveredTranscript,
     default_transcript_roots,

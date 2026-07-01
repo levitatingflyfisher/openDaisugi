@@ -70,7 +70,7 @@ def run() -> int:
     print(f"  subsumption:   holds={decision.subsumption.holds}  "
           f"{decision.subsumption.duration_ms:.1f} ms")
     if decision.counterexample is not None:
-        print(f"  counterexample:")
+        print("  counterexample:")
         print(f"    command:             {decision.counterexample.step.command!r}")
         print(f"    outer rule violated: {decision.counterexample.outer_violation}")
         print(f"    inner justification: {decision.counterexample.inner_justification}")

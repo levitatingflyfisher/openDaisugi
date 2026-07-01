@@ -2,8 +2,6 @@
 
 from unittest.mock import patch
 
-import pytest
-
 from opendaisugi.approval import AllowlistBypassStrategy, DenyStrategy
 from opendaisugi.executor import ExecutorResult, FakeExecutor
 from opendaisugi.fallback import FallbackOutcome, HaltHandler
@@ -244,6 +242,7 @@ async def test_supervisor_tags_refinement_with_envelope_cache_key(tmp_path):
     supervisor propagates to refinement record, journal persists to column.
     """
     from unittest.mock import patch
+
     from opendaisugi.verify import verify_step as _real_verify
 
     env = Envelope(
@@ -273,6 +272,7 @@ async def test_supervisor_tags_refinement_with_envelope_cache_key(tmp_path):
 async def test_supervisor_tags_refinement_none_for_handbuilt_envelope(tmp_path):
     """Hand-built envelopes (no generator) leave cache_key=None on refinements."""
     from unittest.mock import patch
+
     from opendaisugi.verify import verify_step as _real_verify
 
     env = _env_shell_only(["echo"])  # cache_key defaults to None

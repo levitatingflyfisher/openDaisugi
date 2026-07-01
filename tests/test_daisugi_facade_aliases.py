@@ -1,7 +1,8 @@
 """v0.27.0 — the programmatic Daisugi facade supports register->verify->enforce."""
 from __future__ import annotations
+
 from opendaisugi import Daisugi
-from opendaisugi.aliases import Alias, AliasRegistry, AliasRef
+from opendaisugi.aliases import Alias, AliasRef, AliasRegistry
 from opendaisugi.models import ActionPlan, Envelope, Invariant, Permission, ShellStep
 from opendaisugi.predicate import parse_expression
 
@@ -34,6 +35,7 @@ def test_daisugi_run_strict_kwarg_overrides_low_stakes_default():
     """At low stakes, verify() defaults strict=False. An explicit
     strict=True on Daisugi.run must flip it through to the Supervisor."""
     import asyncio
+
     from opendaisugi.models import Postcondition
     from opendaisugi.run_session import RunStatus
 
@@ -60,6 +62,7 @@ def test_daisugi_run_strict_kwarg_overrides_low_stakes_default():
 def test_daisugi_constructor_strict_kwarg_persists():
     """Daisugi(strict=True) sets the default for every subsequent run."""
     import asyncio
+
     from opendaisugi.models import Postcondition
 
     env = Envelope(
@@ -80,6 +83,7 @@ def test_daisugi_run_strict_kwarg_overrides_constructor_strict():
     The base v0.28.3 PR proved each kwarg works in isolation; this proves
     the precedence chain — method kwarg wins over constructor."""
     import asyncio
+
     from opendaisugi.models import Postcondition
 
     env = Envelope(

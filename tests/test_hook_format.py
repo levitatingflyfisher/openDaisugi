@@ -15,9 +15,17 @@ def test_hermes_noop_is_empty_object():
     assert json.loads(out) == {}
 
 
-def test_hermes_block_uses_decision_block():
+def test_hermes_block_emits_both_decision_and_action_keys():
+    """Hermes' live block contract is unverified against a real host, and
+    its docs disagree with the shape we originally shipped (``decision`` vs
+    ``action``). For a fail-closed product an unverifiable contract gets
+    belt-and-braces: emit BOTH keys so whichever the host honors, it blocks.
+    Rewritten (not deleted) from the single-key passive-era expectation."""
     out = stdout_for_format("hermes", block=True, reason="policy")
-    assert json.loads(out) == {"decision": "block", "reason": "policy"}
+    body = json.loads(out)
+    assert body["decision"] == "block"
+    assert body["action"] == "block"
+    assert body["reason"] == "policy"
 
 
 def test_openclaw_noop_is_empty_object():
@@ -82,6 +90,7 @@ def test_record_call_neutralizes_session_id_path_traversal(tmp_path):
 
 def test_capture_dir_and_file_not_world_or_group_accessible(tmp_path):
     import os
+
     from opendaisugi.hook import record_call
     root = tmp_path / "caps"
     root.mkdir(mode=0o777)  # pre-existing loose dir
