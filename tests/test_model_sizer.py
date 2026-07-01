@@ -73,6 +73,32 @@ def test_size_plan_returns_one_sizing_per_step():
     assert [s.step_id for s in sizings] == ["t1", "s1"]
 
 
+def test_target_model_is_honored_as_starting_rung():
+    # An easy step would size to 'local', but an explicit target lifts it.
+    easy = TaskStep(id="t1", prompt="say hi")
+    sized = size_step(easy, target_model=DEFAULT_LADDER.rungs[-1].model)
+    assert sized.tier == "frontier"
+
+
+def test_target_model_off_ladder_falls_back_to_difficulty():
+    easy = TaskStep(id="t1", prompt="say hi")
+    sized = size_step(easy, target_model="some-unknown-model")
+    assert sized.tier != "frontier"  # fell back to difficulty-based sizing
+
+
+def test_target_model_still_downgrades_under_budget():
+    easy = TaskStep(id="t1", prompt="say hi")
+    tight = BudgetTracker(total_tokens=1500)  # < frontier est
+    sized = size_step(easy, target_model=DEFAULT_LADDER.rungs[-1].model, budget=tight)
+    assert sized.tier != "frontier"
+    assert sized.downgraded is True
+
+
+def test_rung_for_model_lookup():
+    assert DEFAULT_LADDER.rung_for_model(DEFAULT_LADDER.rungs[0].model) is DEFAULT_LADDER.rungs[0]
+    assert DEFAULT_LADDER.rung_for_model("nope") is None
+
+
 def test_custom_ladder_is_honored():
     ladder = ModelLadder([
         ModelRung(name="tiny", model="tiny-model", max_difficulty=1.0, est_tokens=500),

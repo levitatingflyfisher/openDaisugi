@@ -82,6 +82,13 @@ class ModelLadder:
                 return rung
         return self.rungs[-1]
 
+    def rung_for_model(self, model: str) -> ModelRung | None:
+        """The rung whose model id is ``model``, or None if it's off this ladder."""
+        for rung in self.rungs:
+            if rung.model == model:
+                return rung
+        return None
+
     def cheapest_affordable(self, remaining: float) -> ModelRung | None:
         """Cheapest rung whose estimate fits ``remaining`` tokens, or None."""
         for rung in self.rungs:
@@ -120,15 +127,23 @@ def size_step(
     *,
     ladder: ModelLadder = DEFAULT_LADDER,
     budget: "object | None" = None,
+    target_model: str | None = None,
 ) -> StepSizing:
     """Size one step: cheapest capable model, downgraded if the budget is tight.
 
     ``budget`` is any object exposing ``remaining() -> float`` (a
     :class:`~opendaisugi.budget.BudgetTracker`); pass the live tracker to gate on
     what remains *now*, or ``None`` for pure capability-based sizing.
+
+    ``target_model`` honors an explicit choice (e.g. a step's ``preferred_model``)
+    as the starting rung; budget downgrade still applies on top. Falls back to
+    difficulty-based selection when the model isn't on the ladder.
     """
     difficulty = estimate_step_difficulty(step)
-    chosen = ladder.rung_for_difficulty(difficulty)
+    chosen = (
+        (ladder.rung_for_model(target_model) if target_model else None)
+        or ladder.rung_for_difficulty(difficulty)
+    )
     downgraded = False
     affordable = True
     if budget is not None:

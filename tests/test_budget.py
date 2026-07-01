@@ -27,16 +27,23 @@ def test_records_spend_and_tracks_remaining():
     assert not b.can_afford(701)
 
 
-def test_exhaustion_and_fraction_used():
+def test_exhaustion_clamps_at_zero():
     b = BudgetTracker(total_tokens=1000)
     b.record(step_id="s1", model="haiku", tokens=1000)
     assert b.remaining() == 0
     assert b.exhausted()
-    assert b.fraction_used() == pytest.approx(1.0)
     # can never go negative even if an actual overshoots the estimate
     b.record(step_id="s2", model="opus", tokens=500)
     assert b.remaining() == 0
     assert b.spent() == 1500
+
+
+def test_report_remaining_is_none_when_unlimited():
+    # JSON-safe: an unlimited budget reports remaining=None, not float('inf').
+    b = BudgetTracker(total_tokens=None)
+    rep = b.report()
+    assert rep.total is None
+    assert rep.remaining is None
 
 
 def test_costs_and_by_model_breakdown():

@@ -395,6 +395,7 @@ class Daisugi:
         mcp_transport=None,
         ladder: "ModelLadder | None" = None,
         strict: bool | None = None,
+        strict_budget: bool = False,
     ) -> "OrchestrationResult":
         """Run ``prompt`` end to end: decompose → size → execute → synthesize.
 
@@ -402,8 +403,9 @@ class Daisugi:
         None one is generated for the prompt (the authorization boundary the
         decomposed plan must verify against) at the given ``stakes``. The
         orchestrator reuses this facade's pathway store (Tier-0 reuse for repeat
-        prompts) and journal, and routes each step to the cheapest capable model
-        under ``budget_tokens`` (None = unbudgeted).
+        prompts) and journal, and routes each executed step to the cheapest
+        capable model under ``budget_tokens`` (None = unbudgeted; the decompose
+        and synthesize calls are overhead, not drawn from it).
         """
         from opendaisugi.orchestrator import Orchestrator
 
@@ -424,6 +426,7 @@ class Daisugi:
             envelope=envelope,
             budget_tokens=budget_tokens,
             strict=strict if strict is not None else self._strict,
+            strict_budget=strict_budget,
         )
 
     async def find_pathway(

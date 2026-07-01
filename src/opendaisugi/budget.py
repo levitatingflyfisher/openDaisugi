@@ -36,7 +36,7 @@ class BudgetReport:
 
     total: int | None
     spent: int
-    remaining: float
+    remaining: int | None  # None when unlimited (keeps the snapshot JSON-safe)
     step_count: int
     by_model: dict[str, int]
 
@@ -76,12 +76,6 @@ class BudgetTracker:
     def exhausted(self) -> bool:
         return self.remaining() <= 0 and self.total_tokens is not None
 
-    def fraction_used(self) -> float:
-        """Spent / total in [0, ∞); 0.0 when unlimited."""
-        if not self.total_tokens:
-            return 0.0
-        return self._spent / self.total_tokens
-
     def record(self, *, step_id: str, model: str, tokens: int) -> None:
         """Add ``tokens`` to the running total, attributed to ``step_id``/``model``.
 
@@ -115,7 +109,7 @@ class BudgetTracker:
         return BudgetReport(
             total=self.total_tokens,
             spent=self._spent,
-            remaining=self.remaining(),
+            remaining=None if self.total_tokens is None else int(self.remaining()),
             step_count=len(self._costs),
             by_model=self.by_model(),
         )

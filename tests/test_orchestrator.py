@@ -161,6 +161,32 @@ async def test_budget_gates_routing_across_steps_during_run():
     non_frontier_spend = sum(v for m, v in by_model.items() if m != frontier_model)
     assert non_frontier_spend > 0
     assert result.budget.step_count == 2
+    # Reported sizings reflect what ACTUALLY ran (not the static estimate): step 2
+    # shows the downgrade, not the frontier it was planned for.
+    sizing_by_id = {s.step_id: s for s in result.sizings}
+    assert sizing_by_id["t1"].model == frontier_model
+    assert sizing_by_id["t2"].model != frontier_model
+    assert sizing_by_id["t2"].downgraded is True
+
+
+async def test_strict_budget_fails_a_step_it_cannot_afford():
+    hard = "prove this concurrency algorithm is deadlock-free and race-free under partition"
+    env = Envelope(generated_by="t", task="demo", permissions=Permission(), stakes="low")
+    orch = Orchestrator()
+    with patch("opendaisugi.delegating_executor.DelegatingExecutor._call", return_value="{}"):
+        result = await orch.orchestrate(
+            "one hard thing on a starved budget",
+            envelope=env,
+            budget_tokens=10,          # cannot afford any tier
+            strict_budget=True,        # → fail cleanly instead of overspending
+            decompose_client=_decompose_client(
+                DecomposedStep(id="t1", type="task", prompt=hard),
+            ),
+            synth_client=_synth_client("unused"),
+        )
+    # The step failed for budget reasons; nothing was spent (no LLM call made).
+    assert result.status != "succeeded"
+    assert result.budget.spent == 0
 
 
 async def test_orchestrate_rejects_out_of_policy_decomposition():

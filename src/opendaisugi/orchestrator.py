@@ -29,7 +29,8 @@ from typing import Any
 
 from opendaisugi.approval import ApprovalStrategy, CallbackStrategy
 from opendaisugi.budget import BudgetReport, BudgetTracker
-from opendaisugi.decomposer import decompose
+from opendaisugi.executor import ExecutorResult
+from opendaisugi.decomposer import _DEFAULT_MODEL as _DEFAULT_DECOMPOSE_MODEL, decompose
 from opendaisugi.delegating_executor import DelegatingExecutor
 from opendaisugi.executor import default_executors
 from opendaisugi.model_sizer import DEFAULT_LADDER, ModelLadder, StepSizing, size_plan, size_step
@@ -37,12 +38,9 @@ from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.orchestration_executors import MCPExecutor, MCPTransport, SkillExecutor, SkillHandler
 from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
 from opendaisugi.supervisor import Supervisor
-from opendaisugi.synthesizer import SynthesisResult, synthesize
+from opendaisugi.synthesizer import _DEFAULT_MODEL as _DEFAULT_SYNTH_MODEL, SynthesisResult, synthesize
 
 _log = logging.getLogger("opendaisugi.orchestrator")
-
-_DEFAULT_DECOMPOSE_MODEL = "anthropic/claude-sonnet-4-20250514"
-_DEFAULT_SYNTH_MODEL = "claude-haiku-4-5"
 
 
 class BudgetAwareDelegatingExecutor(DelegatingExecutor):
@@ -50,12 +48,19 @@ class BudgetAwareDelegatingExecutor(DelegatingExecutor):
 
     This is where the token budget is enforced *during* a run. On each step:
 
-    1. ``_resolve_model`` re-sizes the step against the tracker's *current*
-       remaining budget (not a static up-front decision) and returns the chosen,
-       possibly-downgraded, model — the routing gate.
-    2. After the call, the spend is recorded into the tracker: the backend's
-       actual ``usage`` when available, else the chosen rung's estimate, so the
-       running total always advances and later steps see the pressure.
+    1. The step is sized against the tracker's *current* remaining budget (not a
+       static up-front decision), honoring an explicit ``preferred_model`` as the
+       starting rung and downgrading it when the budget is tight — the routing gate.
+    2. If the tracker is in strict-budget mode and even the cheapest rung is
+       unaffordable, the step fails *without* an LLM call — a clean stop rather
+       than a silent overspend.
+    3. Otherwise the call runs and its spend is recorded: the backend's actual
+       ``usage`` when available, else the chosen rung's estimate, so the running
+       total advances and later steps see the pressure.
+
+    Each step's realized :class:`StepSizing` is appended to ``live_sizings`` so the
+    orchestrator can report what actually ran (including downgrades), not the
+    pre-run estimate.
     """
 
     def __init__(
@@ -68,19 +73,37 @@ class BudgetAwareDelegatingExecutor(DelegatingExecutor):
         super().__init__(**kwargs)
         self.tracker = tracker
         self.ladder = ladder
-        self._last_sizing: StepSizing | None = None
+        self._pending_sizing: StepSizing | None = None
+        self.live_sizings: list[StepSizing] = []
 
     def _resolve_model(self, step):
-        sizing = size_step(step, ladder=self.ladder, budget=self.tracker)
-        self._last_sizing = sizing
-        return sizing.model
+        # Use the sizing computed once in run(); recompute only if called stand-alone.
+        if self._pending_sizing is not None:
+            return self._pending_sizing.model
+        return size_step(
+            step, ladder=self.ladder, budget=self.tracker,
+            target_model=getattr(step, "preferred_model", None),
+        ).model
 
     def run(self, step, *, timeout_s: int, max_output_bytes: int):
+        sizing = size_step(
+            step, ladder=self.ladder, budget=self.tracker,
+            target_model=getattr(step, "preferred_model", None),
+        )
+        self._pending_sizing = sizing
+        self.live_sizings.append(sizing)
+
+        if self.tracker.strict and not sizing.affordable:
+            return ExecutorResult(
+                rc=1,
+                stdout=f"budget exhausted: cannot afford step {step.id!r} at any tier",
+                duration_ms=0.0,
+                timed_out=False,
+            )
+
         result = super().run(step, timeout_s=timeout_s, max_output_bytes=max_output_bytes)
-        tokens = self.last.tokens
-        if tokens is None:
-            tokens = self._last_sizing.est_tokens if self._last_sizing is not None else 0
-        self.tracker.record(step_id=step.id, model=self.last.model or "?", tokens=tokens)
+        tokens = self.last.tokens if self.last.tokens is not None else sizing.est_tokens
+        self.tracker.record(step_id=step.id, model=self.last.model or sizing.model, tokens=tokens)
         return result
 
 
@@ -162,6 +185,7 @@ class Orchestrator:
         envelope: Envelope,
         budget_tokens: int | None = None,
         strict: bool | None = None,
+        strict_budget: bool = False,
         decompose_client: Any | None = None,
         synth_client: Any | None = None,
         approval: ApprovalStrategy | None = None,
@@ -172,8 +196,16 @@ class Orchestrator:
         verify against it and each step is re-verified before execution. Steps
         are auto-approved by default (the verified envelope is the authorization);
         pass ``approval=`` to gate execution differently.
+
+        ``budget_tokens`` bounds the *mid-plan step routing*: each executed step is
+        sized against what remains and downgraded when tight. The decompose and
+        synthesize calls that bracket the run are orchestration overhead and are
+        not drawn from this budget. ``strict_budget=True`` makes a step whose
+        cheapest tier is still unaffordable fail cleanly instead of overspending
+        (default is graceful downgrade). ``strict`` controls *verification*
+        strictness, a separate axis.
         """
-        tracker = BudgetTracker(total_tokens=budget_tokens)
+        tracker = BudgetTracker(total_tokens=budget_tokens, strict=strict_budget)
 
         plan, run_envelope, reused = await self._maybe_reuse(prompt, envelope)
         if not reused:
@@ -187,16 +219,17 @@ class Orchestrator:
             )
             run_envelope = envelope
 
-        # Static, up-front sizing — records the plan's shape and sets the initial
-        # model hint on delegated (task) steps. Live gating happens in the
-        # budget-aware executor at run time.
-        sizings = size_plan(plan, ladder=self.ladder, budget=tracker)
-        _apply_preferred_models(plan, sizings)
+        # Static, budget-free sizing = the capability plan (difficulty → cheapest
+        # capable model). It sets each task step's preferred_model. The live,
+        # budget-gated routing happens in the executor and is reported back below.
+        planned = size_plan(plan, ladder=self.ladder)
+        _apply_preferred_models(plan, planned)
 
-        executors = default_executors()
-        executors["task"] = BudgetAwareDelegatingExecutor(
+        task_executor = BudgetAwareDelegatingExecutor(
             tracker=tracker, ladder=self.ladder, backend=self.backend,
         )
+        executors = default_executors()
+        executors["task"] = task_executor
         executors["skill"] = SkillExecutor(handlers=self.skill_handlers)
         executors["mcp"] = MCPExecutor(transport=self.mcp_transport)
 
@@ -208,6 +241,11 @@ class Orchestrator:
             strict=strict,
         )
         session = await supervisor.run(plan, run_envelope)
+
+        # Report what actually ran: overlay each task step's realized sizing
+        # (incl. any budget downgrade) over the capability plan.
+        realized = {s.step_id: s for s in task_executor.live_sizings}
+        sizings = [realized.get(s.step_id, s) for s in planned]
 
         # If the budget is spent, synthesize deterministically rather than
         # spending tokens we don't have on assembly.
