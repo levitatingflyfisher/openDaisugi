@@ -147,6 +147,12 @@ class DelegatingExecutor:
     def _call_claude_code_sync(
         self, model: str, prompt: str, *, timeout_s: int,
     ) -> str:
+        # Honor json_mode on the claude-code backend too: a prose TaskStep
+        # (json_mode=False) must get raw text, not be forced through JSON
+        # extraction — which raises on a prose answer and fails the step.
+        if not self.json_mode:
+            from opendaisugi.claude_code_llm import call_claude_p_sync
+            return call_claude_p_sync(prompt, timeout_s=float(timeout_s), model=model)
         from opendaisugi.claude_code_llm import call_claude_p_json_sync
         body = call_claude_p_json_sync(prompt, timeout_s=float(timeout_s), model=model)
         return json.dumps(body)

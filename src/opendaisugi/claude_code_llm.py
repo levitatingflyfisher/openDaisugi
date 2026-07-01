@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import subprocess
+import tempfile
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -24,6 +25,21 @@ from opendaisugi.exceptions import EnvelopeGenerationError
 _log = logging.getLogger("opendaisugi.claude_code_llm")
 T = TypeVar("T", bound=BaseModel)
 
+# ``claude -p`` auto-loads project context (CLAUDE.md, .git) from its working
+# directory and ancestors. When openDaisugi uses claude as a *pure LLM* (envelope
+# generation, task execution, synthesis) that context is contamination — a task
+# like "design a drone protocol" gets refused as "out of context with your
+# openDaisugi working directory". Run every claude -p subprocess in a fresh,
+# empty directory so no CLAUDE.md is ever in scope. Created lazily, once.
+_NEUTRAL_CWD: str | None = None
+
+
+def _neutral_cwd() -> str:
+    global _NEUTRAL_CWD
+    if _NEUTRAL_CWD is None:
+        _NEUTRAL_CWD = tempfile.mkdtemp(prefix="opendaisugi-claude-")
+    return _NEUTRAL_CWD
+
 
 async def call_claude_p_async(
     prompt: str,
@@ -32,8 +48,14 @@ async def call_claude_p_async(
     model: str | None = "haiku",
     binary: str = "claude",
     extra_args: tuple[str, ...] = (),
+    cwd: str | None = None,
 ) -> str:
-    """Call ``claude -p <prompt>`` asynchronously; return stdout stripped."""
+    """Call ``claude -p <prompt>`` asynchronously; return stdout stripped.
+
+    Runs in a neutral working directory by default (``cwd=None``) so project
+    context (CLAUDE.md/.git) never leaks into the LLM call; pass an explicit
+    ``cwd`` to override.
+    """
     args = [binary, "-p", prompt]
     if model is not None:
         args.extend(["--model", model])
@@ -44,6 +66,7 @@ async def call_claude_p_async(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=cwd if cwd is not None else _neutral_cwd(),
         )
     except FileNotFoundError as exc:
         raise EnvelopeGenerationError(
@@ -83,8 +106,13 @@ def call_claude_p_sync(
     model: str | None = "haiku",
     binary: str = "claude",
     extra_args: tuple[str, ...] = (),
+    cwd: str | None = None,
 ) -> str:
-    """Synchronous variant of :func:`call_claude_p_async`."""
+    """Synchronous variant of :func:`call_claude_p_async`.
+
+    Runs in a neutral working directory by default so project context never
+    leaks into the LLM call; pass an explicit ``cwd`` to override.
+    """
     args = [binary, "-p", prompt]
     if model is not None:
         args.extend(["--model", model])
@@ -97,6 +125,7 @@ def call_claude_p_sync(
             text=True,
             timeout=timeout_s,
             check=False,
+            cwd=cwd if cwd is not None else _neutral_cwd(),
         )
     except FileNotFoundError as exc:
         raise EnvelopeGenerationError(

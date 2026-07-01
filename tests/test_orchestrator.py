@@ -204,3 +204,26 @@ async def test_orchestrate_rejects_out_of_policy_decomposition():
         assert False, "expected DecompositionError for out-of-policy plan"
     except DecompositionError:
         pass
+
+
+async def test_orchestrator_threads_generous_step_timeout_to_supervisor():
+    # LLM task steps need a longer timeout than the shell-oriented 30s default.
+    import opendaisugi.orchestrator as orch_mod
+    captured = {}
+    real_supervisor = orch_mod.Supervisor
+
+    class _CapSupervisor(real_supervisor):
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            super().__init__(**kwargs)
+
+    orch = Orchestrator(step_timeout_s=180)
+    import unittest.mock as m
+    with m.patch.object(orch_mod, "Supervisor", _CapSupervisor):
+        await orch.orchestrate(
+            "print a word",
+            envelope=_echo_envelope(),
+            decompose_client=_decompose_client(DecomposedStep(id="s1", type="shell", command="echo hi")),
+            synth_client=_synth_client("ok"),
+        )
+    assert captured["step_timeout_s"] == 180

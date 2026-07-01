@@ -167,8 +167,12 @@ class Orchestrator:
         z3_timeout_ms: int = 500,
         pathway_threshold: float = DEFAULT_PATHWAY_THRESHOLD,
         endpoint_overrides: "dict[str, dict[str, Any]] | None" = None,
+        step_timeout_s: int = 180,
     ) -> None:
         self.ladder = ladder
+        # LLM-backed task steps need far longer than the shell-oriented 30s
+        # Supervisor default — a frontier model can take a minute-plus per step.
+        self.step_timeout_s = step_timeout_s
         self.skill_handlers = dict(skill_handlers or {})
         self.mcp_transport = mcp_transport
         self.pathway_store = pathway_store
@@ -268,6 +272,7 @@ class Orchestrator:
             approval=approval or CallbackStrategy(lambda step, env: True),
             journal=self.journal,
             z3_timeout_ms=self.z3_timeout_ms,
+            step_timeout_s=self.step_timeout_s,
             strict=strict,
         )
         session = await supervisor.run(plan, run_envelope)
