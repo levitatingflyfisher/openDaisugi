@@ -153,6 +153,35 @@ grants. `tier1` is the local model (free-ish tokens) the subagent reasons with;
 SafeSubagent is the runtime safety gate. See `examples/safe-local-subagent/`.
 This is plan-level runtime assurance, not an OS sandbox.
 
+### Run a whole prompt end to end — the Orchestrator (v0.32.0+)
+
+`tend()` looks backward (traces → distilled skills). The **Orchestrator** looks
+forward: one prompt → a verified typed-step DAG → each step routed to the cheapest
+capable model under a token budget → a synthesized final answer. Repeat prompts
+reuse a distilled pathway.
+
+```python
+from opendaisugi import Daisugi
+
+dai = Daisugi()
+result = await dai.orchestrate(
+    "summarize the open PRs and draft a standup note",
+    budget_tokens=20_000,          # gates routing DURING the run, not after
+)
+print(result.final_answer)
+for s in result.sizings:           # per-step: difficulty → model
+    print(s.step_id, s.difficulty, s.tier, s.model)
+print(result.budget.spent, "tokens")
+```
+
+Or from the CLI: `daisugi orchestrate "…" --budget 20000`. The decomposed plan is
+verified against an envelope before it runs and each step is re-verified at
+execution time — the orchestrator adds routing and assembly *on top of* the
+assurance guarantees. Pieces are composable too: `decompose()`, `size_plan()`,
+`BudgetTracker`, `synthesize()`. New step types `TaskStep` / `SkillStep` /
+`MCPStep` each carry a real verify surface (skills prove subsumption; MCP tools
+gate against a deny-by-default `mcp_allowlist`).
+
 ---
 
 ## The 30-second demo
@@ -417,6 +446,12 @@ Concrete scenarios where runtime assurance earns its keep:
 ```bash
 # Generate an envelope.
 daisugi generate-envelope "Read /data/sales.csv and print the row count"
+
+# Run a whole prompt end to end (decompose → size → execute → synthesize).
+daisugi orchestrate "summarize the sales csv and draft a one-line takeaway" --budget 20000
+
+# Recommend the cheapest viable model/tier for a task.
+daisugi route "refactor the auth module"
 
 # Verify a plan against an envelope.
 daisugi verify plan.yaml --envelope envelope.yaml
