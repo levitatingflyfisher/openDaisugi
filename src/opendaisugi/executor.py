@@ -48,6 +48,18 @@ class ExecutorResult:
     timed_out: bool
 
 
+def truncate_output(text: str, max_output_bytes: int) -> str:
+    """Cap ``text`` at ``max_output_bytes`` UTF-8 bytes with a truncation marker.
+
+    Encodes once. Returns ``text`` unchanged when it already fits. Shared by the
+    step-type executors so the truncation idiom lives in one place.
+    """
+    encoded = text.encode()
+    if len(encoded) <= max_output_bytes:
+        return text
+    return encoded[:max_output_bytes].decode(errors="replace") + "\n... [truncated]"
+
+
 @runtime_checkable
 class StepExecutor(Protocol):
     def run(

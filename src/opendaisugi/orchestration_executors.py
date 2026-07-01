@@ -23,7 +23,7 @@ import json
 import time
 from typing import Any, Callable, Protocol, runtime_checkable
 
-from opendaisugi.executor import ExecutorResult
+from opendaisugi.executor import ExecutorResult, truncate_output
 from opendaisugi.models import MCPStep, SkillStep
 
 SkillHandler = Callable[[SkillStep], str]
@@ -70,10 +70,9 @@ class SkillExecutor:
                 timed_out=False,
             )
         text = out if isinstance(out, str) else json.dumps(out, default=str)
-        if len(text.encode()) > max_output_bytes:
-            text = text.encode()[:max_output_bytes].decode(errors="replace") + "\n... [truncated]"
         return ExecutorResult(
-            rc=0, stdout=text, duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+            rc=0, stdout=truncate_output(text, max_output_bytes),
+            duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
         )
 
 
@@ -109,10 +108,9 @@ class MCPExecutor:
                 timed_out=False,
             )
         text = json.dumps(result, default=str)
-        if len(text.encode()) > max_output_bytes:
-            text = text.encode()[:max_output_bytes].decode(errors="replace") + "\n... [truncated]"
         return ExecutorResult(
-            rc=0, stdout=text, duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+            rc=0, stdout=truncate_output(text, max_output_bytes),
+            duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
         )
 
 

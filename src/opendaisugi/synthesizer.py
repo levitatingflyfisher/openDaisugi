@@ -23,10 +23,13 @@ from typing import Any
 from pydantic import BaseModel
 
 from opendaisugi import llm as _llm
+from opendaisugi.routing import _DEFAULT_CHEAP_MODEL
 
 _log = logging.getLogger("opendaisugi.synthesizer")
 
-_DEFAULT_MODEL = "claude-haiku-4-5"
+# Synthesis is assembly, not reasoning — the cheap tier is the right default.
+# Single source of truth for the cheap model id lives in routing.
+_DEFAULT_MODEL = _DEFAULT_CHEAP_MODEL
 
 SYNTHESIZER_SYSTEM_PROMPT = """\
 You are a synthesizer. You are given the user's original request and the outputs

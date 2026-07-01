@@ -367,7 +367,11 @@ def check_skill_delegations(
     skill_steps = [s for s in plan.steps if getattr(s, "type", None) == "skill"]
     if not skill_steps:
         return []
-    from opendaisugi.subsumption import envelope_subsumes  # local: avoid import cycle
+    # Local imports avoid the contracts.py↔models.py↔verify.py cycle. A SkillStep
+    # IS a delegation, so its non-opaque check is exactly verify_delegation — reuse
+    # it rather than re-deriving subsumption + counterexample formatting (and get
+    # its signature / unverified-invariant handling for free).
+    from opendaisugi.contracts import Contract, verify_delegation
 
     violations: list[Violation] = []
     for step in skill_steps:
@@ -390,27 +394,28 @@ def check_skill_delegations(
             elif warnings_out is not None:
                 warnings_out.append(msg + " (allowed under lenient mode)")
             continue
-        sub = envelope_subsumes(
-            envelope, contract_env, timeout_ms=timeout_ms, strict=strict
+        contract = Contract(
+            contract_id=f"skillstep:{step.id}",
+            skill_id=step.skill_id,
+            envelope=contract_env,
         )
-        if not sub.holds:
-            if sub.counterexample is not None:
-                why = (
-                    f"skill admits {sub.counterexample.step.command!r} but caller "
-                    f"rejects via {sub.counterexample.outer_violation}"
-                )
-            elif sub.reasons:
-                why = "; ".join(sub.reasons)
-            else:
-                why = "no counterexample produced"
+        decision = verify_delegation(
+            envelope, contract, strict=strict, timeout_ms=timeout_ms
+        )
+        if not decision.allowed:
             violations.append(Violation(
                 stage="delegation",
                 message=(
-                    f"Step '{step.id}' skill '{step.skill_id}' contract is not "
-                    f"subsumed by the caller's envelope: {why}"
+                    f"Step '{step.id}' skill '{step.skill_id}' delegation refused: "
+                    f"{decision.reason}"
                 ),
                 detail={"step": step.id, "skill_id": step.skill_id, "reason": "not_subsumed"},
             ))
+        elif decision.unverified_invariants and warnings_out is not None:
+            warnings_out.append(
+                f"Step '{step.id}' skill '{step.skill_id}' has unverified invariants: "
+                f"{sorted(decision.unverified_invariants)}"
+            )
     return violations
 
 
