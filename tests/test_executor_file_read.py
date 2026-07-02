@@ -51,3 +51,29 @@ def test_rejects_non_file_read_step():
     step = ShellStep(id="s", command="echo hi")
     with pytest.raises(TypeError):
         FileReadExecutor().run(step, timeout_s=5, max_output_bytes=1024)
+
+
+# --------------------- symlink-escape guard (SGCM review EB-2) ---------------------
+
+def _env_read(globs):
+    from opendaisugi.models import Envelope, Permission
+    return Envelope(generated_by="t", task="x", permissions=Permission(file_read=globs))
+
+
+def test_file_read_rejects_inner_symlink_escape(tmp_path):
+    import os
+    from opendaisugi.executor import FileReadExecutor
+    from opendaisugi.models import FileReadStep
+    allowed = tmp_path / "allowed"; allowed.mkdir()
+    secret = tmp_path / "secret.txt"; secret.write_text("TOP SECRET")
+    (allowed / "link").symlink_to(secret)  # symlink INSIDE allowed → outside
+    (allowed / "real.txt").write_text("legit")
+
+    exe = FileReadExecutor()
+    exe.configure_from_envelope(_env_read([str(allowed) + "/**"]))
+    # escape via the inner symlink is refused
+    r = exe.run(FileReadStep(id="s", path=str(allowed / "link")), timeout_s=2, max_output_bytes=1024)
+    assert r.rc == 2 and "TOP SECRET" not in r.stdout
+    # a legit in-tree read still works
+    ok = exe.run(FileReadStep(id="s", path=str(allowed / "real.txt")), timeout_s=2, max_output_bytes=1024)
+    assert ok.rc == 0 and "legit" in ok.stdout

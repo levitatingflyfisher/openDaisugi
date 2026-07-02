@@ -80,3 +80,29 @@ def test_oserror_returns_rc1(tmp_path):
         assert result.stdout  # carries some error message
     finally:
         os.chmod(parent, 0o700)
+
+
+# --------------------- symlink-escape guard (SGCM review EB-2) ---------------------
+
+def _env_write(globs):
+    from opendaisugi.models import Envelope, Permission
+    return Envelope(generated_by="t", task="x", permissions=Permission(file_write=globs))
+
+
+def test_file_write_rejects_ancestor_symlink_escape(tmp_path):
+    from opendaisugi.executor import FileWriteExecutor
+    from opendaisugi.models import FileWriteStep
+    allowed = tmp_path / "allowed"; allowed.mkdir()
+    outside = tmp_path / "outside"; outside.mkdir()
+    (allowed / "sub").symlink_to(outside)  # symlink inside allowed → outside tree
+
+    exe = FileWriteExecutor()
+    exe.configure_from_envelope(_env_write([str(allowed) + "/**"]))
+    r = exe.run(FileWriteStep(id="s", path=str(allowed / "sub" / "x.txt"), content="pwned"),
+                timeout_s=2, max_output_bytes=1024)
+    assert r.rc == 2
+    assert not (outside / "x.txt").exists()  # write did NOT escape
+    # legit in-tree write still works
+    ok = exe.run(FileWriteStep(id="s", path=str(allowed / "y.txt"), content="fine"),
+                 timeout_s=2, max_output_bytes=1024)
+    assert ok.rc == 0 and (allowed / "y.txt").read_text() == "fine"

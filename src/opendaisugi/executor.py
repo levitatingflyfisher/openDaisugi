@@ -158,8 +158,45 @@ class FakeExecutor:
         raise KeyError(f"FakeExecutor has no result for key {key!r}")
 
 
+def _glob_base(glob: str) -> str:
+    """The concrete directory prefix of a permission glob (before any wildcard)."""
+    positions = [glob.find(c) for c in "*?[" if glob.find(c) != -1]
+    if not positions:
+        return glob  # exact path, no wildcard
+    prefix = glob[: min(positions)]
+    base = prefix.rsplit("/", 1)[0]
+    return base or "/"
+
+
+def _resolved_path_escape(target: str, globs: list[str]) -> str | None:
+    """Reason if ``target``'s realpath is NOT within any permitted glob's resolved
+    base (a symlink escape), else None.
+
+    The runtime companion to verify's lexical glob check: verify is I/O-free and
+    can't resolve symlinks, so ``/allowed/link -> /etc/passwd`` passes the lexical
+    check; here (with filesystem access) we resolve the target and confirm it stays
+    under a permitted base. A permitted base that is itself a symlink resolves too,
+    so legitimately-symlinked permitted dirs (e.g. /var/log) are not false-rejected.
+    """
+    target_real = os.path.realpath(target)
+    for g in globs:
+        base_real = os.path.realpath(_glob_base(g))
+        if target_real == base_real or target_real.startswith(base_real + os.sep):
+            return None
+    return (f"resolved path {target_real!r} is outside permitted globs {globs} "
+            f"(symlink escape)")
+
+
 class FileReadExecutor:
     """Reads ``step.path`` in chunks, truncating at ``max_output_bytes``."""
+
+    def __init__(self) -> None:
+        self._allowed_globs: list[str] | None = None
+
+    def configure_from_envelope(self, envelope) -> None:
+        """Capture the envelope's file_read globs so run() can re-check the
+        *resolved* target path against them (symlink-escape defense)."""
+        self._allowed_globs = list(envelope.permissions.file_read)
 
     def run(
         self,
@@ -173,6 +210,13 @@ class FileReadExecutor:
                 f"FileReadExecutor cannot run step of type {type(step).__name__}"
             )
         start = time.monotonic()
+        if self._allowed_globs is not None:
+            escape = _resolved_path_escape(step.path, self._allowed_globs)
+            if escape is not None:
+                return ExecutorResult(
+                    rc=2, stdout=f"file_read refused: {escape}",
+                    duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+                )
         try:
             with open(step.path, "rb") as f:
                 buf = bytearray()
@@ -207,7 +251,17 @@ class FileWriteExecutor:
     resolve the final path's realpath and verify it still lives under the
     parent's realpath — defense-in-depth against symlink swaps in the
     parent dir after verify's glob check.
+
+    When configured with the envelope (via configure_from_envelope), it also
+    re-checks the *resolved* target path against the permitted file_write globs,
+    catching ancestor-symlink escapes verify's lexical check can't see.
     """
+
+    def __init__(self) -> None:
+        self._allowed_globs: list[str] | None = None
+
+    def configure_from_envelope(self, envelope) -> None:
+        self._allowed_globs = list(envelope.permissions.file_write)
 
     def run(
         self,
@@ -221,6 +275,13 @@ class FileWriteExecutor:
                 f"FileWriteExecutor cannot run step of type {type(step).__name__}"
             )
         start = time.monotonic()
+        if self._allowed_globs is not None:
+            escape = _resolved_path_escape(step.path, self._allowed_globs)
+            if escape is not None:
+                return ExecutorResult(
+                    rc=2, stdout=f"file_write refused: {escape}",
+                    duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+                )
         parent = os.path.dirname(step.path) or "."
         tmp_path = ""
         try:
