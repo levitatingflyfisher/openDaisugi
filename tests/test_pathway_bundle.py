@@ -121,3 +121,18 @@ def test_signing_requires_both_keys_or_neither():
     p = _pathway()
     with pytest.raises(ValueError, match="public_key_b64"):
         pathway_to_bundle(p, publisher="alice", private_key_b64="abc")
+
+
+def test_signed_bundle_rejected_without_trusted_set():
+    # M4: a signed bundle with no trusted_pubkey_b64s must be REJECTED — verifying
+    # against its own embedded key proves nothing (any attacker key self-verifies).
+    pytest.importorskip("cryptography")
+    from opendaisugi.signing import generate_keypair
+    priv, pub = generate_keypair()
+    p = _pathway()
+    b = pathway_to_bundle(p, publisher="evil@home", private_key_b64=priv, public_key_b64=pub)
+    assert b.signature_b64 is not None
+    with pytest.raises(UntrustedSignerError):
+        bundle_to_pathway(b)  # trusted_pubkey_b64s=None default
+    # with the real key trusted, it verifies
+    assert bundle_to_pathway(b, trusted_pubkey_b64s={pub}).id == p.id
