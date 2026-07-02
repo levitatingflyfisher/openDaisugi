@@ -63,6 +63,30 @@ def _build_claude_args(
     return args
 
 
+async def _terminate_and_reap(proc) -> None:
+    """SIGTERM the subprocess and AWAIT its exit so it doesn't linger as a zombie.
+
+    ``proc.terminate()`` alone leaves the child unreaped (and the transport open)
+    until GC — under load-timeouts these accumulate. Escalate to kill if TERM is
+    slow, then await so the OS reaps it.
+    """
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=2.0)
+    except (asyncio.TimeoutError, Exception):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+
+
 async def call_claude_p_async(
     prompt: str,
     *,
@@ -98,16 +122,10 @@ async def call_claude_p_async(
             proc.communicate(), timeout=timeout_s,
         )
     except asyncio.TimeoutError:
-        try:
-            proc.terminate()
-        except ProcessLookupError:
-            pass
+        await _terminate_and_reap(proc)
         raise
     except BaseException:
-        try:
-            proc.terminate()
-        except ProcessLookupError:
-            pass
+        await _terminate_and_reap(proc)
         raise
 
     if proc.returncode != 0:
