@@ -302,3 +302,15 @@ def test_redirect_and_newline_metachars_rejected(command):
     violations = check_permissions(plan, env)
     assert len(violations) == 1
     assert "metacharacter" in violations[0].message
+
+
+def test_verify_rejects_non_http_network_scheme():
+    from opendaisugi.models import Envelope, Permission, NetworkStep, ActionPlan
+    from opendaisugi.verify import verify
+    env = Envelope(generated_by="t", task="x", permissions=Permission(network=True, network_hosts=[]))
+    for url in ["file:///etc/passwd", "ftp://evil.com/x", "data:text/plain,x"]:
+        p = ActionPlan(source="t", task="x", steps=[NetworkStep(id="s", url=url)])
+        assert not verify(p, env).ok, url
+    # a normal http(s) URL still verifies
+    ok = ActionPlan(source="t", task="x", steps=[NetworkStep(id="s", url="https://api.example.com/data")])
+    assert verify(ok, env).ok

@@ -26,6 +26,7 @@ import socket
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -316,7 +317,27 @@ class NetworkExecutor:
                 f"NetworkExecutor cannot run step of type {type(step).__name__}"
             )
         start = time.monotonic()
-        opener = urllib.request.build_opener(_NoRedirect)
+        # Defense in depth (verify already gates this): urllib's default opener
+        # honors file://, ftp://, data: — refuse anything but http(s) so a
+        # NetworkStep can never read a local file or reach a non-network scheme.
+        scheme = urllib.parse.urlparse(step.url).scheme.lower()
+        if scheme not in ("http", "https"):
+            return ExecutorResult(
+                rc=2,
+                stdout=f"refused non-http(s) URL scheme {scheme!r}: {step.url}",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+                timed_out=False,
+            )
+        # Build an opener with ONLY http/https handlers — never File/FTP/Data.
+        opener = urllib.request.OpenerDirector()
+        for handler in (
+            urllib.request.HTTPHandler(),
+            urllib.request.HTTPSHandler(),
+            urllib.request.HTTPDefaultErrorHandler(),
+            urllib.request.HTTPErrorProcessor(),
+            _NoRedirect(),
+        ):
+            opener.add_handler(handler)
         req = urllib.request.Request(
             step.url, headers=step.headers, method="GET",
         )

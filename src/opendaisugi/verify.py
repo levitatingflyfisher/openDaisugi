@@ -280,7 +280,24 @@ def check_permissions(plan: ActionPlan, envelope: Envelope) -> list[Violation]:
                             detail={"step": step.id},
                         )
                     )
-                elif perms.network_hosts:
+                    continue
+                # Scheme allowlist — urllib honors file://, ftp://, data: too, so
+                # a NetworkStep(url='file:///etc/passwd') would read a local file,
+                # bypassing file_read permissions. Only http(s) is a network fetch.
+                scheme = (urlparse(step.url).scheme or "").lower()
+                if scheme not in ("http", "https"):
+                    violations.append(
+                        Violation(
+                            stage="permissions",
+                            message=(
+                                f"Step '{step.id}' network URL scheme '{scheme}' not allowed "
+                                f"(only http/https); got {step.url!r}"
+                            ),
+                            detail={"step": step.id, "scheme": scheme, "url": step.url},
+                        )
+                    )
+                    continue
+                if perms.network_hosts:
                     host = urlparse(step.url).hostname or ""
                     if host not in {h.lower() for h in perms.network_hosts}:
                         violations.append(

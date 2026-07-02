@@ -149,3 +149,17 @@ def test_url_error_returns_rc2():
 
     assert result.rc == 2
     assert result.timed_out is False
+
+
+# --------------------- URL scheme guard (SGCM review EB-1) ---------------------
+
+def test_network_executor_refuses_non_http_schemes(tmp_path):
+    from opendaisugi.executor import NetworkExecutor
+    from opendaisugi.models import NetworkStep
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP SECRET")
+    exe = NetworkExecutor()
+    for url in [f"file://{secret}", "ftp://example.com/x", "data:text/plain,hi"]:
+        r = exe.run(NetworkStep(id="s", url=url), timeout_s=2, max_output_bytes=1024)
+        assert r.rc != 0
+        assert "TOP SECRET" not in r.stdout
