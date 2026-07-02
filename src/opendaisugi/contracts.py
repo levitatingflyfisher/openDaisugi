@@ -153,6 +153,16 @@ def verify_delegation(
             reasons.append("signature present but no trusted_signers supplied to verify against")
         else:
             reasons.append("signature present but does not verify under any trusted signer")
+    elif sig_valid is None and trusted_signers:
+        # Supplying trusted_signers means "only run signed skills from these
+        # signers". An UNSIGNED contract must then be denied — otherwise an
+        # attacker's unsigned-but-subsumed contract silently bypasses the gate
+        # (subsumption caps authority, but provenance is unenforced).
+        allowed = False
+        reasons.append(
+            "contract is unsigned but trusted_signers was supplied "
+            "(provenance required — reject unsigned skills)"
+        )
     if sub.unverified_invariants:
         reasons.append(
             f"unverified invariants (no predicate expr): "

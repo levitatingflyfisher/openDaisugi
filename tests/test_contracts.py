@@ -80,3 +80,19 @@ def test_unsigned_contract_signature_valid_is_none():
     skill = _contract("echo", ["echo"])
     d = verify_delegation(caller, skill)
     assert d.signature_valid is None
+
+
+def test_unsigned_contract_denied_when_trusted_signers_supplied():
+    # M2: supplying trusted_signers means "only signed skills from these signers".
+    # An unsigned contract (even if subsumed) must be denied — provenance required.
+    from opendaisugi.models import Envelope, Permission
+    from opendaisugi.contracts import Contract, verify_delegation
+    env = Envelope(generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"]))
+    contract = Contract(contract_id="c", skill_id="s", envelope=env)  # unsigned
+    caller = Envelope(generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"]))
+    # No trusted_signers → unsigned is allowed (caller opted not to require signing)
+    assert verify_delegation(caller, contract).allowed
+    # trusted_signers supplied → unsigned is DENIED
+    d = verify_delegation(caller, contract, trusted_signers=["alice"])
+    assert not d.allowed
+    assert "unsigned" in d.reason.lower()
