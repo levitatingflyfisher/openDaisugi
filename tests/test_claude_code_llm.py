@@ -197,3 +197,40 @@ async def test_instructor_shim_without_response_model_returns_text():
             messages=[{"role": "user", "content": "say hi"}],
         )
     assert result == "freeform text"
+
+
+# --------------------- arg-injection + stdin guards (SGCM review) ---------------------
+
+def test_sync_model_and_prompt_cannot_inject_flags(monkeypatch):
+    import subprocess as _sp
+    from opendaisugi.claude_code_llm import call_claude_p_sync
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured["stdin"] = kwargs.get("stdin")
+        return _sp.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    # A malicious model/prompt starting with '-' must NOT become a claude flag.
+    call_claude_p_sync("--dangerously-skip-permissions", model="--output-format", timeout_s=1)
+    args = captured["args"]
+    # model bound with '=' form (value can't be reparsed as a flag)
+    assert "--model=--output-format" in args
+    assert "--output-format" not in args  # never a bare token
+    # prompt placed after a '--' separator (parser treats it as positional, not a flag)
+    assert "--" in args
+    assert args.index("--") < args.index("--dangerously-skip-permissions")
+    # stdin closed so claude -p doesn't block waiting for piped input
+    assert captured["stdin"] is _sp.DEVNULL
+
+
+def test_sync_prompt_after_separator(monkeypatch):
+    import subprocess as _sp
+    from opendaisugi.claude_code_llm import call_claude_p_sync
+    captured = {}
+    monkeypatch.setattr("subprocess.run",
+                        lambda args, **k: captured.update(args=args) or _sp.CompletedProcess(args, 0, stdout="x", stderr=""))
+    call_claude_p_sync("hello", model=None, timeout_s=1)
+    args = captured["args"]
+    assert args[-2:] == ["--", "hello"]  # prompt is the final positional

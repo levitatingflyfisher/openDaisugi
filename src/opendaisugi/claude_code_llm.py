@@ -41,6 +41,28 @@ def _neutral_cwd() -> str:
     return _NEUTRAL_CWD
 
 
+def _build_claude_args(
+    binary: str, prompt: str, model: str | None, extra_args: tuple[str, ...]
+) -> list[str]:
+    """Build an injection-safe ``claude -p`` argv.
+
+    The ``prompt`` and ``model`` can be LLM-authored (a decomposed TaskStep's text,
+    a plan's ``preferred_model``), so a value starting with ``-`` must NOT be
+    reparsable as a claude CLI flag (e.g. ``--dangerously-skip-permissions``):
+    - ``model`` is bound with the ``--model=<value>`` form (the value can't become
+      a separate flag);
+    - the ``prompt`` positional is placed after a ``--`` end-of-options separator,
+      so the parser always treats it as the query, never a flag.
+    """
+    args = [binary, "-p"]
+    if model is not None:
+        args.append(f"--model={model}")
+    args.extend(extra_args)
+    args.append("--")
+    args.append(prompt)
+    return args
+
+
 async def call_claude_p_async(
     prompt: str,
     *,
@@ -56,16 +78,14 @@ async def call_claude_p_async(
     context (CLAUDE.md/.git) never leaks into the LLM call; pass an explicit
     ``cwd`` to override.
     """
-    args = [binary, "-p", prompt]
-    if model is not None:
-        args.extend(["--model", model])
-    args.extend(extra_args)
+    args = _build_claude_args(binary, prompt, model, extra_args)
 
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL,
             cwd=cwd if cwd is not None else _neutral_cwd(),
         )
     except FileNotFoundError as exc:
@@ -113,10 +133,7 @@ def call_claude_p_sync(
     Runs in a neutral working directory by default so project context never
     leaks into the LLM call; pass an explicit ``cwd`` to override.
     """
-    args = [binary, "-p", prompt]
-    if model is not None:
-        args.extend(["--model", model])
-    args.extend(extra_args)
+    args = _build_claude_args(binary, prompt, model, extra_args)
 
     try:
         result = subprocess.run(
@@ -125,6 +142,7 @@ def call_claude_p_sync(
             text=True,
             timeout=timeout_s,
             check=False,
+            stdin=subprocess.DEVNULL,
             cwd=cwd if cwd is not None else _neutral_cwd(),
         )
     except FileNotFoundError as exc:
