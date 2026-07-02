@@ -20,6 +20,25 @@ fail-closed (`satisfied=False`); its `errored` flag is telemetry only.
 
 ## v0.34.0 — 2026-07-02 — Security hardening (SGCM multi-agent review)
 
+**Upgrading from 0.33.x — some fixes are intentionally fail-closed and change
+behavior.** If a previously-working flow starts rejecting after upgrade, this is
+why (and each is the correct, safer default):
+- **Shared git registries** (`GitPathwayStore`): the trust anchor is no longer the
+  in-repo `trusted-signers.json` (it was remotely controlled). Configure a LOCAL,
+  out-of-band anchor — pass `trusted_signers_path=…` (or drop a JSON file next to
+  the cache). Until you do, signed pulls reject with a warning. This is the most
+  likely upgrade surprise.
+- **Live MCP `run_plan(dry_run=False)`** no longer auto-approves; set
+  `DAISUGI_APPROVE=always` (or an allowlist) to opt into live execution. Dry-run is
+  unchanged.
+- **Signed pathway bundles** (`bundle_to_pathway`) now require a `trusted_pubkey_b64s`
+  anchor — a signed bundle with `None` is rejected (it was verified against its own
+  embedded key). Unsigned dev round-trips (`require_signed=False`) are unchanged.
+- **Delegation contracts**: an unsigned contract is denied when `trusted_signers` is
+  supplied.
+- **Strict mode / physical stakes** are stricter: unknown custom `@step_type`s and
+  robotics invariants declared without their backing bounds now fail closed.
+
 A whole-codebase adversarial review (7 parallel review agents + independent
 verification of every finding) closed a set of fail-opens and exploitable holes.
 All findings were reproduced before fixing and are covered by regression tests.
