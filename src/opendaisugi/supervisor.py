@@ -387,8 +387,17 @@ class Supervisor:
         if session.status == RunStatus.SUCCEEDED:
             expected = {s.id for s in plan.steps}
         elif session.status == RunStatus.FAILED and session.failed_step_id is not None:
+            # Expected receipts = the EXECUTION-order prefix up to the failing step.
+            # Steps execute in topological order, not declaration order — iterating
+            # plan.steps here raised spurious integrity failures (a step that ran
+            # after the failure in topo order but appears earlier in the list) and
+            # could mask a genuine skip. Use the same order the supervisor ran.
             expected = set()
-            for s in plan.steps:
+            try:
+                ordered = topological_order(plan)
+            except ValueError:
+                ordered = plan.steps  # cyclic plan shouldn't reach here; be safe
+            for s in ordered:
                 expected.add(s.id)
                 if s.id == session.failed_step_id:
                     break
