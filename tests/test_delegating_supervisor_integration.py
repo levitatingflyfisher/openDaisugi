@@ -53,3 +53,4 @@ async def test_supervisor_leaves_model_id_none_for_non_delegating_executor(tmp_p
     receipts = j.receipts_for_run(session.id)
     assert len(receipts) == 1
     assert receipts[0].model_id is None
+

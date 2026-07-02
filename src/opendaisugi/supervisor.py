@@ -193,6 +193,32 @@ class Supervisor:
                                 error=None,
                             ))
                             step = record.recomputed_step
+                            # The recomputed replacement is LLM-authored and must
+                            # pass the same per-step gate as any other step before
+                            # it can reach the executor — RecomputeHandler verified a
+                            # bare singleton without the supervisor's strict setting.
+                            # If the replacement is itself out of policy, halt (don't
+                            # execute it, and don't loop into another recompute).
+                            recheck = verify_step(
+                                step.model_copy(update={"depends_on": []}),
+                                envelope, z3_timeout_ms=self._z3_timeout_ms,
+                            )
+                            if not recheck.ok:
+                                _log.warning(
+                                    "run.recomputed_step_rejected",
+                                    extra={"run_id": run_id, "step_id": step.id,
+                                           "violations": len(recheck.violations)},
+                                )
+                                session.steps.append(StepOutcome(
+                                    step_id=step.id, status="rejected_halted",
+                                    approved_by=None, rc=None, stdout="",
+                                    duration_ms=0.0, started_at=_now_iso(),
+                                    error=(f"recomputed step rejected: "
+                                           f"{recheck.violations[0].message}"
+                                           if recheck.violations else "recomputed step rejected"),
+                                ))
+                                session.status = RunStatus.HALTED_BY_SIMPLEX
+                                break
 
                     try:
                         decision = self._approval.decide(step, envelope)
