@@ -114,17 +114,18 @@ class BudgetTracker:
         """
         if tokens < 0:
             raise ValueError(f"token count must be non-negative, got {tokens}")
-        if (
-            self.strict
-            and self.total_tokens is not None
-            and self._spent + tokens > self.total_tokens
-        ):
-            raise BudgetExceeded(
-                f"recording {tokens} tokens for step {step_id!r} would push spend to "
-                f"{self._spent + tokens} > budget {self.total_tokens}"
-            )
+        # Count the spend FIRST — the tokens were really spent, so the report and
+        # exhausted() must reflect them even in strict mode. Then, in strict mode,
+        # raise to SIGNAL the overrun; the caller catches it and keeps the step's
+        # result (a completed call's output must not be discarded), while the now-
+        # exhausted budget stops the next step and forces deterministic synthesis.
         self._spent += tokens
         self._costs.append(StepCost(step_id=step_id, model=model, tokens=tokens, cost_usd=cost_usd))
+        if self.strict and self.total_tokens is not None and self._spent > self.total_tokens:
+            raise BudgetExceeded(
+                f"recording {tokens} tokens for step {step_id!r} pushed spend to "
+                f"{self._spent} > budget {self.total_tokens}"
+            )
 
     def costs(self) -> list[StepCost]:
         return list(self._costs)

@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from opendaisugi.approval import ApprovalStrategy, CallbackStrategy
-from opendaisugi.budget import BudgetReport, BudgetTracker
+from opendaisugi.budget import BudgetExceeded, BudgetReport, BudgetTracker
 from opendaisugi.executor import ExecutorResult
 from opendaisugi.decomposer import _DEFAULT_MODEL as _DEFAULT_DECOMPOSE_MODEL, decompose
 from opendaisugi.delegating_executor import DelegatingExecutor
@@ -38,6 +38,7 @@ from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.orchestration_executors import MCPExecutor, MCPTransport, SkillExecutor, SkillHandler
 from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
 from opendaisugi.supervisor import Supervisor
+from opendaisugi.verify import verify
 from opendaisugi.synthesizer import _DEFAULT_MODEL as _DEFAULT_SYNTH_MODEL, SynthesisResult, synthesize
 
 _log = logging.getLogger("opendaisugi.orchestrator")
@@ -128,10 +129,16 @@ class BudgetAwareDelegatingExecutor(DelegatingExecutor):
 
         result = super().run(step, timeout_s=timeout_s, max_output_bytes=max_output_bytes)
         tokens = self.last.tokens if self.last.tokens is not None else sizing.est_tokens
-        self.tracker.record(
-            step_id=step.id, model=self.last.model or sizing.model,
-            tokens=tokens, cost_usd=self.last.cost_usd,
-        )
+        try:
+            self.tracker.record(
+                step_id=step.id, model=self.last.model or sizing.model,
+                tokens=tokens, cost_usd=self.last.cost_usd,
+            )
+        except BudgetExceeded:
+            # strict_budget: the spend is already counted (tracker exhausted → the
+            # next step's pre-gate stops and synthesis goes deterministic). Keep
+            # THIS step's completed result rather than discarding it as an error.
+            pass
         return result
 
 
@@ -193,17 +200,15 @@ class Orchestrator:
         # executor so a local rung's model reaches its endpoint.
         self.endpoint_overrides = dict(endpoint_overrides or {})
 
-    async def _maybe_reuse(
-        self, prompt: str, envelope: Envelope
-    ) -> tuple[ActionPlan | None, Envelope, bool]:
-        """Tier-0: reuse a distilled pathway that already covers the prompt (D6).
+    async def _maybe_reuse(self, prompt: str) -> ActionPlan | None:
+        """Tier-0: find a distilled pathway whose plan template covers ``prompt`` (D6).
 
-        Returns ``(plan, run_envelope, reused)``. On reuse, the plan is the
-        pathway's template and the run envelope is the pathway's own (already
-        verified) envelope; the Supervisor re-verifies it regardless.
+        Returns the pathway's plan template (deep-copied) or None. The template is
+        NOT authorized here — the caller verifies it against the caller's own
+        envelope (the authorization ceiling), never the pathway's own envelope.
         """
         if self.pathway_store is None:
-            return None, envelope, False
+            return None
         try:
             match = await asyncio.to_thread(
                 self.pathway_store.find, prompt, threshold=self.pathway_threshold
@@ -212,11 +217,11 @@ class Orchestrator:
             _log.warning("orchestrate.pathway_lookup_failed", extra={"error": str(exc)})
             match = None
         if match is None:
-            return None, envelope, False
+            return None
         _log.info("orchestrate.reuse_pathway", extra={"pathway_id": match.pathway.id})
         # Deep-copy the template: sizing mutates preferred_model on steps, and the
         # store's template is shared/cached — mutating it would corrupt it.
-        return match.pathway.plan_template.model_copy(deep=True), match.pathway.envelope, True
+        return match.pathway.plan_template.model_copy(deep=True)
 
     async def orchestrate(
         self,
@@ -247,7 +252,21 @@ class Orchestrator:
         """
         tracker = BudgetTracker(total_tokens=budget_tokens, strict=strict_budget)
 
-        plan, run_envelope, reused = await self._maybe_reuse(prompt, envelope)
+        # The caller's ``envelope`` is the authorization ceiling for BOTH paths.
+        run_envelope = envelope
+        reused = False
+        plan = await self._maybe_reuse(prompt)
+        if plan is not None:
+            # A reused pathway is only trusted if it verifies against the CALLER's
+            # envelope — never its own (possibly broader) distillation envelope.
+            # Otherwise a prompt matching a pathway with file_write/network could
+            # run outside the read-only boundary the caller asked for. If it
+            # doesn't fit, fall through and decompose fresh under the envelope.
+            if verify(plan, envelope, z3_timeout_ms=self.z3_timeout_ms).ok:
+                reused = True
+            else:
+                _log.info("orchestrate.reuse_rejected_by_caller_envelope")
+                plan = None
         if not reused:
             # Ground the decomposer in what can actually run: only skills with a
             # registered handler, and (if the caller declared them) MCP tools.
@@ -261,7 +280,6 @@ class Orchestrator:
                 available_skills=list(self.skill_handlers),
                 available_mcp_tools=self.available_mcp_tools,
             )
-            run_envelope = envelope
 
         # Static, budget-free sizing = the capability plan (difficulty → cheapest
         # capable model). It sets each task step's preferred_model. The live,

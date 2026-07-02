@@ -248,3 +248,64 @@ async def test_orchestrate_records_exact_cost_from_backend():
             synth_client=_synth_client("done"),
         )
     assert result.budget.measured_cost_usd == 0.0207
+
+
+async def test_reused_pathway_verified_against_caller_envelope_not_pathway_envelope():
+    # H2: a pathway whose OWN envelope permits shell must NOT run under a caller
+    # envelope that forbids shell — the caller's envelope is the ceiling.
+    from opendaisugi.models import Envelope as _Env, Permission as _Perm
+    permissive = _Env(generated_by="pw", task="cached",
+                      permissions=_Perm(shell=True, shell_allowlist=["rm"]))
+    template = ActionPlan(source="distilled", task="cached",
+                          steps=[ShellStep(id="s1", command="rm -rf /tmp/x")])
+    pathway = CompiledPathway(
+        id="pw_x", task_description="clean up", task_embedding=[0.1],
+        envelope=permissive, plan_template=template, source_trace_ids=["t"], distilled_at=0.0)
+
+    class _Store:
+        def find(self, task, *, threshold):
+            return PathwayMatch(pathway=pathway, similarity=0.99)
+
+    orch = Orchestrator(pathway_store=_Store())
+    caller_env = _Env(generated_by="caller", task="x",
+                      permissions=_Perm(shell=True, shell_allowlist=["echo"]))  # no 'rm'
+    result = await orch.orchestrate(
+        "clean up",
+        envelope=caller_env,
+        decompose_client=_decompose_client(
+            DecomposedStep(id="d1", type="shell", command="echo did-not-reuse")),
+        synth_client=_synth_client("ok"),
+    )
+    # The pathway (rm) is NOT admissible under the caller (echo-only) → fall through
+    # to decomposition, which ran the echo plan instead.
+    assert result.reused_pathway is False
+    assert result.plan.steps[0].command == "echo did-not-reuse"
+
+
+async def test_strict_budget_overrun_keeps_work_and_stops_spending():
+    # H3: pre-gate allows the step by estimate, but ACTUAL usage exceeds the strict
+    # ceiling. The completed step's output must be kept (not discarded as an error),
+    # its spend counted, and synthesis must NOT fire another LLM call.
+    from types import SimpleNamespace
+    env = Envelope(generated_by="t", task="demo", permissions=Permission(), stakes="low")
+    orch = Orchestrator()
+    fake = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="a real answer"))],
+        usage=SimpleNamespace(total_tokens=5000),  # >> the 2500 ceiling
+    )
+    with patch("litellm.completion", return_value=fake):
+        result = await orch.orchestrate(
+            "one step that overruns",
+            envelope=env,
+            budget_tokens=2500,       # cheap est (2000) fits the pre-gate...
+            strict_budget=True,       # ...but 5000 actual crosses the strict ceiling
+            decompose_client=_decompose_client(DecomposedStep(id="t1", type="task", prompt="do it")),
+            synth_client=_synth_client("SHOULD NOT SPEND"),
+        )
+    # the step's work is preserved, not thrown away as an executor error
+    assert result.session.steps[0].status == "succeeded"
+    # its spend was counted (not dropped by the raise)
+    assert result.budget.spent == 5000
+    # budget exhausted → deterministic synthesis, no further LLM spend
+    assert result.used_llm_synthesis is False
+    assert result.final_answer != "SHOULD NOT SPEND"
