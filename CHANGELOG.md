@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.33.1 — 2026-07-01 — orchestrate CLI fixes + approximate cost
+
+Fixes from feedback after v0.33.0 shipped.
+
+- **`daisugi orchestrate` was unusable without an API key.** It lacked the `--llm`
+  flag every other LLM command has, so it could only use the litellm backend and
+  died without `ANTHROPIC_API_KEY`. Added `--llm litellm|claude-code` (sets
+  `OPENDAISUGI_LLM_BACKEND`); the CLI now runs end to end on `claude -p` — verified:
+  a real answer with correct per-step routing. Also fixed the `Optional` typing on
+  `--budget`/`--envelope` and added a `__main__` guard so `python -m opendaisugi.cli`
+  works (was a silent no-op).
+- **Budget reframed as approximate.** The token counts are heuristic (and the
+  `claude -p` backend reports no usage at all), so the budget is a routing signal +
+  a ballpark, not a meter. Added `BudgetTracker.approx_cost_usd()` /
+  `BudgetReport.approx_cost_usd` from a blended `$/Mtok` price table (overridable);
+  the CLI prints `≈ $X (approximate)`.
+- Test isolation: an in-process CLI test with `--llm claude-code` leaked
+  `OPENDAISUGI_LLM_BACKEND` into later tests (fired real `claude -p` calls, 7
+  failures + 8× slower suite); an autouse conftest fixture now snapshots/restores it.
+
 ## v0.33.0 — 2026-07-01 — Verified swarm tasking (airspace deconfliction)
 
 `opendaisugi.swarm`: the deferred multi-robot deconfliction primitive, and the

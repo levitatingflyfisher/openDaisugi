@@ -1,6 +1,6 @@
 [project]
 name = "opendaisugi"
-version = "0.33.0"
+version = "0.33.1"
 description = "Runtime assurance library: envelope generation, static verification, supervised execution, and journaling for agent actions."
 readme = "README.md"
 requires-python = ">=3.12"
