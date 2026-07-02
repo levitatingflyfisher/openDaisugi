@@ -240,3 +240,30 @@ def test_subsumption_still_holds_for_identical_envelopes():
     e = _penv(shell=True, shell_allowlist=["echo"], file_read=["/data/**"],
              file_write=["/tmp/**"], network=True, network_hosts=["a.com"], mcp_allowlist=["gh/*"])
     assert envelope_subsumes(e, e).holds
+
+
+# --------------------- soft-node polarity (SGCM review VC-3) ---------------------
+
+def test_outer_soft_deny_rule_not_dropped_under_unsupported_regex():
+    # r'\b' (word boundary) is UnsupportedRegexError → the NotMatches compiles to
+    # a SOFT node. The old code pinned outer-only soft nodes to False, which under
+    # the negation made the deny-rule term True and silently DROPPED it → holds=True.
+    soft_deny = Invariant(
+        type="no_sudo", description="forbid sudo",
+        expr={"op": "forall_steps", "pred": {
+            "op": "not_matches", "path": "command", "regex": r".*\bsudo\b.*"}},
+    )
+    outer = _env(["echo", "sudo"], invariants=[soft_deny])
+    inner = _env(["echo", "sudo"])  # no such deny → inner can run sudo
+    r = envelope_subsumes(outer, inner)
+    assert not r.holds  # must fail-closed, not silently approve
+
+
+def test_shared_soft_invariant_still_subsumes():
+    soft = Invariant(
+        type="x", description="d",
+        expr={"op": "forall_steps", "pred": {
+            "op": "not_matches", "path": "command", "regex": r".*\bsudo\b.*"}},
+    )
+    e = _env(["echo"], invariants=[soft])
+    assert envelope_subsumes(e, e).holds  # shared soft node → subsumes

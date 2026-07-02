@@ -520,12 +520,29 @@ def envelope_subsumes(
     # code optimistically bound outer to True, which silently approved
     # subsumption when outer had a stricter LLMCheck than inner.
     inner_soft_set = set(soft_inner)
+    outer_soft_unique_names = [n for n in soft_outer if n not in inner_soft_set]
+    # Fail-closed on outer-only soft constraints. The old approach pinned them to
+    # False ("pessimistic"), but that was fail-OPEN under negation: an outer
+    # deny-rule using an unsupported regex (NotMatches r'\bsudo\b') compiles to
+    # Not(soft); pinning soft=False makes the term True and SILENTLY DROPS the
+    # deny-rule → holds=True. An outer constraint the inner doesn't share means
+    # inner may be broader in either polarity, so subsumption can't be proven.
+    if outer_soft_unique_names:
+        return SubsumptionResult(
+            holds=False,
+            counterexample=None,
+            unverified_invariants=sorted(
+                set(inner_opaque) | set(outer_opaque) | set(outer_strict_blocking)
+                | {f"soft:{n}" for n in outer_soft_unique_names}
+            ),
+            reasons=[
+                f"outer has unverifiable soft constraints not shared by inner "
+                f"({sorted(outer_soft_unique_names)}); cannot prove subsumption (fail-closed)"
+            ],
+            duration_ms=(time.monotonic() - t0) * 1000,
+        )
     for name in soft_inner:
         solver.add(z3.Bool(name) == z3.BoolVal(True))
-    for name in soft_outer:
-        if name in inner_soft_set:
-            continue
-        solver.add(z3.Bool(name) == z3.BoolVal(False))
 
     solver.add(inner_admits)
     solver.add(z3.Not(outer_admits))
