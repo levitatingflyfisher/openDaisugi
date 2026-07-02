@@ -128,3 +128,25 @@ def test_default_config(tmp_path):
     report = merge(store)
     assert isinstance(report, MergeReport)
     assert report.merge_count == 0
+
+
+def test_cross_embedding_version_not_merged(tmp_path):
+    # M8: identical embeddings from DIFFERENT embedding-model versions must NOT
+    # merge — a cross-space similarity is meaningless and could delete an
+    # unrelated pathway.
+    store = PathwayStore(tmp_path / "p.db")
+    a = _pathway("a", [1.0, 0.0, 0.0]).model_copy(update={"embedding_model": "m", "embedding_model_version": "3"})
+    b = _pathway("b", [1.0, 0.0, 0.0]).model_copy(update={"embedding_model": "m", "embedding_model_version": "4"})
+    store.put(a); store.put(b)
+    report = merge(store, MergeConfig(similarity_threshold=0.5, require_compatible_permissions=False))
+    assert report.merged_pairs == []
+    assert len(store.list_all()) == 2
+
+
+def test_mismatched_embedding_dimension_does_not_crash_merge(tmp_path):
+    store = PathwayStore(tmp_path / "p.db")
+    a = _pathway("a", [1.0, 0.0, 0.0]).model_copy(update={"embedding_model": "m", "embedding_model_version": "3"})
+    b = _pathway("b", [1.0, 0.0]).model_copy(update={"embedding_model": "m", "embedding_model_version": "3"})
+    store.put(a); store.put(b)
+    report = merge(store, MergeConfig(similarity_threshold=0.5, require_compatible_permissions=False))
+    assert report.merged_pairs == []  # skipped, no ValueError
