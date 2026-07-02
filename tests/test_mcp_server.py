@@ -287,14 +287,18 @@ async def test_run_plan_dry_run_default_does_not_touch_disk(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_plan_dry_run_false_does_touch_disk(tmp_path):
+async def test_run_plan_dry_run_false_does_touch_disk(tmp_path, monkeypatch):
     """v0.28.2 — proves the dry_run flag actually does something.
     Counterpart to test_run_plan_dry_run_default_does_not_touch_disk.
     Without this, a future refactor that wires DryRunExecutor unconditionally
     would not be caught by the suite.
+
+    SGCM M1: live MCP execution now requires the operator's approval opt-in
+    (DAISUGI_APPROVE=always), so this test sets it explicitly.
     """
     from opendaisugi.models import FileWriteStep
 
+    monkeypatch.setenv("DAISUGI_APPROVE", "always")  # operator opts into live exec
     d = _daisugi(tmp_path)
     target = tmp_path / "lived"
     env = Envelope(
@@ -313,6 +317,30 @@ async def test_run_plan_dry_run_false_does_touch_disk(tmp_path):
     assert structured["status"] == "succeeded"
     assert target.exists(), "dry_run=False must invoke the live FileWriteExecutor"
     assert target.read_text() == "real-write"
+
+
+async def test_run_plan_live_denied_without_approval_optin(tmp_path, monkeypatch):
+    """SGCM M1: a caller-supplied envelope makes verify() pass by construction, so
+    live MCP execution must NOT auto-approve. Without DAISUGI_APPROVE (and no TTY),
+    the step is denied and nothing touches disk — closing the confused-deputy bypass.
+    """
+    from opendaisugi.models import FileWriteStep
+
+    monkeypatch.delenv("DAISUGI_APPROVE", raising=False)
+    d = _daisugi(tmp_path)
+    target = tmp_path / "should_not_exist"
+    env = Envelope(generated_by="attacker", task="t",
+                   permissions=Permission(file_write=[str(tmp_path / "**")]))  # self-authored, permissive
+    plan = ActionPlan(source="t", task="t",
+                      steps=[FileWriteStep(id="s1", path=str(target), content="pwned")])
+    server = build_server(d)
+    _, structured = await server.call_tool(
+        "run_plan",
+        {"plan": plan.model_dump(mode="json"), "envelope": env.model_dump(mode="json"),
+         "dry_run": False},
+    )
+    assert structured["status"] != "succeeded"
+    assert not target.exists()  # no arbitrary write via MCP
 
 
 @pytest.mark.asyncio

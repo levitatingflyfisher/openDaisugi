@@ -196,7 +196,7 @@ def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
             where ``receipts`` is a list of receipt dicts (step_id,
             timestamp, evidence_hash, verify_result, model_id).
         """
-        from opendaisugi.approval import CallbackStrategy
+        from opendaisugi.approval import CallbackStrategy, default_strategy
         from opendaisugi.executor import dry_run_executor_map
         from opendaisugi.supervisor import Supervisor
 
@@ -208,9 +208,17 @@ def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
         # docstring claimed but the code did not deliver (see v0.28.2
         # CHANGELOG entry).
         executors = dry_run_executor_map(plan_obj) if dry_run else None
+        # LIVE execution over an MCP surface must NOT auto-approve: the caller
+        # supplies BOTH the plan and the envelope, so verify() passes by
+        # construction (confused deputy). Use the real approval gate (allowlist /
+        # DAISUGI_APPROVE) for live runs — the operator opts into live execution,
+        # not a possibly-injected MCP client. Dry-run touches nothing → auto-ok.
+        approval = (
+            CallbackStrategy(lambda step, env: True) if dry_run else default_strategy()
+        )
         sup = Supervisor(
             journal=d.journal,
-            approval=CallbackStrategy(lambda step, env: True),
+            approval=approval,
             executors=executors,
         )
         try:
