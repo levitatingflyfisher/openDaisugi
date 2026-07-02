@@ -1,5 +1,58 @@
 # Changelog
 
+## v0.34.0 — 2026-07-02 — Security hardening (SGCM multi-agent review)
+
+A whole-codebase adversarial review (7 parallel review agents + independent
+verification of every finding) closed a set of fail-opens and exploitable holes.
+All findings were reproduced before fixing and are covered by regression tests.
+
+**CRITICAL (the verification core — its whole job is to not fail open):**
+- `envelope_subsumes` encoded ONLY shell + invariants, so `verify_delegation`
+  approved a skill contract permitting `file_write=['/etc/**']`, `network=['evil.com']`,
+  or dangerous MCP tools under a caller that allowed none of them. Now file/network/MCP
+  scope is subsumed too (Z3 witness search for globs, host set-subset), fail-closed.
+- `sh -ec "curl evil"` / `bash -lc` / `-euxc` / `-cSCRIPT` clustered shell flags
+  escaped the `-c` interpreter-payload check (matched by exact token equality), so the
+  embedded command bypassed the allowlist. Clustered flags are now parsed.
+
+**HIGH:**
+- `NetworkStep(url='file:///etc/passwd')` passed verify and read a local file (urllib
+  honors file://) — schemes are now restricted to http(s) in verify and the executor.
+- Symlink path escape: FileReadExecutor had no symlink guard and FileWriteExecutor's
+  realpath check was circular. Both now re-check the *resolved* target against the
+  permitted globs.
+- Outer soft deny-rules (unsupported-regex/LLMCheck) were dropped under negation
+  (pinned False → `Not(False)=True`) — now fail-closed.
+- `verify_inheritance` (the sole tightening proof at envelope generation) ignored
+  robotics/MCP/stakes — a child could relax velocity 10×, expand its workspace, add
+  MCP tools, or downgrade physical→low. Now checked.
+- Orchestrator pathway reuse ran under the pathway's own (broader) envelope, ignoring
+  the caller's stated boundary — now verified against the caller's envelope.
+- `strict_budget` overrun discarded the completed step, dropped its spend, and let
+  synthesis keep spending — now counts the spend, keeps the result, stops cleanly.
+- `daisugi install` silently reset a malformed `settings.json`/Hermes config to `{}`,
+  wiping the user's permission rules — now skip-and-warn.
+- The git-registry trust anchor was pulled from the same remote it authenticated
+  (circular) — now a local, out-of-band anchor.
+- Swarm deconfliction accepted a negative margin (masking overlap) and malformed
+  (inverted/non-finite) AABBs — now fail-closed. `claude -p` argv is injection-safe
+  (`--model=` + `--` separator).
+
+**MEDIUM:** MCP `run_plan` live execution now requires the operator's approval opt-in
+(confused-deputy bypass); an unsigned contract is denied when `trusted_signers` is
+supplied; a signed pathway bundle with no trust anchor is rejected (was verified
+against its own key); `git registry init` rejects `ext::`/`fd::` RCE URLs; unknown
+custom `@step_type` and unbacked robotics invariants fail closed under strict; duplicate
+step ids and execution-order integrity are fixed; recomputed fallback steps are
+re-verified; the metered token count includes cache tokens and rejects `is_error`
+turns; async `claude -p` subprocesses are reaped on timeout; gardener merge only
+compares same-embedding-space pathways; a distilled `plan_template` is verified against
+its envelope before storing.
+
+KNOWN / deferred (lower severity, need care): subprocess/network output DoS bounds
+(EB-3/EB-4), the envelope-improvement pass's breadth gate (M7), llm_check `errored`
+telemetry on claude-code (M9), and a few LOW items are tracked but not in this release.
+
 ## v0.33.2 — 2026-07-01 — exact cost on the Claude Code subscription; cost is opt-in
 
 The budget's dollar figure is now **exact**, not estimated, on the `claude-code`

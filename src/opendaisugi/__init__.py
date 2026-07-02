@@ -565,7 +565,7 @@ def __getattr__(name: str):
     raise AttributeError(f"module 'opendaisugi' has no attribute {name!r}")
 
 
-__version__ = "0.33.2"
+__version__ = "0.34.0"
 
 __all__ = [
     "__version__",
