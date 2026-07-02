@@ -148,3 +148,45 @@ def test_single_drone_is_trivially_deconflicted():
     verdict = verify_swarm_tasking(total, {"solo": _env(((0, 0, 0), (5, 5, 5)))})
     assert verdict.ok
     assert isinstance(verdict, SwarmVerdict)
+
+
+# --------------------------- fail-open guards (SGCM review) ---------------------------
+
+import math
+import pytest as _pytest
+
+
+def test_negative_margin_is_rejected_not_a_fail_open():
+    # A negative margin would SUBTRACT from separation and certify overlapping
+    # drones as deconflicted — the worst kind of fail-open for a safety layer.
+    a = ((0, 0, 0), (1, 1, 1)); b = ((4, 0, 0), (5, 1, 1))
+    with _pytest.raises(ValueError):
+        aabb_disjoint(a, b, margin=-5)
+    total = _env(((0, 0, 0), (30, 10, 10)))
+    overlapping = {"d1": _env(((0, 0, 0), (10, 10, 10))), "d2": _env(((8, 0, 0), (18, 10, 10)))}
+    with _pytest.raises(ValueError):
+        verify_swarm_tasking(total, overlapping, margin=-5)
+
+
+def test_inverted_box_is_not_certified_deconflicted():
+    # A malformed AABB (min > max on an axis) has undefined semantics; certifying
+    # it as in-scope + deconflicted is a fail-open.
+    total = _env(((0, 0, 0), (30, 10, 10)))
+    assignments = {
+        "ok": _env(((0, 0, 0), (10, 10, 10))),
+        "inverted": _env(((10, 0, 0), (0, 10, 10))),  # min.x=10 > max.x=0
+    }
+    verdict = verify_swarm_tasking(total, assignments)
+    assert not verdict.ok
+
+
+def test_non_finite_box_is_not_certified():
+    total = _env(((0, 0, 0), (30, 10, 10)))
+    assignments = {"nan": _env(((0, 0, 0), (float("nan"), 10, 10)))}
+    assert not verify_swarm_tasking(total, assignments).ok
+
+
+def test_inverted_total_fails_closed():
+    total = _env(((30, 0, 0), (0, 10, 10)))  # inverted total
+    assignments = {"d1": _env(((0, 0, 0), (10, 10, 10)))}
+    assert not verify_swarm_tasking(total, assignments).ok

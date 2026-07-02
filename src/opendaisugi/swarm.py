@@ -31,14 +31,34 @@ Fail-closed: a drone that declares no ``workspace_bounds`` cannot be proven disj
 from anything, so it is denied.
 """
 
-from __future__ import annotations
-
+import math
 from dataclasses import dataclass, field
 
 from opendaisugi.models import Envelope, Permission
 from opendaisugi.subsumption import envelope_subsumes
 
 Box = tuple[tuple[float, float, float], tuple[float, float, float]]
+
+
+def _box_invalid_reason(box: Box) -> str | None:
+    """None if ``box`` is a well-formed AABB, else a reason string.
+
+    A valid AABB has finite coordinates and ``min[k] <= max[k]`` on every axis.
+    An inverted (min>max) or non-finite box has undefined separating-axis
+    semantics — treating it as valid is a fail-open, so callers reject it.
+    """
+    try:
+        (lo, hi) = box
+        if len(lo) != 3 or len(hi) != 3:
+            return f"box must be two xyz triples, got {box!r}"
+    except (TypeError, ValueError):
+        return f"box must be ((x,y,z),(x,y,z)), got {box!r}"
+    for k in range(3):
+        if not (math.isfinite(lo[k]) and math.isfinite(hi[k])):
+            return f"non-finite coordinate on axis {k}: {box!r}"
+        if lo[k] > hi[k]:
+            return f"inverted on axis {k} (min {lo[k]} > max {hi[k]}): {box!r}"
+    return None
 
 
 def aabb_disjoint(a: Box, b: Box, *, margin: float = 0.0) -> bool:
@@ -50,7 +70,12 @@ def aabb_disjoint(a: Box, b: Box, *, margin: float = 0.0) -> bool:
     separation needs ``margin ≥ position-uncertainty + vehicle-radius`` so two
     vehicles on adjacent boundaries can't occupy the same point; pass it explicitly
     (openDaisugi can't know your vehicle's size or your estimator's error).
+
+    Raises ``ValueError`` on a negative ``margin`` — a negative margin would
+    *subtract* from separation and report overlapping boxes as disjoint (fail-open).
     """
+    if margin < 0:
+        raise ValueError(f"margin must be non-negative, got {margin}")
     (a_min, a_max) = a
     (b_min, b_max) = b
     for k in range(3):
@@ -174,10 +199,37 @@ def verify_swarm_tasking(
 
     Returns a :class:`SwarmVerdict`; ``.ok`` iff both hold. Conflicts carry the
     concrete overlap region so the caller can see exactly where two drones could meet.
+
+    Raises ``ValueError`` on a negative ``margin``. Malformed workspace_bounds
+    (inverted or non-finite) fail closed — the affected drone is marked unsubsumed
+    rather than silently certified.
     """
+    if margin < 0:
+        raise ValueError(f"margin must be non-negative, got {margin}")
+
     subsumption_failures: dict[str, str] = {}
+
+    # A malformed total volume makes every containment claim meaningless — fail closed.
+    total_box = total.permissions.workspace_bounds
+    total_bad = _box_invalid_reason(total_box) if total_box is not None else None
+    if total_bad is not None:
+        subsumption_failures["__total__"] = f"total workspace_bounds invalid: {total_bad}"
+
+    # Boxes that are malformed can't participate in a sound separating-axis test —
+    # exclude them from deconfliction and mark them unsubsumed (fail closed).
+    invalid_boxes: dict[str, str] = {}
+    for did, env in assignments.items():
+        box = env.permissions.workspace_bounds
+        if box is not None:
+            bad = _box_invalid_reason(box)
+            if bad is not None:
+                invalid_boxes[did] = bad
+                subsumption_failures[did] = f"invalid workspace_bounds: {bad}"
+
     if require_subsumption:
         for did, env in assignments.items():
+            if did in invalid_boxes:
+                continue  # already a failure; envelope_subsumes on a bad box is nonsense
             result = envelope_subsumes(total, env, timeout_ms=timeout_ms)
             if not result.holds:
                 if result.counterexample is not None:
@@ -195,13 +247,14 @@ def verify_swarm_tasking(
             a_id, b_id = ids[i], ids[j]
             a_box = assignments[a_id].permissions.workspace_bounds
             b_box = assignments[b_id].permissions.workspace_bounds
-            if a_box is None or b_box is None:
-                undeclared = [d for d in (a_id, b_id)
-                              if assignments[d].permissions.workspace_bounds is None]
+            if a_box is None or b_box is None or a_id in invalid_boxes or b_id in invalid_boxes:
+                bad_ids = [d for d in (a_id, b_id)
+                           if assignments[d].permissions.workspace_bounds is None
+                           or d in invalid_boxes]
                 conflicts.append(SwarmConflict(
                     drone_a=a_id, drone_b=b_id, region=None,
-                    reason=f"drone(s) {undeclared} declare no workspace_bounds "
-                           f"(undeclared → cannot prove disjoint → denied)",
+                    reason=f"drone(s) {bad_ids} have missing or malformed workspace_bounds "
+                           f"(cannot prove disjoint → denied)",
                 ))
                 continue
             if not aabb_disjoint(a_box, b_box, margin=margin):
