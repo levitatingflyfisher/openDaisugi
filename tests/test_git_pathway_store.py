@@ -99,7 +99,10 @@ def test_publish_and_pull_roundtrip(tmp_path: Path):
     bundle_hash = a_store.publish(_pathway())
     assert bundle_hash
 
-    b_store = GitPathwayStore(repo_path=repo_b)
+    # Trust anchor is LOCAL / out-of-band (SGCM H5) — never the in-repo file.
+    b_trust = tmp_path / "b_trusted_signers.json"
+    b_trust.write_text(json.dumps({"alice": pub_a}))
+    b_store = GitPathwayStore(repo_path=repo_b, trusted_signers_path=b_trust)
     new_count = b_store.pull()
     assert new_count == 1
     found = b_store.list_all()
@@ -194,3 +197,32 @@ def test_offline_ok_tolerates_pull_failure(tmp_path: Path):
     store = GitPathwayStore(repo_path=repo, offline_ok=True)
     # pull() warns but doesn't raise; returns 0 new
     assert store.pull() == 0
+
+
+def test_in_repo_trusted_signers_file_is_not_a_trust_anchor(tmp_path: Path):
+    # H5: an attacker who can push to the registry adds their key to the in-repo
+    # trusted-signers.json — but that file must NOT be used as a trust anchor
+    # (it's pulled from the same remote it authenticates). With no LOCAL anchor,
+    # the attacker's signed bundle is rejected.
+    from opendaisugi.git_pathway_store import GitPathwayStore
+    from opendaisugi.signing import generate_keypair
+
+    priv_evil, pub_evil = generate_keypair()
+    bare = _bare_repo(tmp_path)
+    repo_a = tmp_path / "a"; repo_b = tmp_path / "b"
+    _clone(bare, repo_a)
+    subprocess.run(["git", "-C", str(repo_a), "config", "user.email", "a@test"], check=True)
+    subprocess.run(["git", "-C", str(repo_a), "config", "user.name", "a"], check=True)
+    # The registry itself declares the attacker trusted (remote-controlled file).
+    _initial_commit(repo_a, trusted_signers={"evil": pub_evil})
+    a_store = GitPathwayStore(repo_path=repo_a, private_key_b64=priv_evil,
+                              public_key_b64=pub_evil, publisher="evil@dev")
+    a_store.publish(_pathway())
+
+    _clone(bare, repo_b)
+    subprocess.run(["git", "-C", str(repo_b), "config", "user.email", "b@test"], check=True)
+    subprocess.run(["git", "-C", str(repo_b), "config", "user.name", "b"], check=True)
+    # Consumer configures NO local anchor → the in-repo "evil is trusted" is ignored.
+    b_store = GitPathwayStore(repo_path=repo_b)
+    b_store.pull()
+    assert b_store.list_all() == []  # attacker's self-trusted bundle rejected
