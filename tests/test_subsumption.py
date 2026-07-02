@@ -183,3 +183,60 @@ def test_subsumption_blocks_redirect_substring():
         assert solver.check() == z3.unsat, (
             f"admission must forbid {ch!r} anywhere — verify rejects it concretely"
         )
+
+
+# --------------------- file/network/mcp subsumption (SGCM review VC-1) ---------------------
+
+def _penv(**perm):
+    from opendaisugi.models import Envelope, Permission
+    return Envelope(generated_by="t", task="x", permissions=Permission(**perm))
+
+
+def test_subsumption_rejects_inner_file_write_outside_outer():
+    caller = _penv(file_write=["/tmp/**"])
+    skill = _penv(file_write=["/etc/**"])
+    assert not envelope_subsumes(caller, skill).holds  # /etc not covered by /tmp
+
+
+def test_subsumption_allows_inner_file_write_subset():
+    caller = _penv(file_write=["/tmp/**"])
+    skill = _penv(file_write=["/tmp/sub/x"])
+    assert envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_rejects_inner_network_host_outside_outer():
+    caller = _penv(network=True, network_hosts=["api.internal"])
+    skill = _penv(network=True, network_hosts=["evil.com"])
+    assert not envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_rejects_inner_any_host_under_restricted_outer():
+    caller = _penv(network=True, network_hosts=["api.internal"])  # restricted
+    skill = _penv(network=True, network_hosts=[])                 # any host
+    assert not envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_allows_network_host_subset():
+    caller = _penv(network=True, network_hosts=["a.com", "b.com"])
+    skill = _penv(network=True, network_hosts=["a.com"])
+    assert envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_rejects_inner_mcp_outside_outer():
+    caller = _penv(mcp_allowlist=["safe/*"])
+    skill = _penv(mcp_allowlist=["dangerous/*"])
+    assert not envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_rejects_the_full_vc1_scenario():
+    caller = _penv(shell=True, shell_allowlist=["echo"], file_write=["/tmp/**"],
+                  network=True, network_hosts=["api.internal"], mcp_allowlist=["safe/*"])
+    skill = _penv(shell=True, shell_allowlist=["echo"], file_write=["/etc/**", "/home/**"],
+                 network=True, network_hosts=["evil.com"], mcp_allowlist=["dangerous/*"])
+    assert not envelope_subsumes(caller, skill).holds
+
+
+def test_subsumption_still_holds_for_identical_envelopes():
+    e = _penv(shell=True, shell_allowlist=["echo"], file_read=["/data/**"],
+             file_write=["/tmp/**"], network=True, network_hosts=["a.com"], mcp_allowlist=["gh/*"])
+    assert envelope_subsumes(e, e).holds

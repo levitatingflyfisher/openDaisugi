@@ -142,6 +142,96 @@ def _encode_shell_admission(
     return z3.And(head_ok, no_meta)
 
 
+def _patterns_subsume(
+    inner_patterns: list[str], outer_patterns: list[str], *, label: str, timeout_ms: int
+) -> str | None:
+    """None if every value inner admits, outer admits too; else a reason string.
+
+    For glob-list permissions (file_read/file_write/mcp_allowlist) with
+    deny-by-default (empty list ⟹ admits nothing). Uses Z3 to search for a
+    witness value inner admits but outer forbids. **Fail-closed**: an empty
+    inner is trivially subsumed, but a solver ``unknown`` (timeout) or an
+    exotic outer glob that can't be encoded soundly is treated as NOT proven
+    → a violation, never an optimistic pass.
+    """
+    if not inner_patterns:
+        return None  # inner admits nothing on this axis
+    # An exotic outer glob would encode as True (permissive) — that would be a
+    # fail-open. Refuse to rely on it: if any outer pattern isn't soundly
+    # encodable, we can't prove containment → fail closed.
+    if any(_glob_unsupported(g) for g in outer_patterns):
+        return (f"{label}: outer declares a glob shape that cannot be soundly "
+                f"encoded ({[g for g in outer_patterns if _glob_unsupported(g)]}); "
+                f"cannot prove subsumption → denied")
+    solver = z3.Solver()
+    solver.set("timeout", timeout_ms)
+    v = z3.String("v")
+    inner_ok = z3.Or(*[_glob_to_z3(v, g) for g in inner_patterns])
+    outer_ok = (z3.Or(*[_glob_to_z3(v, g) for g in outer_patterns])
+                if outer_patterns else z3.BoolVal(False))
+    solver.add(inner_ok, z3.Not(outer_ok))
+    result = solver.check()
+    if result == z3.sat:
+        witness = solver.model()[v]
+        return f"{label}: inner admits {witness} which outer forbids"
+    if result != z3.unsat:  # unknown / timeout → can't prove → deny
+        return f"{label}: could not prove subsumption (solver {result}) → denied"
+    return None
+
+
+def _glob_unsupported(glob: str) -> bool:
+    """True if ``_glob_to_z3`` would fall back to its permissive True encoding."""
+    if glob == "**" or glob.endswith("/**") or "*" not in glob:
+        return False
+    if glob.startswith("*") and "*" not in glob[1:]:
+        return False
+    return glob.count("*") != 1
+
+
+def _network_scope_violation(outer: Permission, inner: Permission) -> str | None:
+    """None if inner's network scope is within outer's, else a reason.
+
+    Host matching is exact (mirrors ``verify.check_permissions``). Empty
+    ``network_hosts`` with ``network=True`` means 'any host'.
+    """
+    if not inner.network:
+        return None  # inner uses no network
+    if not outer.network:
+        return "network: inner uses network but outer forbids it"
+    if not outer.network_hosts:
+        return None  # outer admits any host → any inner scope is within it
+    # outer is restricted to a host set
+    if not inner.network_hosts:
+        return ("network: inner admits any host but outer restricts to "
+                f"{outer.network_hosts}")
+    outer_set = {h.lower() for h in outer.network_hosts}
+    extra = [h for h in inner.network_hosts if h.lower() not in outer_set]
+    if extra:
+        return f"network: inner hosts {extra} not in outer allowlist {outer.network_hosts}"
+    return None
+
+
+def _permission_scope_violation(
+    outer: Permission, inner: Permission, *, timeout_ms: int
+) -> str | None:
+    """Fail-closed subsumption of file/network/mcp permissions (v0.33.3).
+
+    ``envelope_subsumes`` historically encoded only shell + invariants, so an
+    inner envelope permitting broader file_read/file_write/network/mcp scope than
+    the outer was silently 'subsumed' — the core delegation-safety hole. This
+    proves each of those axes is contained too.
+    """
+    for label, inner_p, outer_p in (
+        ("file_read", inner.file_read, outer.file_read),
+        ("file_write", inner.file_write, outer.file_write),
+        ("mcp_allowlist", inner.mcp_allowlist, outer.mcp_allowlist),
+    ):
+        reason = _patterns_subsume(inner_p, outer_p, label=label, timeout_ms=timeout_ms)
+        if reason is not None:
+            return reason
+    return _network_scope_violation(outer, inner)
+
+
 def _compile_invariants(
     invariants: list[Invariant],
     scope: _Scope,
@@ -314,6 +404,21 @@ def envelope_subsumes(
             holds=False,
             counterexample=None,
             reasons=[f"robot capability subsumption failed (fail-closed): {robot_violation}"],
+            duration_ms=(time.monotonic() - t0) * 1000,
+        )
+
+    # File / network / MCP subsumption (v0.33.3). The Z3 admission formula below
+    # encodes only shell + invariants, so these axes must be checked here or an
+    # inner envelope with broader file/network/mcp scope than the outer would be
+    # silently 'subsumed' — the core delegation-safety hole. Fail-closed.
+    scope_violation = _permission_scope_violation(
+        outer.permissions, inner.permissions, timeout_ms=timeout_ms
+    )
+    if scope_violation is not None:
+        return SubsumptionResult(
+            holds=False,
+            counterexample=None,
+            reasons=[f"permission scope subsumption failed (fail-closed): {scope_violation}"],
             duration_ms=(time.monotonic() - t0) * 1000,
         )
 
