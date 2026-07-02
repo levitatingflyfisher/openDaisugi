@@ -276,7 +276,16 @@ def _patch_claude_settings(settings_path: Path) -> list[Path]:
         try:
             settings: dict = json.loads(settings_path.read_text())
         except (json.JSONDecodeError, OSError):
-            settings = {}
+            # Skip-and-warn — never clobber an unparseable settings.json. It holds
+            # the user's permission deny-rules and env; resetting to {} and writing
+            # back would silently destroy them (mirrors _patch_mcp's policy).
+            warnings.warn(
+                f"{settings_path} is not valid JSON; skipping hook registration to "
+                f"avoid overwriting your Claude Code settings (permissions/env). "
+                f"Fix the file and re-run `daisugi install`.",
+                UserWarning, stacklevel=2,
+            )
+            return []
     else:
         settings = {}
 
@@ -419,7 +428,14 @@ def _patch_hermes_config(config_path: Path) -> list[Path]:
         try:
             cfg: dict = yaml.safe_load(config_path.read_text()) or {}
         except yaml.YAMLError:
-            cfg = {}
+            # Skip-and-warn — never clobber an unparseable Hermes config (holds the
+            # user's mcp_servers / hooks). Resetting to {} would silently wipe them.
+            warnings.warn(
+                f"{config_path} is not valid YAML; skipping to avoid overwriting your "
+                f"Hermes config. Fix the file and re-run `daisugi install`.",
+                UserWarning, stacklevel=2,
+            )
+            return []
     else:
         cfg = {}
 

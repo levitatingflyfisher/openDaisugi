@@ -805,3 +805,34 @@ def test_patch_mcp_no_warning_when_no_comments_to_lose(tmp_path):
     assert comment_warnings == [], (
         "no comments to lose → no warning"
     )
+
+
+def test_patch_claude_settings_does_not_clobber_unparseable_file(tmp_path):
+    # H4: a malformed settings.json (common hand-edit: trailing comma) must be
+    # LEFT INTACT with a warning — never reset to {} and rewritten (which would
+    # destroy the user's permission deny-rules and env).
+    import warnings as _w
+    from opendaisugi.install import _patch_claude_settings
+    sp = tmp_path / "settings.json"
+    original = '{"permissions": {"deny": ["Read(./secrets/**)"]}, "env": {"K": "v"},}'  # trailing comma
+    sp.write_text(original)
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter("always")
+        result = _patch_claude_settings(sp)
+    assert result == []                       # skipped (no files modified)
+    assert sp.read_text() == original         # file untouched
+    assert any("not valid JSON" in str(x.message) for x in caught)
+
+
+def test_patch_hermes_config_does_not_clobber_unparseable_file(tmp_path):
+    import warnings as _w
+    from opendaisugi.install import _patch_hermes_config
+    cp = tmp_path / "config.yaml"
+    original = "mcp_servers: [\n  - name: x\n   bad_indent: y\n"  # malformed YAML
+    cp.write_text(original)
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter("always")
+        result = _patch_hermes_config(cp)
+    assert result == []
+    assert cp.read_text() == original
+    assert any("not valid YAML" in str(x.message) for x in caught)
