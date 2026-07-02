@@ -163,3 +163,25 @@ def test_network_executor_refuses_non_http_schemes(tmp_path):
         r = exe.run(NetworkStep(id="s", url=url), timeout_s=2, max_output_bytes=1024)
         assert r.rc != 0
         assert "TOP SECRET" not in r.stdout
+
+
+def test_network_executor_enforces_wall_clock_deadline(monkeypatch):
+    # EB-4: a slow-drip server (a byte before each socket timeout) must not hold
+    # the executor past the wall-clock deadline.
+    import time as _t
+    from opendaisugi.executor import NetworkExecutor
+    from opendaisugi.models import NetworkStep
+
+    class _SlowResp:
+        def read(self, want):
+            _t.sleep(0.25)
+            return b"x"  # 1 byte, never EOF → infinite drip
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", lambda self, req, timeout=None: _SlowResp())
+    exe = NetworkExecutor()
+    r = exe.run(NetworkStep(id="s", url="https://slow.example.com/"), timeout_s=1, max_output_bytes=10_000_000)
+    assert r.timed_out is True
+    assert r.rc == 2

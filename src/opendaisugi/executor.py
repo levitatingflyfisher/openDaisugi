@@ -403,8 +403,24 @@ class NetworkExecutor:
             step.url, headers=step.headers, method="GET",
         )
         try:
+            # Wall-clock bound: `timeout_s` is only the per-recv SOCKET timeout, and
+            # resp.read() makes many recvs — a slow-drip server that sends a byte
+            # before each timeout could hold the executor far past step_timeout_s.
+            # Read in bounded chunks against an overall deadline.
+            deadline = start + timeout_s
             with opener.open(req, timeout=timeout_s) as resp:
-                raw = resp.read(max_output_bytes + 1)
+                chunks: list[bytes] = []
+                total = 0
+                while total <= max_output_bytes:
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(f"network read exceeded {timeout_s}s wall clock")
+                    want = min(65536, max_output_bytes + 1 - total)
+                    chunk = resp.read(want)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    total += len(chunk)
+                raw = b"".join(chunks)
             if len(raw) > max_output_bytes:
                 stdout = raw[:max_output_bytes].decode("utf-8", errors="replace")
                 stdout += "\n... [truncated]"
