@@ -92,3 +92,20 @@ def test_subprocess_executor_truncates_large_output():
 def test_subprocess_executor_satisfies_protocol():
     from opendaisugi.executor import StepExecutor
     assert isinstance(SubprocessExecutor(), StepExecutor)
+
+
+def test_subprocess_output_is_bounded_against_flood():
+    # EB-3: an allowlisted-but-noisy command that emits unbounded output must be
+    # capped in memory (not buffered whole via communicate) and killed — this must
+    # return quickly, not hang or OOM.
+    import time as _t
+    from opendaisugi.executor import SubprocessExecutor
+    from opendaisugi.models import ShellStep
+    exe = SubprocessExecutor()
+    start = _t.monotonic()
+    # `yes` emits "y\n" forever; cap at 4KB.
+    r = exe.run(ShellStep(id="s", command="yes"), timeout_s=10, max_output_bytes=4096)
+    elapsed = _t.monotonic() - start
+    assert len(r.stdout.encode()) <= 4096 + len("\n... [truncated]")
+    assert "[truncated]" in r.stdout
+    assert elapsed < 8  # bounded + killed promptly, nowhere near the 10s timeout

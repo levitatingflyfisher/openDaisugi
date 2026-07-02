@@ -24,6 +24,7 @@ import secrets
 import signal
 import socket
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -489,43 +490,88 @@ class SubprocessExecutor:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        # Read stdout in a bounded thread so a permitted-but-noisy command
+        # (`cat /dev/zero`, `yes`) can't exhaust memory: `communicate()` buffers
+        # the WHOLE output before the size cap is applied. stderr is merged into
+        # stdout (single pipe), so a lone reader thread can't deadlock. When the
+        # cap is hit the reader stops; the process then blocks on a full pipe and
+        # is killed below, so it can't run unbounded.
+        holder: dict = {"out": b"", "truncated": False}
+
+        def _reader() -> None:
+            buf = bytearray()
+            try:
+                while len(buf) < max_output_bytes:
+                    chunk = proc.stdout.read(min(65536, max_output_bytes - len(buf)))
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                else:
+                    # Cap hit, not EOF. Kill the group NOW: otherwise the process
+                    # blocks on the full pipe and the main thread's proc.wait()
+                    # spins until the whole timeout elapses instead of returning
+                    # promptly. SIGKILL the group so grandchildren die too.
+                    holder["truncated"] = True
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+            except (ValueError, OSError):
+                pass
+            holder["out"] = bytes(buf)
+
+        reader = threading.Thread(target=_reader, daemon=True)
+        reader.start()
+
         timed_out = False
         try:
-            out_bytes, _ = proc.communicate(timeout=timeout_s)
+            proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             timed_out = True
-            out_bytes = self._teardown(proc)
+            self._kill_group(proc)
         except KeyboardInterrupt:
-            self._teardown(proc)
+            self._kill_group(proc)
             raise
+        # If output hit the cap, the process may be blocked writing to a full pipe;
+        # if it's still alive, kill the group so it can't keep running.
+        if proc.poll() is None:
+            self._kill_group(proc)
+        reader.join(timeout=2)
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+
         duration_ms = (time.monotonic() - start) * 1000.0
         rc = proc.returncode if proc.returncode is not None else -1
-
-        stdout = (out_bytes or b"").decode(errors="replace")
-        if len(stdout.encode()) > max_output_bytes:
-            stdout = stdout.encode()[:max_output_bytes].decode(errors="replace") + "\n... [truncated]"
+        stdout = holder["out"].decode(errors="replace")
+        if holder["truncated"]:
+            stdout += "\n... [truncated]"
         return ExecutorResult(
             rc=rc, stdout=stdout, duration_ms=duration_ms, timed_out=timed_out,
         )
 
     @staticmethod
-    def _teardown(proc: subprocess.Popen) -> bytes:
-        """Escalate SIGTERM → SIGKILL to the process group and drain output."""
+    def _kill_group(proc: subprocess.Popen) -> None:
+        """Escalate SIGTERM → SIGKILL to the whole process group (reaps shell
+        grandchildren, which ``start_new_session=True`` puts in proc's group)."""
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except ProcessLookupError:
-            pass
+            return
         try:
-            out_bytes, _ = proc.communicate(timeout=2)
-            return out_bytes or b""
+            proc.wait(timeout=2)
+            return
         except subprocess.TimeoutExpired:
             pass
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        out_bytes, _ = proc.communicate()
-        return out_bytes or b""
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def default_executors() -> dict[str, StepExecutor]:
