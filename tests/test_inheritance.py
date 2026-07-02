@@ -256,3 +256,48 @@ def test_all_violations_have_inheritance_stage():
     violations = verify_inheritance(child, parent)
     assert len(violations) > 0
     assert all(v.stage == "inheritance" for v in violations)
+
+
+# --------------------- robotics/mcp/stakes tightening (SGCM review H1) ---------------------
+
+def _envp(**perm_and_meta):
+    from opendaisugi.models import Envelope, Permission
+    stakes = perm_and_meta.pop("stakes", "medium")
+    return Envelope(generated_by="t", task="x", stakes=stakes, permissions=Permission(**perm_and_meta))
+
+
+def test_inheritance_rejects_relaxed_velocity():
+    from opendaisugi.inheritance import verify_inheritance
+    parent = _envp(velocity_limit=0.5, stakes="physical")
+    child = _envp(velocity_limit=5.0, stakes="physical")  # 10x faster
+    assert verify_inheritance(child, parent)  # non-empty → violations
+
+
+def test_inheritance_rejects_expanded_workspace():
+    from opendaisugi.inheritance import verify_inheritance
+    parent = _envp(workspace_bounds=((0, 0, 0), (1, 1, 1)), stakes="physical")
+    child = _envp(workspace_bounds=((0, 0, 0), (100, 100, 100)), stakes="physical")
+    assert verify_inheritance(child, parent)
+
+
+def test_inheritance_rejects_added_mcp_tool():
+    from opendaisugi.inheritance import verify_inheritance
+    parent = _envp(mcp_allowlist=[])          # deny all
+    child = _envp(mcp_allowlist=["github/*"])  # added a tool
+    assert verify_inheritance(child, parent)
+
+
+def test_inheritance_rejects_stakes_downgrade():
+    from opendaisugi.inheritance import verify_inheritance
+    parent = _envp(stakes="physical")
+    child = _envp(stakes="low")  # downgrade re-enables probabilistic primitives
+    assert verify_inheritance(child, parent)
+
+
+def test_inheritance_allows_genuine_tightening():
+    from opendaisugi.inheritance import verify_inheritance
+    parent = _envp(velocity_limit=5.0, workspace_bounds=((0, 0, 0), (10, 10, 10)),
+                   mcp_allowlist=["github/*"], stakes="high")
+    child = _envp(velocity_limit=2.0, workspace_bounds=((0, 0, 0), (5, 5, 5)),
+                  mcp_allowlist=[], stakes="physical")
+    assert not verify_inheritance(child, parent)

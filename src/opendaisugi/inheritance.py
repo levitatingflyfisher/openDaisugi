@@ -85,6 +85,28 @@ def verify_inheritance(child: Envelope, parent: Envelope) -> list[Violation]:
         child.permissions.max_output_size_mb,
         parent.permissions.max_output_size_mb,
     )
+    _check_set_subset(
+        violations, "mcp_allowlist",
+        child.permissions.mcp_allowlist, parent.permissions.mcp_allowlist,
+    )
+    # Robotics capabilities (workspace_bounds/velocity/torque/joint/obstacles) —
+    # reuse the fail-closed subsumption check: the child must not exceed OR leave
+    # undeclared any physical bound the parent constrains. (v0.1.2's field-by-field
+    # inheritance predates v0.8 robotics, so these were silently unchecked.)
+    from opendaisugi.subsumption import _robot_capability_violation
+    robot_reason = _robot_capability_violation(parent.permissions, child.permissions)
+    if robot_reason is not None:
+        violations.append(Violation(
+            stage=_STAGE, message=f"robot capability relaxed: {robot_reason}",
+        ))
+    # Stakes may be tightened (escalated) but never downgraded — downgrading
+    # physical→low re-enables probabilistic primitives the parent locked out.
+    _stakes_rank = {"low": 0, "medium": 1, "high": 2, "physical": 3}
+    if _stakes_rank.get(child.stakes, 0) < _stakes_rank.get(parent.stakes, 0):
+        violations.append(Violation(
+            stage=_STAGE,
+            message=f"stakes: child '{child.stakes}' downgrades parent '{parent.stakes}'",
+        ))
     _check_superset(violations, "invariants", child.invariants, parent.invariants)
     _check_superset(
         violations, "postconditions", child.postconditions, parent.postconditions,
