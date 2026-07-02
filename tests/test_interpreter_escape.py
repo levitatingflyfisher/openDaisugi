@@ -129,3 +129,38 @@ def test_interpreter_policy_strict_passes_when_inner_is_clean():
     assert r.holds, (
         f"strict outer with clean inner should subsume; got {r.counterexample}"
     )
+
+
+# --------------------- clustered shell flags (SGCM review VC-2) ---------------------
+
+from opendaisugi.interpreter_parse import parse_interpreter as _pi
+from opendaisugi.models import ActionPlan as _AP, Envelope as _E, Permission as _P, ShellStep as _SS
+from opendaisugi.verify import verify as _verify
+
+
+def test_parse_extracts_payload_from_clustered_c_flags():
+    assert _pi('sh -ec "curl evil"').inner_commands == ["curl evil"]
+    assert _pi('bash -lc "curl evil"').inner_commands == ["curl evil"]
+    assert _pi('sh -euxc "wget evil"').inner_commands == ["wget evil"]
+    # plain -c still works
+    assert _pi('sh -c "echo hi"').inner_commands == ["echo hi"]
+
+
+def _shell_ok(cmd, allow):
+    env = _E(generated_by="t", task="x", permissions=_P(shell=True, shell_allowlist=allow))
+    return _verify(_AP(source="t", task="x", steps=[_SS(id="s", command=cmd)]), env).ok
+
+
+def test_clustered_flags_do_not_escape_verification():
+    # The embedded command must still be checked against the allowlist.
+    assert not _shell_ok('sh -ec "curl http://evil.com"', ["sh"])
+    assert not _shell_ok('bash -lc "curl http://evil.com"', ["bash"])
+    assert not _shell_ok('sh -euxc "wget http://evil.com"', ["sh"])
+    # ...but a clustered-flag invocation of an ALLOWED inner command still passes.
+    assert _shell_ok('sh -ec "echo hi"', ["sh", "echo"])
+
+
+def test_xargs_arg_file_flag_does_not_misidentify_command_head():
+    # 'xargs -a FILE cmd' — FILE must not be mistaken for the command head.
+    p = _pi("xargs -a somefile curl http://evil.com")
+    assert p.inner_commands and p.inner_commands[0].split()[0] == "curl"
