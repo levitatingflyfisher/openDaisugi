@@ -89,3 +89,18 @@ def test_non_strict_allows_overshoot():
     b.record(step_id="s1", model="haiku", tokens=90)
     b.record(step_id="s2", model="opus", tokens=50)  # no raise
     assert b.spent() == 140
+
+
+def test_approx_cost_usd_blends_model_prices():
+    b = BudgetTracker(total_tokens=None)
+    b.record(step_id="s1", model="claude-opus-4-8", tokens=1_000_000)   # $22/Mtok
+    b.record(step_id="s2", model="claude-haiku-4-5", tokens=1_000_000)  # $1.5/Mtok
+    b.record(step_id="s3", model="openai/local-model", tokens=5_000_000)  # local → $0
+    assert b.approx_cost_usd() == 23.5
+    assert b.report().approx_cost_usd == 23.5
+
+
+def test_approx_cost_price_table_is_overridable():
+    b = BudgetTracker(price_table={"tiny": 0.1})
+    b.record(step_id="s1", model="tiny-local", tokens=2_000_000)
+    assert b.approx_cost_usd() == 0.2

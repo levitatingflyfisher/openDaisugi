@@ -1370,7 +1370,8 @@ def orchestrate_cmd(
                        + ("  [downgraded]" if s.downgraded else ""))
         b = result.budget
         spent = f"{b.spent}" + (f"/{b.total}" if b.total is not None else "")
-        typer.echo(f"  budget: {spent} tokens spent across {b.step_count} model call(s)")
+        typer.echo(f"  budget: ~{spent} tokens across {b.step_count} model call(s) "
+                   f"≈ ${b.approx_cost_usd:.4f} (approximate)")
 
     if result.status != "succeeded":
         raise typer.Exit(code=1)

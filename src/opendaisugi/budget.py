@@ -16,6 +16,25 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+# Rough blended $/1M-token prices by model-family substring (input+output blended,
+# published list prices, order-of-magnitude). Deliberately APPROXIMATE — this pairs
+# with heuristic token estimates, so a precise bill it is not; it's a "roughly how
+# much did this cost" figure. Override via BudgetTracker(price_table=...). Local /
+# self-hosted models match nothing → treated as free.
+APPROX_USD_PER_MTOK: dict[str, float] = {
+    "opus": 22.0,
+    "sonnet": 6.0,
+    "haiku": 1.5,
+}
+
+
+def _price_per_mtok(model: str, table: dict[str, float]) -> float:
+    m = model.lower()
+    for key, price in table.items():
+        if key in m:
+            return price
+    return 0.0  # unknown / local → approximate as free
+
 
 class BudgetExceeded(Exception):
     """A strict-mode budget was exceeded by a recorded spend."""
@@ -39,6 +58,7 @@ class BudgetReport:
     remaining: int | None  # None when unlimited (keeps the snapshot JSON-safe)
     step_count: int
     by_model: dict[str, int]
+    approx_cost_usd: float = 0.0  # rough $ estimate — see APPROX_USD_PER_MTOK
 
 
 @dataclass
@@ -54,6 +74,7 @@ class BudgetTracker:
 
     total_tokens: int | None = None
     strict: bool = False
+    price_table: dict[str, float] = field(default_factory=lambda: dict(APPROX_USD_PER_MTOK))
     _spent: int = field(default=0, init=False)
     _costs: list[StepCost] = field(default_factory=list, init=False)
 
@@ -105,6 +126,15 @@ class BudgetTracker:
             out[c.model] = out.get(c.model, 0) + c.tokens
         return out
 
+    def approx_cost_usd(self) -> float:
+        """Rough dollar estimate: Σ per-model tokens × blended $/Mtok. Approximate
+        (heuristic tokens × list prices) — a ballpark, not a bill."""
+        total = sum(
+            _price_per_mtok(model, self.price_table) * tokens / 1_000_000
+            for model, tokens in self.by_model().items()
+        )
+        return round(total, 4)
+
     def report(self) -> BudgetReport:
         return BudgetReport(
             total=self.total_tokens,
@@ -112,7 +142,8 @@ class BudgetTracker:
             remaining=None if self.total_tokens is None else int(self.remaining()),
             step_count=len(self._costs),
             by_model=self.by_model(),
+            approx_cost_usd=self.approx_cost_usd(),
         )
 
 
-__all__ = ["BudgetExceeded", "BudgetReport", "BudgetTracker", "StepCost"]
+__all__ = ["APPROX_USD_PER_MTOK", "BudgetExceeded", "BudgetReport", "BudgetTracker", "StepCost"]
