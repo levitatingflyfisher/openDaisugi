@@ -227,3 +227,24 @@ async def test_orchestrator_threads_generous_step_timeout_to_supervisor():
             synth_client=_synth_client("ok"),
         )
     assert captured["step_timeout_s"] == 180
+
+
+async def test_orchestrate_records_exact_cost_from_backend():
+    # When the delegating executor reports a measured cost (claude-code json),
+    # it flows into the budget's measured_cost_usd.
+    from unittest.mock import patch as _patch
+    env = Envelope(generated_by="t", task="demo", permissions=Permission(), stakes="low")
+    orch = Orchestrator()
+
+    def fake_metered(prompt, *, timeout_s, model, binary="claude", cwd=None):
+        return "answer", {"tokens": 50, "cost_usd": 0.0207}
+
+    with _patch("opendaisugi.claude_code_llm.call_claude_p_metered", fake_metered), \
+         _patch("opendaisugi.llm.resolve_backend", return_value="claude-code"):
+        result = await orch.orchestrate(
+            "one reasoning step",
+            envelope=env,
+            decompose_client=_decompose_client(DecomposedStep(id="t1", type="task", prompt="think")),
+            synth_client=_synth_client("done"),
+        )
+    assert result.budget.measured_cost_usd == 0.0207

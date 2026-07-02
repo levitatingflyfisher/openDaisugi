@@ -104,3 +104,18 @@ def test_approx_cost_price_table_is_overridable():
     b = BudgetTracker(price_table={"tiny": 0.1})
     b.record(step_id="s1", model="tiny-local", tokens=2_000_000)
     assert b.approx_cost_usd() == 0.2
+
+
+def test_measured_cost_is_exact_when_backend_reports_it():
+    b = BudgetTracker()
+    b.record(step_id="s1", model="claude-haiku-4-5", tokens=72, cost_usd=0.0207)
+    b.record(step_id="s2", model="claude-opus-4-8", tokens=500, cost_usd=0.15)
+    assert b.measured_cost_usd() == 0.1707
+    assert b.report().measured_cost_usd == 0.1707
+
+
+def test_measured_cost_is_none_without_backend_costs():
+    b = BudgetTracker()
+    b.record(step_id="s1", model="haiku", tokens=100)  # no cost_usd
+    assert b.measured_cost_usd() is None
+    assert b.report().measured_cost_usd is None

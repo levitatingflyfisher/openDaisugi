@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.33.2 — 2026-07-01 — exact cost on the Claude Code subscription; cost is opt-in
+
+The budget's dollar figure is now **exact**, not estimated, on the `claude-code`
+backend — and cost display is opt-in.
+
+- **Exact cost with no API key.** `claude -p --output-format json` returns Claude
+  Code's own `total_cost_usd` + token `usage`. The delegating executor now uses that
+  metered call for prose (TaskStep) execution, so `BudgetTracker` records the *real*
+  cost and token count. Confirmed live: a run reported `measured_cost_usd=$0.0238`
+  where the old heuristic estimate said `$0.0011` — ~20× off, which is exactly why
+  the estimate wasn't trustworthy. `BudgetReport.measured_cost_usd` is the exact
+  figure (None when no backend reported one → falls back to `approx_cost_usd`).
+- **Cost is opt-in.** `daisugi orchestrate` no longer prints a dollar figure by
+  default; pass `--cost` to see it (labeled *exact* on claude-code, *estimated* on
+  litellm). The token/routing summary still shows.
+- Honest caveat: each `claude -p` subprocess reloads Claude Code's full system prompt
+  (cache-creation tokens), so per-call cost is dominated by that overhead (~2¢/call
+  even for a one-line answer). The numbers are exact; the *subprocess* backend is just
+  expensive per step. The Claude Agent SDK (which can reuse context) is the amortizing
+  path — and it also runs on a Claude Code subscription.
+
 ## v0.33.1 — 2026-07-01 — orchestrate CLI fixes + approximate cost
 
 Fixes from feedback after v0.33.0 shipped.

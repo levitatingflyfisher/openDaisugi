@@ -101,3 +101,41 @@ def test_orchestrate_accepts_budget_and_envelope_optionals(monkeypatch, tmp_path
     assert res.exit_code == 0, res.output
     assert captured["budget_tokens"] is None      # omitted → None, no crash
     assert captured["envelope"] is None
+
+
+def _result_with_measured_cost():
+    r = _fake_result()
+    from dataclasses import replace
+    r.budget = replace(r.budget, measured_cost_usd=0.0207)
+    return r
+
+
+def test_orchestrate_cost_hidden_by_default(monkeypatch, tmp_path):
+    import opendaisugi
+    monkeypatch.setattr(opendaisugi.Daisugi, "orchestrate",
+                        lambda self, prompt, **k: _async(_fake_result()), raising=False)
+    res = runner.invoke(app, ["orchestrate", "demo", "--data-dir", str(tmp_path)])
+    assert res.exit_code == 0, res.output
+    assert "cost:" not in res.output  # costing removed from default output
+
+
+def test_orchestrate_cost_flag_shows_exact_when_measured(monkeypatch, tmp_path):
+    import opendaisugi
+    monkeypatch.setattr(opendaisugi.Daisugi, "orchestrate",
+                        lambda self, prompt, **k: _async(_result_with_measured_cost()), raising=False)
+    res = runner.invoke(app, ["orchestrate", "demo", "--cost", "--data-dir", str(tmp_path)])
+    assert res.exit_code == 0, res.output
+    assert "cost:" in res.output and "exact" in res.output and "0.0207" in res.output
+
+
+def test_orchestrate_cost_flag_shows_estimate_without_measured(monkeypatch, tmp_path):
+    import opendaisugi
+    monkeypatch.setattr(opendaisugi.Daisugi, "orchestrate",
+                        lambda self, prompt, **k: _async(_fake_result()), raising=False)
+    res = runner.invoke(app, ["orchestrate", "demo", "--cost", "--data-dir", str(tmp_path)])
+    assert res.exit_code == 0, res.output
+    assert "cost:" in res.output and "estimated" in res.output
+
+
+async def _async(v):
+    return v

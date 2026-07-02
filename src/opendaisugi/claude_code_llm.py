@@ -174,6 +174,38 @@ def call_claude_p_json_sync(
     return _extract_first_json_object(stdout)
 
 
+def call_claude_p_metered(
+    prompt: str,
+    *,
+    timeout_s: float = 60.0,
+    model: str | None = "haiku",
+    binary: str = "claude",
+    cwd: str | None = None,
+) -> tuple[str, dict]:
+    """Call ``claude -p --output-format json``; return (result_text, meter).
+
+    ``meter`` is ``{"tokens": int | None, "cost_usd": float | None}`` taken from
+    Claude Code's OWN accounting (``usage`` + ``total_cost_usd``) — exact, and it
+    works on a Claude Code subscription with no API key. Falls back to raw text
+    with empty meter if the envelope can't be parsed.
+    """
+    raw = call_claude_p_sync(
+        prompt, timeout_s=timeout_s, model=model, binary=binary, cwd=cwd,
+        extra_args=("--output-format", "json"),
+    )
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw, {"tokens": None, "cost_usd": None}
+    text = obj.get("result", "") or ""
+    usage = obj.get("usage") if isinstance(obj.get("usage"), dict) else {}
+    tokens: int | None = None
+    inp, out = usage.get("input_tokens"), usage.get("output_tokens")
+    if inp is not None or out is not None:
+        tokens = (inp or 0) + (out or 0)
+    return text, {"tokens": tokens, "cost_usd": obj.get("total_cost_usd")}
+
+
 _SCHEMA_PREAMBLE = (
     "Respond with ONLY a JSON object that validates against the following schema.\n"
     "No prose, no code fences, no explanation.\n\n"
@@ -279,6 +311,7 @@ __all__ = [
     "call_claude_p_async",
     "call_claude_p_sync",
     "call_claude_p_json_sync",
+    "call_claude_p_metered",
     "call_claude_p_structured",
     "ClaudeCodeInstructorClient",
 ]

@@ -38,10 +38,14 @@ class _LastInvocation:
     model: str | None = None
     attempts: int = 0
     # v0.32: total tokens reported by the backend for the last call, when it
-    # exposes usage (litellm ``result.usage.total_tokens``). None when the
-    # backend reports no usage (claude-code subprocess) or the call was mocked.
+    # exposes usage (litellm ``result.usage.total_tokens`` or claude-code
+    # ``--output-format json`` usage). None when unavailable or mocked.
     # The budget-aware executor reads this to record actual spend.
     tokens: int | None = None
+    # v0.33.2: measured dollar cost, exact, from the claude-code backend's
+    # ``total_cost_usd`` (Claude Code's own accounting; works on a subscription).
+    # None on backends that don't report a cost (litellm → estimated elsewhere).
+    cost_usd: float | None = None
 
 
 def _extract_total_tokens(result: object) -> int | None:
@@ -106,9 +110,10 @@ class DelegatingExecutor:
         # answers the subtask in prose instead of being forced into a JSON object.
         self.json_mode = json_mode
         self.last = _LastInvocation()
-        # Set by _call_litellm_sync as a side channel; folded into self.last
-        # after each call so patched _call (returning a bare str) leaves it None.
+        # Set by the backend call as a side channel; folded into self.last after
+        # each call so a patched _call (returning a bare str) leaves them None.
         self._last_usage: int | None = None
+        self._last_cost: float | None = None
 
     @staticmethod
     def _default_prompt(step: StepBase) -> str:
@@ -149,10 +154,14 @@ class DelegatingExecutor:
     ) -> str:
         # Honor json_mode on the claude-code backend too: a prose TaskStep
         # (json_mode=False) must get raw text, not be forced through JSON
-        # extraction — which raises on a prose answer and fails the step.
+        # extraction — which raises on a prose answer and fails the step. The
+        # metered variant also captures Claude Code's exact usage + cost.
         if not self.json_mode:
-            from opendaisugi.claude_code_llm import call_claude_p_sync
-            return call_claude_p_sync(prompt, timeout_s=float(timeout_s), model=model)
+            from opendaisugi.claude_code_llm import call_claude_p_metered
+            text, meter = call_claude_p_metered(prompt, timeout_s=float(timeout_s), model=model)
+            self._last_usage = meter.get("tokens")
+            self._last_cost = meter.get("cost_usd")
+            return text
         from opendaisugi.claude_code_llm import call_claude_p_json_sync
         body = call_claude_p_json_sync(prompt, timeout_s=float(timeout_s), model=model)
         return json.dumps(body)
@@ -187,13 +196,15 @@ class DelegatingExecutor:
         for attempt in range(1, self.max_retries + 2):
             self.last = _LastInvocation(model=model, attempts=attempt)
             self._last_usage = None
+            self._last_cost = None
             try:
                 content = self._call(
                     model, prompt,
                     timeout_s=timeout_s, max_tokens=max_tokens,
                 )
                 self.last = _LastInvocation(
-                    model=model, attempts=attempt, tokens=self._last_usage,
+                    model=model, attempts=attempt,
+                    tokens=self._last_usage, cost_usd=self._last_cost,
                 )
             except Exception as exc:  # noqa: BLE001 — translate at boundary
                 last_error = str(translate_llm_error(exc))

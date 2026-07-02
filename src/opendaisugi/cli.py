@@ -1312,6 +1312,11 @@ def orchestrate_cmd(
              "(no API key — uses your Claude Code subscription via a claude -p subprocess).",
     ),
     stakes: str = typer.Option("medium", "--stakes", help="Stakes for a generated envelope: low|medium|high."),
+    cost: bool = typer.Option(
+        False, "--cost",
+        help="Show a cost figure for the run — exact on the claude-code backend "
+             "(Claude Code's own accounting), estimated on litellm. Off by default.",
+    ),
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data dir (pathway store + journal)."),
     json_output: bool = typer.Option(False, "--json", help="Emit the orchestration result as JSON."),
 ) -> None:
@@ -1370,8 +1375,12 @@ def orchestrate_cmd(
                        + ("  [downgraded]" if s.downgraded else ""))
         b = result.budget
         spent = f"{b.spent}" + (f"/{b.total}" if b.total is not None else "")
-        typer.echo(f"  budget: ~{spent} tokens across {b.step_count} model call(s) "
-                   f"≈ ${b.approx_cost_usd:.4f} (approximate)")
+        typer.echo(f"  budget: {spent} tokens across {b.step_count} model call(s)")
+        if cost:
+            if b.measured_cost_usd is not None:
+                typer.echo(f"  cost:   ${b.measured_cost_usd:.4f} (exact — Claude Code accounting)")
+            else:
+                typer.echo(f"  cost:   ~${b.approx_cost_usd:.4f} (estimated)")
 
     if result.status != "succeeded":
         raise typer.Exit(code=1)

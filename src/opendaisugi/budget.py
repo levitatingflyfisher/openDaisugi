@@ -42,11 +42,13 @@ class BudgetExceeded(Exception):
 
 @dataclass(frozen=True)
 class StepCost:
-    """One recorded spend: which step, which model, how many tokens."""
+    """One recorded spend: which step, which model, how many tokens, and (when the
+    backend reports it, e.g. claude -p --output-format json) the exact dollar cost."""
 
     step_id: str
     model: str
     tokens: int
+    cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,9 @@ class BudgetReport:
     step_count: int
     by_model: dict[str, int]
     approx_cost_usd: float = 0.0  # rough $ estimate — see APPROX_USD_PER_MTOK
+    # Exact $ summed from backends that report it (claude -p --output-format json).
+    # None when no step reported a measured cost (e.g. litellm-only → use approx).
+    measured_cost_usd: float | None = None
 
 
 @dataclass
@@ -97,11 +102,15 @@ class BudgetTracker:
     def exhausted(self) -> bool:
         return self.remaining() <= 0 and self.total_tokens is not None
 
-    def record(self, *, step_id: str, model: str, tokens: int) -> None:
+    def record(
+        self, *, step_id: str, model: str, tokens: int, cost_usd: float | None = None
+    ) -> None:
         """Add ``tokens`` to the running total, attributed to ``step_id``/``model``.
 
-        Raises :class:`ValueError` on a negative count and, in strict mode,
-        :class:`BudgetExceeded` when the spend crosses ``total_tokens``.
+        ``cost_usd`` is the backend's EXACT measured cost when available (claude -p
+        --output-format json); when omitted the tracker falls back to a price-table
+        estimate for that step. Raises :class:`ValueError` on a negative count and,
+        in strict mode, :class:`BudgetExceeded` when the spend crosses ``total_tokens``.
         """
         if tokens < 0:
             raise ValueError(f"token count must be non-negative, got {tokens}")
@@ -115,7 +124,7 @@ class BudgetTracker:
                 f"{self._spent + tokens} > budget {self.total_tokens}"
             )
         self._spent += tokens
-        self._costs.append(StepCost(step_id=step_id, model=model, tokens=tokens))
+        self._costs.append(StepCost(step_id=step_id, model=model, tokens=tokens, cost_usd=cost_usd))
 
     def costs(self) -> list[StepCost]:
         return list(self._costs)
@@ -126,9 +135,18 @@ class BudgetTracker:
             out[c.model] = out.get(c.model, 0) + c.tokens
         return out
 
+    def measured_cost_usd(self) -> float | None:
+        """Sum of EXACT per-step costs the backend reported, or None if no step
+        reported one. This is the real dollar figure (no estimation)."""
+        measured = [c.cost_usd for c in self._costs if c.cost_usd is not None]
+        if not measured:
+            return None
+        return round(sum(measured), 6)
+
     def approx_cost_usd(self) -> float:
         """Rough dollar estimate: Σ per-model tokens × blended $/Mtok. Approximate
-        (heuristic tokens × list prices) — a ballpark, not a bill."""
+        (heuristic tokens × list prices) — a ballpark, not a bill. Prefer
+        :meth:`measured_cost_usd` when it is not None."""
         total = sum(
             _price_per_mtok(model, self.price_table) * tokens / 1_000_000
             for model, tokens in self.by_model().items()
@@ -143,6 +161,7 @@ class BudgetTracker:
             step_count=len(self._costs),
             by_model=self.by_model(),
             approx_cost_usd=self.approx_cost_usd(),
+            measured_cost_usd=self.measured_cost_usd(),
         )
 
 

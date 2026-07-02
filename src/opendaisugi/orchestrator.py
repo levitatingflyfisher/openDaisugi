@@ -128,7 +128,10 @@ class BudgetAwareDelegatingExecutor(DelegatingExecutor):
 
         result = super().run(step, timeout_s=timeout_s, max_output_bytes=max_output_bytes)
         tokens = self.last.tokens if self.last.tokens is not None else sizing.est_tokens
-        self.tracker.record(step_id=step.id, model=self.last.model or sizing.model, tokens=tokens)
+        self.tracker.record(
+            step_id=step.id, model=self.last.model or sizing.model,
+            tokens=tokens, cost_usd=self.last.cost_usd,
+        )
         return result
 
 
