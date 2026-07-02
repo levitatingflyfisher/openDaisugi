@@ -80,3 +80,37 @@ def test_verify_robot_plan_fails_on_multiple_invariants():
     # joint_limits + velocity should both flag on step b
     assert "joint_limits_respected" in flagged
     assert "velocity_bounded" in flagged
+
+
+def test_robotics_invariant_without_backing_bounds_is_rejected():
+    # end_effector_in_workspace enforced but workspace_bounds=None → the z3 handler
+    # no-ops, so the invariant was silently vacuous (fail-open) even at physical
+    # stakes. Must reject: the operator believes the workspace is guarded.
+    from opendaisugi.models import Envelope, Permission, Invariant, CartesianMoveStep, ActionPlan
+    from opendaisugi.verify import verify
+    env = Envelope(
+        generated_by="t", task="x", stakes="physical",
+        permissions=Permission(workspace_bounds=None),
+        invariants=[Invariant(type="end_effector_in_workspace", description="guarded")],
+    )
+    plan = ActionPlan(source="t", task="x",
+                      steps=[CartesianMoveStep(id="m", target_position=(999.0, 999.0, 999.0))])
+    r = verify(plan, env)
+    assert not r.ok
+    assert any("backing" in v.message.lower() or "workspace_bounds" in v.message for v in r.violations)
+
+
+def test_robotics_invariant_with_bounds_still_works():
+    from opendaisugi.models import Envelope, Permission, Invariant, CartesianMoveStep, ActionPlan
+    from opendaisugi.verify import verify
+    env = Envelope(
+        generated_by="t", task="x", stakes="physical",
+        permissions=Permission(workspace_bounds=((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))),
+        invariants=[Invariant(type="end_effector_in_workspace", description="guarded")],
+    )
+    inside = ActionPlan(source="t", task="x",
+                        steps=[CartesianMoveStep(id="m", target_position=(0.5, 0.5, 0.5))])
+    assert verify(inside, env).ok
+    outside = ActionPlan(source="t", task="x",
+                         steps=[CartesianMoveStep(id="m", target_position=(9.0, 9.0, 9.0))])
+    assert not verify(outside, env).ok

@@ -314,3 +314,28 @@ def test_verify_rejects_non_http_network_scheme():
     # a normal http(s) URL still verifies
     ok = ActionPlan(source="t", task="x", steps=[NetworkStep(id="s", url="https://api.example.com/data")])
     assert verify(ok, env).ok
+
+
+def test_unknown_custom_step_type_rejected_under_strict():
+    # A custom @step_type with an external effect and no permission surface must
+    # fail closed under strict mode (high/physical stakes), not pass silently.
+    from opendaisugi.models import StepBase, step_type, ActionPlan, Envelope, Permission
+    from opendaisugi.verify import verify
+    from typing import Literal
+
+    @step_type
+    class _DraftEmailStep(StepBase):
+        type: Literal["_sgcm_draft_email"] = "_sgcm_draft_email"
+        to: str = "x@example.com"
+
+    plan = ActionPlan(source="t", task="x", steps=[_DraftEmailStep(id="s")])
+    # low stakes (non-strict) → passes (trust mode)
+    low = Envelope(generated_by="t", task="x", permissions=Permission(), stakes="low")
+    assert verify(plan, low).ok
+    # high stakes (strict) → rejected
+    high = Envelope(generated_by="t", task="x", permissions=Permission(), stakes="high")
+    r = verify(plan, high)
+    assert not r.ok
+    assert any("unverifiable step type" in v.message for v in r.violations)
+    # explicit strict override also rejects at low stakes
+    assert not verify(plan, low, strict=True).ok
