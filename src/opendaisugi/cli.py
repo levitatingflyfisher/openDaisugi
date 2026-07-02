@@ -1294,17 +1294,22 @@ def route_cmd(
 @app.command("orchestrate")
 def orchestrate_cmd(
     prompt: str = typer.Argument(..., help="The prompt to run end to end."),
-    envelope_path: Path = typer.Option(
+    envelope_path: "Path | None" = typer.Option(
         None, "--envelope", "-e",
         help="Envelope YAML (authorization boundary). If omitted, one is generated for the prompt.",
     ),
-    budget: int = typer.Option(
+    budget: "int | None" = typer.Option(
         None, "--budget", "-b",
-        help="Token budget for the run (gates routing during execution). Omit for unbudgeted.",
+        help="Approximate token budget for the run (gates routing during execution). Omit for unbudgeted.",
     ),
     model: str = typer.Option(
         "anthropic/claude-sonnet-4-20250514", "--model",
         help="Model used to decompose the prompt (and generate the envelope if none is given).",
+    ),
+    llm: str = typer.Option(
+        "litellm", "--llm",
+        help="LLM backend: 'litellm' (needs ANTHROPIC_API_KEY) or 'claude-code' "
+             "(no API key — uses your Claude Code subscription via a claude -p subprocess).",
     ),
     stakes: str = typer.Option("medium", "--stakes", help="Stakes for a generated envelope: low|medium|high."),
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data dir (pathway store + journal)."),
@@ -1321,6 +1326,11 @@ def orchestrate_cmd(
     if stakes not in _VALID_STAKES:
         typer.echo(f"Invalid --stakes {stakes!r}; choose from {sorted(_VALID_STAKES)}.", err=True)
         raise typer.Exit(code=2)
+    if llm not in {"litellm", "claude-code"}:
+        typer.echo(f"Invalid --llm value {llm!r}. Must be 'litellm' or 'claude-code'.", err=True)
+        raise typer.Exit(code=2)
+    if llm != "litellm":
+        os.environ["OPENDAISUGI_LLM_BACKEND"] = llm
 
     envelope = None
     if envelope_path is not None:
@@ -1964,3 +1974,7 @@ def install_cmd(
         typer.echo("\nRestart your agent session to pick up the changes.")
     else:
         typer.echo("\nAll runtimes were already configured — nothing changed.")
+
+
+if __name__ == "__main__":  # enable `python -m opendaisugi.cli ...`
+    app()

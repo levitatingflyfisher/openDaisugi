@@ -63,3 +63,41 @@ def test_orchestrate_json_output(monkeypatch, tmp_path):
     assert payload["status"] == "succeeded"
     assert payload["budget"]["spent"] == 1200
     assert payload["reused_pathway"] is False
+
+
+def test_orchestrate_rejects_bad_llm_flag(tmp_path):
+    res = runner.invoke(app, ["orchestrate", "x", "--llm", "nonsense", "--data-dir", str(tmp_path)])
+    assert res.exit_code == 2
+    assert "Invalid --llm" in res.output
+
+
+def test_orchestrate_llm_flag_sets_backend_env(monkeypatch, tmp_path):
+    import opendaisugi
+    seen = {}
+
+    async def fake_orchestrate(self, prompt, **kwargs):
+        import os
+        seen["backend"] = os.environ.get("OPENDAISUGI_LLM_BACKEND")
+        return _fake_result()
+
+    monkeypatch.delenv("OPENDAISUGI_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(opendaisugi.Daisugi, "orchestrate", fake_orchestrate, raising=False)
+    res = runner.invoke(app, ["orchestrate", "demo", "--llm", "claude-code", "--data-dir", str(tmp_path)])
+    assert res.exit_code == 0, res.output
+    assert seen["backend"] == "claude-code"
+
+
+def test_orchestrate_accepts_budget_and_envelope_optionals(monkeypatch, tmp_path):
+    # Optional-typed flags: omitting them must not error on annotation parsing.
+    import opendaisugi
+    captured = {}
+
+    async def fake_orchestrate(self, prompt, **kwargs):
+        captured.update(kwargs)
+        return _fake_result()
+
+    monkeypatch.setattr(opendaisugi.Daisugi, "orchestrate", fake_orchestrate, raising=False)
+    res = runner.invoke(app, ["orchestrate", "demo", "--data-dir", str(tmp_path)])
+    assert res.exit_code == 0, res.output
+    assert captured["budget_tokens"] is None      # omitted → None, no crash
+    assert captured["envelope"] is None

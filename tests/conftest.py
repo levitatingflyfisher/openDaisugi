@@ -1,5 +1,6 @@
 """Shared pytest fixtures for opendaisugi tests."""
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,27 @@ from opendaisugi.models import (
 
 
 MJCF_TWO_JOINT_ARM = Path(__file__).parent / "fixtures" / "mjcf" / "two_joint_arm.xml"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_llm_backend_env():
+    """Snapshot+restore OPENDAISUGI_LLM_BACKEND around every test.
+
+    The CLI's ``--llm`` handling sets this env var via a direct ``os.environ[...]``
+    write (not through monkeypatch), so an in-process CliRunner invoke with
+    ``--llm claude-code`` would otherwise LEAK the var into every later test —
+    flipping the global backend and making litellm-mocking tests fire real
+    ``claude -p`` subprocesses. Restore it unconditionally so tests stay isolated.
+    """
+    sentinel = object()
+    before = os.environ.get("OPENDAISUGI_LLM_BACKEND", sentinel)
+    try:
+        yield
+    finally:
+        if before is sentinel:
+            os.environ.pop("OPENDAISUGI_LLM_BACKEND", None)
+        else:
+            os.environ["OPENDAISUGI_LLM_BACKEND"] = before
 
 
 @pytest.fixture
