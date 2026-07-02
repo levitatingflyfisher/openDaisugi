@@ -234,3 +234,33 @@ def test_sync_prompt_after_separator(monkeypatch):
     call_claude_p_sync("hello", model=None, timeout_s=1)
     args = captured["args"]
     assert args[-2:] == ["--", "hello"]  # prompt is the final positional
+
+
+# --------------------- metered accounting (SGCM review) ---------------------
+
+def test_metered_counts_all_token_kinds_including_cache(monkeypatch):
+    import json as _json
+    from opendaisugi.claude_code_llm import call_claude_p_metered
+    envelope = {
+        "result": "the answer",
+        "total_cost_usd": 0.0126,
+        "usage": {"input_tokens": 10, "output_tokens": 166,
+                  "cache_creation_input_tokens": 4800, "cache_read_input_tokens": 22011},
+    }
+    monkeypatch.setattr("opendaisugi.claude_code_llm.call_claude_p_sync",
+                        lambda *a, **k: _json.dumps(envelope))
+    text, meter = call_claude_p_metered("x", timeout_s=1)
+    assert text == "the answer"
+    assert meter["tokens"] == 10 + 166 + 4800 + 22011  # NOT just 176
+    assert meter["cost_usd"] == 0.0126
+
+
+def test_metered_raises_on_is_error(monkeypatch):
+    import json as _json
+    from opendaisugi.claude_code_llm import call_claude_p_metered
+    from opendaisugi.exceptions import EnvelopeGenerationError
+    envelope = {"result": "hit max turns", "is_error": True, "usage": {}}
+    monkeypatch.setattr("opendaisugi.claude_code_llm.call_claude_p_sync",
+                        lambda *a, **k: _json.dumps(envelope))
+    with pytest.raises(EnvelopeGenerationError):
+        call_claude_p_metered("x", timeout_s=1)

@@ -215,12 +215,25 @@ def call_claude_p_metered(
         obj = json.loads(raw)
     except json.JSONDecodeError:
         return raw, {"tokens": None, "cost_usd": None}
+    # An in-turn error (max-turns, refusal, execution error) can exit 0 with
+    # is_error=true; don't return its ``result`` as if it were a real answer.
+    if obj.get("is_error"):
+        raise EnvelopeGenerationError(
+            f"claude -p reported is_error: {str(obj.get('result'))[:200]!r}"
+        )
     text = obj.get("result", "") or ""
     usage = obj.get("usage") if isinstance(obj.get("usage"), dict) else {}
+    # Count ALL token kinds — input, output, AND cache creation/read. On the
+    # claude-code backend the reloaded system prompt makes cache tokens dominate
+    # (often ~99% of the total); summing only input+output undercounts by ~100x,
+    # so the token budget would never bite. total_cost_usd already prices the
+    # cache discount, so the exact dollar figure is unaffected either way.
     tokens: int | None = None
-    inp, out = usage.get("input_tokens"), usage.get("output_tokens")
-    if inp is not None or out is not None:
-        tokens = (inp or 0) + (out or 0)
+    fields = ("input_tokens", "output_tokens",
+              "cache_creation_input_tokens", "cache_read_input_tokens")
+    present = [usage.get(f) for f in fields if usage.get(f) is not None]
+    if present:
+        tokens = sum(int(v) for v in present)
     return text, {"tokens": tokens, "cost_usd": obj.get("total_cost_usd")}
 
 
