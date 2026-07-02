@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.34.1 — 2026-07-02 — Security hardening, part 2 (DoS bounds)
+
+Follow-up to v0.34.0 closing the two availability findings that were deferred there:
+- **EB-3:** `SubprocessExecutor` buffered the whole of a command's stdout via
+  `communicate()` before applying the size cap, so a permitted-but-noisy command
+  (`cat /dev/zero`, `yes`) could exhaust memory. Now read in a bounded reader thread
+  (stderr is merged, so a single reader can't deadlock) and SIGKILL the process group
+  the instant the cap is hit — memory is bounded and the run returns promptly instead
+  of spinning to the timeout. Group-kill/grandchild-reaping discipline is preserved.
+- **EB-4:** `NetworkExecutor`'s `timeout_s` was only the per-recv socket timeout, so a
+  slow-drip server (a byte before each timeout) could hold the executor far past
+  `step_timeout_s`. Reads are now bounded against an overall wall-clock deadline.
+
+Still tracked, lower severity: the envelope-improvement breadth gate (M7, needs a
+permission-union primitive; partially mitigated by v0.34.0's template-verification),
+and a few LOW items. M9 (llm_check on error) was reviewed and confirmed already
+fail-closed (`satisfied=False`); its `errored` flag is telemetry only.
+
 ## v0.34.0 — 2026-07-02 — Security hardening (SGCM multi-agent review)
 
 A whole-codebase adversarial review (7 parallel review agents + independent
