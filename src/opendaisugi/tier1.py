@@ -225,10 +225,14 @@ class ClaudeCodeTier1Provider:
     ) -> Envelope | None:
         import json
 
-        args = [self.binary, "-p", self._build_prompt(task, context)]
-        if self.model_flag is not None:
-            args.extend(["--model", self.model_flag])
-        args.extend(self.extra_args)
+        # Reuse the shared injection-safe builder: model bound with --model=,
+        # prompt after a -- separator, and operator-configured DAISUGI_CLAUDE_ARGS
+        # (e.g. --dangerously-skip-permissions) merged in alongside self.extra_args.
+        from opendaisugi.claude_code_llm import _build_claude_args
+        args = _build_claude_args(
+            self.binary, self._build_prompt(task, context),
+            self.model_flag, tuple(self.extra_args),
+        )
 
         proc = None
         try:

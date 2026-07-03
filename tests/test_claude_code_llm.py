@@ -264,3 +264,60 @@ def test_metered_raises_on_is_error(monkeypatch):
                         lambda *a, **k: _json.dumps(envelope))
     with pytest.raises(EnvelopeGenerationError):
         call_claude_p_metered("x", timeout_s=1)
+
+
+# --------------------- DAISUGI_CLAUDE_ARGS passthrough (issue: --dangerously-skip-permissions) ---
+
+def test_build_args_merges_configured_claude_args(monkeypatch):
+    from opendaisugi.claude_code_llm import _build_claude_args
+    monkeypatch.setenv("DAISUGI_CLAUDE_ARGS", "--dangerously-skip-permissions")
+    args = _build_claude_args("claude", "do the thing", "haiku", ())
+    assert "--dangerously-skip-permissions" in args
+    # still injection-safe: model bound with =, prompt after the -- separator
+    assert "--model=haiku" in args
+    sep = args.index("--")
+    assert args[sep + 1] == "do the thing"
+    assert args.index("--dangerously-skip-permissions") < sep  # a real flag, before --
+
+
+def test_build_args_shlex_splits_quoted_allowed_tools(monkeypatch):
+    from opendaisugi.claude_code_llm import _build_claude_args
+    monkeypatch.setenv("DAISUGI_CLAUDE_ARGS", '--allowedTools "Bash(ls:*) Read"')
+    args = _build_claude_args("claude", "q", None, ())
+    assert "--allowedTools" in args
+    assert "Bash(ls:*) Read" in args  # the quoted value stays one token
+
+
+def test_build_args_no_env_is_noop(monkeypatch):
+    from opendaisugi.claude_code_llm import _build_claude_args
+    monkeypatch.delenv("DAISUGI_CLAUDE_ARGS", raising=False)
+    args = _build_claude_args("claude", "q", "haiku", ("--output-format", "json"))
+    assert args == ["claude", "-p", "--model=haiku", "--output-format", "json", "--", "q"]
+
+
+async def test_tier1_uses_safe_builder_and_configured_args(monkeypatch):
+    # tier1 previously built args itself (prompt right after -p, --model space form);
+    # it now routes through _build_claude_args → injection-safe + env flags merged.
+    from unittest.mock import patch
+    from opendaisugi.tier1 import ClaudeCodeTier1Provider
+
+    monkeypatch.setenv("DAISUGI_CLAUDE_ARGS", "--dangerously-skip-permissions")
+    captured = {}
+
+    class _Proc:
+        returncode = 0
+        async def communicate(self): return (b"{}", b"")
+        def terminate(self): ...
+        def kill(self): ...
+        async def wait(self): return 0
+
+    async def fake_exec(*args, **kwargs):
+        captured["args"] = list(args)
+        return _Proc()
+
+    with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+        await ClaudeCodeTier1Provider(model_flag="haiku").generate_envelope("t")
+    a = captured["args"]
+    assert "--dangerously-skip-permissions" in a
+    assert "--model=haiku" in a           # = form, not the old ["--model","haiku"]
+    assert a[-2] == "--" and a[-1]         # prompt after the separator

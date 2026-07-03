@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import shlex
 import subprocess
 import tempfile
 from typing import Any, TypeVar
@@ -41,6 +43,28 @@ def _neutral_cwd() -> str:
     return _NEUTRAL_CWD
 
 
+_CLAUDE_ARGS_ENV = "DAISUGI_CLAUDE_ARGS"
+
+
+def _configured_extra_args() -> tuple[str, ...]:
+    """Extra ``claude -p`` flags from the ``DAISUGI_CLAUDE_ARGS`` env var.
+
+    Lets an operator forward flags to EVERY claude -p call site (orchestrator,
+    envelope generation, LLMCheck) without threading a parameter through each —
+    e.g. ``DAISUGI_CLAUDE_ARGS='--dangerously-skip-permissions'`` or
+    ``DAISUGI_CLAUDE_ARGS='--allowedTools "Bash(ls:*) Read"'``. Parsed with shlex
+    so quoted multi-word values survive. Opt-in: unset means no extra flags.
+    """
+    raw = os.environ.get(_CLAUDE_ARGS_ENV, "").strip()
+    if not raw:
+        return ()
+    try:
+        return tuple(shlex.split(raw))
+    except ValueError as exc:
+        _log.warning("%s is not parseable (%s); ignoring", _CLAUDE_ARGS_ENV, exc)
+        return ()
+
+
 def _build_claude_args(
     binary: str, prompt: str, model: str | None, extra_args: tuple[str, ...]
 ) -> list[str]:
@@ -53,10 +77,14 @@ def _build_claude_args(
       a separate flag);
     - the ``prompt`` positional is placed after a ``--`` end-of-options separator,
       so the parser always treats it as the query, never a flag.
+
+    Operator-configured flags (``DAISUGI_CLAUDE_ARGS``) and any call-site
+    ``extra_args`` are inserted as real options BEFORE the ``--`` separator.
     """
     args = [binary, "-p"]
     if model is not None:
         args.append(f"--model={model}")
+    args.extend(_configured_extra_args())
     args.extend(extra_args)
     args.append("--")
     args.append(prompt)
