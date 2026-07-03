@@ -84,6 +84,38 @@ def check_gates():
         "cross_swarm (aabb)":     (aabb_disjoint(((0, 0, 0), (15, 12, 8)), ((16, 0, 0), (30, 12, 8)), margin=0.5),
                                    not aabb_disjoint(((0, 0, 0), (15, 12, 8)), ((11, 0, 0), (30, 12, 8)), margin=0.5)),
     }
+    # ── the seven 4x4 additions ──
+    squads = partition_and_assign(mission, ["al", "br"], axis=0, margin=0.5)
+    adr = partition_and_assign(squads["al"], ["a1", "a2"], axis=1, margin=0.4)
+    (salx, _, _), _ = squads["al"].permissions.workspace_bounds
+    (sblx, _, _), _ = squads["br"].permissions.workspace_bounds
+    b_env = E(((12, 0, 0), (24, 12, 8)))
+    slalom_env = Envelope(generated_by="t", task="x", stakes="physical",
+        permissions=Permission(workspace_bounds=box, obstacles=[((8, 4, 0), (11, 8, 8)), ((19, 4, 0), (22, 8, 8))]),
+        invariants=[Invariant(type="end_effector_in_workspace", description="in"),
+                    Invariant(type="no_obstacle_penetration", description="a")])
+    rtb_env = Envelope(generated_by="t", task="x", stakes="physical",
+        permissions=Permission(workspace_bounds=box, custom_step_allowlist=["return_to_base"]),
+        invariants=[Invariant(type="end_effector_in_workspace", description="in"),
+                    Invariant(type="must_return_to_base", description="end at base", enforce=True,
+                              expr={"op": "exists_step", "pred": {"op": "equals", "path": "type", "value": "return_to_base"}})])
+    patrol = [CartesianMoveStep(id="a", target_position=(6, 6, 4))]
+    checks.update({
+        "swarm_of_swarms (nested)":(envelope_subsumes(mission, adr["a1"]).holds,
+                                    not envelope_subsumes(squads["br"], E(((salx, 3, 0), (sblx + 4, 9, 8)))).holds),
+        "slalom (multi-obstacle)": (verify(_path([(3, 6), (6, 11), (24, 11), (27, 6)]), slalom_env).ok,
+                                    not verify(_path([(3, 6), (27, 6)]), slalom_env).ok),
+        "handoff (lateral)":       (envelope_subsumes(b_env, E(((13, 4, 0), (23, 9, 8)))).holds,
+                                    not envelope_subsumes(b_env, E(((13, 4, 0), (30, 9, 8)))).holds),
+        "leash (tether)":          (verify(_mv((10, 6)), E(((4, 2, 0), (12, 10, 8)))).ok,
+                                    not verify(_mv((17, 6)), E(((4, 2, 0), (12, 10, 8)))).ok),
+        "restricted (TFR)":        (verify(_path([(4, 6), (15, 10.5), (25, 6)]), ob).ok,
+                                    not verify(_path([(9, 6), (24, 6)]), ob).ok),
+        "corridor (merge)":        (aabb_disjoint(R((4, 6)), R((26, 6)), margin=3.0),
+                                    not aabb_disjoint(R((14, 6)), R((16, 6)), margin=3.0)),
+        "return_to_base (invar)":  (verify(ActionPlan(source="t", task="x", steps=[*patrol, S._ReturnToBase(id="c", depends_on=["a"])]), rtb_env).ok,
+                                    not verify(ActionPlan(source="t", task="x", steps=patrol), rtb_env).ok),
+    })
     print("── gate verification (accept safe / reject unsafe) ──")
     allgood = True
     for name, (a, b) in checks.items():
@@ -102,8 +134,10 @@ def main():
     import imageio.v2 as imageio
     check_gates()
     os.makedirs(os.path.join(OUT, "gallery"), exist_ok=True)
-    order = ["keep_in", "no_fly", "deconflict", "delegation", "formation",
-             "human_keepout", "intercept", "reassignment", "cross_swarm"]
+    order = ["keep_in", "no_fly", "deconflict", "delegation",
+             "formation", "human_keepout", "intercept", "reassignment",
+             "cross_swarm", "swarm_of_swarms", "slalom", "handoff",
+             "leash", "restricted", "corridor", "return_to_base"]
     clips = {}
     for name in order:
         frames = S.ALL[name]()
@@ -111,19 +145,19 @@ def main():
         imageio.mimsave(os.path.join(OUT, "gallery", f"{name}.gif"), frames, duration=110, loop=0)
         print(f"  rendered {name:16} ({len(frames)} frames)")
 
-    # tile into a 3x3 grid, all clips resampled to a common length
-    L = 36
-    tw, th = 214, 150
+    # tile into a 4x4 grid, all clips resampled to a common length
+    N, L = 4, 24
+    tw, th = 182, 128
     grid = []
     res = {k: resample(v, L) for k, v in clips.items()}
     for k in range(L):
-        canvas = Image.new("RGB", (tw * 3, th * 3), (8, 9, 12))
+        canvas = Image.new("RGB", (tw * N, th * N), (8, 9, 12))
         for idx, name in enumerate(order):
             tile = Image.fromarray(res[name][k]).resize((tw, th))
-            canvas.paste(tile, ((idx % 3) * tw, (idx // 3) * th))
+            canvas.paste(tile, ((idx % N) * tw, (idx // N) * th))
         grid.append(np.asarray(canvas))
-    imageio.mimsave(os.path.join(OUT, "gallery-grid.gif"), grid, duration=120, loop=0)
-    print(f"\n  wrote docs/assets/gallery-grid.gif  ({tw*3}x{th*3}, {L} frames)")
+    imageio.mimsave(os.path.join(OUT, "gallery-grid.gif"), grid, duration=125, loop=0)
+    print(f"\n  wrote docs/assets/gallery-grid.gif  ({tw*N}x{th*N}, {L} frames)")
 
 
 if __name__ == "__main__":

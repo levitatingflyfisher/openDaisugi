@@ -1,8 +1,10 @@
-"""Gallery scenarios — each backed by a REAL opendaisugi verify / swarm check.
+"""Gallery scenarios - each backed by a REAL opendaisugi verify / swarm check.
 
 Every function returns a list of rendered frames (same size), color-coded
 green=accepted, amber=out-of-bounds refused+fallback, red=hard hold/refusal.
 """
+from typing import Literal
+
 from harness import AMBER, BLUE, GREEN, GREY, RED, Stage, play
 
 from opendaisugi import (
@@ -16,7 +18,7 @@ from opendaisugi import (
     verify,
     verify_swarm_tasking,
 )
-from opendaisugi.models import CartesianMoveStep
+from opendaisugi.models import CartesianMoveStep, StepBase, step_type
 
 
 def _ws_env(box, obstacles=None):
@@ -97,7 +99,7 @@ def deconflict():
     conflict = not aabb_disjoint(box(a), box(b), margin=bubble)   # would breach the bubble
     keys.append(([(a[0], a[1], GREEN), (b[0], b[1], RED)],
                  f"would breach {bubble}m bubble: {'HOLD' if conflict else '?'}"))
-    keys.append(([(a[0], a[1], GREEN), (b[0], b[1], RED)], "the second drone holds — no collision"))
+    keys.append(([(a[0], a[1], GREEN), (b[0], b[1], RED)], "the second drone holds - no collision"))
     play(st, title, keys)
     return st.close()
 
@@ -141,7 +143,7 @@ def formation():
     drift_ok = _accepts(envs[1], (16.0, 6))          # 16 is well inside lane 3, out of lane 2
     keys.append(([home(0)[i] if i != 1 else (13.5, 6, RED) for i in range(4)],
                  f"crosses its lane: {'REFUSED' if not drift_ok else '?'} -> held"))
-    keys.append((home(0), "formation holds — every drone in its lane"))
+    keys.append((home(0), "formation holds - every drone in its lane"))
     play(st, title, keys)
     return st.close()
 
@@ -234,8 +236,159 @@ def cross_swarm():
     return st.close()
 
 
+# 10 ── swarm-of-swarms (nested delegation) ───────────────────────────────────
+def swarm_of_swarms():
+    st = Stage()
+    mission = _ws_env(((0, 0, 0), (30, 12, 8)))
+    squads = partition_and_assign(mission, ["alpha", "bravo"], axis=0, margin=0.5)
+    (alx, _, _), (ahx, _, _) = squads["alpha"].permissions.workspace_bounds
+    (blx, _, _), (bhx, _, _) = squads["bravo"].permissions.workspace_bounds
+    st.zone(0, (alx + ahx) / 2, 6, (ahx - alx) / 2, 6, (*BLUE, 0.22))
+    st.zone(1, (blx + bhx) / 2, 6, (bhx - blx) / 2, 6, (*AMBER, 0.22))
+    adr = partition_and_assign(squads["alpha"], ["a1", "a2"], axis=1, margin=0.4)
+    chain = (envelope_subsumes(mission, squads["alpha"]).holds
+             and envelope_subsumes(squads["alpha"], adr["a1"]).holds
+             and envelope_subsumes(mission, adr["a1"]).holds)
+    rogue = _ws_env(((alx, 3, 0), (blx + 4, 9, 8)))            # bravo drone spills into alpha
+    bad = envelope_subsumes(squads["bravo"], rogue).holds
+    title = "NESTED · swarm-of-swarms"
+    ac, bc = (alx + ahx) / 2, (blx + bhx) / 2
+    keys = [([(ac, 6, BLUE), (bc, 6, AMBER)], "mission -> 2 squads")]
+    keys.append(([(ac, 4, BLUE), (bc, 8, AMBER)], f"squad -> drones {'⊆ at every level' if chain else '?'}"))
+    keys.append(([(alx - 2, 6, RED), (bc, 6, AMBER)], f"bravo reaches into alpha: {'REJECTED' if not bad else '?'}"))
+    keys.append(([(ac, 6, BLUE), (bc, 6, AMBER)], "delegation is transitive containment"))
+    play(st, title, keys)
+    return st.close()
+
+
+# 11 ── multi-obstacle slalom ─────────────────────────────────────────────────
+def slalom():
+    st = Stage()
+    box = ((0, 0, 0), (30, 12, 8))
+    obs = [((8, 4, 0), (11, 8, 8)), ((19, 4, 0), (22, 8, 8))]
+    st.zone(0, 15, 6, 15, 6, (0.16, 0.17, 0.2, 0.45))
+    st.zone(1, 9.5, 6, 1.5, 2, (*RED, 0.5)); st.zone(2, 20.5, 6, 1.5, 2, (*RED, 0.5))
+    env = _ws_env(box, obstacles=obs)
+    title = "SLALOM · two keep-out zones"
+    straight = verify(_path([(3, 6), (27, 6)]), env).ok
+    keys = [([(3, 6, GREEN)], "cross the field, two no-fly boxes")]
+    keys.append(([(9, 6, RED)], f"straight line clips a box: {'REFUSED' if not straight else '?'}"))
+    for wp, s in [((6, 11), "weave over the top (verified clear)"), ((24, 11), "..."), ((27, 6), "arrived, both boxes clear")]:
+        keys.append(([(wp[0], wp[1], GREEN)], s))
+    play(st, title, keys)
+    return st.close()
+
+
+# 12 ── lateral hand-off ──────────────────────────────────────────────────────
+def handoff():
+    st = Stage()
+    b_env = _ws_env(((12, 0, 0), (24, 12, 8)))
+    st.zone(0, 6, 6, 6, 6, (*BLUE, 0.28)); st.zone(1, 18, 6, 6, 6, (*GREEN, 0.28))
+    title = "HAND-OFF · lateral delegation"
+    task_ok = _ws_env(((13, 4, 0), (23, 9, 8)))
+    task_bad = _ws_env(((13, 4, 0), (30, 9, 8)))
+    ok = envelope_subsumes(b_env, task_ok).holds
+    bad = envelope_subsumes(b_env, task_bad).holds
+    keys = [([(5, 5, BLUE), (18, 6, GREEN)], "target crosses A's boundary into B")]
+    keys.append(([(11, 6, BLUE), (14, 6, GREEN)], f"A hands B a task ⊆ B? {'ACCEPTED' if ok else '?'}"))
+    keys.append(([(11, 6, BLUE), (26, 6, RED)], f"hand B a task past B's grant: {'REJECTED' if not bad else '?'}"))
+    keys.append(([(6, 6, BLUE), (18, 6, GREEN)], "B re-proves the message before accepting"))
+    play(st, title, keys)
+    return st.close()
+
+
+# 13 ── leash / tether to a (moving) anchor ───────────────────────────────────
+def leash():
+    st = Stage()
+    title = "LEASH · tether to anchor"
+    anchor_path = [(8, 6), (11, 6), (14, 6), (17, 6), (20, 6)]
+    for k, (ax, ay) in enumerate(anchor_path):
+        leash_box = ((ax - 4, ay - 4, 0), (ax + 4, ay + 4, 8))
+        st.zone(0, ax, ay, 4, 4, (*GREEN, 0.22))
+        st.zone(1, ax, ay, 0.5, 0.5, (*BLUE, 0.9))          # the anchor
+        env = _ws_env(leash_box)
+        far = (ax + 9, ay)                                   # beyond the leash
+        broke = not _accepts(env, far)
+        if k == 2:
+            st.push([(ax + 8, ay, RED)], title, f"drone strays past leash: {'HELD' if broke else '?'}", hold=3)
+        st.push([(ax + 2.5, ay, GREEN)], title, "follows within tether of the anchor", hold=2)
+    return st.close()
+
+
+# 14 ── restricted airspace appears mid-flight ────────────────────────────────
+def restricted():
+    st = Stage()
+    box = ((0, 0, 0), (30, 12, 8))
+    st.zone(0, 15, 6, 15, 6, (0.16, 0.17, 0.2, 0.45))
+    title = "TFR · airspace closes mid-flight"
+    st.push([(5, 6, GREEN)], title, "en route across the property", hold=3)
+    st.push([(9, 6, GREEN)], title, "en route across the property", hold=2)
+    st.zone(1, 15, 6, 2, 2, (*RED, 0.55))                    # TFR appears
+    tfr = _ws_env(box, obstacles=[((13, 4, 0), (17, 8, 8))])
+    thru = verify(_path([(9, 6), (24, 6)]), tfr).ok
+    st.push([(9, 6, RED)], title, f"a TFR closes ahead: current path {'REFUSED' if not thru else '?'}", hold=3)
+    for wp, s in [((15, 10.5), "replan around the restriction"), ((24, 8), "clear"), ((26, 6), "arrived")]:
+        st.push([(wp[0], wp[1], GREEN)], title, s, hold=2)
+    return st.close()
+
+
+# 15 ── corridor merge ────────────────────────────────────────────────────────
+def corridor():
+    st = Stage()
+    st.zone(0, 8, 6, 8, 4, (*BLUE, 0.2)); st.zone(1, 22, 6, 8, 4, (*AMBER, 0.2))
+    st.zone(2, 15, 6, 2.5, 1.4, (0.5, 0.5, 0.55, 0.3))       # the shared corridor
+    title = "CORRIDOR · merge conflict"
+    R, bubble = 0.6, 3.0
+
+    def bx(p):
+        return ((p[0] - R, p[1] - R, 0), (p[0] + R, p[1] + R, 8))
+    keys = [([(4, 6, BLUE), (26, 6, AMBER)], "two lanes merge into one corridor")]
+    keys.append(([(12, 6, BLUE), (18, 6, AMBER)], "both approach the corridor..."))
+    a, b = (14, 6), (16, 6)
+    clash = not aabb_disjoint(bx(a), bx(b), margin=bubble)
+    keys.append(([(a[0], a[1], BLUE), (b[0], b[1], RED)], f"simultaneous entry: {'HOLD one' if clash else '?'}"))
+    keys.append(([(15, 6, BLUE), (20, 6, AMBER)], "sequenced through - no conflict in the corridor"))
+    play(st, title, keys)
+    return st.close()
+
+
+# 16 ── must-return-to-base invariant (predicate algebra, not geometry) ────────
+@step_type
+class _ReturnToBase(StepBase):
+    type: Literal["return_to_base"] = "return_to_base"
+
+
+def return_to_base():
+    st = Stage()
+    box = ((0, 0, 0), (30, 12, 8))
+    st.zone(0, 15, 6, 15, 6, (0.16, 0.17, 0.2, 0.45))
+    st.zone(1, 26, 6, 1.6, 1.6, (*GREEN, 0.5))               # the base / dock
+    inv = [Invariant(type="end_effector_in_workspace", description="in"),
+           Invariant(type="must_return_to_base", description="plan must end at base", enforce=True,
+                     expr={"op": "exists_step", "pred": {"op": "equals", "path": "type", "value": "return_to_base"}})]
+    env = Envelope(generated_by="t", task="x", stakes="physical",
+                   permissions=Permission(workspace_bounds=box, custom_step_allowlist=["return_to_base"]),
+                   invariants=inv)
+    patrol = [CartesianMoveStep(id="a", target_position=(6, 6, 4)),
+              CartesianMoveStep(id="b", target_position=(14, 8, 4), depends_on=["a"])]
+    no_ret = ActionPlan(source="t", task="x", steps=patrol)
+    with_ret = ActionPlan(source="t", task="x",
+                          steps=[*patrol, _ReturnToBase(id="c", depends_on=["b"])])
+    bad = verify(no_ret, env).ok
+    ok = verify(with_ret, env).ok
+    title = "INVARIANT · must return to base"
+    keys = [([(6, 6, GREEN)], "patrol plan (structural check, not geometry)")]
+    keys.append(([(14, 8, RED)], f"plan omits return-to-base: {'REJECTED' if not bad else '?'}"))
+    keys.append(([(20, 7, GREEN)], f"add the return step: {'ACCEPTED' if ok else '?'}"))
+    keys.append(([(26, 6, GREEN)], "docked - exists_step(return_to_base) satisfied"))
+    play(st, title, keys)
+    return st.close()
+
+
 ALL = {
     "keep_in": keep_in, "no_fly": no_fly, "deconflict": deconflict, "delegation": delegation,
     "formation": formation, "human_keepout": human_keepout, "intercept": intercept,
     "reassignment": reassignment, "cross_swarm": cross_swarm,
+    "swarm_of_swarms": swarm_of_swarms, "slalom": slalom, "handoff": handoff, "leash": leash,
+    "restricted": restricted, "corridor": corridor, "return_to_base": return_to_base,
 }
