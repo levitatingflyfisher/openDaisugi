@@ -11,6 +11,22 @@ Skills can be treated as contracts — one agent can delegate to another
 (including LoRA-tuned smaller models) with a mechanical proof that the
 delegation is safe.
 
+## Vision
+
+**Separate what is _allowed_ from what is _decided._** What's decided comes from a
+black box (an LLM, a neural policy, a VLA) — capable and fundamentally unverifiable.
+What's allowed comes from a space of checkable calculations. The key move: an LLM
+closes the verification loop not by becoming verifiable, but by *generating*
+verifiable constraints — the envelope — which a deterministic layer then enforces.
+It's [Runtime Assurance](https://en.wikipedia.org/wiki/Runtime_assurance) (Simplex,
+verified envelopes) pointed somewhere it never has been: LLM agents and robot
+foundation models.
+
+→ **[VISION.md](VISION.md)** for the full north star — the invariants that must
+stay true, and an honest scorecard of what's built vs. aspirational.
+→ **[docs/](docs/README.md)** for the [Diátaxis](https://diataxis.fr/)-organized
+docs (tutorials · how-to · reference · explanation).
+
 **Status (v0.27.0):** verification-core is sound — strict mode (default-on
 at `stakes` high/physical) rejects opaque invariants and postconditions that
 can't be discharged, Z3 vacuity detection catches tautological or
