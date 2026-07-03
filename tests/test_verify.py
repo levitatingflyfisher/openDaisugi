@@ -340,3 +340,26 @@ def test_unknown_custom_step_type_rejected_under_strict():
     assert any("unverifiable step type" in v.message for v in r.violations)
     # explicit strict override also rejects at low stakes
     assert not verify(plan, low, strict=True).ok
+
+
+def test_custom_step_allowlist_permits_under_strict():
+    # A kit's registered custom step types are permitted under strict when the
+    # envelope declares them in custom_step_allowlist (VC-4 stays fail-closed for
+    # UNlisted custom types). Regression: my VC-4 fix had broken the dishwash kit.
+    from typing import Literal
+
+    from opendaisugi.models import ActionPlan, Envelope, Permission, StepBase, step_type
+    from opendaisugi.verify import verify
+
+    @step_type
+    class _KitMotionStep(StepBase):
+        type: Literal["_sgcm_kit_motion"] = "_sgcm_kit_motion"
+
+    plan = ActionPlan(source="t", task="x", steps=[_KitMotionStep(id="s")])
+    # not declared → rejected under strict (physical stakes)
+    denied = Envelope(generated_by="t", task="x", permissions=Permission(), stakes="physical")
+    assert not verify(plan, denied).ok
+    # declared in the envelope's custom_step_allowlist → permitted under strict
+    allowed = Envelope(generated_by="t", task="x", stakes="physical",
+                       permissions=Permission(custom_step_allowlist=["_sgcm_kit_motion"]))
+    assert verify(plan, allowed).ok

@@ -54,6 +54,12 @@ class Permission(BaseModel):
         default_factory=list,
         description="Allowed MCP tools as 'server/tool' (glob-able) for MCPStep. Empty = none permitted.",
     )
+    custom_step_allowlist: list[str] = Field(
+        default_factory=list,
+        description="Custom @step_type names this envelope explicitly permits. Under "
+                    "strict mode an unknown step type is rejected unless listed here "
+                    "(a kit declares its own domain step types, e.g. 'approach_dish').",
+    )
     max_execution_time_s: int = 30
     max_output_size_mb: int = 10
 

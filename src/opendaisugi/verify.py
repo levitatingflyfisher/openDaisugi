@@ -375,7 +375,13 @@ def check_permissions(
                 # Unknown custom @step_type: no permission surface, no handler.
                 # Fail closed under strict mode (an unverifiable effect can't run
                 # in a high-stakes plan); pass under non-strict (the trust mode).
-                if strict and step.type not in _KNOWN_STEP_TYPES:
+                # A kit declares its own domain step types in the envelope's
+                # custom_step_allowlist to opt them in under strict.
+                if (
+                    strict
+                    and step.type not in _KNOWN_STEP_TYPES
+                    and step.type not in perms.custom_step_allowlist
+                ):
                     violations.append(
                         Violation(
                             stage="permissions",
