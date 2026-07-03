@@ -337,6 +337,17 @@ async def main():
 
 ---
 
+## Architecture
+
+How it all fits together — the verify→supervise→journal→distill spine, the two
+loops, the consumption surfaces, and the module map, with diagrams.
+
+→ **[docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md)**
+
+The *why* behind the load-bearing decisions (fail-closed, Z3-over-heuristics,
+envelope-as-contract, layer-not-harness, the Python runtime, the `claude -p`
+backend) lives in **[docs/adr/](docs/adr/)**.
+
 ## Concepts
 
 How opendaisugi actually works — envelopes, the predicate algebra, Z3
