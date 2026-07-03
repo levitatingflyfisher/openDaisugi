@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.34.2 — 2026-07-02 — claude -p flag passthrough + failed-step reasons
+
+Two fixes for running the orchestrator on the `claude -p` (Claude Code) backend:
+
+- **Forward flags to `claude -p`.** There was no way to pass
+  `--dangerously-skip-permissions`, `--allowedTools`, or any other Claude Code
+  flag through the backend, so in environments where `claude -p` requires
+  interactive permission approval it couldn't act — every affected step failed and
+  the run reported `failed`. Set `DAISUGI_CLAUDE_ARGS` (shlex-parsed) to forward
+  flags to EVERY `claude -p` call site — e.g.
+  `DAISUGI_CLAUDE_ARGS='--dangerously-skip-permissions'` or
+  `DAISUGI_CLAUDE_ARGS='--allowedTools "Bash(ls:*) Read"'`. Opt-in; unset = no
+  change. Also routed `ClaudeCodeTier1Provider` through the shared injection-safe
+  argv builder (fixing its old prompt-after-`-p` / `--model <v>` construction so it
+  too honors the env flags).
+- **A failed step now says why.** `StepOutcome.error` was left `None` on any
+  non-timeout failure, so a `failed` status came with no explanation (the reason
+  was buried in the step's captured output). It now carries `exit <rc>: <reason>`,
+  and the `run` / `orchestrate` CLIs (text and `--json`) surface per-step failure
+  reasons — so "failed" is never reason-less. NOTE: the run-status aggregation was
+  verified correct (a genuinely-errored step drives `failed`; a succeeded step is
+  never mislabeled) — this was an observability gap, not a status bug.
+
 ## v0.34.1 — 2026-07-02 — Security hardening, part 2 (DoS bounds)
 
 Follow-up to v0.34.0 closing the two availability findings that were deferred there:
