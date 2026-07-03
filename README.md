@@ -50,6 +50,15 @@ gap — **accepted** only after `verify_swarm_tasking` re-proves it's still cont
 **red — rejected before any drone moves**. Four such scenarios (hierarchy · hand-off ·
 comms-loss · cross-swarm) in [`examples/swarm-comms-delegation/`](examples/swarm-comms-delegation/).
 
+And nine kinds of refusal at once — each tile a *real* `verify()` rejection of a
+different unsafe action (keep-in · no-fly · deconflict · delegation · formation ·
+moving keep-out · geofence · reassignment · cross-swarm):
+
+![Nine runtime-assurance scenarios, each a real openDaisugi rejection](docs/assets/gallery-grid.gif)
+
+The gate is proven *before* any frame is rendered — see
+[`examples/gallery/`](examples/gallery/).
+
 **Status (v0.27.0):** verification-core is sound — strict mode (default-on
 at `stakes` high/physical) rejects opaque invariants and postconditions that
 can't be discharged, Z3 vacuity detection catches tautological or
