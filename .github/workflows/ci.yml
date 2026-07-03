@@ -22,16 +22,20 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
-      # Dev extras pull [search] (sentence-transformers), [mcp], [sign] — the test
-      # suite needs them (see pyproject dev note). [lora]/[robotics] stay opt-in;
-      # their tests are importorskip-gated.
-      - name: Install
-        run: uv pip install --system -e ".[dev]"
+      # Use a uv-managed venv (not --system: the runner's /usr python is
+      # externally managed / PEP 668). Dev extras pull [search]
+      # (sentence-transformers), [mcp], [sign] — the suite needs them (see the
+      # pyproject dev note). [lora]/[robotics] stay opt-in; those tests are
+      # importorskip-gated.
+      - name: Create venv + install
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[dev]"
 
       - name: Lint (ruff)
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Test (pytest)
         # Smoke/calibration tests need a live LLM / `claude` binary and are gated by
         # env vars (DAISUGI_SMOKE / ANTHROPIC_API_KEY); they stay skipped in CI.
-        run: pytest -q
+        run: uv run pytest -q
