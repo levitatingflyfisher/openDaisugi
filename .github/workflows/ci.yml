@@ -27,10 +27,9 @@ jobs:
       # (sentence-transformers), [mcp], [sign] — the suite needs them (see the
       # pyproject dev note). [lora]/[robotics] stay opt-in; those tests are
       # importorskip-gated.
-      - name: Create venv + install
-        run: |
-          uv venv --python 3.12
-          uv pip install -e ".[dev]"
+      # setup-uv (with python-version) already provisions a .venv; install into it.
+      - name: Install
+        run: uv pip install -e ".[dev]"
 
       - name: Lint (ruff)
         run: uv run ruff check .
