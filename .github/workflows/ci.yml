@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      # Dev extras pull [search] (sentence-transformers), [mcp], [sign] — the test
+      # suite needs them (see pyproject dev note). [lora]/[robotics] stay opt-in;
+      # their tests are importorskip-gated.
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Test (pytest)
+        # Smoke/calibration tests need a live LLM / `claude` binary and are gated by
+        # env vars (DAISUGI_SMOKE / ANTHROPIC_API_KEY); they stay skipped in CI.
+        run: pytest -q

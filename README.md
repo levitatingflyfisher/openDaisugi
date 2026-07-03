@@ -1,5 +1,7 @@
 # opendaisugi
 
+[![CI](https://github.com/levitatingflyfisher/openDaisugi/actions/workflows/ci.yml/badge.svg)](https://github.com/levitatingflyfisher/openDaisugi/actions/workflows/ci.yml)
+
 > A restricted predicate algebra authorable by agents, compiling to SMT-LIB2
 > that Z3 solves. We verify plans authored by LLMs at runtime.
 
