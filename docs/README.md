@@ -44,9 +44,8 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Step vocabulary](step-vocabulary.md)** — every step type + its metadata keys.
 - **[Pathway / skill bundle format](pathway-skill-format.md)** — the on-disk contract.
 - **[Feature status](feature-status.md)** — what's shipped, per version.
-- **Formal specification (yellow paper)** — the rigorous verification semantics
-  (envelope algebra, subsumption soundness, fail-closed guarantees). *(Planned —
-  see below.)*
+- **[Formal specification (yellow paper)](spec/yellow-paper.md)** — the rigorous
+  verification semantics (envelope algebra, subsumption soundness, fail-closed law).
 - The public API is the `opendaisugi` package surface (`Daisugi`, `verify`,
   `generate_envelope`, `orchestrate`) — see the docstrings and the
   [architecture module map](architecture/OVERVIEW.md#module-map-where-to-look).
@@ -68,11 +67,11 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 
 ### The white paper & yellow paper
 
-Two long-form documents complement this tree *(both planned; drafts landing next)*:
-- **White paper** — the conceptual/strategic case (why this matters, the RTA
-  lineage, the layer-not-harness position).
-- **Yellow paper / formal spec** — the rigorous specification of the verification
-  semantics.
+Two long-form documents complement this tree:
+- **[White paper](whitepaper.md)** — the conceptual/strategic case (why this
+  matters, the RTA lineage, the layer-not-harness position).
+- **[Yellow paper / formal spec](spec/yellow-paper.md)** — the rigorous
+  specification of the verification semantics.
 
 *(A "beige paper" — a plain-language restatement of the yellow paper — would live
 here too, if/when the formal spec warrants an accessible companion.)*
