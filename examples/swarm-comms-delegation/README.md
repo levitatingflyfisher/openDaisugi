@@ -1,10 +1,21 @@
 # Swarm communication & delegation — verified authority transfer
 
+![Comms-loss reassignment in MuJoCo — a survivor's authority expands to cover a downed peer, verified](../../docs/assets/comms-delegation.gif)
+
+*Delegation, visualized: `drone_mid` loses comms; the coordinator expands `west`'s
+authority to cover the gap — **accepted** only after `verify_swarm_tasking` re-proves
+it's still contained AND deconflicted; the "hand it to both neighbors" alternative
+flashes the overlap **red — rejected before any drone moves**.*
+
 ```
-python run_demo.py
+python run_demo.py                       # the four scenarios, text output (CPU, zero deps)
+
+pip install mujoco imageio pillow
+MUJOCO_GL=egl python mujoco_render.py     # regenerate the GIF above (headless CPU render)
 ```
 
-No physics, no GPU, no network, no model — pure envelope algebra, runs anywhere.
+No physics, no GPU, no network, no model needed for the gate — pure envelope algebra,
+runs anywhere. (The GIF is a kinematic illustration; the verify calls in it are real.)
 
 ## The idea
 
