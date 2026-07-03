@@ -94,3 +94,26 @@ async def test_eb7_recomputed_step_is_reverified_and_halts_when_out_of_policy():
         session = await sup.run(plan, env)
     assert session.status == RunStatus.HALTED_BY_SIMPLEX
     assert executed["n"] == 0  # the recomputed replacement never executed
+
+
+async def test_failed_step_surfaces_reason_in_error_not_none():
+    # A non-timeout failure (rc != 0) must carry WHY in StepOutcome.error — it was
+    # None, so a "failed" status came with no explanation (the reason was buried in
+    # stdout). This is the observability half of the "status: failed" report.
+    from opendaisugi.executor import ExecutorResult
+    from opendaisugi.run_session import RunStatus
+
+    class _FailExec:
+        def run(self, step, *, timeout_s, max_output_bytes):
+            return ExecutorResult(rc=1, stdout="delegating_executor: exhausted retries: is_error",
+                                  duration_ms=0.0, timed_out=False)
+
+    plan = ActionPlan(source="t", task="x", steps=[ShellStep(id="s1", command="echo hi")])
+    sup = Supervisor(executors={"shell": _FailExec()}, approval=CallbackStrategy(lambda s, e: True))
+    session = await sup.run(plan, _env())
+    assert session.status == RunStatus.FAILED
+    outcome = session.steps[0]
+    assert outcome.status == "failed"
+    assert outcome.error is not None
+    assert "exhausted retries" in outcome.error  # the reason is surfaced
+    assert "1" in outcome.error  # includes the exit code

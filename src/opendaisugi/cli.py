@@ -928,6 +928,8 @@ def run_cmd(
                     f"(rc={outcome.rc}, approved_by={outcome.approved_by}, "
                     f"{outcome.duration_ms:.1f} ms)")
             typer.echo(line)
+            if outcome.error:
+                typer.echo(f"      error: {outcome.error}")
             if outcome.stdout:
                 for out_line in outcome.stdout.rstrip().splitlines()[:5]:
                     typer.echo(f"      {out_line}")
@@ -1337,6 +1339,11 @@ def orchestrate_cmd(
     The decomposed plan is verified against the envelope before it runs and each
     step is re-verified at execution time; each step routes to the cheapest capable
     model within the token budget. Repeat prompts may reuse a distilled pathway.
+
+    With ``--llm claude-code``, forward extra flags to every ``claude -p`` call via
+    the ``DAISUGI_CLAUDE_ARGS`` env var — e.g.
+    ``DAISUGI_CLAUDE_ARGS='--dangerously-skip-permissions'`` so the backend can act
+    without an interactive permission prompt (which otherwise makes steps fail).
     """
     from opendaisugi import Daisugi
 
@@ -1374,6 +1381,10 @@ def orchestrate_cmd(
             "used_llm_synthesis": result.used_llm_synthesis,
             "budget": asdict(result.budget),
             "sizings": [asdict(s) for s in result.sizings],
+            "steps": [
+                {"step_id": s.step_id, "status": s.status, "rc": s.rc, "error": s.error}
+                for s in result.session.steps
+            ],
             "plan": result.plan.model_dump(mode="json"),
         }
         typer.echo(json.dumps(payload, indent=2, default=str))
@@ -1382,6 +1393,13 @@ def orchestrate_cmd(
         typer.echo("")
         typer.echo(f"— orchestration ({result.status}"
                    + (", reused pathway" if result.reused_pathway else "") + ") —")
+        # When the run didn't succeed, say WHY — otherwise the reader sees a final
+        # answer plus a bare "failed" with no explanation (common cause: the
+        # claude -p backend couldn't get tool permission; see DAISUGI_CLAUDE_ARGS).
+        if result.status != "succeeded":
+            for s in result.session.steps:
+                if s.status in ("failed", "aborted", "rejected_halted") and s.error:
+                    typer.echo(f"  {s.step_id}: {s.status} — {s.error}", err=True)
         for s in result.sizings:
             typer.echo(f"  {s.step_id}: difficulty={s.difficulty:.2f} → {s.tier} ({s.model})"
                        + ("  [downgraded]" if s.downgraded else ""))

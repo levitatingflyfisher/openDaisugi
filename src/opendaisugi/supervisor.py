@@ -369,7 +369,18 @@ class Supervisor:
                     error=f"executor error: {e}",
                 )
         status = "succeeded" if result.rc == 0 and not result.timed_out else "failed"
-        error = "timed out" if result.timed_out else None
+        # A failed step must carry WHY. The reason lives in result.stdout (an
+        # executor's stderr is merged there, and DelegatingExecutor puts its
+        # exhausted-retries message there) — surfacing it means a "failed" status
+        # is never reason-less. (Previously error stayed None on any non-timeout
+        # failure, so callers/CLI/JSON saw "failed" with no explanation.)
+        if result.timed_out:
+            error = "timed out"
+        elif result.rc != 0:
+            detail = (result.stdout or "").strip()
+            error = f"exit {result.rc}: {detail[:500]}" if detail else f"exit {result.rc}"
+        else:
+            error = None
         return StepOutcome(
             step_id=step.id,
             status=status,
