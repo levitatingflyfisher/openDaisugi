@@ -570,7 +570,6 @@ async def test_generate_envelope_journal_query_failure_is_tolerated(tmp_path, mo
 @pytest.mark.asyncio
 async def test_generate_envelope_cache_bust_on_newer_refinement(tmp_path, mock_llm_client):
     """If a cached entry is older than a refinement record, cache is invalidated."""
-    import time
     from opendaisugi.envelope_cache import EnvelopeCache, make_cache_key
     from opendaisugi.journal import Journal
     from opendaisugi.models import Envelope, Permission, ShellStep, Violation

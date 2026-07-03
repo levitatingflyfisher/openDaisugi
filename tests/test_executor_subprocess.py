@@ -99,6 +99,7 @@ def test_subprocess_output_is_bounded_against_flood():
     # capped in memory (not buffered whole via communicate) and killed — this must
     # return quickly, not hang or OOM.
     import time as _t
+
     from opendaisugi.executor import SubprocessExecutor
     from opendaisugi.models import ShellStep
     exe = SubprocessExecutor()

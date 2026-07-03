@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from opendaisugi.models import StepBase, step_type, Postcondition
+from opendaisugi.models import Postcondition, StepBase, step_type
 
 
 @step_type

@@ -203,6 +203,7 @@ async def test_instructor_shim_without_response_model_returns_text():
 
 def test_sync_model_and_prompt_cannot_inject_flags(monkeypatch):
     import subprocess as _sp
+
     from opendaisugi.claude_code_llm import call_claude_p_sync
     captured = {}
 
@@ -227,6 +228,7 @@ def test_sync_model_and_prompt_cannot_inject_flags(monkeypatch):
 
 def test_sync_prompt_after_separator(monkeypatch):
     import subprocess as _sp
+
     from opendaisugi.claude_code_llm import call_claude_p_sync
     captured = {}
     monkeypatch.setattr("subprocess.run",
@@ -240,6 +242,7 @@ def test_sync_prompt_after_separator(monkeypatch):
 
 def test_metered_counts_all_token_kinds_including_cache(monkeypatch):
     import json as _json
+
     from opendaisugi.claude_code_llm import call_claude_p_metered
     envelope = {
         "result": "the answer",
@@ -257,6 +260,7 @@ def test_metered_counts_all_token_kinds_including_cache(monkeypatch):
 
 def test_metered_raises_on_is_error(monkeypatch):
     import json as _json
+
     from opendaisugi.claude_code_llm import call_claude_p_metered
     from opendaisugi.exceptions import EnvelopeGenerationError
     envelope = {"result": "hit max turns", "is_error": True, "usage": {}}
@@ -299,6 +303,7 @@ async def test_tier1_uses_safe_builder_and_configured_args(monkeypatch):
     # tier1 previously built args itself (prompt right after -p, --model space form);
     # it now routes through _build_claude_args → injection-safe + env flags merged.
     from unittest.mock import patch
+
     from opendaisugi.tier1 import ClaudeCodeTier1Provider
 
     monkeypatch.setenv("DAISUGI_CLAUDE_ARGS", "--dangerously-skip-permissions")

@@ -1,6 +1,6 @@
 """SGCM review M3: `daisugi registry init` must reject git ext::/fd:: URLs."""
-import os
 from typer.testing import CliRunner
+
 from opendaisugi.cli import app
 
 runner = CliRunner()

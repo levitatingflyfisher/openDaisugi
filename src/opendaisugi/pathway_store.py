@@ -20,7 +20,7 @@ from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.pathway import CompiledPathway, PathwayMatch
 
 if TYPE_CHECKING:
-    import numpy as np
+    pass
 
 _log = logging.getLogger("opendaisugi.pathway_store")
 
@@ -208,8 +208,8 @@ class PathwayStore:
             _warn_search_extra_missing_once()
             return None
 
-        from opendaisugi.distiller import _EMBEDDING_MODEL_VERSION
         from opendaisugi._search import _MODEL_NAME
+        from opendaisugi.distiller import _EMBEDDING_MODEL_VERSION
 
         current_model = _MODEL_NAME
         current_version = _EMBEDDING_MODEL_VERSION

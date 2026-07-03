@@ -1,6 +1,7 @@
 """v0.27.0 — core verify() resolves invariant exprs through an AliasRegistry."""
 from __future__ import annotations
-from opendaisugi.aliases import Alias, AliasRegistry, AliasRef
+
+from opendaisugi.aliases import Alias, AliasRef, AliasRegistry
 from opendaisugi.models import ActionPlan, Envelope, Invariant, Permission, ShellStep
 from opendaisugi.predicate import parse_expression
 from opendaisugi.verify import verify

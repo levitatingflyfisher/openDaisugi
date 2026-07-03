@@ -10,10 +10,15 @@ import yaml
 
 from opendaisugi import journal as journal_module
 from opendaisugi.dag import topological_order
-from opendaisugi.journal import Journal, TraceRecord, JournalStats, ReplayResult
+from opendaisugi.journal import Journal, JournalStats, ReplayResult, TraceRecord
 from opendaisugi.models import (
-    ActionPlan, ShellStep, Envelope, Permission,
-    Trace, VerificationResult, Violation,
+    ActionPlan,
+    Envelope,
+    Permission,
+    ShellStep,
+    Trace,
+    VerificationResult,
+    Violation,
 )
 from opendaisugi.run_session import RunSession, RunStatus, StepOutcome
 

@@ -1,12 +1,13 @@
 """Tests for PathwayBundle (v0.25)."""
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from opendaisugi.models import (
-    ActionPlan, Envelope, Permission, ShellStep,
+    ActionPlan,
+    Envelope,
+    Permission,
+    ShellStep,
 )
 from opendaisugi.pathway import CompiledPathway
 from opendaisugi.pathway_bundle import (
@@ -14,7 +15,6 @@ from opendaisugi.pathway_bundle import (
     UnsignedBundleError,
     UntrustedSignerError,
     bundle_to_pathway,
-    compute_bundle_hash,
     pathway_to_bundle,
 )
 

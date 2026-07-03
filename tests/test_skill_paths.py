@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from opendaisugi.skill_paths import resolve_skill_dir, SkillInstaller
+from opendaisugi.skill_paths import SkillInstaller, resolve_skill_dir
 
 
 def test_resolve_skill_dir_points_at_real_skill():

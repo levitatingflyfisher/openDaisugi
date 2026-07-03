@@ -75,7 +75,7 @@ def _link_skill(target: Path) -> Path:
     zipimport the source has no real path; the sentinel is a guaranteed-absent
     sibling that forces SkillInstaller's copy branch (its location is never read).
     """
-    from opendaisugi.skill_paths import resolve_skill_dir, SkillInstaller
+    from opendaisugi.skill_paths import SkillInstaller, resolve_skill_dir
 
     try:
         return SkillInstaller(resolve_skill_dir()).link(target)

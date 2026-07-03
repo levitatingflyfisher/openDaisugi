@@ -1,8 +1,6 @@
 """Facade-level low-stakes configuration (v0.1.3)."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 from opendaisugi import DEFAULT_LOW_STAKES_ENVELOPE, Daisugi

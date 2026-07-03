@@ -5,8 +5,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
-
 from opendaisugi.delegating_executor import DelegatingExecutor
 from opendaisugi.executor import DryRunExecutor, ExecutorResult, FakeExecutor
 from opendaisugi.models import MCPStep, ShellStep, SkillStep, TaskStep

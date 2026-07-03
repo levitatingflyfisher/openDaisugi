@@ -7,8 +7,6 @@ empty list means the child is a valid tightening.
 
 from __future__ import annotations
 
-import pytest
-
 from opendaisugi.inheritance import EnvelopeInheritanceError, verify_inheritance
 from opendaisugi.models import Envelope, Invariant, Permission, Postcondition
 

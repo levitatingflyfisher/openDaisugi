@@ -45,7 +45,7 @@ from opendaisugi.models import (
     ShellStep,
 )
 from opendaisugi.predicate import ExistsStep, ForallSteps, parse_expression
-from opendaisugi.predicate_z3 import _Scope, _compile_scalar
+from opendaisugi.predicate_z3 import _compile_scalar, _Scope
 
 
 @dataclass

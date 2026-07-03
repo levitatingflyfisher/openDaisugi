@@ -4,11 +4,8 @@ user would see it, but a silent log.warning they wouldn't.
 """
 from __future__ import annotations
 
-import importlib
 import warnings
 from unittest import mock
-
-import pytest
 
 from opendaisugi.pathway_store import PathwayStore
 
@@ -17,11 +14,15 @@ def test_find_emits_user_warning_when_search_extra_missing(tmp_path):
     store = PathwayStore(tmp_path / "p.db")
 
     # Seed one pathway so the store isn't empty and we reach the embed call.
+    import time
+
     from opendaisugi.models import (
-        ActionPlan, Envelope, Permission, ShellStep,
+        ActionPlan,
+        Envelope,
+        Permission,
+        ShellStep,
     )
     from opendaisugi.pathway import CompiledPathway
-    import time
 
     env = Envelope(generated_by="t", task="T", permissions=Permission(shell=True))
     plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="ls")])
@@ -49,11 +50,15 @@ def test_find_warning_fires_at_most_once(tmp_path):
     ps_mod._search_extra_warned = False  # reset module-level guard
 
     store = PathwayStore(tmp_path / "p.db")
+    import time
+
     from opendaisugi.models import (
-        ActionPlan, Envelope, Permission, ShellStep,
+        ActionPlan,
+        Envelope,
+        Permission,
+        ShellStep,
     )
     from opendaisugi.pathway import CompiledPathway
-    import time
 
     env = Envelope(generated_by="t", task="T", permissions=Permission(shell=True))
     plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="ls")])

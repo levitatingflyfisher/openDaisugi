@@ -17,6 +17,7 @@ import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from opendaisugi.aliases import AliasRegistry
 from opendaisugi.approval import ApprovalStrategy, default_strategy
 from opendaisugi.dag import topological_order
 from opendaisugi.executor import ExecutorResult, StepExecutor, default_executors
@@ -25,7 +26,6 @@ from opendaisugi.journal import Journal
 from opendaisugi.models import ActionPlan, Envelope, Receipt, compute_evidence_hash
 from opendaisugi.refinement import RefinementRecord
 from opendaisugi.run_session import RunSession, RunStatus, StepOutcome
-from opendaisugi.aliases import AliasRegistry
 from opendaisugi.verify import verify, verify_step
 
 _log = logging.getLogger("opendaisugi.supervisor")

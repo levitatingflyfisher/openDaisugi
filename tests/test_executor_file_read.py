@@ -2,7 +2,7 @@
 
 import pytest
 
-from opendaisugi.executor import ExecutorResult, FileReadExecutor
+from opendaisugi.executor import FileReadExecutor
 from opendaisugi.models import FileReadStep, ShellStep
 
 
@@ -61,7 +61,6 @@ def _env_read(globs):
 
 
 def test_file_read_rejects_inner_symlink_escape(tmp_path):
-    import os
     from opendaisugi.executor import FileReadExecutor
     from opendaisugi.models import FileReadStep
     allowed = tmp_path / "allowed"; allowed.mkdir()

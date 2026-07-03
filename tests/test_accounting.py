@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 
 import pytest
 from typer.testing import CliRunner
 
 from opendaisugi.accounting import (
-    TierStats,
     classify_tier,
     tier1_provider_name,
     tier_stats,

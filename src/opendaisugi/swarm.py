@@ -34,7 +34,7 @@ from anything, so it is denied.
 import math
 from dataclasses import dataclass, field
 
-from opendaisugi.models import Envelope, Permission
+from opendaisugi.models import Envelope
 from opendaisugi.subsumption import envelope_subsumes
 
 Box = tuple[tuple[float, float, float], tuple[float, float, float]]
@@ -152,7 +152,7 @@ def partition_and_assign(
     slabs = partition_airspace(
         total.permissions.workspace_bounds, len(drone_ids), axis=axis, margin=margin
     )
-    return {did: _with_workspace_bounds(total, slab) for did, slab in zip(drone_ids, slabs)}
+    return {did: _with_workspace_bounds(total, slab) for did, slab in zip(drone_ids, slabs, strict=True)}
 
 
 @dataclass(frozen=True)

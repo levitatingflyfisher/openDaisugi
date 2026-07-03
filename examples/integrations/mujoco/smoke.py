@@ -28,7 +28,7 @@ except ImportError:
         "mujoco not installed. Install with: pip install 'opendaisugi[robotics]'",
         file=sys.stderr,
     )
-    raise SystemExit(2)
+    raise SystemExit(2) from None
 
 from opendaisugi.executor_mujoco import MuJoCoExecutor
 from opendaisugi.models import (
@@ -40,7 +40,6 @@ from opendaisugi.models import (
     SimulationResetStep,
 )
 from opendaisugi.verify import verify
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MJCF = REPO_ROOT / "tests" / "fixtures" / "mjcf" / "two_joint_arm.xml"

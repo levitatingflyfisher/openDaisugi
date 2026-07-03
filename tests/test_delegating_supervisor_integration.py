@@ -61,10 +61,10 @@ async def test_eb7_recomputed_step_is_reverified_and_halts_when_out_of_policy():
     # verify() gates first), so patch verify_step to fail per-step while the
     # whole-plan verify still passes. A recompute fallback returns a replacement;
     # the EB-7 re-verify must reject it and HALT — never execute it.
-    from opendaisugi.models import VerificationResult, Violation
+    from opendaisugi.executor import ExecutorResult
     from opendaisugi.fallback import FallbackOutcome
+    from opendaisugi.models import VerificationResult, Violation
     from opendaisugi.run_session import RunStatus
-    from opendaisugi.executor import FakeExecutor, ExecutorResult
 
     executed = {"n": 0}
 

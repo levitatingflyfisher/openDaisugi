@@ -94,7 +94,7 @@ def test_ingest_episodes_consults_configured_tier1(tmp_path):
     """Onboard's envelope generation must defer to the local Tier-1 when wired."""
     from opendaisugi.ingest import ingest_episodes
     from opendaisugi.journal import Journal
-    from opendaisugi.models import ActionPlan, Permission, ShellStep
+    from opendaisugi.models import Permission, ShellStep
     from opendaisugi.parsers import Episode, ParseResult
 
     env = Envelope(

@@ -1,6 +1,7 @@
 """Tests for the opendaisugi Typer CLI."""
 
 from pathlib import Path
+
 from typer.testing import CliRunner
 
 from opendaisugi.cli import app
@@ -91,7 +92,7 @@ def _write_yaml(path: Path, obj) -> None:
 
 
 def test_verify_ok_plan_exits_zero(tmp_path):
-    from opendaisugi.models import ActionPlan, ShellStep, Envelope, Permission
+    from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 
     env = Envelope(
         id="env_ok", generated_by="t", task="t",
@@ -114,7 +115,7 @@ def test_verify_ok_plan_exits_zero(tmp_path):
 
 
 def test_verify_failing_plan_exits_one(tmp_path):
-    from opendaisugi.models import ActionPlan, ShellStep, Envelope, Permission
+    from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 
     env = Envelope(
         id="env_f", generated_by="t", task="t",
@@ -137,7 +138,7 @@ def test_verify_failing_plan_exits_one(tmp_path):
 
 
 def test_verify_json_output(tmp_path):
-    from opendaisugi.models import ActionPlan, ShellStep, Envelope, Permission
+    from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 
     env = Envelope(
         id="env_j", generated_by="t", task="t",
@@ -176,7 +177,11 @@ def test_journal_stats_empty(tmp_path):
 
 def test_journal_stats_with_traces(tmp_path):
     from opendaisugi.models import (
-        ActionPlan, ShellStep, Envelope, Permission, VerificationResult,
+        ActionPlan,
+        Envelope,
+        Permission,
+        ShellStep,
+        VerificationResult,
     )
     j = Journal(data_dir=tmp_path)
     env = Envelope(id="e", generated_by="t", task="t",
@@ -224,6 +229,7 @@ def test_journal_search_error_when_extra_missing(tmp_path, monkeypatch):
 
 def test_journal_search_dispatches_to_semantic_search(tmp_path, monkeypatch):
     import types
+
     from opendaisugi.models import Trace
     fake_module = types.ModuleType("opendaisugi._search")
     def fake_semantic_search(journal, query, *, limit):
@@ -247,7 +253,11 @@ def test_journal_search_dispatches_to_semantic_search(tmp_path, monkeypatch):
 
 def test_journal_replay_no_drift(tmp_path):
     from opendaisugi.models import (
-        ActionPlan, ShellStep, Envelope, Permission, VerificationResult,
+        ActionPlan,
+        Envelope,
+        Permission,
+        ShellStep,
+        VerificationResult,
     )
     j = Journal(data_dir=tmp_path)
     env = Envelope(id="e", generated_by="t", task="t",
@@ -273,7 +283,11 @@ def test_journal_replay_no_drift(tmp_path):
 
 def test_journal_replay_drift_exits_one(tmp_path, monkeypatch):
     from opendaisugi.models import (
-        ActionPlan, ShellStep, Envelope, Permission, VerificationResult,
+        ActionPlan,
+        Envelope,
+        Permission,
+        ShellStep,
+        VerificationResult,
     )
     j = Journal(data_dir=tmp_path)
     env = Envelope(id="e", generated_by="t", task="t",
@@ -320,8 +334,8 @@ def test_journal_replay_missing_trace_exits_two(tmp_path):
 
 def test_verify_prints_warnings(tmp_path, monkeypatch):
     """Cover the result.warnings branch in verify_cmd (lines 106-108)."""
-    from opendaisugi.models import ActionPlan, ShellStep, Envelope, Permission
     from opendaisugi.exceptions import VerificationTimeout
+    from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 
     env = Envelope(
         id="env_w", generated_by="t", task="t",
@@ -336,7 +350,7 @@ def test_verify_prints_warnings(tmp_path, monkeypatch):
 
     # Force a Z3 timeout so verify() adds a warning
     import sys as _sys
-    import opendaisugi.verify
+
     verify_mod = _sys.modules["opendaisugi.verify"]
 
     def _raise_timeout(*a, **kw):
@@ -354,6 +368,7 @@ def test_verify_prints_warnings(tmp_path, monkeypatch):
 def test_journal_search_json_output(tmp_path, monkeypatch):
     """Cover the --json branch of journal_search_cmd (lines 134-136)."""
     import types
+
     from opendaisugi.models import Trace
 
     fake_module = types.ModuleType("opendaisugi._search")
@@ -398,7 +413,11 @@ def test_journal_search_no_results(tmp_path, monkeypatch):
 def test_journal_replay_json_output(tmp_path):
     """Cover the --json branch of journal_replay_cmd (lines 166-174)."""
     from opendaisugi.models import (
-        ActionPlan, ShellStep, Envelope, Permission, VerificationResult,
+        ActionPlan,
+        Envelope,
+        Permission,
+        ShellStep,
+        VerificationResult,
     )
 
     j = Journal(data_dir=tmp_path)
@@ -428,7 +447,12 @@ def test_journal_replay_json_output(tmp_path):
 def test_journal_replay_drift_with_violations(tmp_path, monkeypatch):
     """Cover the violations branch in drift text output (lines 181-183)."""
     from opendaisugi.models import (
-        ActionPlan, ShellStep, Envelope, Permission, VerificationResult, Violation,
+        ActionPlan,
+        Envelope,
+        Permission,
+        ShellStep,
+        VerificationResult,
+        Violation,
     )
 
     j = Journal(data_dir=tmp_path)

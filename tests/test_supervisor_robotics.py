@@ -18,7 +18,6 @@ from opendaisugi.models import (
 )
 from opendaisugi.supervisor import Supervisor
 
-
 APPROVE_ALL = CallbackStrategy(lambda step, env: True)
 
 

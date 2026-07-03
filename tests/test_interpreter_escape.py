@@ -25,7 +25,7 @@ Attack C (outer LLMCheck polarity) is covered in ``test_subsumption.py``.
 
 from __future__ import annotations
 
-from opendaisugi.models import Envelope, Invariant, Permission, SHELL_INTERPRETERS
+from opendaisugi.models import SHELL_INTERPRETERS, Envelope, Permission
 from opendaisugi.subsumption import envelope_subsumes
 
 
@@ -134,7 +134,10 @@ def test_interpreter_policy_strict_passes_when_inner_is_clean():
 # --------------------- clustered shell flags (SGCM review VC-2) ---------------------
 
 from opendaisugi.interpreter_parse import parse_interpreter as _pi
-from opendaisugi.models import ActionPlan as _AP, Envelope as _E, Permission as _P, ShellStep as _SS
+from opendaisugi.models import ActionPlan as _AP
+from opendaisugi.models import Envelope as _E
+from opendaisugi.models import Permission as _P
+from opendaisugi.models import ShellStep as _SS
 from opendaisugi.verify import verify as _verify
 
 

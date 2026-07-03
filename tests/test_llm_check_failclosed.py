@@ -1,6 +1,5 @@
 """v0.27.0 — a failed llm_check LLM call fails CLOSED, never silent-passes."""
 from __future__ import annotations
-import pytest
 
 
 def test_llm_check_network_error_fails_closed(monkeypatch):

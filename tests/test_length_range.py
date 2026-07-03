@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 from opendaisugi.predicate import ForallSteps, LengthRange, parse_expression
 from opendaisugi.predicate_z3 import evaluate_predicate, verify_predicate_z3

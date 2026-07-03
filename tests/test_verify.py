@@ -305,7 +305,7 @@ def test_redirect_and_newline_metachars_rejected(command):
 
 
 def test_verify_rejects_non_http_network_scheme():
-    from opendaisugi.models import Envelope, Permission, NetworkStep, ActionPlan
+    from opendaisugi.models import ActionPlan, Envelope, NetworkStep, Permission
     from opendaisugi.verify import verify
     env = Envelope(generated_by="t", task="x", permissions=Permission(network=True, network_hosts=[]))
     for url in ["file:///etc/passwd", "ftp://evil.com/x", "data:text/plain,x"]:
@@ -319,9 +319,10 @@ def test_verify_rejects_non_http_network_scheme():
 def test_unknown_custom_step_type_rejected_under_strict():
     # A custom @step_type with an external effect and no permission surface must
     # fail closed under strict mode (high/physical stakes), not pass silently.
-    from opendaisugi.models import StepBase, step_type, ActionPlan, Envelope, Permission
-    from opendaisugi.verify import verify
     from typing import Literal
+
+    from opendaisugi.models import ActionPlan, Envelope, Permission, StepBase, step_type
+    from opendaisugi.verify import verify
 
     @step_type
     class _DraftEmailStep(StepBase):

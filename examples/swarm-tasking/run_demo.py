@@ -22,10 +22,10 @@ from opendaisugi import (
     Envelope,
     Invariant,
     Permission,
+    aabb_disjoint,
+    partition_and_assign,
     verify,
     verify_swarm_tasking,
-    partition_and_assign,
-    aabb_disjoint,
 )
 from opendaisugi.models import CartesianMoveStep
 

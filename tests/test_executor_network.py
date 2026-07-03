@@ -169,6 +169,7 @@ def test_network_executor_enforces_wall_clock_deadline(monkeypatch):
     # EB-4: a slow-drip server (a byte before each socket timeout) must not hold
     # the executor past the wall-clock deadline.
     import time as _t
+
     from opendaisugi.executor import NetworkExecutor
     from opendaisugi.models import NetworkStep
 

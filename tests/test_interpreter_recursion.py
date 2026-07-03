@@ -246,6 +246,7 @@ def test_verify_depth_limit_prevents_pathological_nesting(monkeypatch):
     parser to return an infinite-recursion payload since real shlex
     can't survive 6+ levels of escaping."""
     import sys
+
     from opendaisugi.interpreter_parse import InterpreterPayload
 
     verify_mod = sys.modules["opendaisugi.verify"]

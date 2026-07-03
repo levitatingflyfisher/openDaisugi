@@ -12,11 +12,7 @@ Tests cover:
 from __future__ import annotations
 
 import json
-import shutil
-from pathlib import Path
-from unittest import mock
 
-import pytest
 import yaml
 
 from opendaisugi.install import (
@@ -24,9 +20,7 @@ from opendaisugi.install import (
     HermesRuntime,
     detect_runtimes,
     install,
-    InstallResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Detection
@@ -287,7 +281,7 @@ def test_claude_install_keeps_mcp_and_pretooluse(tmp_path):
 
 # --- Task 9: shared instruction-file writer ----------------------------------
 
-from opendaisugi.install import _patch_instructions, _CLAUDE_MD_MARKER
+from opendaisugi.install import _CLAUDE_MD_MARKER, _patch_instructions
 
 
 def test_patch_instructions_appends_once(tmp_path):
@@ -481,8 +475,9 @@ def test_combined_install_all_harnesses(tmp_path):
 
 # --- SGCM fix: --runtime exact-key selection (was substring over-select) -------
 
-from opendaisugi.install import _select_runtimes
 import pytest as _pytest
+
+from opendaisugi.install import _select_runtimes
 
 
 def test_select_runtimes_code_resolves_to_codex_only():
@@ -703,7 +698,8 @@ def test_backup_is_collision_proof(tmp_path):
 
 # --- SGCM polish: parsing robustness (json5 strings, marker-pair) -------------
 
-from opendaisugi.install import _strip_json5_comments, _unpatch_instructions, _CLAUDE_MD_MARKER as _MARK
+from opendaisugi.install import _CLAUDE_MD_MARKER as _MARK
+from opendaisugi.install import _strip_json5_comments, _unpatch_instructions
 
 
 def test_strip_json5_comments_preserves_double_slash_in_strings(tmp_path):
@@ -764,7 +760,7 @@ def test_openclaw_plugin_does_not_follow_symlink(tmp_path):
 def test_patch_mcp_warns_when_clobbering_json5_comments(tmp_path):
     import warnings as _warnings
 
-    from opendaisugi.install import _patch_mcp, _JSON5
+    from opendaisugi.install import _JSON5, _patch_mcp
 
     cfg = tmp_path / "openclaw.json"
     cfg.write_text(
@@ -791,7 +787,7 @@ def test_patch_mcp_warns_when_clobbering_json5_comments(tmp_path):
 def test_patch_mcp_no_warning_when_no_comments_to_lose(tmp_path):
     import warnings as _warnings
 
-    from opendaisugi.install import _patch_mcp, _JSON5
+    from opendaisugi.install import _JSON5, _patch_mcp
 
     cfg = tmp_path / "openclaw.json"
     cfg.write_text('{ "mcp": { "servers": {} } }\n')  # plain JSON, no comments
@@ -812,6 +808,7 @@ def test_patch_claude_settings_does_not_clobber_unparseable_file(tmp_path):
     # LEFT INTACT with a warning — never reset to {} and rewritten (which would
     # destroy the user's permission deny-rules and env).
     import warnings as _w
+
     from opendaisugi.install import _patch_claude_settings
     sp = tmp_path / "settings.json"
     original = '{"permissions": {"deny": ["Read(./secrets/**)"]}, "env": {"K": "v"},}'  # trailing comma
@@ -826,6 +823,7 @@ def test_patch_claude_settings_does_not_clobber_unparseable_file(tmp_path):
 
 def test_patch_hermes_config_does_not_clobber_unparseable_file(tmp_path):
     import warnings as _w
+
     from opendaisugi.install import _patch_hermes_config
     cp = tmp_path / "config.yaml"
     original = "mcp_servers: [\n  - name: x\n   bad_indent: y\n"  # malformed YAML

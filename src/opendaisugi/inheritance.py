@@ -12,7 +12,6 @@ from pydantic import BaseModel
 
 from opendaisugi.models import Envelope, Violation
 
-
 _STAGE = "inheritance"
 
 

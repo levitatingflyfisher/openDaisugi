@@ -19,8 +19,8 @@ from typing import Literal
 
 import z3
 
-from opendaisugi.predicate import Expression, ExistsStep, ForallOutputs, ForallSteps
-from opendaisugi.predicate_z3 import _Scope, _compile_scalar
+from opendaisugi.predicate import ExistsStep, Expression, ForallOutputs, ForallSteps
+from opendaisugi.predicate_z3 import _compile_scalar, _Scope
 
 Verdict = Literal["tautology", "contradiction", "non_trivial"]
 

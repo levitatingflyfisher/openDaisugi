@@ -12,9 +12,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from opendaisugi.models import (
+    StepBase,
     VerificationResult,
     Violation,
-    StepBase,
     coerce_step,
 )
 

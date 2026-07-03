@@ -19,7 +19,6 @@ Design constraints:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -27,7 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from opendaisugi.executor import ExecutorResult
-from opendaisugi.llm import get_instructor_client, translate_llm_error
+from opendaisugi.llm import translate_llm_error
 from opendaisugi.models import StepBase
 
 _log = logging.getLogger("opendaisugi.delegating_executor")

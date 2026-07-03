@@ -408,7 +408,9 @@ class ClaudeCodeParser:
                 return []
             return body.get("subtasks", [])
 
-        from opendaisugi.parsers import claude_code as _self  # resolves the (patchable) lazy litellm
+        from opendaisugi.parsers import (
+            claude_code as _self,  # resolves the (patchable) lazy litellm
+        )
         response = _self.litellm.completion(
             model=self.model,
             messages=[

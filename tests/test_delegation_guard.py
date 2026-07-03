@@ -1,5 +1,5 @@
 """Physical-stakes delegation guard (v0.19 L4)."""
-from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep, JointMoveStep
+from opendaisugi.models import ActionPlan, Envelope, JointMoveStep, Permission, ShellStep
 from opendaisugi.verify import verify
 
 

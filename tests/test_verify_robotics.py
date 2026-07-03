@@ -86,7 +86,7 @@ def test_robotics_invariant_without_backing_bounds_is_rejected():
     # end_effector_in_workspace enforced but workspace_bounds=None → the z3 handler
     # no-ops, so the invariant was silently vacuous (fail-open) even at physical
     # stakes. Must reject: the operator believes the workspace is guarded.
-    from opendaisugi.models import Envelope, Permission, Invariant, CartesianMoveStep, ActionPlan
+    from opendaisugi.models import ActionPlan, CartesianMoveStep, Envelope, Invariant, Permission
     from opendaisugi.verify import verify
     env = Envelope(
         generated_by="t", task="x", stakes="physical",
@@ -101,7 +101,7 @@ def test_robotics_invariant_without_backing_bounds_is_rejected():
 
 
 def test_robotics_invariant_with_bounds_still_works():
-    from opendaisugi.models import Envelope, Permission, Invariant, CartesianMoveStep, ActionPlan
+    from opendaisugi.models import ActionPlan, CartesianMoveStep, Envelope, Invariant, Permission
     from opendaisugi.verify import verify
     env = Envelope(
         generated_by="t", task="x", stakes="physical",

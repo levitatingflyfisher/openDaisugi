@@ -14,7 +14,6 @@ from opendaisugi.models import (
     ShellStep,
 )
 
-
 MJCF_TWO_JOINT_ARM = Path(__file__).parent / "fixtures" / "mjcf" / "two_joint_arm.xml"
 
 

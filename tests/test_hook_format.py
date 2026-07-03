@@ -82,6 +82,7 @@ def test_record_call_neutralizes_session_id_path_traversal(tmp_path):
 
 def test_capture_dir_and_file_not_world_or_group_accessible(tmp_path):
     import os
+
     from opendaisugi.hook import record_call
     root = tmp_path / "caps"
     root.mkdir(mode=0o777)  # pre-existing loose dir

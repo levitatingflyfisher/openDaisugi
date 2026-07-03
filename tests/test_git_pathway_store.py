@@ -8,10 +8,12 @@ from pathlib import Path
 import pytest
 
 from opendaisugi.models import (
-    ActionPlan, Envelope, Permission, ShellStep,
+    ActionPlan,
+    Envelope,
+    Permission,
+    ShellStep,
 )
 from opendaisugi.pathway import CompiledPathway
-
 
 pytest.importorskip("cryptography")  # signing path required for most tests
 

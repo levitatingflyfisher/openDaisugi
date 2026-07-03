@@ -2,11 +2,9 @@
 on realistic plan+envelope pairs. These also serve as executable documentation
 for the v0.0.1 public API."""
 
-import pytest
 
 from opendaisugi import (
     ActionPlan,
-    ActionStep,
     Daisugi,
     Envelope,
     FileWriteStep,

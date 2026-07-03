@@ -24,7 +24,6 @@ from opendaisugi import (
 )
 from opendaisugi.decomposer import DecomposedPlan, DecomposedStep
 
-
 # --- fake LLM clients so the demo runs offline ------------------------------
 
 class _FakeCompletions:

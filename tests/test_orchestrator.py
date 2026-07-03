@@ -7,15 +7,13 @@ from unittest.mock import patch
 from opendaisugi.budget import BudgetTracker
 from opendaisugi.decomposer import DecomposedPlan, DecomposedStep
 from opendaisugi.model_sizer import DEFAULT_LADDER
-from opendaisugi.models import Envelope, Permission, TaskStep
+from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep, TaskStep
 from opendaisugi.orchestrator import (
     BudgetAwareDelegatingExecutor,
     OrchestrationResult,
     Orchestrator,
 )
 from opendaisugi.pathway import CompiledPathway, PathwayMatch
-from opendaisugi.models import ActionPlan, ShellStep
-
 
 # --- fakes -----------------------------------------------------------------
 
@@ -253,7 +251,8 @@ async def test_orchestrate_records_exact_cost_from_backend():
 async def test_reused_pathway_verified_against_caller_envelope_not_pathway_envelope():
     # H2: a pathway whose OWN envelope permits shell must NOT run under a caller
     # envelope that forbids shell — the caller's envelope is the ceiling.
-    from opendaisugi.models import Envelope as _Env, Permission as _Perm
+    from opendaisugi.models import Envelope as _Env
+    from opendaisugi.models import Permission as _Perm
     permissive = _Env(generated_by="pw", task="cached",
                       permissions=_Perm(shell=True, shell_allowlist=["rm"]))
     template = ActionPlan(source="distilled", task="cached",

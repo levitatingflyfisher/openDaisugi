@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from opendaisugi.claude_code_llm import ClaudeCodeInstructorClient
 from opendaisugi.llm import get_instructor_client
 

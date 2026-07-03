@@ -7,7 +7,6 @@ import json
 from opendaisugi.models import MCPStep, ShellStep, SkillStep
 from opendaisugi.orchestration_executors import MCPExecutor, SkillExecutor
 
-
 # --------------------------- SkillExecutor ---------------------------
 
 def test_skill_executor_runs_matching_handler():

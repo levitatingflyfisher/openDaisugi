@@ -67,7 +67,6 @@ async def test_high_stakes_bypasses_cache_read(tmp_path, sample_envelope):
 async def test_high_stakes_overwrites_cache_on_write(tmp_path, sample_envelope):
     from opendaisugi import generate_envelope
     from opendaisugi.envelope_cache import EnvelopeCache
-    from opendaisugi.models import Envelope
 
     cache = EnvelopeCache(tmp_path / "c.db", prompt_version="2026-04-15")
     old = sample_envelope.model_copy(update={"id": "env_old"})
@@ -160,6 +159,7 @@ async def test_low_stakes_skips_cache(tmp_path, sample_envelope):
 @pytest.mark.asyncio
 async def test_low_stakes_with_parent_warns_and_ignores_parent(sample_envelope):
     import warnings
+
     from opendaisugi import generate_envelope
     from opendaisugi.exceptions import StakesInheritanceWarning
 

@@ -1,5 +1,6 @@
 """v0.27.0 — alias registration + vacuity verdicts land in the RefinementLog."""
 from __future__ import annotations
+
 from opendaisugi.aliases import Alias, AliasRegistry
 from opendaisugi.predicate import parse_expression
 

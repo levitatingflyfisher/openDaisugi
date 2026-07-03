@@ -58,7 +58,6 @@ async def test_approval_strategy_exception_aborts_cleanly(tmp_path: Path):
     """A custom approval strategy that raises must not crash the supervisor.
     The run is marked ABORTED with a clean error message and the integrity
     check finishes."""
-    from opendaisugi.approval import ApprovalDecision
 
     class RaisingApproval:
         def decide(self, step, env):

@@ -28,6 +28,7 @@ from opendaisugi.models import ActionPlan, Envelope, VerificationResult
 from opendaisugi.verify import verify
 
 if TYPE_CHECKING:
+    from opendaisugi.models import Receipt, Trace  # noqa: F401
     from opendaisugi.refinement import RefinementLog, RefinementRecord  # noqa: F401
     from opendaisugi.run_session import RunSession  # noqa: F401
 

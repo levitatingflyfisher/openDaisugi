@@ -27,7 +27,6 @@ from typing import Literal
 
 import yaml
 
-from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.pathway import CompiledPathway
 from opendaisugi.pathway_store import PathwayStore
 from opendaisugi.verify import verify
@@ -202,7 +201,7 @@ def _export_smtlib(pathway: CompiledPathway) -> str:
     needed for verification.
     """
     import z3
-    from opendaisugi.z3_checks import check_envelope_self_consistency
+
 
     # Re-encode the self-consistency checks into a fresh solver and sexpr
     # it out. We don't use the z3_checks helper directly because it

@@ -152,7 +152,6 @@ def test_single_drone_is_trivially_deconflicted():
 
 # --------------------------- fail-open guards (SGCM review) ---------------------------
 
-import math
 import pytest as _pytest
 
 

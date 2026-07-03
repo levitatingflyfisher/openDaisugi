@@ -18,9 +18,12 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Union
+from typing import TYPE_CHECKING, Union
 
 from opendaisugi.exceptions import EnvelopeGenerationError
+
+if TYPE_CHECKING:
+    import instructor
 
 _KEY_RE = re.compile(r"(sk-[a-zA-Z0-9_-]{4})[a-zA-Z0-9_-]{8,}([a-zA-Z0-9_-]{4})")
 

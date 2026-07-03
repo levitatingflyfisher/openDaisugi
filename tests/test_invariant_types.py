@@ -1,8 +1,8 @@
 """v0.27.0 — recognized opaque invariant types are the single source of truth."""
 from __future__ import annotations
+
 from opendaisugi._invariant_types import RECOGNIZED_OPAQUE_TYPES
-from opendaisugi.models import ActionPlan, Envelope, Invariant, Permission
-from opendaisugi.models import JointMoveStep
+from opendaisugi.models import ActionPlan, Envelope, Invariant, JointMoveStep, Permission
 from opendaisugi.verify import verify
 
 

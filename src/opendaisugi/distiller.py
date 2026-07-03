@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from opendaisugi.journal import Journal
-    from opendaisugi.pathway import PathwayMatch
+    from opendaisugi.pathway import CompiledPathway, PathwayMatch
     from opendaisugi.pathway_store import PathwayStore
 
 from opendaisugi._search import _MODEL_NAME as _EMBEDDING_MODEL_NAME
@@ -153,7 +153,7 @@ def _cluster_with_centroids(
             clusters.append([i])
             centroids.append(v.copy())
 
-    return list(zip(clusters, centroids))
+    return list(zip(clusters, centroids, strict=True))
 
 
 def _cluster_by_similarity(

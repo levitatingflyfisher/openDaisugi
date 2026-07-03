@@ -33,7 +33,6 @@ from opendaisugi.z3_checks import (
     check_plan_invariants,
 )
 
-
 _log = logging.getLogger("opendaisugi.verify")
 
 _SHELL_METACHAR_RE = re.compile(r"[;|&`<>\n\r]|\$\(")
@@ -71,7 +70,7 @@ def _extract_shell_head(stripped: str) -> str | None:
     if stripped.startswith("#"):
         return None
     tokens = stripped.split()
-    for i, tok in enumerate(tokens):
+    for tok in tokens:
         if _ENV_ASSIGN_RE.match(tok):
             continue
         return tok
@@ -124,7 +123,7 @@ def _head_allowed(head: str, allowlist: list[str]) -> bool:
         pat_segs = pat.split("/")
         if len(head_segs) != len(pat_segs):
             continue
-        if all(fnmatch.fnmatchcase(h, p) for h, p in zip(head_segs, pat_segs)):
+        if all(fnmatch.fnmatchcase(h, p) for h, p in zip(head_segs, pat_segs, strict=True)):
             return True
     return False
 

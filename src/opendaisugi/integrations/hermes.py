@@ -27,7 +27,6 @@ need to import them directly.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -46,7 +45,6 @@ from opendaisugi.predicate import parse_expression
 from opendaisugi.stage2 import verify_completed_step
 from opendaisugi.system_aliases import load_system_aliases
 from opendaisugi.verify import verify
-
 
 __all__ = [
     "envelope_from_yaml",

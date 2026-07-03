@@ -14,7 +14,6 @@ from opendaisugi.hardware import (
     recommend_model,
 )
 
-
 # ---- recommendation (pure) ----
 
 def _profile(*, ram_gb=16.0, vram_gb=0.0, gpu_name=None, unified=False, system="Linux", arch="x86_64", cpu=8):

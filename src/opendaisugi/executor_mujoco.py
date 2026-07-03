@@ -23,7 +23,7 @@ from opendaisugi.models import (
 )
 
 if TYPE_CHECKING:
-    import mujoco
+    import numpy as np
 
 
 # Return codes for rollout-time violations. rc=0 is success; values above 0

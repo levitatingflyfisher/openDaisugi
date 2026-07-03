@@ -236,6 +236,7 @@ def registry_pull_and_tend_cmd(
     on every team instance.
     """
     import asyncio
+
     from opendaisugi.git_pathway_store import GitPathwayStore
 
     store = GitPathwayStore(repo_path=repo_path)
@@ -275,6 +276,7 @@ def hook_record_cmd(
     never disrupted. ``--format`` selects which allow/continue shape to emit.
     """
     import sys
+
     from opendaisugi.hook import record_and_contract
 
     try:
@@ -479,6 +481,7 @@ def lora_export_cmd(
 ) -> None:
     """Emit (task → envelope JSON) pairs from the journal as JSONL for fine-tuning."""
     import time
+
     from opendaisugi.lora.dataset import emit_jsonl
 
     if fmt not in ("alpaca", "chat"):
@@ -613,7 +616,8 @@ def pathways_export_cmd(
 ) -> None:
     """Export a compiled pathway for sharing or inspection."""
     from opendaisugi.pathway_store import PathwayStore
-    from opendaisugi.portability import export as _export, _SUPPORTED_FORMATS
+    from opendaisugi.portability import _SUPPORTED_FORMATS
+    from opendaisugi.portability import export as _export
 
     if fmt not in _SUPPORTED_FORMATS:
         typer.echo(
@@ -779,6 +783,7 @@ def gardener_watch_cmd(
     gate survives restarts.
     """
     import time
+
     from opendaisugi.gardener import run_gardener
     from opendaisugi.pathway_store import PathwayStore
 
@@ -1098,6 +1103,7 @@ def tend_cmd(
 ) -> None:
     """Run the distiller. Scans successful traces and produces compiled pathways."""
     import asyncio
+
     from opendaisugi import Daisugi
     from opendaisugi.local_setup import load_configured_tier1
 
@@ -1175,8 +1181,8 @@ def onboard_cmd(
     if llm != "litellm":
         os.environ["OPENDAISUGI_LLM_BACKEND"] = llm
 
-    from opendaisugi.onboarding import DiscoveredTranscript, onboard
     from opendaisugi.local_setup import load_configured_tier1
+    from opendaisugi.onboarding import DiscoveredTranscript, onboard
 
     journal = Journal(data_dir=data_dir)
     tier1 = load_configured_tier1(data_dir)  # defer bulk envelope-gen to a qualified local model if wired
@@ -1955,8 +1961,14 @@ def install_cmd(
         return
 
     from opendaisugi.install import (
-        detect_runtimes, install as _install, uninstall as _uninstall,
         _select_runtimes,
+        detect_runtimes,
+    )
+    from opendaisugi.install import (
+        install as _install,
+    )
+    from opendaisugi.install import (
+        uninstall as _uninstall,
     )
 
     home = Path.home()

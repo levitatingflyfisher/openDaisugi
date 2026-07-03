@@ -110,7 +110,7 @@ async def test_verify_plan_roundtrip(tmp_path):
 
 @pytest.mark.asyncio
 async def test_verify_completed_step_rejects_impersonation(tmp_path):
-    from opendaisugi.models import Invariant, Postcondition
+    from opendaisugi.models import Postcondition
     from opendaisugi.predicate import parse_expression
 
     d = _daisugi(tmp_path)
@@ -432,6 +432,7 @@ def test_cli_mcp_serve_fails_gracefully_without_extra(monkeypatch):
     """If `mcp` isn't importable, `daisugi mcp serve` should exit 1 with a hint."""
     import builtins
     import sys
+
     from typer.testing import CliRunner
 
     from opendaisugi.cli import app

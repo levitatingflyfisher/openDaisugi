@@ -1,12 +1,9 @@
 """Unit tests for refinement data types."""
 
-import time
 
 from opendaisugi.models import (
     FileWriteStep,
-    Permission,
     ShellStep,
-    Envelope,
     VerificationResult,
     Violation,
 )

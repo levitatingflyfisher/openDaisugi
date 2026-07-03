@@ -8,7 +8,6 @@ from pydantic import ValidationError
 from opendaisugi.models import ShellStep
 from opendaisugi.parsers import Episode, ParseResult, get_parser
 
-
 # ----- Episode model -----
 
 
@@ -90,8 +89,7 @@ def test_get_parser_returns_claude_code_parser():
 
 from pathlib import Path
 
-from opendaisugi.parsers.claude_code import ClaudeCodeParser, _TOOL_TYPE_MAP, _extract_step
-
+from opendaisugi.parsers.claude_code import _TOOL_TYPE_MAP, ClaudeCodeParser, _extract_step
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_transcript.jsonl"
 

@@ -107,8 +107,8 @@ def test_dag_empty_plan_is_valid():
 def test_duplicate_step_ids_rejected():
     # EB-6: duplicate ids collapse in the graph → a step silently doesn't run and
     # the set-based integrity check can't detect the drop. Reject at verify time.
-    from opendaisugi.models import ActionPlan, ShellStep
     from opendaisugi.dag import check_dag
+    from opendaisugi.models import ActionPlan, ShellStep
     plan = ActionPlan(source="t", task="x", steps=[
         ShellStep(id="dup", command="echo a"),
         ShellStep(id="dup", command="echo b"),  # same id

@@ -1,5 +1,6 @@
 """v0.27.0 — Z3-backed tautology/contradiction detection on predicates."""
 from __future__ import annotations
+
 from opendaisugi.predicate import parse_expression
 from opendaisugi.vacuity import check_vacuity, clear_vacuity_cache
 

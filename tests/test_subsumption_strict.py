@@ -1,5 +1,6 @@
 """v0.27.0 — strict subsumption hard-fails on unprovable opaque inner invariants."""
 from __future__ import annotations
+
 from opendaisugi.models import Envelope, Invariant, Permission
 from opendaisugi.subsumption import envelope_subsumes
 

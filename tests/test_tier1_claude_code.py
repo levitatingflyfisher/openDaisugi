@@ -14,7 +14,6 @@ import pytest
 
 from opendaisugi.tier1 import ClaudeCodeTier1Provider, Tier1Provider
 
-
 _VALID_ENVELOPE_JSON = json.dumps({
     "generated_by": "claude-code-tier1",
     "task": "demo",

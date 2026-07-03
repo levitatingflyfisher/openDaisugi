@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from opendaisugi.budget import BudgetTracker
-from opendaisugi.models import ActionPlan, ShellStep, SkillStep, TaskStep
 from opendaisugi.model_sizer import (
     DEFAULT_LADDER,
     ModelLadder,
@@ -13,6 +12,7 @@ from opendaisugi.model_sizer import (
     size_plan,
     size_step,
 )
+from opendaisugi.models import ActionPlan, ShellStep, SkillStep, TaskStep
 
 
 def test_difficulty_is_per_step_and_text_driven_for_tasks():

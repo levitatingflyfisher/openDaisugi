@@ -10,8 +10,6 @@ from opendaisugi.executor import ExecutorResult, FakeExecutor
 from opendaisugi.fallback import HaltHandler
 from opendaisugi.models import (
     ActionPlan,
-    Envelope,
-    Permission,
     ShellStep,
     VerificationResult,
     Violation,

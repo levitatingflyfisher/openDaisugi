@@ -10,10 +10,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from opendaisugi.budget import BudgetTracker
 from opendaisugi.delegating_executor import DelegatingExecutor
 from opendaisugi.models import TaskStep
 from opendaisugi.orchestrator import BudgetAwareDelegatingExecutor
-from opendaisugi.budget import BudgetTracker
 
 
 def test_json_mode_false_omits_response_format():

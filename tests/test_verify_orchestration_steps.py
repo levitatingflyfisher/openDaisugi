@@ -7,8 +7,6 @@ assurance — silently defeating the library. Each type must be able to FAIL.
 
 from __future__ import annotations
 
-import pytest
-
 from opendaisugi.models import (
     ActionPlan,
     Envelope,

@@ -4,13 +4,9 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from opendaisugi.gardener import (
     GardenerConfig,
     GardenerReport,
-    MergeConfig,
-    PruneConfig,
     run_gardener,
 )
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep

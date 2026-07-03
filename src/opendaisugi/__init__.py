@@ -19,6 +19,33 @@ from typing import Literal
 logging.getLogger("opendaisugi").addHandler(logging.NullHandler())
 _log = logging.getLogger("opendaisugi.facade")
 
+from opendaisugi import integrations
+from opendaisugi.accounting import TierStats, classify_tier, tier_stats
+from opendaisugi.aliases import Alias, AliasRegistry
+from opendaisugi.approval import ApprovalDecision, ApprovalStrategy
+from opendaisugi.budget import BudgetExceeded, BudgetReport, BudgetTracker, StepCost
+from opendaisugi.config import Config, load_config, save_config
+from opendaisugi.contracts import (
+    Contract,
+    DelegationDecision,
+    verify_delegation,
+)
+from opendaisugi.decomposer import (
+    DecomposedPlan,
+    DecomposedStep,
+    DecompositionError,
+    decompose,
+)
+from opendaisugi.defaults import DEFAULT_LOW_STAKES_ENVELOPE
+from opendaisugi.distiller import Distiller, TendReport
+from opendaisugi.envelope import (
+    ENVELOPE_PROMPT_VERSION,
+    CalibrationReport,
+    generate_envelope,
+    run_calibration,
+)
+from opendaisugi.envelope import generate_envelope as _generate_envelope
+from opendaisugi.envelope_cache import EnvelopeCache, make_cache_key
 from opendaisugi.exceptions import (
     EnvelopeGenerationError,
     LowStakesNotConfigured,
@@ -28,17 +55,19 @@ from opendaisugi.exceptions import (
     TaskTooLongError,
     VerificationTimeout,
 )
-from opendaisugi.defaults import DEFAULT_LOW_STAKES_ENVELOPE
-from opendaisugi.thinking import ThinkingBudget
-from opendaisugi.envelope_cache import EnvelopeCache, make_cache_key
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD, PathwayStore
-from opendaisugi.pathway_bundle import (
-    PathwayBundle, pathway_to_bundle, bundle_to_pathway,
-    UntrustedSignerError, InvalidSignatureError, UnsignedBundleError,
+from opendaisugi.executor import (
+    DryRunExecutor,
+    ExecutorResult,
+    FakeExecutor,
+    StepExecutor,
+    SubprocessExecutor,
 )
-from opendaisugi.distiller import Distiller, TendReport
-from opendaisugi.pathway import CompiledPathway, PathwayMatch
-from opendaisugi.accounting import TierStats, classify_tier, tier_stats
+from opendaisugi.fallback import (
+    FallbackHandler,
+    FallbackOutcome,
+    HaltHandler,
+    RecomputeHandler,
+)
 from opendaisugi.gardener import (
     ABResult,
     GardenerConfig,
@@ -54,11 +83,12 @@ from opendaisugi.gardener import (
     regression_check,
     run_gardener,
 )
-from opendaisugi.tier1 import (
-    ClaudeCodeTier1Provider,
-    LiteLLMTier1Provider,
-    OllamaTier1Provider,
-    Tier1Provider,
+from opendaisugi.inheritance import EnvelopeInheritanceError, verify_inheritance
+from opendaisugi.journal import (
+    Journal,
+    JournalStats,
+    ReplayResult,
+    TraceRecord,
 )
 from opendaisugi.lora import (
     DatasetStats,
@@ -66,101 +96,6 @@ from opendaisugi.lora import (
     emit_jsonl,
     iter_training_examples,
 )
-from opendaisugi import integrations
-from opendaisugi.portability import (
-    BUNDLE_SCHEMA_VERSION,
-    ImportResult,
-    PathwayImportError,
-    export as export_pathway,
-    import_pathway,
-    parse_bundle,
-)
-from opendaisugi.inheritance import EnvelopeInheritanceError, verify_inheritance
-from opendaisugi.models import (
-    ActionPlan,
-    ActionStep,
-    CartesianMoveStep,
-    VLAStep,
-    Envelope,
-    FallbackStrategy,
-    FileReadStep,
-    FileWriteStep,
-    GripperStep,
-    Invariant,
-    JointMoveStep,
-    NetworkStep,
-    Permission,
-    Postcondition,
-    ShellStep,
-    SimulationResetStep,
-    Trace,
-    VerificationResult,
-    Violation,
-)
-from opendaisugi.config import Config, load_config, save_config
-from opendaisugi.verify import verify
-from opendaisugi.verify import verify as _verify
-from opendaisugi.envelope import (
-    CalibrationReport,
-    ENVELOPE_PROMPT_VERSION,
-    generate_envelope,
-    run_calibration,
-)
-from opendaisugi.envelope import generate_envelope as _generate_envelope
-from opendaisugi.journal import (
-    Journal,
-    JournalStats,
-    ReplayResult,
-    TraceRecord,
-)
-from opendaisugi.parsers import Episode, ParseResult
-from opendaisugi.approval import ApprovalDecision, ApprovalStrategy
-from opendaisugi.executor import (
-    DryRunExecutor,
-    ExecutorResult,
-    FakeExecutor,
-    StepExecutor,
-    SubprocessExecutor,
-)
-from opendaisugi.run_session import RunSession, RunStatus, StepOutcome
-from opendaisugi.supervisor import Supervisor
-from opendaisugi.refinement import RefinementLog, RefinementRecord
-from opendaisugi.fallback import (
-    FallbackHandler,
-    FallbackOutcome,
-    HaltHandler,
-    RecomputeHandler,
-)
-
-# v0.9.0 meta-DSL exports
-from opendaisugi.predicate import Expression, LengthRange, parse_expression
-from opendaisugi.aliases import Alias, AliasRegistry
-from opendaisugi.system_aliases import load_system_aliases
-from opendaisugi.stage2 import verify_completed_step
-
-# v0.11.0: real Z3 compilation + skills-as-contracts
-from opendaisugi.predicate_z3 import (
-    CompiledPredicate,
-    compile_to_z3,
-    evaluate_predicate,
-    verify_predicate_z3,
-)
-from opendaisugi.regex_to_z3 import UnsupportedRegexError
-from opendaisugi.subsumption import (
-    Counterexample,
-    SubsumptionResult,
-    envelope_subsumes,
-)
-from opendaisugi.contracts import (
-    Contract,
-    DelegationDecision,
-    verify_delegation,
-)
-from opendaisugi.subagent import DelegationDenied, SafeSubagent
-
-# v0.32.0: forward-looking orchestration layer
-from opendaisugi.models import MCPStep, SkillStep, TaskStep
-from opendaisugi.budget import BudgetExceeded, BudgetReport, BudgetTracker, StepCost
 from opendaisugi.model_sizer import (
     DEFAULT_LADDER,
     ModelLadder,
@@ -170,17 +105,31 @@ from opendaisugi.model_sizer import (
     size_plan,
     size_step,
 )
-from opendaisugi.decomposer import (
-    DecomposedPlan,
-    DecomposedStep,
-    DecompositionError,
-    decompose,
-)
-from opendaisugi.synthesizer import (
-    StepOutput,
-    SynthesisResult,
-    collect_outputs,
-    synthesize,
+
+# v0.32.0: forward-looking orchestration layer
+from opendaisugi.models import (
+    ActionPlan,
+    ActionStep,
+    CartesianMoveStep,
+    Envelope,
+    FallbackStrategy,
+    FileReadStep,
+    FileWriteStep,
+    GripperStep,
+    Invariant,
+    JointMoveStep,
+    MCPStep,
+    NetworkStep,
+    Permission,
+    Postcondition,
+    ShellStep,
+    SimulationResetStep,
+    SkillStep,
+    TaskStep,
+    Trace,
+    VerificationResult,
+    Violation,
+    VLAStep,
 )
 from opendaisugi.orchestration_executors import (
     MCPExecutor,
@@ -193,6 +142,49 @@ from opendaisugi.orchestrator import (
     OrchestrationResult,
     Orchestrator,
 )
+from opendaisugi.parsers import Episode, ParseResult
+from opendaisugi.pathway import CompiledPathway, PathwayMatch
+from opendaisugi.pathway_bundle import (
+    InvalidSignatureError,
+    PathwayBundle,
+    UnsignedBundleError,
+    UntrustedSignerError,
+    bundle_to_pathway,
+    pathway_to_bundle,
+)
+from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD, PathwayStore
+from opendaisugi.portability import (
+    BUNDLE_SCHEMA_VERSION,
+    ImportResult,
+    PathwayImportError,
+    import_pathway,
+    parse_bundle,
+)
+from opendaisugi.portability import (
+    export as export_pathway,
+)
+
+# v0.9.0 meta-DSL exports
+from opendaisugi.predicate import Expression, LengthRange, parse_expression
+
+# v0.11.0: real Z3 compilation + skills-as-contracts
+from opendaisugi.predicate_z3 import (
+    CompiledPredicate,
+    compile_to_z3,
+    evaluate_predicate,
+    verify_predicate_z3,
+)
+from opendaisugi.refinement import RefinementLog, RefinementRecord
+from opendaisugi.regex_to_z3 import UnsupportedRegexError
+from opendaisugi.run_session import RunSession, RunStatus, StepOutcome
+from opendaisugi.stage2 import verify_completed_step
+from opendaisugi.subagent import DelegationDenied, SafeSubagent
+from opendaisugi.subsumption import (
+    Counterexample,
+    SubsumptionResult,
+    envelope_subsumes,
+)
+from opendaisugi.supervisor import Supervisor
 
 # v0.33.0: verified swarm tasking (airspace deconfliction via envelope algebra)
 from opendaisugi.swarm import (
@@ -204,6 +196,22 @@ from opendaisugi.swarm import (
     partition_and_assign,
     verify_swarm_tasking,
 )
+from opendaisugi.synthesizer import (
+    StepOutput,
+    SynthesisResult,
+    collect_outputs,
+    synthesize,
+)
+from opendaisugi.system_aliases import load_system_aliases
+from opendaisugi.thinking import ThinkingBudget
+from opendaisugi.tier1 import (
+    ClaudeCodeTier1Provider,
+    LiteLLMTier1Provider,
+    OllamaTier1Provider,
+    Tier1Provider,
+)
+from opendaisugi.verify import verify
+from opendaisugi.verify import verify as _verify
 
 # v0.15.0: real ed25519 signing (optional, requires [sign] extra)
 try:
@@ -418,8 +426,8 @@ class Daisugi:
         capable model under ``budget_tokens`` (None = unbudgeted; the decompose
         and synthesize calls are overhead, not drawn from it).
         """
-        from opendaisugi.orchestrator import Orchestrator
         from opendaisugi.model_sizer import build_ladder
+        from opendaisugi.orchestrator import Orchestrator
 
         if envelope is None:
             envelope = await self.generate_envelope(prompt, stakes=stakes)

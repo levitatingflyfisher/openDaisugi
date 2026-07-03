@@ -14,7 +14,6 @@ from opendaisugi.executor_mujoco import (
 )
 from opendaisugi.models import CartesianMoveStep, GripperStep, JointMoveStep, SimulationResetStep
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "mjcf" / "two_joint_arm.xml"
 
 

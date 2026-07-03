@@ -24,6 +24,7 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
     "pytest-asyncio>=0.23",
+    "ruff>=0.14",
     "build>=1.2",
     "twine>=5.0",
     # v0.28.5: include the test surface that's nominally light. [search]
@@ -81,3 +82,35 @@ markers = [
     "calibration: runs against the real LLM API; requires ANTHROPIC_API_KEY",
     "smoke: end-to-end prompt sanity via `claude -p`; requires DAISUGI_SMOKE=1",
 ]
+
+[tool.ruff]
+# Target the existing style: 100-col soft target (E501 not enforced — long lines
+# are grandfathered; see docs/architecture/CONVENTIONS.md).
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Real-bug + import-hygiene rules only. Deliberately NOT: E501 (line length — noise,
+# not correctness), UP (pyupgrade — style modernization that would mass-rewrite
+# annotations), E402 (module-import-not-at-top — openDaisugi uses function-local &
+# conditional imports on purpose, for optional deps and circular-import avoidance;
+# see CONVENTIONS.md). Tighten later via a new ADR if the team wants more.
+select = ["F", "E9", "B", "I"]
+
+[tool.ruff.lint.flake8-bugbear]
+# typer builds CLIs by putting typer.Option(...)/Argument(...) in argument defaults;
+# that is the framework idiom, not the B008 "mutable/expensive default" bug.
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py re-exports the public API; "unused import" / star-import are intentional.
+"__init__.py" = ["F401", "F403"]
+# B008: the CLI computes typer.Option defaults like `Path.home() / ...` at import —
+#   benign for a short-lived process; not the mutable/expensive-default hazard.
+# B904: `raise typer.Exit(code=N)` after echoing the error is control flow, not error
+#   propagation — chaining `from err` would attach a traceback the user never sees.
+"cli.py" = ["B008", "B904"]
+# Tests favor readability over strict hygiene: fixtures/redefs look "unused" (F811),
+# imports mid-file are common (E402), a var can document intent unused (F841), and
+# `assert False` is a fine "unreachable" marker in a test (B011).
+"tests/*" = ["F811", "E402", "F841", "B011"]

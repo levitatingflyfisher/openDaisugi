@@ -5,8 +5,8 @@ import sqlite3
 import numpy as np
 import pytest
 
-from opendaisugi.distiller import Distiller, GeneralizedTemplate
 from opendaisugi import distiller as dist_mod
+from opendaisugi.distiller import Distiller, GeneralizedTemplate
 from opendaisugi.journal import Journal
 from opendaisugi.models import (
     ActionPlan,

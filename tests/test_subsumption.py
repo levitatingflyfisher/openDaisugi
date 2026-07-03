@@ -156,8 +156,9 @@ def test_subsumption_blocks_command_substitution_substring():
     # that pass the head check, fail concrete verify on $(, and the
     # subsumption proof would falsely approve. We assert subsumption
     # rejects when the metachar gate disagrees with verify.
-    from opendaisugi.subsumption import _encode_shell_admission
     import z3
+
+    from opendaisugi.subsumption import _encode_shell_admission
     s = z3.String("cmd")
     perms = Permission(shell=True, shell_allowlist=["cat"])
     admission = _encode_shell_admission(perms, s)
@@ -171,8 +172,9 @@ def test_subsumption_blocks_command_substitution_substring():
 
 def test_subsumption_blocks_redirect_substring():
     """Same invariant for `>` and `<` — added v0.28.2."""
-    from opendaisugi.subsumption import _encode_shell_admission
     import z3
+
+    from opendaisugi.subsumption import _encode_shell_admission
     s = z3.String("cmd")
     perms = Permission(shell=True, shell_allowlist=["cat"])
     admission = _encode_shell_admission(perms, s)

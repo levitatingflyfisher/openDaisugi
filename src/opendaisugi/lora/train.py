@@ -26,7 +26,6 @@ Hugging Face PEFT adapter directory.
 from __future__ import annotations
 
 import argparse
-import sys
 from typing import Sequence
 
 

@@ -11,7 +11,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from opendaisugi.budget import BudgetTracker
 from opendaisugi.delegating_executor import DelegatingExecutor
 from opendaisugi.model_sizer import DEFAULT_LADDER, build_ladder, size_step
 from opendaisugi.models import TaskStep

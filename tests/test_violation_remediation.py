@@ -1,5 +1,6 @@
 """Violations carry suggested_remediation so agents can self-correct (v0.18 L7)."""
 from __future__ import annotations
+
 from opendaisugi.models import ActionPlan, Envelope, Invariant, Permission, ShellStep
 from opendaisugi.verify import check_permissions, verify
 

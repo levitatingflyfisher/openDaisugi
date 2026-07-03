@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from opendaisugi.thinking import ThinkingBudget, thinking_kwargs
+from opendaisugi.thinking import thinking_kwargs
 
 
 class TestAnthropic:
