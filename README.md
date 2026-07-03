@@ -27,6 +27,20 @@ stay true, and an honest scorecard of what's built vs. aspirational.
 → **[docs/](docs/README.md)** for the [Diátaxis](https://diataxis.fr/)-organized
 docs (tutorials · how-to · reference · explanation).
 
+### See it: runtime assurance for a robot swarm
+
+![Property-security patrol — openDaisugi gating a (mock) VLA swarm in MuJoCo](docs/assets/property-patrol.gif)
+
+Three drones patrol a property, one sector each. A black-box policy (a stand-in for a
+VLA like π0 / SmolVLA) proposes each drone's next move; openDaisugi verifies it live
+against the drone's sector envelope + swarm deconfliction — **green** accepted,
+**amber** an out-of-sector proposal refused and pulled back (Simplex fallback),
+**red** a proposal held because it closed on a peer. No drone can leave its sector and
+no two can collide, *proven every tick before motion*, whatever the policy proposes.
+Runnable: [`examples/property-patrol/`](examples/property-patrol/) (the gate, CPU,
+zero deps) + `mujoco_render.py` (this recording). More:
+[`examples/swarm-comms-delegation/`](examples/swarm-comms-delegation/).
+
 **Status (v0.27.0):** verification-core is sound — strict mode (default-on
 at `stakes` high/physical) rejects opaque invariants and postconditions that
 can't be discharged, Z3 vacuity detection catches tautological or

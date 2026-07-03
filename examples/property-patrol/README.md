@@ -1,7 +1,12 @@
 # Property-security patrol — runtime assurance for a VLA swarm, in motion
 
+![Property-security patrol in MuJoCo](../../docs/assets/property-patrol.gif)
+
 ```
-python run_demo.py
+python run_demo.py            # the gate, text output (CPU, zero deps)
+
+pip install mujoco imageio pillow
+MUJOCO_GL=egl python mujoco_render.py    # regenerate the GIF above (headless CPU render)
 ```
 
 No physics engine, no GPU, no network, no real model — pure envelope algebra plus a
