@@ -161,8 +161,14 @@ class DelegatingExecutor:
             self._last_usage = meter.get("tokens")
             self._last_cost = meter.get("cost_usd")
             return text
-        from opendaisugi.claude_code_llm import call_claude_p_json_sync
-        body = call_claude_p_json_sync(prompt, timeout_s=float(timeout_s), model=model)
+        # v0.34.3: json_mode routes through the metered variant too — the old
+        # unmetered path skipped is_error detection, recorded no usage/cost
+        # (budget undercount), and blamed "no JSON object" when the real cause
+        # was a tool-needing prompt answered with prose from the empty sandbox.
+        from opendaisugi.claude_code_llm import call_claude_p_json_metered
+        body, meter = call_claude_p_json_metered(prompt, timeout_s=float(timeout_s), model=model)
+        self._last_usage = meter.get("tokens")
+        self._last_cost = meter.get("cost_usd")
         return json.dumps(body)
 
     def _call(
