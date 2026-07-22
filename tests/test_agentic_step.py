@@ -8,8 +8,6 @@ pure-reasoning exemption. No silent pass.
 
 from __future__ import annotations
 
-import pytest
-
 from opendaisugi.models import ActionPlan, AgenticStep, Envelope, Permission
 from opendaisugi.verify import check_permissions, verify
 

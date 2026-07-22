@@ -123,6 +123,18 @@ happens). Neither alone is the enforcement story.
 - Every adversarial escape in Stage 3 is denied when attempted *from inside* a
   delegated sub-agent.
 
+**Status (v0.36.0):** the mechanism is built and the first three criteria
+have committed evidence — `AgenticStep` with a real permission arm in
+`verify.py` (`tests/test_agentic_step.py`), `AgenticExecutor` computing the
+tool wall from the envelope and registering the gate in a root outside the
+workspace (`tests/test_agentic_executor.py`), failed sub-agents surfacing as
+failed steps, and gated calls mirrored into the captures pipeline for
+distillation. A live opt-in test (`tests/test_agentic_live.py`) shows a real
+sub-agent's out-of-envelope read denied by the inner-wall gate, with a
+benign in-workspace read succeeding as the causality control. The fourth
+criterion — *every* Stage-3 adversarial escape denied from inside a
+sub-agent — waits on Stage 3's corpus, by design.
+
 ## Stage 3 — The evidence problem
 *A safety claim someone else can check.*
 

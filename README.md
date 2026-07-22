@@ -233,7 +233,11 @@ execution time — the orchestrator adds routing and assembly *on top of* the
 assurance guarantees. Pieces are composable too: `decompose()`, `size_plan()`,
 `BudgetTracker`, `synthesize()`. New step types `TaskStep` / `SkillStep` /
 `MCPStep` each carry a real verify surface (skills prove subsumption; MCP tools
-gate against a deny-by-default `mcp_allowlist`).
+gate against a deny-by-default `mcp_allowlist`). `AgenticStep` (v0.36) is the
+tool-using delegation type: unlike TaskStep's pure-reasoning leaf, it runs a
+sub-agent with real tools — bounded by the parent envelope via a computed
+`--allowedTools` wall *and* the call-time gate wired into the sub-agent's own
+hook config (`AgenticExecutor`).
 
 ---
 

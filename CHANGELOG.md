@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.36.0 — 2026-07-22 — Sub-agents that can act, inside the envelope (roadmap Stage 2)
+
+The delegation ban becomes a delegation *boundary*. `TaskStep` stays a
+pure-reasoning leaf; the new **`AgenticStep`** is the tool-using delegation
+type, and it never rides TaskStep's exemption.
+
+- **`AgenticStep`** (`type="agentic"`, fields `prompt` / `workspace` /
+  `tools` / `max_turns`) joins the step union and the verifier's known-type
+  set. Its permission arm (`verify._check_agentic_step`) is the static outer
+  wall: every requested host tool must map to a capability the caller's
+  envelope grants (`Bash`→shell, `Read`/`Glob`/`Grep`→file_read,
+  `Write`/`Edit`/`MultiEdit`→file_write, `WebFetch`/`WebSearch`→network),
+  the workspace must be inside the envelope's `file_read` globs, an unknown
+  tool denies by default, and an empty tool list is rejected ("that's a
+  TaskStep"). Physical-stakes envelopes refuse agentic delegation outright.
+- **`AgenticExecutor`** (`opendaisugi.agentic_executor`) runs the sub-agent
+  with defense in depth: `--allowedTools` computed as envelope ∩ request (an
+  unbacked tool never reaches the argv), plus the call-time gate in enforce
+  mode wired into the sub-agent's own `--settings`, registered in a private
+  gate root *outside* the workspace so the sub-agent cannot rewrite its own
+  wall. `is_error`, spawn failure, and a missing workspace surface as failed
+  steps — never swallowed. `capture=True` mirrors gate-allowed calls into
+  passive-capture format so delegated runs feed the captures → to-trace →
+  journal distillation pipeline (denied calls never mirror — they didn't
+  happen).
+- **Live proof** (`tests/test_agentic_live.py`, opt-in
+  `DAISUGI_CLAUDE_CODE_INTEGRATION=1`): a real delegated sub-agent attempts
+  an out-of-envelope read and the inner-wall gate denies it (secret withheld,
+  permission reason logged); a benign in-workspace read succeeds as the
+  causality control.
+- The gate gains a `--captures-root` passthrough (mirrors allowed calls) so
+  any gated session — not only agentic ones — can feed distillation.
+
 ## v0.35.0 — 2026-07-22 — The call-time gate (ADR-0007, roadmap Stage 1)
 
 The hook seam gains its enforce-mode counterpart: a **call-time tool gate**

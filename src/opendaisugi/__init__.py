@@ -21,6 +21,7 @@ _log = logging.getLogger("opendaisugi.facade")
 
 from opendaisugi import integrations
 from opendaisugi.accounting import TierStats, classify_tier, tier_stats
+from opendaisugi.agentic_executor import AgenticExecutor
 from opendaisugi.aliases import Alias, AliasRegistry
 from opendaisugi.approval import ApprovalDecision, ApprovalStrategy
 from opendaisugi.budget import BudgetExceeded, BudgetReport, BudgetTracker, StepCost
@@ -110,6 +111,7 @@ from opendaisugi.model_sizer import (
 from opendaisugi.models import (
     ActionPlan,
     ActionStep,
+    AgenticStep,
     CartesianMoveStep,
     Envelope,
     FallbackStrategy,
@@ -753,6 +755,9 @@ __all__ = [
     "Orchestrator",
     "OrchestrationResult",
     "BudgetAwareDelegatingExecutor",
+    # v0.36.0: tool-using delegation inside the envelope (roadmap Stage 2)
+    "AgenticStep",
+    "AgenticExecutor",
     # v0.33.0: verified swarm tasking
     "verify_swarm_tasking",
     "partition_and_assign",
