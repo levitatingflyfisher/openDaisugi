@@ -18,6 +18,8 @@ whether you're fixing a mistake or unknowingly reopening a settled trade-off.
 | [0004](0004-layer-not-harness.md) | openDaisugi is a layer; MCP is the control pathway | Accepted |
 | [0005](0005-python-runtime.md) | Stay on Python; Rust only for a profiled bottleneck | Accepted |
 | [0006](0006-claude-p-backend.md) | `claude -p` as a keyless LLM backend (stopgap) | Accepted |
+| [0007](0007-call-time-gate.md) | A call-time tool gate, shadow-by-default, beside plan verification | Accepted |
+| [0007](0007-call-time-gate.md) | A call-time tool gate, shadow-by-default, beside plan verification | Accepted |
 
 ## Writing a new one
 
