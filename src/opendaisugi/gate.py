@@ -370,3 +370,103 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
                 mode=mode, elapsed_ms=(time.monotonic() - t0) * 1000,
             )
         return _outcome(decision, fmt)
+
+
+# ---------------------------------------------------------------------------
+# Shadow report + capture replay
+# ---------------------------------------------------------------------------
+
+def _is_false_positive_candidate(reason: str) -> bool:
+    """Classify a would-deny as a likely false positive worth operator review.
+
+    Two known classes (the product's false-positive economics, per the
+    roadmap): compound-command metachar denials (the command may be benign;
+    the gate can't prove it and offers a decomposition instead) and host
+    tools the classification map doesn't know (TodoWrite, Task, …) which
+    deny-by-default sweeps up wholesale.
+    """
+    return "metacharacters" in reason or reason.startswith("unrecognized tool")
+
+
+def _build_report(records: list[dict[str, Any]]) -> dict[str, Any]:
+    denied = [r for r in records if r.get("would_deny")]
+    reasons: dict[str, int] = {}
+    for r in denied:
+        key = (r.get("reason") or "")[:120]
+        reasons[key] = reasons.get(key, 0) + 1
+    return {
+        "calls": len(records),
+        "allowed": sum(1 for r in records if not r.get("would_deny")),
+        "would_deny": len(denied),
+        "reasons": reasons,
+        "denied": denied,
+        "false_positive_candidates": [
+            r for r in denied
+            if _is_false_positive_candidate(r.get("reason") or "")
+        ],
+    }
+
+
+def shadow_report(*, root: Path = DEFAULT_GATE_ROOT,
+                  session_id: str | None = None) -> dict[str, Any]:
+    """Summarize the shadow log: what an enforcing gate would have denied.
+
+    Denied records are included verbatim so the operator can adjudicate each
+    one; the ``false_positive_candidates`` subset flags the two known
+    over-denial classes (compound-command metachars, unrecognized host
+    tools). One session, or all sessions when ``session_id`` is None.
+    """
+    d = _shadow_dir(root)
+    files = (
+        [d / f"{_safe_session_id(session_id)}.jsonl"] if session_id
+        else sorted(d.glob("*.jsonl")) if d.exists() else []
+    )
+    records: list[dict[str, Any]] = []
+    for f in files:
+        if not f.exists():
+            continue
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return _build_report(records)
+
+
+def replay_captures(captures_jsonl: Path, envelope: Envelope, *,
+                    verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+                    ) -> dict[str, Any]:
+    """Run a passively captured session back through the gate, offline.
+
+    This is how an operator tunes an envelope against a real session before
+    trusting enforce mode: every captured call is decided in shadow terms
+    against ``envelope`` and summarized like :func:`shadow_report` — false
+    positive candidates included. Nothing is executed and nothing is denied;
+    the captures are historical.
+    """
+    records: list[dict[str, Any]] = []
+    for line in captures_jsonl.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            cap = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        decision = evaluate_record(
+            cap, envelope, mode="shadow", verify_timeout_s=verify_timeout_s,
+        )
+        records.append({
+            "at": cap.get("captured_at"),
+            "session_id": cap.get("session_id"),
+            "tool_name": decision.tool_name,
+            "step_type": decision.step_type,
+            "detail": decision.detail,
+            "mode": "shadow",
+            "allow": decision.allow,
+            "would_deny": decision.would_deny,
+            "reason": decision.reason,
+            "elapsed_ms": round(decision.elapsed_ms, 3),
+        })
+    return _build_report(records)

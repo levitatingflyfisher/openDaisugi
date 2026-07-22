@@ -311,3 +311,77 @@ def test_hermes_fmt_deny_is_block_json_exit_0(tmp_path):
     assert out.exit_code == 0
     body = json.loads(out.stdout)
     assert body.get("decision") == "block" or body.get("action") == "block"
+
+
+# =================================================================
+# Task 3: shadow report + capture replay
+# =================================================================
+
+from opendaisugi.gate import replay_captures, shadow_report  # noqa: E402
+
+
+def _drive_shadow_session(root, session="sessR"):
+    register_envelope(_envelope(shell=True, shell_allowlist=["echo"]), root=root)
+    calls = [
+        _read_payload("/allowed/ok.txt"),                                   # allowed
+        _read_payload("/etc/passwd"),                                       # real deny
+        {"tool_name": "Bash", "tool_input": {"command": "echo a && echo b"},},  # FP candidate
+        {"tool_name": "TodoWrite", "tool_input": {"todos": []}},            # unrecognized host tool → FP candidate
+    ]
+    for c in calls:
+        gate_and_contract(
+            json.dumps(c | {"session_id": session}).encode(),
+            root=root, fmt="claude", mode="shadow",
+        )
+
+
+def test_shadow_report_counts_and_flags_fp_candidates(tmp_path):
+    _drive_shadow_session(tmp_path)
+    rep = shadow_report(root=tmp_path, session_id="sessR")
+    assert rep["calls"] == 4
+    assert rep["would_deny"] == 3
+    assert rep["allowed"] == 1
+    # The compound-&& and the unrecognized host tool are false-positive
+    # candidates; the /etc/passwd read is a true permission denial.
+    fp = rep["false_positive_candidates"]
+    assert len(fp) == 2
+    fp_details = " ".join(json.dumps(r) for r in fp)
+    assert "echo a && echo b" in fp_details
+    assert "TodoWrite" in fp_details
+    true_denies = [r for r in rep["denied"] if r not in fp]
+    assert any("/etc/passwd" in (r.get("detail") or "") for r in true_denies)
+
+
+def test_shadow_report_all_sessions_when_none_given(tmp_path):
+    _drive_shadow_session(tmp_path, session="s1")
+    _drive_shadow_session(tmp_path, session="s2")
+    rep = shadow_report(root=tmp_path)
+    assert rep["calls"] == 8
+
+
+def test_shadow_report_empty_when_no_log(tmp_path):
+    rep = shadow_report(root=tmp_path)
+    assert rep["calls"] == 0
+    assert rep["would_deny"] == 0
+
+
+def test_replay_captures_produces_report_from_passive_session(tmp_path):
+    """Roadmap Stage 1 exit criterion: a shadow-mode report generated from a
+    captured real session, false-positive candidates included."""
+    captures = tmp_path / "cap.jsonl"
+    rows = [
+        {"captured_at": 1.0, "session_id": "cap", "tool_name": "Read",
+         "step_type": "file_read", "path": "/allowed/a.txt"},
+        {"captured_at": 2.0, "session_id": "cap", "tool_name": "Read",
+         "step_type": "file_read", "path": "/secret/b.txt"},
+        {"captured_at": 3.0, "session_id": "cap", "tool_name": "Bash",
+         "step_type": "shell", "command": "echo hi && rm -rf /"},
+    ]
+    captures.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    env = _envelope(shell=True, shell_allowlist=["echo"])
+    rep = replay_captures(captures, env)
+    assert rep["calls"] == 3
+    assert rep["would_deny"] == 2
+    assert rep["allowed"] == 1
+    assert any("/secret/b.txt" in (r.get("detail") or "") for r in rep["denied"])
+    assert len(rep["false_positive_candidates"]) == 1  # the compound &&
