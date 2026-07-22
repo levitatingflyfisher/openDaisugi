@@ -18,12 +18,15 @@ The plan-verification spine is real: envelope → `verify` → supervise → jou
 distill, Z3-backed, fail-closed, ~1600 tests, CI green. What it verifies is
 **plans it is handed** — typed, declared, submitted in advance.
 
-What it cannot yet do is gate the tool calls of an agent you are *already
-running*. The hook that observes a host harness's tool calls is a passive
-capture seam: it journals what it sees, and it fails **open** by design, so it
-can never hang the host. That is the correct posture for observation and the
-wrong one for protection. Closing that gap — without ever pretending it is
-closed before the evidence exists — orders everything below.
+As of v0.35.0 the call-time gate exists beside it: live tool calls are
+verified against a registered per-session envelope, deny-by-default, shadow
+mode first (see Stage 1's status note for the evidence). The passive capture
+seam is unchanged — it journals and fails **open** by design, correct for
+observation. What the library still cannot do is hand a *sub-agent* real
+tools inside the parent's envelope (Stage 2), or back its fail-closed claim
+with evidence someone else authored (Stage 3). Closing those gaps — without
+ever pretending they are closed before the evidence exists — orders
+everything below.
 
 ---
 
@@ -82,6 +85,17 @@ never blur that line.
   the deny path.
 - The existing suite is green with the passive-era "always allow" expectations
   *rewritten*, not deleted.
+
+**Status (v0.35.0):** the criteria above have committed evidence —
+`opendaisugi.gate` + `tests/test_gate.py` (every failure path denies),
+`tests/test_hook_gate_contract.py` (the real gate denying a real Read in the
+real host CLI, live-verified), `daisugi gate report` / `replay` (shadow
+report with false-positive candidates), `daisugi gate disarm`, and the
+measured round trip published in [docs/how-to/gate.md](how-to/gate.md). One
+named sub-problem deliberately remains open: the **host-session envelope
+authoring story** (shipped default template / interactive authoring /
+drafted-then-reviewed). Until it lands with Stage 6, "protect your existing
+session" honestly means: bring your own envelope, or run shadow.
 
 ## Stage 2 — The delegation problem
 *Sub-agents that can act — inside the envelope.*

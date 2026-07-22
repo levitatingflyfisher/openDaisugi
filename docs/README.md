@@ -35,6 +35,7 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Deployment](deployment.md)** — run it in the modes it supports.
 - **[Integrations](integrations.md)** — wire it into a harness (per-harness adapters).
 - **[Hook integration](hook-integration.md)** — the passive-hook path.
+- **[Gate a live session](gate.md)** — the call-time gate: shadow → report → enforce → disarm.
 - **[π0 / VLA integration](pi-vla-integration.md)** — the robotics integration path.
 - Agent-guidance for working *in* this repo: **[AGENTS.md](../AGENTS.md)**.
 

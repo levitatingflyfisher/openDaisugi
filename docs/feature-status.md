@@ -38,6 +38,8 @@ not what the spec aspires to.
 | Low-stakes permissive envelope | v0.1.3 | Working | Skips LLM call for trivial tasks. |
 | Contract cryptographic signing | v0.15.0 | Working | `opendaisugi.signing` ships `sign_contract` / `verify_signature_raw` / `TrustedSignerRegistry`. `contracts._verify_signature` consults the registry against `trusted_signers`. Requires `[sign]` extra. |
 | Distributed pathway registry | v0.25.0 | Working | `GitPathwayStore` + `PathwayBundle` + `daisugi registry init/pull/publish/status/pull-and-tend`. Git-backed, content-addressed bundles. |
+| Passive capture hook (`daisugi hook record`) | v0.21.0 | Working | Observation only, fail-open by contract — never blocks the host. Feeds distillation. |
+| Call-time gate (`daisugi gate`) | v0.35.0 | Working | ADR-0007. Deny-by-default `verify()` per live tool call; shadow default, `--enforce` flips, `disarm` kill switch. Claude Code deny path contract-tested live (exit 2); Hermes/OpenClaw block shapes emitted but **unverified**. ~0.6 s round trip, import-dominated. |
 | String length / arithmetic in algebra | — | Planned | Grammar extension. |
 
 ## Legend

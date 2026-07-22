@@ -1,5 +1,56 @@
 # Changelog
 
+## v0.35.0 — 2026-07-22 — The call-time gate (ADR-0007, roadmap Stage 1)
+
+The hook seam gains its enforce-mode counterpart: a **call-time tool gate**
+that synthesizes each live tool call into a one-step plan and proves it
+inside the session's registered envelope *before it runs*. Plan verification
+covers plans the library is handed; the gate covers the agent you are
+already running.
+
+- **`opendaisugi.gate`** — deny-by-default decision core. Unknown tool,
+  unparseable payload, internal exception, or slow verifier ALL deny in
+  enforce mode; each failure path is pinned by a test. Runs the full
+  `verify()` pipeline per call (not `verify_step` — plan-level strict checks
+  are never skipped at the boundary) with `strict=None`, so strictness comes
+  from the envelope's stakes and is never relaxed at the gate. An inner
+  verify timeout denies *before* any host's fail-open outer hook timeout can
+  fire.
+- **Shadow by default, one-flag enforce.** Shadow mode evaluates and logs
+  every call (`~/.opendaisugi/gate/shadow/*.jsonl`) but always allows —
+  observation, not protection, and documented as such. `--enforce` flips.
+  Failure policy is mode-selected: enforce fails closed, shadow never breaks
+  the host; capture mode (`daisugi hook record`) is untouched and still
+  never blocks.
+- **Session envelope channel.** `daisugi gate register <envelope>` binds an
+  envelope per session (or as the default fallback). Enforce mode with no
+  registered envelope denies, and the message names both exits (register /
+  disarm).
+- **One-command kill switch.** `daisugi gate disarm` — a plain CLI command
+  that does not itself pass through the gate — makes the gate allow
+  everything until `daisugi gate arm`.
+- **Shadow report + offline replay.** `daisugi gate report` summarizes
+  would-denies verbatim and flags the two known over-denial classes
+  (compound-command metachar denials, unrecognized host tools) as
+  false-positive candidates. `daisugi gate replay <captures> --envelope <e>`
+  runs a passively captured session through the gate offline — the
+  envelope-tuning loop before anyone trusts enforce.
+- **Live host contract, proven not assumed.** `tests/test_hook_gate_contract.py`
+  (opt-in `DAISUGI_CLAUDE_CODE_INTEGRATION=1`) now includes the real shipped
+  gate denying a real `Read` inside a real headless `claude -p` run — secret
+  withheld from the model, proof-backed reason in the shadow log. Verified
+  live on claude 2.1.204. Measured full round trip 559–670 ms per call,
+  import-dominated; `gate settings` therefore wires hosts to the lean
+  `python -m opendaisugi.gate` entry (argparse only).
+- **Hermes block shape hardened.** The passive-era single-key
+  `{"decision": "block"}` may be wrong per Hermes docs (`action`); the block
+  contract is unverifiable here, so the hook now emits BOTH keys —
+  whichever the host honors, it blocks. Hermes/OpenClaw enforcement remains
+  **unverified** (roadmap Stage 5) and the docs say so.
+- Docs: `docs/how-to/gate.md` (shadow → report → enforce → disarm, latency
+  numbers, per-host enforcement class stated first), feature-status rows for
+  the hook + gate, cross-link from `hook-integration.md`.
+
 ## v0.34.2 — 2026-07-02 — claude -p flag passthrough + failed-step reasons
 
 Two fixes for running the orchestrator on the `claude -p` (Claude Code) backend:

@@ -48,7 +48,9 @@ def stdout_for_format(fmt: str, *, block: bool, reason: str = "") -> str:
     """Return the JSON stdout a given host runtime expects from a pre-tool hook.
 
     Passive capture always allows the call (block=False). The block branch is
-    reserved for verified-pathway enforcement wiring in a later release.
+    used by the call-time gate (:mod:`opendaisugi.gate`) on hosts whose deny
+    contract is JSON-on-stdout; on the Claude Code path the gate denies via
+    exit code 2 instead (see ``gate.gate_and_contract``).
 
     - claude (and default): ``{"continue": true}`` (PreToolUse contract)
     - hermes: ``{}`` no-op, or a block object carrying BOTH ``decision`` and
