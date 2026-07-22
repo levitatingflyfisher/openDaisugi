@@ -320,6 +320,7 @@ def _log_shadow(root: Path, session_id: str | None,
 def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
                       fmt: str = "claude", mode: str = "shadow",
                       verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+                      captures_root: Path | None = None,
                       ) -> GateOutcome:
     """Full gate entry: raw hook stdin → decision → host contract.
 
@@ -327,6 +328,11 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
     error here denies with exit 2), shadow fails OPEN (observation must
     never break the host). Every decision is appended to the shadow log,
     in both modes — enforce sessions produce the same report material.
+
+    With ``captures_root``, calls the gate *allows* are also mirrored into
+    passive-capture format (best-effort) so a gated session feeds the same
+    captures → to-trace → journal pipeline distillation already reads.
+    Denied calls are never mirrored — they didn't happen.
     """
     t0 = time.monotonic()
     try:
@@ -360,6 +366,12 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
                 payload, envelope, mode=mode, verify_timeout_s=verify_timeout_s,
             )
         _log_shadow(root, session_id, decision)
+        if captures_root is not None and decision.allow and isinstance(payload, dict):
+            try:
+                from opendaisugi.hook import record_call
+                record_call(payload, root=captures_root)
+            except Exception:  # noqa: BLE001 — mirroring is best-effort
+                pass
         return _outcome(decision, fmt)
     except Exception as exc:  # noqa: BLE001 — mode-selected failure policy
         decision = _deny(mode, f"gate I/O error (denied fail-closed): {exc}", t0=t0)
@@ -482,6 +494,7 @@ def gate_settings_json(*, mode: str = "shadow",
                        hook_timeout_s: int = 30,
                        python: str | None = None,
                        verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+                       captures_root: Path | None = None,
                        ) -> str:
     """Return the Claude Code hooks-settings JSON that wires in the gate.
 
@@ -508,6 +521,8 @@ def gate_settings_json(*, mode: str = "shadow",
         f" --format {shlex.quote(fmt)}"
         f" --verify-timeout {inner}"
     )
+    if captures_root is not None:
+        command += f" --captures-root {shlex.quote(str(captures_root))}"
     return json.dumps({
         "hooks": {
             "PreToolUse": [{
@@ -539,6 +554,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--format", dest="fmt", default="claude")
     parser.add_argument("--verify-timeout", type=float,
                         default=_DEFAULT_VERIFY_TIMEOUT_S)
+    parser.add_argument("--captures-root", type=Path, default=None)
     args = parser.parse_args(argv)
 
     try:
@@ -548,6 +564,7 @@ def main(argv: list[str] | None = None) -> int:
     out = gate_and_contract(
         raw, root=args.root, fmt=args.fmt, mode=args.mode,
         verify_timeout_s=args.verify_timeout,
+        captures_root=args.captures_root,
     )
     if out.stdout:
         print(out.stdout)

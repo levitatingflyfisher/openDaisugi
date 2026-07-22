@@ -382,3 +382,57 @@ def test_replay_captures_produces_report_from_passive_session(tmp_path):
     assert rep["allowed"] == 1
     assert any("/secret/b.txt" in (r.get("detail") or "") for r in rep["denied"])
     assert len(rep["false_positive_candidates"]) == 1  # the compound &&
+
+
+# =================================================================
+# Captures mirroring: gated sessions feed the distillation pipeline
+# =================================================================
+
+def test_allowed_calls_mirror_into_captures_format(tmp_path):
+    """With a captures_root, calls the gate allows are recorded in passive-
+    capture format — so a gated session distills through the existing
+    captures → to-trace → journal pipeline."""
+    register_envelope(_envelope(), root=tmp_path)
+    caps = tmp_path / "caps"
+    gate_and_contract(
+        _payload_bytes("/allowed/ok.txt"), root=tmp_path, fmt="claude",
+        mode="enforce", captures_root=caps,
+    )
+    files = list(caps.glob("*.jsonl"))
+    assert files, "no capture written for an allowed call"
+    rec = json.loads(files[0].read_text().splitlines()[0])
+    assert rec["tool_name"] == "Read"
+    assert rec["path"] == "/allowed/ok.txt"
+
+
+def test_denied_calls_do_not_mirror_into_captures(tmp_path):
+    """A denied call never executed — recording it as a capture would teach
+    distillation an action that didn't happen."""
+    register_envelope(_envelope(), root=tmp_path)
+    caps = tmp_path / "caps"
+    gate_and_contract(
+        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="claude",
+        mode="enforce", captures_root=caps,
+    )
+    assert not list(caps.glob("*.jsonl")) if caps.exists() else True
+
+
+def test_shadow_mode_mirrors_everything_it_allows(tmp_path):
+    """Shadow mode allows every call (they all really ran), so every call
+    is captured — including the would-denies."""
+    register_envelope(_envelope(), root=tmp_path)
+    caps = tmp_path / "caps"
+    gate_and_contract(
+        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="claude",
+        mode="shadow", captures_root=caps,
+    )
+    files = list(caps.glob("*.jsonl"))
+    assert files, "shadow mode must capture calls that actually ran"
+
+
+def test_settings_json_carries_captures_root(tmp_path):
+    from opendaisugi.gate import gate_settings_json
+    caps = tmp_path / "caps"
+    settings = json.loads(gate_settings_json(root=tmp_path, captures_root=caps))
+    cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert "--captures-root" in cmd
