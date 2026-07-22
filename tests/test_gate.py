@@ -154,3 +154,160 @@ def test_compound_shell_command_denied_and_names_decomposition():
     d = evaluate_call(payload, env, mode="enforce")
     assert d.allow is False
     assert d.step_type == "shell"
+
+
+# =================================================================
+# Task 2: envelope registration channel, disarm, gate_and_contract
+# =================================================================
+
+from opendaisugi.gate import (  # noqa: E402
+    arm,
+    disarm,
+    gate_and_contract,
+    is_disarmed,
+    load_envelope,
+    register_envelope,
+)
+
+
+def _payload_bytes(path: str, session: str = "sess1") -> bytes:
+    return json.dumps(_read_payload(path) | {"session_id": session}).encode()
+
+
+# ------------------------------------------------- registration channel
+
+def test_register_and_load_envelope_roundtrip(tmp_path):
+    env = _envelope()
+    p = register_envelope(env, session_id="sessA", root=tmp_path)
+    assert p.exists()
+    loaded = load_envelope("sessA", root=tmp_path)
+    assert loaded is not None
+    assert loaded.permissions.file_read == ["/allowed/**"]
+
+
+def test_register_without_session_becomes_default_fallback(tmp_path):
+    register_envelope(_envelope(), root=tmp_path)
+    # Any session id falls back to the default envelope.
+    assert load_envelope("some-other-session", root=tmp_path) is not None
+    assert load_envelope(None, root=tmp_path) is not None
+
+
+def test_session_envelope_wins_over_default(tmp_path):
+    register_envelope(_envelope(), root=tmp_path)
+    register_envelope(_envelope(file_read=["/special/**"]), session_id="sessB", root=tmp_path)
+    loaded = load_envelope("sessB", root=tmp_path)
+    assert loaded.permissions.file_read == ["/special/**"]
+
+
+def test_load_envelope_none_when_nothing_registered(tmp_path):
+    assert load_envelope("sessX", root=tmp_path) is None
+
+
+def test_registered_envelope_file_is_private(tmp_path):
+    p = register_envelope(_envelope(), root=tmp_path)
+    assert (p.stat().st_mode & 0o777) == 0o600
+
+
+# --------------------------------------------------------- disarm switch
+
+def test_disarm_arm_roundtrip(tmp_path):
+    assert is_disarmed(tmp_path) is False
+    disarm(tmp_path)
+    assert is_disarmed(tmp_path) is True
+    arm(tmp_path)
+    assert is_disarmed(tmp_path) is False
+
+
+def test_disarmed_gate_allows_everything_even_out_of_envelope(tmp_path):
+    register_envelope(_envelope(), root=tmp_path)
+    disarm(tmp_path)
+    out = gate_and_contract(
+        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="claude", mode="enforce",
+    )
+    assert out.exit_code == 0
+    assert "disarmed" in out.decision.reason
+
+
+# --------------------------------------------------- gate_and_contract
+
+def test_enforce_deny_is_exit_2_with_reason_on_stderr(tmp_path):
+    register_envelope(_envelope(), root=tmp_path)
+    out = gate_and_contract(
+        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="claude", mode="enforce",
+    )
+    assert out.exit_code == 2
+    assert "/etc/passwd" in out.stderr
+    assert out.decision.would_deny is True
+
+
+def test_enforce_allow_is_exit_0_with_continue_contract(tmp_path):
+    register_envelope(_envelope(), root=tmp_path)
+    out = gate_and_contract(
+        _payload_bytes("/allowed/notes.txt"), root=tmp_path, fmt="claude", mode="enforce",
+    )
+    assert out.exit_code == 0
+    assert json.loads(out.stdout) == {"continue": True}
+
+
+def test_shadow_never_blocks_but_logs_would_deny(tmp_path):
+    register_envelope(_envelope(), root=tmp_path)
+    out = gate_and_contract(
+        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="claude", mode="shadow",
+    )
+    assert out.exit_code == 0
+    log = tmp_path / "shadow" / "sess1.jsonl"
+    assert log.exists()
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec["would_deny"] is True
+    assert rec["mode"] == "shadow"
+
+
+def test_missing_envelope_enforce_denies_and_names_both_exits(tmp_path):
+    out = gate_and_contract(
+        _payload_bytes("/anything"), root=tmp_path, fmt="claude", mode="enforce",
+    )
+    assert out.exit_code == 2
+    assert "register" in out.stderr
+    assert "disarm" in out.stderr
+
+
+def test_missing_envelope_shadow_allows_but_flags(tmp_path):
+    out = gate_and_contract(
+        _payload_bytes("/anything"), root=tmp_path, fmt="claude", mode="shadow",
+    )
+    assert out.exit_code == 0
+    assert out.decision.would_deny is True
+
+
+def test_unparseable_stdin_enforce_denies(tmp_path):
+    register_envelope(_envelope(), root=tmp_path)
+    out = gate_and_contract(b"\xff not json {{{", root=tmp_path, fmt="claude", mode="enforce")
+    assert out.exit_code == 2
+
+
+def test_unparseable_stdin_shadow_allows(tmp_path):
+    register_envelope(_envelope(), root=tmp_path)
+    out = gate_and_contract(b"\xff not json {{{", root=tmp_path, fmt="claude", mode="shadow")
+    assert out.exit_code == 0
+
+
+def test_outer_exception_enforce_denies_shadow_allows(tmp_path, monkeypatch):
+    register_envelope(_envelope(), root=tmp_path)
+
+    def _boom(*a, **k):
+        raise RuntimeError("io layer exploded")
+    monkeypatch.setattr("opendaisugi.gate.load_envelope", _boom)
+    out = gate_and_contract(_payload_bytes("/allowed/x"), root=tmp_path, fmt="claude", mode="enforce")
+    assert out.exit_code == 2
+    out2 = gate_and_contract(_payload_bytes("/allowed/x"), root=tmp_path, fmt="claude", mode="shadow")
+    assert out2.exit_code == 0
+
+
+def test_hermes_fmt_deny_is_block_json_exit_0(tmp_path):
+    register_envelope(_envelope(), root=tmp_path)
+    out = gate_and_contract(
+        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="hermes", mode="enforce",
+    )
+    assert out.exit_code == 0
+    body = json.loads(out.stdout)
+    assert body.get("decision") == "block" or body.get("action") == "block"

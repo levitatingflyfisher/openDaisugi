@@ -21,15 +21,25 @@ at the boundary, and strictness is resolved from the envelope's stakes
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from opendaisugi.hook import _payload_to_record, _records_to_steps
+from opendaisugi.hook import (
+    _payload_to_record,
+    _records_to_steps,
+    _safe_session_id,
+    stdout_for_format,
+)
 from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.verify import verify
 
+DEFAULT_GATE_ROOT = Path.home() / ".opendaisugi" / "gate"
+_DISARM_FILENAME = "DISARMED"
 _DEFAULT_VERIFY_TIMEOUT_S = 10.0
 
 
@@ -166,3 +176,197 @@ def evaluate_call(payload: Any, envelope: Envelope, *,
         )
     except Exception as exc:  # noqa: BLE001 — fail-closed: any error denies
         return _deny(mode, f"gate internal error (denied fail-closed): {exc}", t0=t0)
+
+
+# ---------------------------------------------------------------------------
+# Envelope registration channel + disarm switch + host contract (I/O layer)
+# ---------------------------------------------------------------------------
+
+def _envelopes_dir(root: Path) -> Path:
+    return root / "envelopes"
+
+
+def _shadow_dir(root: Path) -> Path:
+    return root / "shadow"
+
+
+def _mkdir_private(d: Path) -> None:
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        os.chmod(d, 0o700)
+    except OSError:
+        pass
+
+
+def register_envelope(envelope: Envelope, *, session_id: str | None = None,
+                      root: Path = DEFAULT_GATE_ROOT) -> Path:
+    """Register an envelope for the gate to check calls against.
+
+    With a ``session_id`` the envelope binds to that session; without one it
+    becomes the ``default`` envelope every unmatched session falls back to.
+    Files are private (0700 dir / 0600 file) — envelopes reveal what a
+    session is allowed to touch.
+    """
+    d = _envelopes_dir(root)
+    _mkdir_private(d)
+    name = _safe_session_id(session_id) if session_id else "default"
+    path = d / f"{name}.json"
+    path.write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
+def load_envelope(session_id: str | None, *,
+                  root: Path = DEFAULT_GATE_ROOT) -> Envelope | None:
+    """Load the envelope for a session: exact match first, then ``default``."""
+    candidates = []
+    if session_id:
+        candidates.append(_safe_session_id(session_id))
+    candidates.append("default")
+    for name in candidates:
+        path = _envelopes_dir(root) / f"{name}.json"
+        if path.exists():
+            return Envelope.model_validate_json(path.read_text(encoding="utf-8"))
+    return None
+
+
+def disarm(root: Path = DEFAULT_GATE_ROOT) -> Path:
+    """One-command kill switch: an armed gate allows everything while the
+    marker exists. Deliberately requires no allowed tool call — the operator
+    runs it from any shell, outside the gated agent."""
+    _mkdir_private(root)
+    marker = root / _DISARM_FILENAME
+    marker.write_text("disarmed by operator\n", encoding="utf-8")
+    return marker
+
+
+def arm(root: Path = DEFAULT_GATE_ROOT) -> None:
+    """Remove the disarm marker; the gate resumes evaluating calls."""
+    marker = root / _DISARM_FILENAME
+    if marker.exists():
+        marker.unlink()
+
+
+def is_disarmed(root: Path = DEFAULT_GATE_ROOT) -> bool:
+    return (root / _DISARM_FILENAME).exists()
+
+
+@dataclass
+class GateOutcome:
+    """What the gate process should emit to the host: stdout, stderr, exit
+    code — plus the decision for logging/inspection."""
+
+    stdout: str
+    stderr: str
+    exit_code: int
+    decision: GateDecision
+
+
+def _outcome(decision: GateDecision, fmt: str) -> GateOutcome:
+    deny_now = decision.mode == "enforce" and decision.would_deny
+    if fmt == "claude":
+        if deny_now:
+            return GateOutcome(
+                stdout="",
+                stderr=f"openDaisugi gate: DENIED — {decision.reason}",
+                exit_code=2,
+                decision=decision,
+            )
+        return GateOutcome(
+            stdout=stdout_for_format("claude", block=False),
+            stderr="", exit_code=0, decision=decision,
+        )
+    return GateOutcome(
+        stdout=stdout_for_format(fmt, block=deny_now, reason=decision.reason),
+        stderr="", exit_code=0, decision=decision,
+    )
+
+
+def _log_shadow(root: Path, session_id: str | None,
+                decision: GateDecision) -> None:
+    """Best-effort JSONL decision log — the raw material of the shadow
+    report. Never raises; a logging failure must not change a verdict."""
+    try:
+        d = _shadow_dir(root)
+        _mkdir_private(d)
+        path = d / f"{_safe_session_id(session_id)}.jsonl"
+        newly_created = not path.exists()
+        rec = {
+            "at": time.time(),
+            "session_id": _safe_session_id(session_id),
+            "tool_name": decision.tool_name,
+            "step_type": decision.step_type,
+            "detail": decision.detail,
+            "mode": decision.mode,
+            "allow": decision.allow,
+            "would_deny": decision.would_deny,
+            "reason": decision.reason,
+            "elapsed_ms": round(decision.elapsed_ms, 3),
+        }
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+        if newly_created:
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+    except Exception:  # noqa: BLE001 — logging is best-effort by contract
+        pass
+
+
+def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
+                      fmt: str = "claude", mode: str = "shadow",
+                      verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+                      ) -> GateOutcome:
+    """Full gate entry: raw hook stdin → decision → host contract.
+
+    Failure policy is mode-selected (ADR-0007): enforce fails CLOSED (any
+    error here denies with exit 2), shadow fails OPEN (observation must
+    never break the host). Every decision is appended to the shadow log,
+    in both modes — enforce sessions produce the same report material.
+    """
+    t0 = time.monotonic()
+    try:
+        if is_disarmed(root):
+            decision = GateDecision(
+                allow=True, would_deny=False,
+                reason="gate disarmed by operator (marker file present)",
+                mode=mode, elapsed_ms=(time.monotonic() - t0) * 1000,
+            )
+            _log_shadow(root, None, decision)
+            return _outcome(decision, fmt)
+        try:
+            text = raw.decode("utf-8", "replace")
+            payload = json.loads(text) if text.strip() else None
+        except Exception:  # noqa: BLE001 — malformed stdin is a deny, not a crash
+            payload = None
+        session_id = payload.get("session_id") if isinstance(payload, dict) else None
+        envelope = load_envelope(session_id, root=root)
+        if envelope is None:
+            decision = _deny(
+                mode,
+                "no envelope registered for this session — run "
+                "`daisugi gate register <envelope.json>` to authorize it, or "
+                "`daisugi gate disarm` to switch the gate off",
+                t0=t0,
+            )
+        elif payload is None:
+            decision = _deny(mode, "hook payload was not parseable JSON", t0=t0)
+        else:
+            decision = evaluate_call(
+                payload, envelope, mode=mode, verify_timeout_s=verify_timeout_s,
+            )
+        _log_shadow(root, session_id, decision)
+        return _outcome(decision, fmt)
+    except Exception as exc:  # noqa: BLE001 — mode-selected failure policy
+        decision = _deny(mode, f"gate I/O error (denied fail-closed): {exc}", t0=t0)
+        if mode != "enforce":
+            decision = GateDecision(
+                allow=True, would_deny=True,
+                reason=f"gate I/O error (shadow mode allows): {exc}",
+                mode=mode, elapsed_ms=(time.monotonic() - t0) * 1000,
+            )
+        return _outcome(decision, fmt)
