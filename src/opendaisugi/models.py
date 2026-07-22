@@ -387,6 +387,34 @@ class TaskStep(StepBase):
 
 
 @step_type
+class AgenticStep(StepBase):
+    """A tool-using subtask delegated to an agent runtime. Roadmap Stage 2.
+
+    The counterpart of :class:`TaskStep`: where TaskStep is a pure-reasoning
+    leaf that structurally cannot act, AgenticStep is *allowed* to act — in a
+    real working directory, with real tools — and precisely because of that
+    it never rides the pure-reasoning exemption. Enforcement is defense in
+    depth (ADR-0007): statically, the verifier proves every requested tool
+    maps to a capability the caller's envelope grants (the envelope is the
+    authorization ceiling — the caller's, never the callee's); at run time,
+    the executor wires the call-time gate into the sub-agent's own hook
+    configuration, supplied from outside anything the sub-agent can write.
+
+    ``tools`` are host tool names (``Read``, ``Bash``, ``Write``, ``Edit``,
+    ``Glob``, ``Grep``, ``WebFetch``, ``WebSearch``). An empty list is
+    rejected by the verifier — a tool-less agentic step is a TaskStep.
+    ``workspace`` is the real directory the sub-agent runs in and must be
+    inside the envelope's ``file_read`` globs.
+    """
+
+    type: Literal["agentic"] = "agentic"
+    prompt: str
+    workspace: str
+    tools: list[str] = Field(default_factory=list)
+    max_turns: int | None = None
+
+
+@step_type
 class SkillStep(StepBase):
     """Invoke a named skill / distilled pathway. v0.32 orchestration.
 
@@ -427,7 +455,7 @@ class MCPStep(StepBase):
 ActionStep = Annotated[
     ShellStep | FileReadStep | FileWriteStep | NetworkStep
     | JointMoveStep | CartesianMoveStep | GripperStep | SimulationResetStep
-    | VLAStep | TaskStep | SkillStep | MCPStep,
+    | VLAStep | TaskStep | AgenticStep | SkillStep | MCPStep,
     Field(discriminator="type"),
 ]
 

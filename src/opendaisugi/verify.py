@@ -252,8 +252,80 @@ def _match_glob(p: PurePosixPath, path: str, glob: str) -> bool:
 # NOT here is a custom @step_type with no verification story — an unknown effect.
 _KNOWN_STEP_TYPES: frozenset[str] = frozenset({
     "shell", "network", "file_read", "file_write", "mcp", "task", "skill",
+    "agentic",
     "joint_move", "cartesian_move", "gripper", "sim_reset", "vla",
 })
+
+
+# Host tool name → the Permission capability that must back it before an
+# AgenticStep may request it. Deny-by-default: a requested tool not in this
+# map is a violation, mirroring the gate's unknown-tool denial.
+_AGENTIC_TOOL_CAPABILITIES: dict[str, str] = {
+    "Bash": "shell",
+    "Read": "file_read",
+    "Glob": "file_read",
+    "Grep": "file_read",
+    "Write": "file_write",
+    "Edit": "file_write",
+    "MultiEdit": "file_write",
+    "WebFetch": "network",
+    "WebSearch": "network",
+}
+
+
+def _check_agentic_step(step, perms: Permission) -> list[Violation]:
+    """Permission arm for AgenticStep (roadmap Stage 2) — the static outer
+    wall of its defense in depth. Each requested host tool must map to a
+    capability the envelope grants; the workspace must be readable under the
+    envelope's globs; an unknown or empty tool request fails closed. The
+    dynamic inner wall (the call-time gate in the sub-agent's own hook
+    config) is the executor's job, not this check's.
+    """
+    violations: list[Violation] = []
+    if not step.tools:
+        violations.append(Violation(
+            stage="permissions",
+            message=(
+                f"Step '{step.id}' is agentic but requests no tools — a "
+                f"tool-less delegated subtask is a TaskStep (pure reasoning); "
+                f"use that instead"
+            ),
+            detail={"step": step.id},
+        ))
+        return violations
+    if not _path_matches_any(step.workspace, perms.file_read):
+        violations.append(Violation(
+            stage="permissions",
+            message=(
+                f"Step '{step.id}' agentic workspace '{step.workspace}' is not "
+                f"inside the envelope's file_read globs {perms.file_read} — a "
+                f"sub-agent must be able to read its own working directory"
+            ),
+            detail={"step": step.id, "workspace": step.workspace},
+        ))
+    for tool in step.tools:
+        cap = _AGENTIC_TOOL_CAPABILITIES.get(tool)
+        if cap is None:
+            violations.append(Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step.id}' requests host tool '{tool}' which has "
+                    f"no capability mapping — denied by default"
+                ),
+                detail={"step": step.id, "tool": tool},
+            ))
+            continue
+        granted = getattr(perms, cap)
+        if not granted:  # False for bools, [] for glob lists — both deny
+            violations.append(Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step.id}' requests host tool '{tool}' but the "
+                    f"envelope grants no {cap} capability"
+                ),
+                detail={"step": step.id, "tool": tool, "capability": cap},
+            ))
+    return violations
 
 
 def check_permissions(
@@ -367,6 +439,8 @@ def check_permissions(
                             detail={"step": step.id, "mcp_tool": key},
                         )
                     )
+            case "agentic":
+                violations.extend(_check_agentic_step(step, perms))
             # task/skill steps carry no permission-stage surface here: a TaskStep
             # is a contained pure-reasoning leaf (gated by _check_delegation_safety),
             # and a SkillStep's surface is the subsumption stage
@@ -676,6 +750,20 @@ def _check_delegation_safety(
         return []
     violations: list[Violation] = []
     for step in plan.steps:
+        # An AgenticStep is inherently delegated (a tool-using sub-agent),
+        # so physical stakes refuse it outright — with or without a
+        # preferred_model hint.
+        if getattr(step, "type", None) == "agentic":
+            violations.append(Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step.id}' is an agentic delegation but envelope "
+                    f"stakes='physical'; physical-stakes plans cannot be "
+                    f"LLM-delegated"
+                ),
+                detail={"step": step.id, "stakes": "physical"},
+            ))
+            continue
         if getattr(step, "preferred_model", None):
             violations.append(Violation(
                 stage="permissions",
