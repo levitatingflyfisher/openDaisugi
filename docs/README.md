@@ -54,6 +54,8 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 *Understanding-oriented — help me understand the ideas and the why.*
 
 - **[Vision](../VISION.md)** — the one idea, the invariants, the honest scorecard.
+- **[Roadmap](roadmap.md)** — the problems we cannot yet solve, each paired with
+  the evidence that would prove it solved.
 - **[Architecture overview](architecture/OVERVIEW.md)** — the spine + diagrams.
 - **[Architecture Decision Records](adr/)** — why each load-bearing choice was made.
 - **[Concepts](concepts.md)** — envelopes, the predicate algebra, Z3 compilation,
