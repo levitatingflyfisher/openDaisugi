@@ -94,6 +94,14 @@ hook_app = typer.Typer(
 )
 app.add_typer(hook_app, name="hook")
 
+gate_app = typer.Typer(
+    name="gate",
+    help="Call-time tool gate (ADR-0007) — verify each live tool call against "
+         "a registered envelope. Shadow by default; --mode enforce denies.",
+    no_args_is_help=True,
+)
+app.add_typer(gate_app, name="gate")
+
 registry_app = typer.Typer(
     name="registry",
     help="Git-backed shared pathway registry (v0.25+).",
@@ -429,6 +437,190 @@ def hook_auto_tend_cmd(
 
     data_dir.mkdir(parents=True, exist_ok=True)
     stamp_file.write_text(f"{now}")
+
+
+_GATE_ROOT_OPT = typer.Option(
+    Path.home() / ".opendaisugi" / "gate", "--root",
+    help="Gate state directory (envelopes, shadow log, disarm marker).",
+)
+
+
+@gate_app.command("check")
+def gate_check_cmd(
+    mode: str = typer.Option(
+        "shadow", "--mode",
+        help="shadow = observe and log only; enforce = deny out-of-envelope calls.",
+    ),
+    root: Path = _GATE_ROOT_OPT,
+    fmt: str = typer.Option("claude", "--format",
+                            help="Host contract: claude | hermes | openclaw."),
+    verify_timeout: float = typer.Option(
+        10.0, "--verify-timeout",
+        help="Inner verifier budget in seconds; exceeding it DENIES "
+             "(the host's outer timeout fails open, ours must not).",
+    ),
+) -> None:
+    """Read one hook payload from stdin and emit the host's verdict contract.
+
+    On the Claude Code path a deny is exit code 2 with the reason on stderr —
+    the contract pinned by tests/test_hook_gate_contract.py. Prefer wiring
+    hosts to ``python -m opendaisugi.gate`` (same behavior, faster import);
+    this command exists for parity and manual testing.
+    """
+    import sys
+
+    from opendaisugi.gate import gate_and_contract
+
+    try:
+        raw = sys.stdin.buffer.read()
+    except Exception:
+        raw = b""
+    out = gate_and_contract(
+        raw, root=root, fmt=fmt, mode=mode, verify_timeout_s=verify_timeout,
+    )
+    if out.stdout:
+        typer.echo(out.stdout)
+    if out.stderr:
+        typer.echo(out.stderr, err=True)
+    raise typer.Exit(code=out.exit_code)
+
+
+@gate_app.command("register")
+def gate_register_cmd(
+    envelope_path: Path = typer.Argument(..., help="Envelope file (JSON or YAML)."),
+    session: str | None = typer.Option(
+        None, "--session",
+        help="Bind to one session id; omit to register the default envelope "
+             "every unmatched session falls back to.",
+    ),
+    root: Path = _GATE_ROOT_OPT,
+) -> None:
+    """Register the envelope the gate checks this session's calls against."""
+    import yaml
+
+    from opendaisugi.gate import register_envelope
+    from opendaisugi.models import Envelope
+
+    envelope = Envelope(**yaml.safe_load(envelope_path.read_text()))
+    path = register_envelope(envelope, session_id=session, root=root)
+    typer.echo(f"registered {'session ' + session if session else 'default'} envelope → {path}")
+
+
+@gate_app.command("disarm")
+def gate_disarm_cmd(root: Path = _GATE_ROOT_OPT) -> None:
+    """Kill switch: the gate allows everything until re-armed.
+
+    Deliberately requires no allowed tool call — run it from any shell if
+    an over-denying gate has locked an agent up.
+    """
+    from opendaisugi.gate import disarm
+
+    marker = disarm(root)
+    typer.echo(f"gate DISARMED (marker: {marker}) — `daisugi gate arm` to re-enable")
+
+
+@gate_app.command("arm")
+def gate_arm_cmd(root: Path = _GATE_ROOT_OPT) -> None:
+    """Remove the disarm marker; the gate resumes evaluating calls."""
+    from opendaisugi.gate import arm
+
+    arm(root)
+    typer.echo("gate armed")
+
+
+@gate_app.command("status")
+def gate_status_cmd(root: Path = _GATE_ROOT_OPT) -> None:
+    """Show armed/disarmed state and the registered envelopes."""
+    from opendaisugi.gate import _envelopes_dir, is_disarmed
+
+    state = "DISARMED" if is_disarmed(root) else "armed"
+    typer.echo(f"gate: {state}")
+    d = _envelopes_dir(root)
+    envelopes = sorted(d.glob("*.json")) if d.exists() else []
+    if not envelopes:
+        typer.echo("no envelopes registered — enforce mode would deny everything")
+    for e in envelopes:
+        typer.echo(f"  envelope: {e.stem}")
+
+
+@gate_app.command("report")
+def gate_report_cmd(
+    session: str | None = typer.Option(None, "--session"),
+    root: Path = _GATE_ROOT_OPT,
+    as_json: bool = typer.Option(False, "--json", help="Emit the full report as JSON."),
+) -> None:
+    """Summarize the shadow log: what an enforcing gate would have denied."""
+    import json as _json
+
+    from opendaisugi.gate import shadow_report
+
+    rep = shadow_report(root=root, session_id=session)
+    if as_json:
+        typer.echo(_json.dumps(rep, indent=2))
+        return
+    typer.echo(
+        f"calls={rep['calls']} allowed={rep['allowed']} "
+        f"would_deny={rep['would_deny']} "
+        f"false_positive_candidates={len(rep['false_positive_candidates'])}"
+    )
+    for r in rep["denied"]:
+        fp = " [FP-candidate]" if r in rep["false_positive_candidates"] else ""
+        typer.echo(f"  DENY{fp} {r.get('tool_name')} {r.get('detail','')!r}: {r.get('reason')}")
+
+
+@gate_app.command("replay")
+def gate_replay_cmd(
+    captures_jsonl: Path = typer.Argument(..., help="A passive-capture session file."),
+    envelope_path: Path = typer.Option(..., "--envelope",
+                                       help="Envelope to evaluate against (JSON/YAML)."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the full report as JSON."),
+) -> None:
+    """Replay a captured session through the gate offline (nothing executes).
+
+    The envelope-tuning loop: run this against real captured sessions and
+    adjudicate the would-denies before trusting --mode enforce.
+    """
+    import json as _json
+
+    import yaml
+
+    from opendaisugi.gate import replay_captures
+    from opendaisugi.models import Envelope
+
+    envelope = Envelope(**yaml.safe_load(envelope_path.read_text()))
+    rep = replay_captures(captures_jsonl, envelope)
+    if as_json:
+        typer.echo(_json.dumps(rep, indent=2))
+        return
+    typer.echo(
+        f"calls={rep['calls']} allowed={rep['allowed']} "
+        f"would_deny={rep['would_deny']} "
+        f"false_positive_candidates={len(rep['false_positive_candidates'])}"
+    )
+    for r in rep["denied"]:
+        fp = " [FP-candidate]" if r in rep["false_positive_candidates"] else ""
+        typer.echo(f"  DENY{fp} {r.get('tool_name')} {r.get('detail','')!r}: {r.get('reason')}")
+
+
+@gate_app.command("settings")
+def gate_settings_cmd(
+    enforce: bool = typer.Option(
+        False, "--enforce",
+        help="Emit enforce-mode settings (default is shadow — observation only).",
+    ),
+    root: Path = _GATE_ROOT_OPT,
+    fmt: str = typer.Option("claude", "--format"),
+) -> None:
+    """Print the Claude Code hooks-settings JSON that wires in the gate.
+
+    Usage: ``claude --settings "$(daisugi gate settings)"`` for shadow mode,
+    add ``--enforce`` for the one-flag flip to protection.
+    """
+    from opendaisugi.gate import gate_settings_json
+
+    typer.echo(gate_settings_json(
+        mode="enforce" if enforce else "shadow", root=root, fmt=fmt,
+    ))
 
 
 @mcp_app.command("serve")

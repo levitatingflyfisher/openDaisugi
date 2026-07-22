@@ -470,3 +470,91 @@ def replay_captures(captures_jsonl: Path, envelope: Envelope, *,
             "elapsed_ms": round(decision.elapsed_ms, 3),
         })
     return _build_report(records)
+
+
+# ---------------------------------------------------------------------------
+# Host wiring: settings emitter + lean hook entry
+# ---------------------------------------------------------------------------
+
+def gate_settings_json(*, mode: str = "shadow",
+                       root: Path = DEFAULT_GATE_ROOT,
+                       fmt: str = "claude",
+                       hook_timeout_s: int = 30,
+                       python: str | None = None,
+                       verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+                       ) -> str:
+    """Return the Claude Code hooks-settings JSON that wires in the gate.
+
+    Usable inline (``claude --settings "$(daisugi gate settings ...)"``) or
+    merged into a settings file. The matcher is ``*`` — total by design;
+    tool classification happens *inside* the gate so an unmatched tool can
+    never be silently allowed. The command uses ``python -m opendaisugi.gate``
+    (argparse only), not the full typer CLI — the lean entry ADR-0007 names
+    as the latency seam. The one-flag flip to protection is ``mode="enforce"``.
+
+    The host-side ``timeout`` is a backstop only: on every known host an
+    outer hook timeout fails OPEN, which is why the gate owns an inner
+    ``verify_timeout_s`` that denies first.
+    """
+    import shlex
+    import sys as _sys
+
+    py = python or _sys.executable
+    inner = min(verify_timeout_s, max(1.0, hook_timeout_s - 5.0))
+    command = (
+        f"{shlex.quote(py)} -m opendaisugi.gate"
+        f" --mode {shlex.quote(mode)}"
+        f" --root {shlex.quote(str(root))}"
+        f" --format {shlex.quote(fmt)}"
+        f" --verify-timeout {inner}"
+    )
+    return json.dumps({
+        "hooks": {
+            "PreToolUse": [{
+                "matcher": "*",
+                "hooks": [{
+                    "type": "command",
+                    "command": command,
+                    "timeout": hook_timeout_s,
+                }],
+            }],
+        },
+    })
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Lean hook entry: ``python -m opendaisugi.gate`` (no typer import).
+
+    Reads one hook payload from stdin, emits the host contract, and returns
+    the process exit code (2 = deny on the Claude Code path). Kept argparse-
+    only because hook round-trip latency is import-dominated; the full
+    ``daisugi gate check`` command delegates here.
+    """
+    import argparse
+    import sys as _sys
+
+    parser = argparse.ArgumentParser(prog="opendaisugi.gate", add_help=True)
+    parser.add_argument("--mode", choices=("shadow", "enforce"), default="shadow")
+    parser.add_argument("--root", type=Path, default=DEFAULT_GATE_ROOT)
+    parser.add_argument("--format", dest="fmt", default="claude")
+    parser.add_argument("--verify-timeout", type=float,
+                        default=_DEFAULT_VERIFY_TIMEOUT_S)
+    args = parser.parse_args(argv)
+
+    try:
+        raw = _sys.stdin.buffer.read()
+    except Exception:  # noqa: BLE001 — a broken stdin still gets a verdict
+        raw = b""
+    out = gate_and_contract(
+        raw, root=args.root, fmt=args.fmt, mode=args.mode,
+        verify_timeout_s=args.verify_timeout,
+    )
+    if out.stdout:
+        print(out.stdout)
+    if out.stderr:
+        print(out.stderr, file=_sys.stderr)
+    return out.exit_code
+
+
+if __name__ == "__main__":  # pragma: no cover — exercised via main() tests
+    raise SystemExit(main())

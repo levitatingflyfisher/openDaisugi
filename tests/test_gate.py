@@ -12,14 +12,11 @@ from __future__ import annotations
 import json
 import time
 
-import pytest
-
-from opendaisugi.models import Envelope, Permission
-
 from opendaisugi.gate import (
     GateDecision,
     evaluate_call,
 )
+from opendaisugi.models import Envelope, Permission
 
 
 def _envelope(**perm_kwargs) -> Envelope:
