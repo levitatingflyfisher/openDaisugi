@@ -283,6 +283,38 @@ def call_claude_p_metered(
     return text, {"tokens": tokens, "cost_usd": obj.get("total_cost_usd")}
 
 
+def call_claude_p_json_metered(
+    prompt: str,
+    *,
+    timeout_s: float = 60.0,
+    model: str | None = "haiku",
+    binary: str = "claude",
+    cwd: str | None = None,
+) -> tuple[dict, dict]:
+    """Metered JSON call: ``--output-format json`` + first-JSON-object extraction.
+
+    Unlike :func:`call_claude_p_json_sync` this surfaces ``is_error`` (via the
+    metered envelope) and returns Claude Code's exact usage/cost meter. And when
+    the model answers in prose instead of JSON, the error names the REAL cause —
+    the delegated sandbox has no project files and no tools, so a tool-needing
+    prompt gets an apologetic prose reply — instead of blaming JSON formatting
+    (the old message sent one operator debugging the wrong layer entirely).
+    """
+    text, meter = call_claude_p_metered(
+        prompt, timeout_s=timeout_s, model=model, binary=binary, cwd=cwd,
+    )
+    try:
+        return _extract_first_json_object(text), meter
+    except EnvelopeGenerationError as exc:
+        raise EnvelopeGenerationError(
+            f"delegated model replied with prose, not JSON: {text[:300]!r}. "
+            "Delegated steps run in an isolated working directory with no "
+            "project files and no tools; a prompt that asks the model to read "
+            "files, browse, or run commands cannot succeed on this path — "
+            "restate the step as pure reasoning or use a capability step type."
+        ) from exc
+
+
 _SCHEMA_PREAMBLE = (
     "Respond with ONLY a JSON object that validates against the following schema.\n"
     "No prose, no code fences, no explanation.\n\n"
@@ -387,6 +419,7 @@ class ClaudeCodeInstructorClient:
 __all__ = [
     "call_claude_p_async",
     "call_claude_p_sync",
+    "call_claude_p_json_metered",
     "call_claude_p_json_sync",
     "call_claude_p_metered",
     "call_claude_p_structured",

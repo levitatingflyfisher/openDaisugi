@@ -270,6 +270,58 @@ def test_metered_raises_on_is_error(monkeypatch):
         call_claude_p_metered("x", timeout_s=1)
 
 
+# --------------------- metered JSON path (honest prose diagnostics) ---------------------
+
+def test_json_metered_returns_body_and_meter(monkeypatch):
+    import json as _json
+
+    from opendaisugi.claude_code_llm import call_claude_p_json_metered
+    envelope = {
+        "result": 'preamble {"first_line": "# hi"} trailing',
+        "total_cost_usd": 0.003,
+        "usage": {"input_tokens": 5, "output_tokens": 7},
+    }
+    monkeypatch.setattr("opendaisugi.claude_code_llm.call_claude_p_sync",
+                        lambda *a, **k: _json.dumps(envelope))
+    body, meter = call_claude_p_json_metered("x", timeout_s=1)
+    assert body == {"first_line": "# hi"}
+    assert meter["tokens"] == 12
+    assert meter["cost_usd"] == 0.003
+
+
+def test_json_metered_prose_reply_names_the_real_cause(monkeypatch):
+    # A delegated model in the empty sandbox answers a tool-needing prompt with
+    # apologetic prose. The old error blamed JSON formatting; the honest error
+    # names the sandbox (no project files, no tools) and keeps the model's words.
+    import json as _json
+
+    from opendaisugi.claude_code_llm import call_claude_p_json_metered
+    envelope = {
+        "result": "The README.md file does not exist in the current directory.",
+        "total_cost_usd": 0.002,
+        "usage": {"input_tokens": 5, "output_tokens": 9},
+    }
+    monkeypatch.setattr("opendaisugi.claude_code_llm.call_claude_p_sync",
+                        lambda *a, **k: _json.dumps(envelope))
+    with pytest.raises(EnvelopeGenerationError) as excinfo:
+        call_claude_p_json_metered("read a file", timeout_s=1)
+    msg = str(excinfo.value)
+    assert "prose" in msg
+    assert "no project files and no tools" in msg
+    assert "README.md" in msg  # the model's own explanation is preserved
+
+
+def test_json_metered_propagates_is_error(monkeypatch):
+    import json as _json
+
+    from opendaisugi.claude_code_llm import call_claude_p_json_metered
+    envelope = {"result": "hit max turns", "is_error": True, "usage": {}}
+    monkeypatch.setattr("opendaisugi.claude_code_llm.call_claude_p_sync",
+                        lambda *a, **k: _json.dumps(envelope))
+    with pytest.raises(EnvelopeGenerationError, match="is_error"):
+        call_claude_p_json_metered("x", timeout_s=1)
+
+
 # --------------------- DAISUGI_CLAUDE_ARGS passthrough (issue: --dangerously-skip-permissions) ---
 
 def test_build_args_merges_configured_claude_args(monkeypatch):
