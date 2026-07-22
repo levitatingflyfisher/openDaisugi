@@ -51,11 +51,20 @@ def stdout_for_format(fmt: str, *, block: bool, reason: str = "") -> str:
     reserved for verified-pathway enforcement wiring in a later release.
 
     - claude (and default): ``{"continue": true}`` (PreToolUse contract)
-    - hermes: ``{}`` no-op, or ``{"decision": "block", "reason": ...}``
+    - hermes: ``{}`` no-op, or a block object carrying BOTH ``decision`` and
+      ``action`` keys — Hermes' live block contract is unverified against a
+      real host and its docs disagree with the originally shipped single-key
+      shape, so a fail-closed product emits both; whichever the host honors,
+      it blocks. (Enforcement class for Hermes remains *unverified* until a
+      per-version contract test exists — roadmap Stage 5.)
     - openclaw: ``{}`` no-op, or ``{"block": true, "blockReason": ...}``
+      (same unverified caveat)
     """
     if fmt == "hermes":
-        return json.dumps({"decision": "block", "reason": reason} if block else {})
+        return json.dumps(
+            {"decision": "block", "action": "block", "reason": reason}
+            if block else {}
+        )
     if fmt == "openclaw":
         return json.dumps({"block": True, "blockReason": reason} if block else {})
     return json.dumps({"continue": True})

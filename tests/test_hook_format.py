@@ -15,9 +15,17 @@ def test_hermes_noop_is_empty_object():
     assert json.loads(out) == {}
 
 
-def test_hermes_block_uses_decision_block():
+def test_hermes_block_emits_both_decision_and_action_keys():
+    """Hermes' live block contract is unverified against a real host, and
+    its docs disagree with the shape we originally shipped (``decision`` vs
+    ``action``). For a fail-closed product an unverifiable contract gets
+    belt-and-braces: emit BOTH keys so whichever the host honors, it blocks.
+    Rewritten (not deleted) from the single-key passive-era expectation."""
     out = stdout_for_format("hermes", block=True, reason="policy")
-    assert json.loads(out) == {"decision": "block", "reason": "policy"}
+    body = json.loads(out)
+    assert body["decision"] == "block"
+    assert body["action"] == "block"
+    assert body["reason"] == "policy"
 
 
 def test_openclaw_noop_is_empty_object():
