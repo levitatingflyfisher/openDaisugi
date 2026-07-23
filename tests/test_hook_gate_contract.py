@@ -141,3 +141,48 @@ def test_real_gate_denies_read_in_live_host(tmp_path):
     ]
     assert denies, f"no gate denial recorded for the sentinel: {rep!r}"
     assert "not permitted by file_read" in denies[0]["reason"]
+
+
+@_GATED
+def test_gate_unavailable_denies_fail_closed(tmp_path):
+    """The gate process crashing / failing to import must DENY, not allow.
+
+    On Claude Code any hook exit that is not 2 is non-blocking, so a gate that
+    exits 1 (crash) or can't import (broken install) would silently let the
+    call through — the exact silent fail-open this project exists to prevent.
+    The emitted command's `|| exit 2` maps every nonzero-non-2 exit to a deny.
+
+    Proven here two ways against the real CLI: an external command that exits 1
+    wrapped in `|| exit 2` blocks, and a genuine `python -m <missing>` import
+    failure wrapped the same way blocks — while the unwrapped exit-1 baseline
+    leaks (the shipped bug before this guard).
+    """
+    import sys
+
+    secret_file, prompt = _sentinel_setup(tmp_path)
+
+    def _settings(command: str) -> str:
+        return json.dumps({"hooks": {"PreToolUse": [{
+            "matcher": "*",
+            "hooks": [{"type": "command", "command": command, "timeout": 20}],
+        }]}})
+
+    py = sys.executable
+
+    # Baseline: an unwrapped crashing hook LEAKS — this is why the guard exists.
+    leak = _run_claude(prompt, cwd=tmp_path, extra_args=[
+        "--settings", _settings(f'{py} -c "import sys; sys.exit(1)"')])
+    assert _SECRET in str(leak.get("result", "")), (
+        "expected the unwrapped exit-1 baseline to leak; if it doesn't, the "
+        "host contract changed and the guard's premise needs re-checking"
+    )
+
+    # Guarded crash: `|| exit 2` turns the exit-1 into a deny.
+    blocked = _run_claude(prompt, cwd=tmp_path, extra_args=[
+        "--settings", _settings(f'{py} -c "import sys; sys.exit(1)" || exit 2')])
+    assert _SECRET not in str(blocked.get("result", ""))
+
+    # Guarded import failure: main() never runs, but the boundary still denies.
+    import_fail = _run_claude(prompt, cwd=tmp_path, extra_args=[
+        "--settings", _settings(f'{py} -m opendaisugi.nonexistent_xyz || exit 2')])
+    assert _SECRET not in str(import_fail.get("result", ""))

@@ -436,3 +436,48 @@ def test_settings_json_carries_captures_root(tmp_path):
     settings = json.loads(gate_settings_json(root=tmp_path, captures_root=caps))
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "--captures-root" in cmd
+
+
+# =================================================================
+# Fail-closed at the process boundary (advisor finding, live-verified)
+# =================================================================
+
+from opendaisugi.gate import main as gate_main  # noqa: E402
+
+
+def test_main_returns_2_on_baseexception(tmp_path, monkeypatch):
+    """A BaseException escaping gate_and_contract (e.g. SystemExit re-raised
+    from the verify thread, which `except Exception` won't catch) must still
+    exit 2 — never fall through to a non-blocking exit code."""
+    import io
+    import sys as _sys
+
+    def _boom(*a, **k):
+        raise SystemExit(1)
+    monkeypatch.setattr("opendaisugi.gate.gate_and_contract", _boom)
+    monkeypatch.setattr(
+        _sys, "stdin",
+        type("S", (), {"buffer": io.BytesIO(b"{}")})(),
+    )
+    code = gate_main(["--mode", "enforce", "--root", str(tmp_path)])
+    assert code == 2
+
+
+def test_claude_settings_command_maps_any_nonzero_to_deny(tmp_path):
+    """The emitted claude command must default-deny at the process boundary:
+    `... || exit 2` so an import failure or crash (exit 1) — where main()
+    never runs — still blocks. Live-verified: without this the read leaks."""
+    from opendaisugi.gate import gate_settings_json
+    settings = json.loads(gate_settings_json(mode="enforce", root=tmp_path))
+    cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert cmd.rstrip().endswith("|| exit 2")
+
+
+def test_non_claude_settings_command_is_not_wrapped(tmp_path):
+    """`|| exit 2` is a claude-specific deny; for hermes/openclaw a deny is
+    JSON-on-stdout, so wrapping would be meaningless (their crash-time
+    behavior is part of the already-documented 'unverified' enforcement)."""
+    from opendaisugi.gate import gate_settings_json
+    settings = json.loads(gate_settings_json(mode="enforce", root=tmp_path, fmt="hermes"))
+    cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert "|| exit 2" not in cmd

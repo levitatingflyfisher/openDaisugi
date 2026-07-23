@@ -523,6 +523,20 @@ def gate_settings_json(*, mode: str = "shadow",
     )
     if captures_root is not None:
         command += f" --captures-root {shlex.quote(str(captures_root))}"
+    # Default-deny at the PROCESS boundary. The host runs `command` through a
+    # shell (verified live), and on Claude Code any hook exit that is not 2 is
+    # non-blocking — so a crashed gate (exit 1), or a package that fails to
+    # import (where main() never runs to trap anything), would silently ALLOW.
+    # `... || exit 2` maps every nonzero exit — including import failure, since
+    # the whole invocation is the left operand — to a deny, while leaving exit 0
+    # an allow and exit 2 a deny. `python -m …` is an external command, so its
+    # nonzero exit triggers `||` (unlike a shell `exit` builtin). Live-verified:
+    # without this, an exit-1 hook lets the read through; with it, it blocks.
+    # Only for the claude contract (exit-code deny); hermes/openclaw deny via
+    # stdout JSON, where this idiom would be meaningless — their crash-time
+    # behavior is part of the already-documented 'unverified' enforcement class.
+    if fmt == "claude":
+        command = f"{command} || exit 2"
     return json.dumps({
         "hooks": {
             "PreToolUse": [{
@@ -557,20 +571,36 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--captures-root", type=Path, default=None)
     args = parser.parse_args(argv)
 
+    # Fail-closed wrapper: ANY escape from here — a BaseException re-raised out
+    # of the verify thread (which gate_and_contract's `except Exception` won't
+    # catch), an error in print(), a broken stdout — must still deny in enforce
+    # mode. Shadow mode has nothing to protect, so a crash there is allowed to
+    # surface. The `|| exit 2` in the emitted command is the outer belt for the
+    # case this can't reach (the package failing to import before main() runs).
     try:
-        raw = _sys.stdin.buffer.read()
-    except Exception:  # noqa: BLE001 — a broken stdin still gets a verdict
-        raw = b""
-    out = gate_and_contract(
-        raw, root=args.root, fmt=args.fmt, mode=args.mode,
-        verify_timeout_s=args.verify_timeout,
-        captures_root=args.captures_root,
-    )
-    if out.stdout:
-        print(out.stdout)
-    if out.stderr:
-        print(out.stderr, file=_sys.stderr)
-    return out.exit_code
+        try:
+            raw = _sys.stdin.buffer.read()
+        except Exception:  # noqa: BLE001 — a broken stdin still gets a verdict
+            raw = b""
+        out = gate_and_contract(
+            raw, root=args.root, fmt=args.fmt, mode=args.mode,
+            verify_timeout_s=args.verify_timeout,
+            captures_root=args.captures_root,
+        )
+        if out.stdout:
+            print(out.stdout)
+        if out.stderr:
+            print(out.stderr, file=_sys.stderr)
+        return out.exit_code
+    except BaseException as exc:  # noqa: BLE001 — deny-by-default on any escape
+        if args.mode == "enforce":
+            try:
+                print(f"openDaisugi gate: DENIED (fail-closed on error): {exc}",
+                      file=_sys.stderr)
+            except Exception:  # noqa: BLE001 — even a broken stderr must not un-deny
+                pass
+            return 2
+        return 0
 
 
 if __name__ == "__main__":  # pragma: no cover — exercised via main() tests
