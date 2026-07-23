@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.36.1 — 2026-07-22 — Fail closed when the gate process itself dies
+
+A fail-open in the v0.35.0 gate, found by review and reproduced against the
+real CLI before fixing. On Claude Code any hook exit that is not 2 is
+non-blocking — so a gate that **crashed** (exit 1) or a package that **failed
+to import** silently ALLOWED the call. An operator in enforce mode with a
+broken install was wide open and had no way to tell. Reproduced live: an
+unwrapped exit-1 hook lets the sentinel read straight through.
+
+Fixed in two layers, because neither covers the other:
+- `main()` traps `BaseException` — which `gate_and_contract`'s
+  `except Exception` misses (e.g. re-raised out of the verify thread) — and
+  returns 2 in enforce mode.
+- The command emitted by `daisugi gate settings` now ends in `|| exit 2`,
+  mapping every nonzero-non-2 exit to a deny at the **process** boundary.
+  This is the only layer that can cover an import failure, where `main()`
+  never runs. Verified live that the idiom fires for external commands
+  (`python -m …`) and blocks a genuine missing-module invocation.
+  **Hand-written hook commands must keep the suffix** — documented in
+  `docs/how-to/gate.md`.
+
+Not applied to the hermes/openclaw formats, whose deny is stdout JSON; their
+crash-time behavior remains part of the documented *unverified* enforcement
+class (roadmap Stage 5).
+
 ## v0.36.0 — 2026-07-22 — Sub-agents that can act, inside the envelope (roadmap Stage 2)
 
 The delegation ban becomes a delegation *boundary*. `TaskStep` stays a

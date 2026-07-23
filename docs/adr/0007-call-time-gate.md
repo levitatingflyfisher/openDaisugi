@@ -70,6 +70,14 @@ never a replacement for it**:
   not required for v1.
 - An over-denying gate must be disarmable by one command that does not itself
   require an allowed tool call.
+- **Deny-by-default has to hold at the process boundary, not just inside
+  the process.** The host treats any hook exit that is not the deny code as
+  non-blocking, so a gate that crashes — or a package that fails to import,
+  where the gate's own error handling never runs — allows silently. The
+  emitted hook command therefore maps every nonzero-non-deny exit to a deny
+  (`|| exit 2` on the Claude Code path), and the entry point traps
+  `BaseException`. Found by review after the first gate release and
+  reproduced live before fixing; the reproduction is a committed test.
 
 ## Alternatives considered
 

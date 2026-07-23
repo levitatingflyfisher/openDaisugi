@@ -27,6 +27,14 @@ never relaxes it.
   hook timeout, or a harness that silently stops firing hooks. The gate's
   inner verify timeout denies *before* the host's outer timeout can fail
   open, but it cannot help if the hook is never invoked.
+- **A dead gate denies.** On Claude Code any hook exit that is not 2 is
+  non-blocking, so a crashed gate or a broken install would otherwise allow
+  silently. The command emitted by `gate settings` therefore ends in
+  `|| exit 2`, mapping every nonzero-non-2 exit — including the package
+  failing to import, where the gate's own error handling never runs — to a
+  deny. **If you hand-write your hook command, keep that suffix.** Without
+  it the gate fails open exactly when it is most broken; this is
+  live-verified in `tests/test_hook_gate_contract.py`.
 
 ## 1. Register an envelope
 
@@ -121,6 +129,7 @@ of the allow path.
 | Verification fails | allow, logged `would_deny` | **deny** (exit 2) |
 | Unknown tool / bad payload | allow, logged | **deny** |
 | Gate internal error / slow verifier | allow, logged | **deny** |
+| Gate process crashes / won't import | allow (host proceeds) | **deny** (via `\|\| exit 2`) |
 | No envelope registered | allow, logged | **deny** (message names `register` and `disarm`) |
 | Disarmed | allow | allow |
 
