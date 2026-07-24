@@ -186,6 +186,24 @@ threat model and non-guarantees stated plainly; and one recorded demonstration
 exists of a live injection attempt being denied, with its proof-backed reason
 on screen.
 
+**Status (v0.37.0):** the deterministic layer is committed and green as a merge
+check — `src/opendaisugi/adversarial.py` (13 attacks across 7 categories, 9
+benign, content-addressed, per-attack provenance) and `tests/test_adversarial.py`
+(every attack denied ⇒ the merge-gate invariant; unexpected false positives
+break the build). `daisugi gate audit` publishes both rates and the comparison
+arms (no-gate 0.00 / literal-glob 0.46 / gate 1.00 attack-denial; the gate's
+0.33 FP rate is entirely the *known*, budgeted false positives — compound
+commands and unmapped tools — reported, not hidden). The yellow paper's
+[two-checkpoint section (§8)](spec/yellow-paper.md) states the safety-only
+guarantee, the enforceability-class limits, the in-envelope-≠-benign gap with a
+worked example, the threat model, and the fail-open edges. The recorded live
+denial is [`examples/injection-denied/`](../examples/injection-denied/). The
+**live layer's** stochastic bait-taking rate — reported with confidence
+intervals, separately from whether-the-gate-denies — is the remaining piece;
+the live *deny* behavior is pinned by `tests/test_agentic_live.py` and
+`tests/test_hook_gate_contract.py`, but the model-takes-the-bait frequency is
+not yet run at N for intervals.
+
 ## Stage 4 — The distillation-fidelity problem
 *Does distillation actually pay? Measured, not asserted.*
 

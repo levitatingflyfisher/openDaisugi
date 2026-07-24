@@ -210,9 +210,146 @@ incomplete method*. "Not disproven" is not "proven".
   additionally conditional on the honesty of the evidence a step reports and on the
   envelope's `parent`/provenance being independent of the plan's author (§VISION
   invariant 4).
+- **Call-time gating is safety-only, and narrower than "benign."** The
+  call-time gate (§8) soundly enforces that every executed action is in `⟦E⟧`,
+  but cannot establish plan-structure or liveness properties (no plan exists to
+  range over), cannot enforce information-flow (a hyperproperty), and does not
+  make an in-envelope *trajectory* benign — individually-admitted calls compose
+  into harm (§8.3). Its guarantee is additionally conditioned on the host
+  invoking it and on a working deny path (§8.5).
 - **Physical-stakes caveats.** Swarm deconfliction is analytic AABB geometry, not a
   flight-safety certificate: waypoint-in-box ≠ path-in-box, and disjoint boxes ≠
   collision-free unless margins ≥ vehicle radius + position uncertainty.
+
+## 8. Two checkpoints: plan-time verification and call-time gating
+
+Everything above concerns **plan-time** verification: a declared plan `π` is
+handed to `verify(π, E)` before any step runs. A second checkpoint operates
+where no `π` exists — an agent already running inside a host harness, emitting
+tool calls one at a time. The **call-time gate** (ADR-0007) intercepts each
+call, synthesizes it into a one-step plan `⟨aᵢ⟩`, and evaluates
+`verify(⟨aᵢ⟩, E) ` before the call executes, preventing `aᵢ` when
+`aᵢ ∉ ⟦E⟧`. The two checkpoints share the decision procedure of §4; they do
+**not** share what they can guarantee, and conflating them would over-claim.
+
+### 8.1 The gate as an execution monitor
+
+Model the running agent as emitting a trace `a₁ a₂ a₃ …`. The gate is an
+**execution monitor** in the sense of Schneider [Sch00]: it observes the trace
+step by step and prevents any action that would violate the policy. The policy
+it enforces is
+
+```
+P(a₁ … aₙ)  ≝  ∀ i ≤ n .  aᵢ ∈ ⟦E⟧
+```
+
+`P` is **prefix-closed** — if a trace satisfies it, so does every prefix, and a
+single out-of-envelope action falsifies it irrecoverably. A prefix-closed trace
+property is a **safety property** (Alpern–Schneider [AS85]), and safety
+properties are exactly the class an execution monitor can soundly enforce
+[Sch00]. So the gate's guarantee is real and not weaker than its mechanism:
+*every executed action lies in `⟦E⟧`.* Whether the target **halts** after a
+denial or **continues** with that one action suppressed is a host-contract
+detail (on the Claude Code path the call is blocked and the agent continues);
+the per-action guarantee holds either way.
+
+### 8.2 What plan-time has that call-time structurally cannot (class limit)
+
+Two properties are provable at plan time and **not** at call time — the first
+by construction of this codebase, the second by the enforceability class.
+
+- **No cross-step structure at call time.** A call-time evaluation has no `π`:
+  the gate builds a *singleton* plan per call. Exactly the checks that quantify
+  over multiple steps therefore have nothing to range over and are not run —
+  DAG ordering (§4.5), the predicate invariants `exists_step` / `forall_steps`
+  (§4.4, §2b), and postconditions spanning more than one step. This is not a
+  gap to be closed later; it is what "one call at a time, no plan" means, and
+  the implementation says so (`verify_step` deliberately omits the plan-level
+  stages). Ordering, completeness, and "the plan as a whole establishes X" are
+  **plan-time properties**.
+- **Liveness and hyperproperties are outside the monitor class.** An execution
+  monitor cannot enforce a **liveness** property — "eventually returns to
+  base," "the task is eventually completed" — because no finite prefix
+  witnesses its violation [AS85]. Nor can it enforce a **hyperproperty**:
+  information-flow / non-interference is 2-safety over *pairs* of traces
+  [CS10], not a property of the single trace in front of the monitor, so no
+  per-call gate enforces "this run leaked nothing." These are limits of the
+  mechanism, independent of `E`.
+
+### 8.3 In-envelope ≠ trajectory-benign (policy-adequacy gap)
+
+Distinct from §8.2, and the easier one to mistake for a bug: `⟦E⟧` is a
+predicate on **individual actions**. The gate soundly enforces
+`∀ i . aᵢ ∈ ⟦E⟧`. That predicate does **not** entail "the trajectory is
+benign." Concretely, let `E` grant `file_read : /work/**` and
+`network → api.github.com`. Then
+
+```
+a₁ = read  /work/secret           a₁ ∈ ⟦E⟧
+a₂ = POST  api.github.com  ⟨secret⟩ a₂ ∈ ⟦E⟧
+```
+
+— each call is inside the envelope, the composition is exfiltration. Nothing is
+broken: this is **not** an enforcement failure but the difference between
+*per-action authorization* and a *trajectory specification*. A gate cannot make
+`⟦E⟧` say more than it says; tightening the envelope (drop the network grant,
+or bound the host set) is the only remedy, and it is the envelope author's, not
+the gate's. Stated plainly for the scorecard: **a call being inside the
+envelope does not make the trajectory benign.**
+
+### 8.4 Threat model and boundaries
+
+- **Assumed hostile:** the model's outputs and hence every tool-call argument;
+  instructions injected into the model's context (prompt injection); a
+  sub-agent that attempts to widen its own authority.
+- **Assumed trusted (out of scope):** the verifier and its translation layer
+  (§7 — a soundness bug there is a silent fail-open); the envelope's provenance
+  being independent of the plan's author (VISION invariant 4 — a self-authored
+  envelope authorizes nothing meaningfully); and the host faithfully invoking
+  the gate.
+- **Mediation boundary.** The gate sees only what the host routes through the
+  **hooked tool surface**. An action taken over a channel the host does not
+  hook is unmediated — outside the gate's view and therefore outside its
+  guarantee. Enforcement is per-harness and per-version (roadmap Stage 5).
+
+### 8.5 The conditioned guarantee, and the fail-open edges
+
+The safety guarantee of §8.1 holds **conditioned on** all of: (i) the host
+invokes the gate on *every* tool call; (ii) the host's deny path actually
+blocks; (iii) the action traverses a hooked surface (§8.4). Where a condition
+can fail outside our control, it is named here, not buried:
+
+- **Host outer hook timeout** — fails open on every harness measured. Mitigated,
+  not eliminated: the gate owns an *inner* timeout that denies first (§6's
+  fail-closed law applied to the clock).
+- **A harness that silently stops firing hooks** — condition (i) fails with no
+  signal; only a per-version contract test detects it (Stage 5).
+- **Gate-process death / import failure** — would make condition (ii) fail
+  (a non-deny exit is non-blocking on the host). Closed at the process
+  boundary: the emitted hook command maps every non-deny exit to a deny.
+
+### 8.6 Relation to Simplex / RTA
+
+The two-checkpoint design descends from Simplex runtime assurance [Sha01]:
+a trusted safety layer vetoing an untrusted controller. The lineage is
+**inspirational, and the call-time guarantee is strictly weaker.** Simplex
+guarantees the system remains in a *recoverable safe state over time* — a
+trajectory-level, liveness-flavored property delivered by a safety controller
+that can *act*. The call-time gate only **prevents** individual actions; it
+provides no recoverable-state guarantee over the trajectory (indeed §8.2 says
+it cannot). A reader who knows Simplex should not import its temporal guarantee
+here.
+
+### References
+
+Standard citations, given for provenance; verify wording and venue against the
+sources (this document is AI-authored — the grain-of-salt law applies).
+
+- **[Sch00]** F. B. Schneider. *Enforceable Security Policies.* ACM TISSEC 3(1), 2000. (Execution monitors enforce safety properties.)
+- **[AS85]** B. Alpern, F. B. Schneider. *Defining Liveness.* Information Processing Letters 21(4), 1985. (safety / liveness decomposition.)
+- **[CS10]** M. R. Clarkson, F. B. Schneider. *Hyperproperties.* Journal of Computer Security 18(6), 2010. (information flow as 2-safety.)
+- **[LBW05]** J. Ligatti, L. Bauer, D. Walker. *Edit automata: enforcement mechanisms for run-time security policies.* Int. J. Information Security 4(1–2), 2005. (suppression/insertion beyond truncation.)
+- **[Sha01]** L. Sha. *Using Simplicity to Control Complexity.* IEEE Software 18(4), 2001. (the Simplex architecture.)
 
 ---
 
