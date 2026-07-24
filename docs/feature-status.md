@@ -41,6 +41,7 @@ not what the spec aspires to.
 | Passive capture hook (`daisugi hook record`) | v0.21.0 | Working | Observation only, fail-open by contract — never blocks the host. Feeds distillation. |
 | Call-time gate (`daisugi gate`) | v0.35.0 | Working | ADR-0007. Deny-by-default `verify()` per live tool call; shadow default, `--enforce` flips, `disarm` kill switch. Claude Code deny path contract-tested live (exit 2); Hermes/OpenClaw block shapes emitted but **unverified**. ~0.6 s round trip, import-dominated. |
 | `AgenticStep` + `AgenticExecutor` | v0.36.0 | Working | Tool-using delegation inside the parent envelope (ADR-0007 §3). Static `--allowedTools` wall (envelope ∩ request) + the call-time gate in the sub-agent's own hook config, registered outside the workspace. Physical stakes refuse it. Live-tested: an out-of-envelope read attempted by a real sub-agent is denied by the gate. |
+| Adversarial corpus + merge gate (`daisugi gate audit`) | v0.37.0 | Working | Roadmap Stage 3. Deterministic, content-addressed corpus (13 attacks / 7 categories, 9 benign) run through the real gate; `tests/test_adversarial.py` is a required CI check (attack-denial 1.00; FP rate 0.33, all known/budgeted). Comparison arms (no-gate / literal-glob / gate) published. Yellow-paper §8 states the safety-only guarantee + limits. Live layer's stochastic bait-rate not yet run at N for CIs. |
 | String length / arithmetic in algebra | — | Planned | Grammar extension. |
 
 ## Legend

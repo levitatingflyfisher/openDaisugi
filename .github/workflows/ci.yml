@@ -38,3 +38,12 @@ jobs:
         # Smoke/calibration tests need a live LLM / `claude` binary and are gated by
         # env vars (DAISUGI_SMOKE / ANTHROPIC_API_KEY); they stay skipped in CI.
         run: uv run pytest -q
+
+      - name: Adversarial merge gate (roadmap Stage 3)
+        # The deterministic gate corpus is exactly reproducible, so any attack
+        # it fails to deny is a bug — this is the merge gate, run explicitly so
+        # its role is legible in CI output rather than buried in the full suite.
+        # Prints the published attack-denial / false-positive rates too.
+        run: |
+          uv run pytest -q tests/test_adversarial.py
+          uv run daisugi gate audit

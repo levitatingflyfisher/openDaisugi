@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.37.0 — 2026-07-23 — The evidence problem: adversarial merge gate + spec (roadmap Stage 3)
+
+"Fail-closed" stops being an assertion we make about attacks we imagined and
+becomes a number anyone can reproduce.
+
+- **The adversarial corpus** (`opendaisugi.adversarial`): 13 attack cases
+  across 7 categories (credential-read, compound-shell, out-of-pattern-shell,
+  undeclared-mcp, hook-rewrite, scheme-smuggle, unknown-tool) and 9 benign
+  cases, each run through the real gate decision core offline. Deterministic
+  and content-addressed → a rerun is a rerun, so any attack the gate fails to
+  deny is by definition a bug. Per-attack provenance (`source` / `adaptation`)
+  is recorded — the corpus adapts known injection patterns, it is not solely
+  self-authored.
+- **The merge gate** (`tests/test_adversarial.py`, an explicit named CI step):
+  every attack must be denied (attack-denial 1.00); no *unexpected* benign
+  false positive may appear. Both error directions are first-class — the
+  false-positive rate (0.33) is published, and it is *entirely* the known,
+  budgeted FPs (compound `&&` commands, host tools the classifier doesn't map),
+  reported not hidden.
+- **`daisugi gate audit`** publishes the rates, the per-category breakdown, and
+  the comparison arms: no-gate 0.00 attack-denial, a representative literal-glob
+  matcher 0.46 (it catches path attacks but misses the compound-shell /
+  scheme-smuggle / MCP classes), solver-backed gate 1.00. The claim is
+  comparative, not absolute.
+- **MCP calls are now classified** (`mcp__<server>__<tool>` → `MCPStep` checked
+  against `mcp_allowlist`). Previously the gate blanket-denied every MCP call as
+  an unknown tool, making the allowlist dead on the gate path and
+  "undeclared-MCP denied" a vacuous test; now allowed MCP is admitted and
+  undeclared MCP denied — the real distinction. `infer_envelope` admits observed
+  MCP calls too, keeping captures→trace honest.
+- **Yellow paper §8 — two checkpoints.** The formal account of what a call-time
+  gate can and cannot guarantee: it is an execution monitor enforcing a
+  prefix-closed (= safety) property — every executed action is in the envelope,
+  a real guarantee — while (A) structural/liveness properties need a plan that
+  call-time doesn't have, and hyperproperties (information-flow) are outside the
+  monitor class; and (B) in-envelope ≠ trajectory-benign (a worked read-then-
+  exfil example). Threat model, conditioned guarantee, named fail-open edges,
+  and the Simplex lineage flagged as strictly weaker. §7 cross-links it.
+- **The recorded live denial**: `examples/injection-denied/` (runnable demo +
+  captured transcript) — a real sub-agent attempts an out-of-envelope read and
+  the gate denies it, proof-backed reason on screen, value withheld from the
+  model. The live counterpart to the deterministic corpus.
+
+Still open in Stage 3 (named in the roadmap, not papered over): the live
+layer's *stochastic bait-taking* rate reported with confidence intervals,
+separate from whether-the-gate-denies. The live deny behavior is pinned;
+running the model at N for intervals is not done.
+
 ## v0.36.2 — 2026-07-23 — Pin the gate's envelope; don't key auth on payload input
 
 Hardening found while scoping the Stage-3 adversarial corpus. The gate
