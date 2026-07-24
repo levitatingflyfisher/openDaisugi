@@ -286,7 +286,8 @@ def _outcome(decision: GateDecision, fmt: str) -> GateOutcome:
 
 
 def _log_shadow(root: Path, session_id: str | None,
-                decision: GateDecision) -> None:
+                decision: GateDecision,
+                payload_session_id: str | None = None) -> None:
     """Best-effort JSONL decision log — the raw material of the shadow
     report. Never raises; a logging failure must not change a verdict."""
     try:
@@ -297,6 +298,9 @@ def _log_shadow(root: Path, session_id: str | None,
         rec = {
             "at": time.time(),
             "session_id": _safe_session_id(session_id),
+            # What the payload claimed, kept even when the envelope was pinned
+            # to something else — so a report can show a mismatch.
+            "payload_session_id": payload_session_id,
             "tool_name": decision.tool_name,
             "step_type": decision.step_type,
             "detail": decision.detail,
@@ -321,6 +325,7 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
                       fmt: str = "claude", mode: str = "shadow",
                       verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
                       captures_root: Path | None = None,
+                      pin_session: str | None = None,
                       ) -> GateOutcome:
     """Full gate entry: raw hook stdin → decision → host contract.
 
@@ -333,6 +338,14 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
     passive-capture format (best-effort) so a gated session feeds the same
     captures → to-trace → journal pipeline distillation already reads.
     Denied calls are never mirrored — they didn't happen.
+
+    ``pin_session`` fixes which registered envelope is used, ignoring the
+    session id in the payload. Authorization must not key on input the
+    caller can influence: unpinned, a payload claiming another session's id
+    is checked against *that* session's envelope, which may be more
+    permissive. The hook command supplies the pin from outside anything the
+    agent can rewrite — the same principle as the sub-agent gate root living
+    outside its workspace.
     """
     t0 = time.monotonic()
     try:
@@ -349,7 +362,11 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
             payload = json.loads(text) if text.strip() else None
         except Exception:  # noqa: BLE001 — malformed stdin is a deny, not a crash
             payload = None
-        session_id = payload.get("session_id") if isinstance(payload, dict) else None
+        payload_session = (
+            payload.get("session_id") if isinstance(payload, dict) else None
+        )
+        # Pinned wins: the payload's claim is recorded but never authorizes.
+        session_id = pin_session or payload_session
         envelope = load_envelope(session_id, root=root)
         if envelope is None:
             decision = _deny(
@@ -365,7 +382,7 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
             decision = evaluate_call(
                 payload, envelope, mode=mode, verify_timeout_s=verify_timeout_s,
             )
-        _log_shadow(root, session_id, decision)
+        _log_shadow(root, session_id, decision, payload_session_id=payload_session)
         if captures_root is not None and decision.allow and isinstance(payload, dict):
             try:
                 from opendaisugi.hook import record_call
@@ -495,6 +512,7 @@ def gate_settings_json(*, mode: str = "shadow",
                        python: str | None = None,
                        verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
                        captures_root: Path | None = None,
+                       session: str | None = None,
                        ) -> str:
     """Return the Claude Code hooks-settings JSON that wires in the gate.
 
@@ -523,6 +541,11 @@ def gate_settings_json(*, mode: str = "shadow",
     )
     if captures_root is not None:
         command += f" --captures-root {shlex.quote(str(captures_root))}"
+    # Pin the envelope from OUTSIDE the agent: with --session set, a payload
+    # claiming another session's id cannot select that session's (possibly
+    # more permissive) envelope. The agent cannot rewrite this command.
+    if session is not None:
+        command += f" --session {shlex.quote(session)}"
     # Default-deny at the PROCESS boundary. The host runs `command` through a
     # shell (verified live), and on Claude Code any hook exit that is not 2 is
     # non-blocking — so a crashed gate (exit 1), or a package that fails to
@@ -569,6 +592,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verify-timeout", type=float,
                         default=_DEFAULT_VERIFY_TIMEOUT_S)
     parser.add_argument("--captures-root", type=Path, default=None)
+    parser.add_argument(
+        "--session", default=None,
+        help="Pin the envelope to this registered session, ignoring the "
+             "session id in the payload (authorization must not key on "
+             "caller-influenceable input).",
+    )
     args = parser.parse_args(argv)
 
     # Fail-closed wrapper: ANY escape from here — a BaseException re-raised out
@@ -586,6 +615,7 @@ def main(argv: list[str] | None = None) -> int:
             raw, root=args.root, fmt=args.fmt, mode=args.mode,
             verify_timeout_s=args.verify_timeout,
             captures_root=args.captures_root,
+            pin_session=args.session,
         )
         if out.stdout:
             print(out.stdout)

@@ -88,6 +88,23 @@ daisugi gate replay ~/.opendaisugi/captures/<session>.jsonl --envelope my-envelo
 claude --settings "$(daisugi gate settings --enforce)"
 ```
 
+**Pinning the envelope (`--session`).** By default the gate selects an
+envelope by the `session_id` in each hook payload, falling back to the
+default. That is fine when the host is the only writer of `session_id`, but
+authorization then keys on a field the caller can influence: a payload
+claiming another registered session's id would be checked against *that*
+session's (possibly more permissive) envelope. To close that off, pin it:
+
+```bash
+claude --settings "$(daisugi gate settings --enforce --session job7)"
+```
+
+With `--session` set, the payload's `session_id` is recorded (the report
+keeps `payload_session_id` for traceability) but never authorizes. The pin
+lives in the hook command, which the agent cannot rewrite — the same
+principle as a sub-agent's gate root living outside its workspace.
+`AgenticExecutor` pins its sub-agents automatically.
+
 On the Claude Code path a deny is exit code 2 with the proof-backed reason
 on stderr — the model sees *why* ("permissions: Step 's0' file_read path
 '/etc/passwd' not permitted by file_read ['/allowed/**']") and can restate

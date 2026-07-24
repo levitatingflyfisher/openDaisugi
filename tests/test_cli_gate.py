@@ -160,3 +160,12 @@ def test_lean_entry_main_enforce_denies(tmp_path, monkeypatch, capsys):
     code = gate_main(["--mode", "enforce", "--root", str(root)])
     assert code == 2
     assert "DENIED" in capsys.readouterr().err
+
+
+def test_gate_settings_session_pin_flows_into_command(tmp_path):
+    res = runner.invoke(app, [
+        "gate", "settings", "--root", str(tmp_path), "--session", "job7",
+    ])
+    assert res.exit_code == 0
+    cmd = json.loads(res.stdout)["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert "--session job7" in cmd

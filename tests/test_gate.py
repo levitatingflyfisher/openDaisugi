@@ -481,3 +481,66 @@ def test_non_claude_settings_command_is_not_wrapped(tmp_path):
     settings = json.loads(gate_settings_json(mode="enforce", root=tmp_path, fmt="hermes"))
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "|| exit 2" not in cmd
+
+
+# =================================================================
+# Envelope pinning: authorization must not key on untrusted input
+# =================================================================
+
+def test_payload_session_id_can_select_another_envelope_when_unpinned(tmp_path):
+    """Documents the unpinned behavior: the payload's session_id chooses the
+    envelope. Harmless when the host is the only writer of session_id, but it
+    means authorization keys on attacker-influenceable input — which is why
+    pinning exists (and why the settings emitter pins by default)."""
+    register_envelope(_envelope(), root=tmp_path)
+    register_envelope(_envelope(file_read=["/**"]), session_id="admin", root=tmp_path)
+    out = gate_and_contract(
+        _payload_bytes("/etc/passwd", session="admin"),
+        root=tmp_path, fmt="claude", mode="enforce",
+    )
+    assert out.exit_code == 0  # the permissive 'admin' envelope was selected
+
+
+def test_pinned_session_ignores_the_payloads_session_id(tmp_path):
+    """With the envelope pinned from outside (the hook command supplies it,
+    and the agent cannot rewrite the hook command), a forged session_id in
+    the payload cannot escalate."""
+    register_envelope(_envelope(), root=tmp_path)
+    register_envelope(_envelope(file_read=["/**"]), session_id="admin", root=tmp_path)
+    out = gate_and_contract(
+        _payload_bytes("/etc/passwd", session="admin"),
+        root=tmp_path, fmt="claude", mode="enforce", pin_session="default",
+    )
+    assert out.exit_code == 2
+
+
+def test_pinned_session_selects_the_named_envelope(tmp_path):
+    register_envelope(_envelope(file_read=["/only-here/**"]), session_id="job7", root=tmp_path)
+    allowed = gate_and_contract(
+        _payload_bytes("/only-here/x", session="whatever"),
+        root=tmp_path, fmt="claude", mode="enforce", pin_session="job7",
+    )
+    assert allowed.exit_code == 0
+    denied = gate_and_contract(
+        _payload_bytes("/elsewhere/x", session="whatever"),
+        root=tmp_path, fmt="claude", mode="enforce", pin_session="job7",
+    )
+    assert denied.exit_code == 2
+
+
+def test_pinned_log_record_keeps_the_real_session_for_traceability(tmp_path):
+    register_envelope(_envelope(), root=tmp_path)
+    gate_and_contract(
+        _payload_bytes("/etc/passwd", session="claimed-session"),
+        root=tmp_path, fmt="claude", mode="enforce", pin_session="default",
+    )
+    rep = shadow_report(root=tmp_path)
+    assert rep["would_deny"] == 1
+    assert rep["denied"][0]["payload_session_id"] == "claimed-session"
+
+
+def test_settings_emitter_pins_the_session_when_asked(tmp_path):
+    from opendaisugi.gate import gate_settings_json
+    settings = json.loads(gate_settings_json(root=tmp_path, session="job7"))
+    cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert "--session job7" in cmd

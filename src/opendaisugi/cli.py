@@ -610,16 +610,25 @@ def gate_settings_cmd(
     ),
     root: Path = _GATE_ROOT_OPT,
     fmt: str = typer.Option("claude", "--format"),
+    session: str | None = typer.Option(
+        None, "--session",
+        help="Pin the gate to this registered session's envelope, ignoring "
+             "the session id in each payload — authorization must not key on "
+             "caller-influenceable input.",
+    ),
 ) -> None:
     """Print the Claude Code hooks-settings JSON that wires in the gate.
 
     Usage: ``claude --settings "$(daisugi gate settings)"`` for shadow mode,
-    add ``--enforce`` for the one-flag flip to protection.
+    add ``--enforce`` for the one-flag flip to protection. Add ``--session``
+    to pin which registered envelope is checked, so a forged payload session
+    id cannot select a more permissive one.
     """
     from opendaisugi.gate import gate_settings_json
 
     typer.echo(gate_settings_json(
         mode="enforce" if enforce else "shadow", root=root, fmt=fmt,
+        session=session,
     ))
 
 

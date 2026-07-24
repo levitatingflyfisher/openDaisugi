@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.36.2 — 2026-07-23 — Pin the gate's envelope; don't key auth on payload input
+
+Hardening found while scoping the Stage-3 adversarial corpus. The gate
+selected its envelope by the `session_id` in each hook payload — so a payload
+claiming another registered session's id was checked against *that* session's
+envelope, which may be more permissive. Harmless when the host is the sole
+writer of `session_id`, but authorization keyed on caller-influenceable input
+is the wrong shape, and it is exactly the kind of thing the Stage-3 suite
+must measure rather than assume away.
+
+- **`gate_and_contract(..., pin_session=...)`** and the `daisugi gate
+  settings --session <id>` / `gate.main --session` surface fix which
+  registered envelope is used, ignoring the payload's claim. The pin lives in
+  the hook command, which the agent cannot rewrite. The shadow log now keeps
+  `payload_session_id` alongside the pinned `session_id`, so a report can show
+  a mismatch.
+- **`AgenticExecutor` pins its sub-agents to `default`** automatically — a
+  sub-agent's payload can no longer name a different registered session.
+- Documented in `docs/how-to/gate.md` (the "Pinning the envelope" note).
+
+Unpinned remains the default for the bare passive/observation path (the
+report note explains the trade-off); enforce deployments should pin.
+
 ## v0.36.1 — 2026-07-22 — Fail closed when the gate process itself dies
 
 A fail-open in the v0.35.0 gate, found by review and reproduced against the

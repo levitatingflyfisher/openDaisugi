@@ -184,3 +184,14 @@ def test_capture_false_omits_captures_root(tmp_path, spy_call):
     settings = json.loads(args[args.index("--settings") + 1])
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "--captures-root" not in cmd
+
+
+def test_sub_agent_gate_is_pinned_to_the_default_envelope(tmp_path, spy_call):
+    """The sub-agent's gate must not honor a session id from the payload —
+    the envelope is pinned from outside, like the gate root itself."""
+    exe = AgenticExecutor(envelope=_envelope())
+    _run(exe, _step(tmp_path))
+    args = spy_call["extra_args"]
+    settings = json.loads(args[args.index("--settings") + 1])
+    cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert "--session default" in cmd

@@ -118,6 +118,9 @@ class AgenticExecutor:
         settings = gate_settings_json(
             mode="enforce", root=gate_root,
             captures_root=(gate_root / "captures") if self.capture else None,
+            # Pin the envelope: the sub-agent's payload cannot name a
+            # different (more permissive) registered session.
+            session="default",
         )
 
         extra_args: list[str] = [
