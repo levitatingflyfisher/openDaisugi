@@ -587,3 +587,62 @@ def test_mcp_tool_name_with_underscores_parses_server_and_tool():
     )
     assert d.step_type == "mcp"
     assert d.allow is True  # github/* still matches
+
+
+# =================================================================
+# Onboarding: the starter envelope (Stage 1's open sub-problem, Stage 6)
+# =================================================================
+
+from opendaisugi.gate import starter_envelope  # noqa: E402
+
+
+def test_starter_envelope_reads_and_writes_only_the_workspace(tmp_path):
+    env = starter_envelope(tmp_path)
+    assert env.permissions.file_read == [f"{tmp_path}/**"]
+    assert env.permissions.file_write == [f"{tmp_path}/**"]
+
+
+def test_starter_envelope_has_no_network_by_default(tmp_path):
+    env = starter_envelope(tmp_path)
+    assert env.permissions.network is False
+
+
+def test_starter_envelope_shell_allowlist_is_conservative(tmp_path):
+    env = starter_envelope(tmp_path)
+    assert env.permissions.shell is True
+    assert "git" in env.permissions.shell_allowlist
+    # It must NOT hand out a wildcard / blanket shell.
+    assert "*" not in env.permissions.shell_allowlist
+    assert "bash" not in env.permissions.shell_allowlist
+    assert "sh" not in env.permissions.shell_allowlist
+
+
+def test_starter_envelope_is_registrable_and_gates(tmp_path):
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    root = tmp_path / "gate"
+    register_envelope(starter_envelope(ws), root=root)
+    # A read inside the workspace is allowed; outside is denied.
+    inside = gate_and_contract(
+        _payload_bytes(str(ws / "main.py")), root=root, fmt="claude", mode="enforce",
+    )
+    assert inside.exit_code == 0
+    outside = gate_and_contract(
+        _payload_bytes("/etc/passwd"), root=root, fmt="claude", mode="enforce",
+    )
+    assert outside.exit_code == 2
+
+
+def test_shadow_settings_command_has_no_fail_closed_suffix(tmp_path):
+    """Shadow mode must NEVER break the host — so a crashed/un-importable gate
+    in shadow must stay non-blocking (exit 1 = allow on CC). The `|| exit 2`
+    fail-closed suffix is enforce-only; in shadow it would turn observation
+    into a blocking deny on any gate error, exactly the regression shadow
+    exists to avoid."""
+    from opendaisugi.gate import gate_settings_json
+    shadow = json.loads(gate_settings_json(mode="shadow", root=tmp_path))
+    cmd = shadow["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert "|| exit 2" not in cmd
+    enforce = json.loads(gate_settings_json(mode="enforce", root=tmp_path))
+    ecmd = enforce["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert ecmd.rstrip().endswith("|| exit 2")

@@ -445,6 +445,90 @@ _GATE_ROOT_OPT = typer.Option(
 )
 
 
+@gate_app.command("init")
+def gate_init_cmd(
+    workspace: Path = typer.Option(
+        Path.cwd, "--workspace",
+        help="The directory the session may read/write (default: cwd).",
+    ),
+    session: str | None = typer.Option(None, "--session"),
+    root: Path = _GATE_ROOT_OPT,
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing envelope."),
+) -> None:
+    """Generate and register a reviewable starter envelope for this session.
+
+    The answer to "where does the envelope come from?" for a session you are
+    already running: a tight, sane default (read/write the workspace, a
+    conservative shell allowlist, no network) that you then review and adjust.
+    It is a starting point, not a finished policy — run shadow mode and
+    `daisugi gate report` to tune it.
+    """
+    from opendaisugi.gate import _envelopes_dir, register_envelope, starter_envelope
+
+    name = session or "default"
+    target = _envelopes_dir(root) / f"{name}.json"
+    if target.exists() and not force:
+        typer.echo(
+            f"an envelope for '{name}' is already registered at {target}; "
+            f"pass --force to overwrite",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    ws = workspace.resolve()
+    path = register_envelope(starter_envelope(ws), session_id=session, root=root)
+    typer.echo(f"registered a starter envelope for {ws} → {path}")
+    typer.echo("REVIEW it before enforcing — it is a tight default, not a finished policy.")
+    typer.echo("Then launch shadow mode:")
+    typer.echo(f'  claude --settings "$(daisugi gate settings --root {root})"')
+
+
+@gate_app.command("quickstart")
+def gate_quickstart_cmd(
+    workspace: Path = typer.Option(Path.cwd, "--workspace"),
+    session: str | None = typer.Option(None, "--session"),
+    root: Path = _GATE_ROOT_OPT,
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    """One command → a working shadow-mode gate over this session.
+
+    Generates + registers a starter envelope, then prints the full copy-paste
+    flow: launch in shadow mode, see what it would deny, flip to enforce, and
+    disarm if it over-denies.
+    """
+    from opendaisugi.gate import (
+        _envelopes_dir,
+        gate_settings_json,
+        register_envelope,
+        starter_envelope,
+    )
+
+    name = session or "default"
+    target = _envelopes_dir(root) / f"{name}.json"
+    if target.exists() and not force:
+        typer.echo(f"reusing the envelope already registered at {target} "
+                   f"(pass --force to regenerate)")
+    else:
+        ws = workspace.resolve()
+        register_envelope(starter_envelope(ws), session_id=session, root=root)
+        typer.echo(f"registered a starter envelope for {ws}")
+
+    sess_arg = f" --session {session}" if session else ""
+    shadow = gate_settings_json(mode="shadow", root=root, session=session)
+    typer.echo("")
+    typer.echo("# 1. Launch your session with the gate observing (shadow — never blocks):")
+    typer.echo(f"claude --settings '{shadow}'")
+    typer.echo("")
+    typer.echo("# 2. See what it WOULD have denied, and tune the envelope:")
+    typer.echo(f"daisugi gate report --root {root}{sess_arg}")
+    typer.echo(f"#   (edit {target} until the would-denies are only what you want denied)")
+    typer.echo("")
+    typer.echo("# 3. Flip to enforce (one flag) once you trust it:")
+    typer.echo(f'claude --settings "$(daisugi gate settings --enforce --root {root}{sess_arg})"')
+    typer.echo("")
+    typer.echo("# 4. If it ever over-denies, one command turns it off (needs no allowed tool call):")
+    typer.echo(f"daisugi gate disarm --root {root}")
+
+
 @gate_app.command("check")
 def gate_check_cmd(
     mode: str = typer.Option(

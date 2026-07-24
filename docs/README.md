@@ -20,10 +20,14 @@ New here? Start with the [README quickstart](../README.md), then the
 *Learning-oriented — take me by the hand through my first success.*
 
 This is the quadrant we're actively growing. Today the entry points are:
+- **[Protect an agent you're already running](tutorials/protect-your-existing-session.md)**
+  — one command to a working shadow-mode gate over a live session, then one flag
+  to enforce.
 - The **[README quickstart](../README.md)** — install, generate an envelope, verify
   a plan.
 - The runnable **[examples/](../examples/)** — end-to-end scripts you can read and
-  run (orchestrator, safe sub-agent, swarm tasking, robotics sims).
+  run (orchestrator, safe sub-agent, swarm tasking, robotics sims, the
+  [injection-denied](../examples/injection-denied/) live demo).
 
 *Gap (contributions welcome):* a hand-held "verify your first plan and watch it
 reject an unsafe one in 10 minutes" tutorial, and a "distill your first pathway"

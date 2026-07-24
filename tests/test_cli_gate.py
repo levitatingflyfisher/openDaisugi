@@ -185,3 +185,48 @@ def test_gate_audit_text_summary():
     assert res.exit_code == 0
     assert "attack" in res.output.lower()
     assert "13/13" in res.output or "1.00" in res.output
+
+
+def test_gate_init_registers_a_starter_envelope(tmp_path):
+    root = tmp_path / "gate"
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    res = runner.invoke(app, [
+        "gate", "init", "--workspace", str(ws), "--root", str(root),
+    ])
+    assert res.exit_code == 0
+    assert (root / "envelopes" / "default.json").exists()
+    # It tells the operator to review it and how to launch.
+    assert "review" in res.output.lower()
+    assert "gate settings" in res.output
+
+
+def test_gate_quickstart_prints_the_full_shadow_flow(tmp_path):
+    root = tmp_path / "gate"
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    res = runner.invoke(app, [
+        "gate", "quickstart", "--workspace", str(ws), "--root", str(root),
+    ])
+    assert res.exit_code == 0
+    out = res.output
+    # A copy-pasteable shadow launch line, plus how to report / enforce / disarm.
+    assert "--settings" in out
+    assert "shadow" in out.lower()
+    assert "gate report" in out
+    assert "gate disarm" in out
+    assert (root / "envelopes" / "default.json").exists()
+
+
+def test_gate_init_refuses_to_clobber_without_force(tmp_path):
+    root = tmp_path / "gate"
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    runner.invoke(app, ["gate", "init", "--workspace", str(ws), "--root", str(root)])
+    res = runner.invoke(app, ["gate", "init", "--workspace", str(ws), "--root", str(root)])
+    assert res.exit_code != 0
+    assert "already" in res.output.lower()
+    forced = runner.invoke(app, [
+        "gate", "init", "--workspace", str(ws), "--root", str(root), "--force",
+    ])
+    assert forced.exit_code == 0

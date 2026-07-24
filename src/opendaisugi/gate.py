@@ -35,7 +35,7 @@ from opendaisugi.hook import (
     _safe_session_id,
     stdout_for_format,
 )
-from opendaisugi.models import ActionPlan, Envelope
+from opendaisugi.models import ActionPlan, Envelope, Permission
 from opendaisugi.verify import verify
 
 DEFAULT_GATE_ROOT = Path.home() / ".opendaisugi" / "gate"
@@ -196,6 +196,48 @@ def _mkdir_private(d: Path) -> None:
         os.chmod(d, 0o700)
     except OSError:
         pass
+
+
+# A conservative starting shell allowlist for a generated envelope: read-
+# oriented inspection plus version control and test runners. It is
+# deliberately NOT a blanket ``*`` and omits the interpreters (``bash``,
+# ``sh``) and anything that trivially shells out, because the operator is
+# meant to *review and tighten or widen* this before trusting enforce mode.
+# Shell allowlisting matches only the command head, and shadow mode is where
+# you discover what your real session actually needs.
+_STARTER_SHELL_ALLOWLIST: tuple[str, ...] = (
+    "cat", "cd", "echo", "find", "git", "grep", "head", "ls", "npm", "cargo",
+    "printf", "pwd", "pytest", "python", "python3", "rg", "sort", "tail",
+    "uniq", "wc", "which",
+)
+
+
+def starter_envelope(workspace: Path, *, stakes: str = "medium") -> Envelope:
+    """Generate a reviewable starter envelope for an existing session.
+
+    This is the drafted-then-reviewed answer to "where does the envelope come
+    from?" for an operator's *own* running session (roadmap Stage 1's open
+    sub-problem; the onboarding funnel of Stage 6). It grants read/write
+    within one workspace, a conservative shell head allowlist, and NO network
+    — a sane, tight default that the operator edits before enforcing. It is
+    not a security guarantee on its own; it is a starting point that shadow
+    mode and `daisugi gate report` help tune.
+    """
+    ws = str(Path(workspace).resolve())
+    return Envelope(
+        generated_by="opendaisugi.gate.starter_envelope",
+        task=f"session in {ws}",
+        permissions=Permission(
+            file_read=[f"{ws}/**"],
+            file_write=[f"{ws}/**"],
+            shell=True,
+            shell_allowlist=sorted(_STARTER_SHELL_ALLOWLIST),
+            network=False,
+            max_execution_time_s=60,
+            max_output_size_mb=20,
+        ),
+        stakes=stakes,
+    )
 
 
 def register_envelope(envelope: Envelope, *, session_id: str | None = None,
@@ -555,10 +597,13 @@ def gate_settings_json(*, mode: str = "shadow",
     # an allow and exit 2 a deny. `python -m …` is an external command, so its
     # nonzero exit triggers `||` (unlike a shell `exit` builtin). Live-verified:
     # without this, an exit-1 hook lets the read through; with it, it blocks.
-    # Only for the claude contract (exit-code deny); hermes/openclaw deny via
-    # stdout JSON, where this idiom would be meaningless — their crash-time
-    # behavior is part of the already-documented 'unverified' enforcement class.
-    if fmt == "claude":
+    # ENFORCE only, and only for the claude contract (exit-code deny). In
+    # SHADOW mode a crash must stay non-blocking — shadow never breaks the
+    # host, so mapping a gate error to exit 2 (deny) would be the exact
+    # regression shadow exists to avoid. hermes/openclaw deny via stdout JSON,
+    # where this idiom is meaningless anyway (their crash behavior is part of
+    # the documented 'unverified' enforcement class).
+    if fmt == "claude" and mode == "enforce":
         command = f"{command} || exit 2"
     return json.dumps({
         "hooks": {
