@@ -169,3 +169,19 @@ def test_gate_settings_session_pin_flows_into_command(tmp_path):
     assert res.exit_code == 0
     cmd = json.loads(res.stdout)["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "--session job7" in cmd
+
+
+def test_gate_audit_reports_attack_and_fp_rates():
+    res = runner.invoke(app, ["gate", "audit", "--json"])
+    assert res.exit_code == 0
+    rep = json.loads(res.stdout)
+    assert rep["attack_denial_rate"] == 1.0
+    assert rep["unexpected_allowed_attacks"] == []
+    assert "arms" in rep
+
+
+def test_gate_audit_text_summary():
+    res = runner.invoke(app, ["gate", "audit"])
+    assert res.exit_code == 0
+    assert "attack" in res.output.lower()
+    assert "13/13" in res.output or "1.00" in res.output

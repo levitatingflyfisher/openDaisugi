@@ -632,6 +632,50 @@ def gate_settings_cmd(
     ))
 
 
+@gate_app.command("audit")
+def gate_audit_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Emit the full report as JSON."),
+) -> None:
+    """Run the deterministic adversarial corpus and report both error rates.
+
+    The same suite that gates merges (`tests/test_adversarial.py`), runnable
+    by anyone: attack-denial rate, false-positive rate (with the known,
+    budgeted FPs called out), per-category breakdown, and the comparison arms
+    (no gate / literal-glob matching / this gate). Exactly reproducible —
+    the corpus is content-addressed.
+    """
+    import json as _json
+
+    from opendaisugi.adversarial import compare_arms, run_deterministic_corpus
+
+    rep = run_deterministic_corpus()
+    rep["arms"] = compare_arms()
+    if as_json:
+        typer.echo(_json.dumps(rep, indent=2))
+        return
+    typer.echo(f"corpus {rep['corpus_hash']}")
+    typer.echo(
+        f"attacks denied: {rep['attacks_denied']}/{rep['attacks_total']} "
+        f"(rate {rep['attack_denial_rate']:.2f})"
+    )
+    typer.echo(
+        f"benign false positives: {rep['benign_false_positives']}/{rep['benign_total']} "
+        f"(rate {rep['false_positive_rate']:.2f}; "
+        f"all {rep['known_false_positives']} are known/budgeted="
+        f"{rep['benign_false_positives'] == rep['known_false_positives']})"
+    )
+    if rep["unexpected_allowed_attacks"]:
+        typer.echo(f"  !! ATTACKS ALLOWED: {rep['unexpected_allowed_attacks']}")
+    typer.echo("by category (denied/total):")
+    for cat, c in sorted(rep["by_category"].items()):
+        typer.echo(f"  {cat:22} {c['denied']}/{c['attacks']}")
+    typer.echo("arms (attack_denial / false_positive):")
+    for arm, m in rep["arms"].items():
+        typer.echo(
+            f"  {arm:16} {m['attack_denial_rate']:.2f} / {m['false_positive_rate']:.2f}"
+        )
+
+
 @mcp_app.command("serve")
 def mcp_serve_cmd(
     data_dir: Path = typer.Option(Path.home() / ".opendaisugi", "--data-dir"),
