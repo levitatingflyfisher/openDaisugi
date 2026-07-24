@@ -36,6 +36,7 @@ from opendaisugi.models import (
     Envelope,
     FileReadStep,
     FileWriteStep,
+    MCPStep,
     NetworkStep,
     Permission,
     ShellStep,
@@ -113,9 +114,30 @@ def _classify_tool(name: str) -> str | None:
 
     Unknown tools are dropped from captures rather than guessed at — keeps
     the post-hoc inference honest. v0.22+ may add a registry for custom
-    mappings.
+    mappings. Host MCP tools follow the ``mcp__<server>__<tool>`` convention
+    and classify as ``mcp`` so the gate can check them against the envelope's
+    deny-by-default ``mcp_allowlist`` rather than blanket-denying every MCP
+    call as an unknown tool.
     """
+    if name.startswith("mcp__"):
+        return "mcp"
     return _TOOL_TYPE_MAP.get(name)
+
+
+def _parse_mcp_tool_name(name: str) -> tuple[str, str] | None:
+    """Split a host ``mcp__<server>__<tool>`` name into (server, tool).
+
+    The tool half may itself contain ``__`` (``mcp__github__list__issues`` →
+    ``github`` / ``list__issues``), so only the first ``__`` after the server
+    is the split point. Returns None if the name isn't a well-formed MCP tool.
+    """
+    if not name.startswith("mcp__"):
+        return None
+    rest = name[len("mcp__"):]
+    parts = rest.split("__", 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
 
 
 def _payload_to_record(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -167,6 +189,12 @@ def _payload_to_record(payload: dict[str, Any]) -> dict[str, Any] | None:
             record["content_len"] = len(content)
     elif step_type == "network":
         record["url"] = inp.get("url") or inp.get("query") or ""
+    elif step_type == "mcp":
+        parsed = _parse_mcp_tool_name(tool_name)
+        if parsed is None:
+            return None
+        record["mcp_server"], record["mcp_tool"] = parsed
+        record["arguments"] = inp if isinstance(inp, dict) else {}
     return record
 
 
@@ -285,6 +313,7 @@ def infer_envelope(records: list[dict[str, Any]], *, task: str = "captured-sessi
     file_write_globs: set[str] = set()
     network_seen = False
     network_hosts: set[str] = set()
+    mcp_tools: set[str] = set()
     for r in records:
         if r["step_type"] == "shell":
             cmd = (r.get("command") or "").strip()
@@ -303,12 +332,18 @@ def infer_envelope(records: list[dict[str, Any]], *, task: str = "captured-sessi
             m = re.match(r"https?://([^/]+)", url)
             if m:
                 network_hosts.add(m.group(1).lower())
+        elif r["step_type"] == "mcp":
+            server = r.get("mcp_server") or ""
+            tool = r.get("mcp_tool") or ""
+            if server and tool:
+                mcp_tools.add(f"{server}/{tool}")
     return Envelope(
         generated_by="opendaisugi.hook.infer_envelope",
         task=task,
         permissions=Permission(
             shell=bool(shell_heads),
             shell_allowlist=sorted(shell_heads),
+            mcp_allowlist=sorted(mcp_tools),
             file_read=sorted(file_read_globs) or [],
             file_write=sorted(file_write_globs) or [],
             network=network_seen,
@@ -336,6 +371,14 @@ def _records_to_steps(records: list[dict[str, Any]]) -> list:
             ))
         elif r["step_type"] == "network":
             steps.append(NetworkStep(id=sid, url=r.get("url") or "", depends_on=deps))
+        elif r["step_type"] == "mcp":
+            steps.append(MCPStep(
+                id=sid,
+                server=r.get("mcp_server") or "",
+                tool=r.get("mcp_tool") or "",
+                arguments=r.get("arguments") or {},
+                depends_on=deps,
+            ))
         prev_id = sid
     return steps
 

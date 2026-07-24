@@ -544,3 +544,46 @@ def test_settings_emitter_pins_the_session_when_asked(tmp_path):
     settings = json.loads(gate_settings_json(root=tmp_path, session="job7"))
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "--session job7" in cmd
+
+
+# =================================================================
+# MCP classification: allowed vs undeclared must be a REAL distinction
+# =================================================================
+
+def _mcp_env():
+    return Envelope(generated_by="t", task="t",
+                    permissions=Permission(file_read=["/work/**"],
+                                           mcp_allowlist=["github/*"]))
+
+
+def test_allowed_mcp_call_is_admitted():
+    d = evaluate_call(
+        {"tool_name": "mcp__github__create_issue", "tool_input": {"title": "x"},
+         "session_id": "s"},
+        _mcp_env(), mode="enforce",
+    )
+    assert d.step_type == "mcp"
+    assert d.allow is True
+    assert d.would_deny is False
+
+
+def test_undeclared_mcp_call_is_denied_by_allowlist():
+    d = evaluate_call(
+        {"tool_name": "mcp__stripe__create_charge", "tool_input": {},
+         "session_id": "s"},
+        _mcp_env(), mode="enforce",
+    )
+    assert d.step_type == "mcp"
+    assert d.would_deny is True
+    assert "mcp_allowlist" in d.reason or "stripe" in d.reason
+
+
+def test_mcp_tool_name_with_underscores_parses_server_and_tool():
+    """`mcp__<server>__<tool>` where the tool name itself contains `__`."""
+    d = evaluate_call(
+        {"tool_name": "mcp__github__list__issues", "tool_input": {},
+         "session_id": "s"},
+        _mcp_env(), mode="enforce",
+    )
+    assert d.step_type == "mcp"
+    assert d.allow is True  # github/* still matches
