@@ -27,6 +27,31 @@ stay true, and an honest scorecard of what's built vs. aspirational.
 → **[docs/](docs/README.md)** for the [Diátaxis](https://diataxis.fr/)-organized
 docs (tutorials · how-to · reference · explanation).
 
+### Gate an agent you're already running
+
+One command puts a fail-closed gate in front of a live Claude Code session:
+every tool call is proven inside an envelope *before it runs*, shadow-mode
+first, one flag to enforce.
+
+```bash
+daisugi gate quickstart      # → a working shadow-mode gate in minutes
+```
+
+It is not a demo. A real delegated sub-agent asked to read a file outside its
+envelope is denied by the gate, the value withheld from the model, the reason
+proof-backed — captured verbatim in
+[`examples/injection-denied/`](examples/injection-denied/):
+
+```
+DENIED Read '/.../infra/deploy_region.txt'
+  reason: permissions: file_read path '/.../infra/deploy_region.txt'
+          not permitted by file_read ['/.../workspace/**']
+```
+
+The same 13-attack corpus that gates this project's own merges is one command:
+`daisugi gate audit` (denial 1.00; false-positive rate published, not hidden).
+Start here: **[Protect an agent you're already running](docs/tutorials/protect-your-existing-session.md)**.
+
 ### See it: runtime assurance for a robot swarm
 
 ![Property-security patrol — openDaisugi gating a (mock) VLA swarm in MuJoCo](docs/assets/property-patrol.gif)

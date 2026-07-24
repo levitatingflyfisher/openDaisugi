@@ -240,6 +240,14 @@ block; here is the reproduction"); each integration doc states its enforcement
 class in the first paragraph; and the passive journaling path remains supported
 for hosts where observation is all that is honestly available.
 
+**Status (v0.38.0):** the enforcement-class table leads
+[integrations.md](integrations.md) (Claude Code = hard/contract-tested; Hermes
+and OpenClaw = unverified, treat as observation), and the passive path stays
+first-class. The committed contract test is Claude-Code-only
+(`tests/test_hook_gate_contract.py`, pinned to the installed CLI version); a
+Hermes/OpenClaw live contract test — with its findings published even if
+negative — is the remaining piece, gated on having those hosts to pin against.
+
 ## Stage 6 — The onboarding problem
 *Time-to-first-verified-plan.*
 
@@ -257,6 +265,17 @@ session" tutorial exists in `docs/tutorials/` (closing the gap the
 recorded denial from Stage 3; and time-to-first-verified-plan is measured from
 a clean environment and published as a number we defend.
 
+**Status (v0.38.0):** `daisugi gate quickstart` is the one command — it
+generates and registers a reviewable starter envelope (resolving Stage 1's open
+host-session-envelope sub-problem via the drafted-then-reviewed candidate:
+`starter_envelope` / `gate init`) and prints the whole shadow → report →
+enforce → disarm flow. The tutorial
+[protect-your-existing-session.md](tutorials/protect-your-existing-session.md)
+exists and is linked from the docs hub; the README leads with the gate
+quickstart and the recorded denial. The remaining piece is the *measured*
+time-to-first — clocked on a clean machine and published as a defended number
+(the mechanism is in place; the measurement is not yet run).
+
 ## Stage 7 — The trust problem
 *Why a stranger should run this.*
 
@@ -272,6 +291,15 @@ benchmark harnesses are content-addressed and re-runnable by someone who isn't
 us, with matching results; and the supply-chain posture — pinned dependencies,
 allowlist-based model resolution, no telemetry of any kind — is documented in
 one place a skeptic can audit in an afternoon.
+
+**Status (v0.38.0):** four of five have evidence — public CI green on every
+push with the adversarial suite as an explicit required step; the corpus is
+content-addressed and re-runnable by anyone (`daisugi gate audit`); the
+supply-chain posture is documented in one place
+([security-model.md § supply-chain](security-model.md)); pathway bundles are
+signed. The one honest gap, named there and not hidden: **release artifacts are
+not yet signed** — until artifact signing lands, install from a pinned git ref
+you have read, not an unpinned index.
 
 ---
 

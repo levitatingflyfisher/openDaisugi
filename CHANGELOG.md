@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.38.0 — 2026-07-23 — One-command onboarding + harness/trust honesty (roadmap Stages 5–7)
+
+Closes the implementable remainder of the roadmap and resolves Stage 1's one
+open sub-problem (where an existing session's envelope comes from).
+
+- **`daisugi gate quickstart`** — one command → a working shadow-mode gate over
+  the current project, plus the whole shadow → report → enforce → disarm flow
+  printed to copy-paste. **`daisugi gate init`** generates and registers a
+  reviewable **starter envelope** (`starter_envelope`: read/write the workspace,
+  a conservative shell head allowlist, no network) — the drafted-then-reviewed
+  answer to "where does the envelope come from?", not a blank file or a
+  dangerous blanket-allow. Tutorial:
+  `docs/tutorials/protect-your-existing-session.md` (the gap the docs hub named).
+- **Shadow fail-open fixed.** The `|| exit 2` process-boundary guard was being
+  applied to *shadow* settings too — so a crashed shadow gate would map to a
+  blocking deny, the exact "shadow must never break the host" regression. Now
+  enforce-only. (Found by previewing the quickstart output.)
+- **Enforcement class stated first (Stage 5).** `integrations.md` opens with a
+  per-harness table: Claude Code = **hard, contract-tested**; Hermes/OpenClaw =
+  **unverified**, treat as observation until a live contract test exists. The
+  passive journaling path stays first-class where observation is all that is
+  honest.
+- **README leads with the gate (Stage 6).** A "Gate an agent you're already
+  running" section up top with the quickstart one-liner and the verbatim
+  recorded denial from `examples/injection-denied/`.
+- **Trust surface in one place (Stage 7).** `security-model.md` gains a
+  supply-chain & reproducibility section: public green CI with the adversarial
+  suite as a required step, content-addressed re-runnable evals, pinned deps,
+  allowlist-based commit-pinned model resolution, no telemetry — and the honest
+  open gap that **release artifacts are not yet signed** (pathway bundles are).
+- Roadmap Stages 5/6/7 carry status notes distinguishing what has committed
+  evidence from the measurement/signing pieces still open.
+
 ## v0.37.0 — 2026-07-23 — The evidence problem: adversarial merge gate + spec (roadmap Stage 3)
 
 "Fail-closed" stops being an assertion we make about attacks we imagined and

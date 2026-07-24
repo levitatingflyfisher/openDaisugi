@@ -4,6 +4,31 @@ openDaisugi is a library, not a framework. It ships narrow adapters
 for four external surfaces so agent frameworks, training pipelines,
 and simulators can consume it without reimplementation.
 
+## Enforcement class, stated first (roadmap Stage 5)
+
+A runtime-assurance layer must be honest about *where it can actually
+block*, per harness and per host version — claiming hard enforcement while
+delivering observation would be the fail-open this project exists to prevent,
+committed at the level of documentation. Three classes:
+
+| Class | Meaning |
+|---|---|
+| **Hard enforcement** | A denied tool call is *blocked* before it runs, proven per version by a committed contract test. |
+| **Soft enforcement** | The block path exists but is unverified at this version, or its timeout can fail open. |
+| **Observation** | The passive capture path only — calls are journaled, never blocked. |
+
+| Harness | Plan-time verify | Call-time gate | Basis |
+|---|---|---|---|
+| **Claude Code** | Hard (library call) | **Hard**, contract-tested | `tests/test_hook_gate_contract.py` on the pinned CLI: `--settings` hooks fire in `-p`, exit-2 blocks, the real gate denies a real Read, and a crashed gate still denies (`\|\| exit 2`). |
+| **Hermes** | Hard (library call) | **Unverified** (soft/observation) | Block-shape emitted belt-and-braces (both `decision` and `action` keys); no live contract test yet. Treat as observation until one exists. |
+| **OpenClaw** | Hard (library call) | **Unverified** (soft/observation) | Block-shape emitted; no live contract test yet. |
+
+Where the class is *observation* or *unverified*, the passive journaling path
+(`daisugi hook record`) remains fully supported — observation is a first-class
+mode, not a degraded one. The per-host call-time gate is the
+[gate how-to](how-to/gate.md); its non-guarantees are
+[yellow paper §8](spec/yellow-paper.md).
+
 ## Hermes (Python, direct import)
 
 Hermes is a Python skill framework. The adapter is a plain module:
