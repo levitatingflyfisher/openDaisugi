@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.39.0 — 2026-07-23 — The distillation-fidelity ruler (roadmap Stage 4 harness)
+
+Stage 4 asks the oldest question in the scorecard — does distillation actually
+pay? — and it *deliberately waits* on real tool-using transcripts and a local
+model for its numbers. This release builds the **ruler**, tested and ready, so
+the moment a local-model runner is wired in the measurement is a run, not a
+build.
+
+- **`opendaisugi.benchmark`**: seeded, content-addressed **paired runs** of each
+  task cold (no pathway) and warm (pathway available), cold/warm sharing a seed
+  so the only difference is pathway warmth. `summarize()` reports token / latency
+  deltas (warm − cold) with **t-based 95% confidence intervals** (honest for the
+  small samples Stage 4 uses — not a normal-approx that would understate them),
+  outcome rates, and the **safety-direction check**: warm runs must not attempt
+  *more* denied or violating actions than cold — a faster-but-looser pathway is
+  not a win. `meets_stage4_bar()` enforces the ≥20-tasks × ≥5-repeats bar so a
+  thin, flattering sample can't be published as settled.
+- Execution is an **injected runner** (`runner(task, *, warm, seed)`), so the
+  harness is verified offline with a deterministic fake runner and the real
+  numbers come from a local-model-backed runner (the piece still open, by the
+  stage's design). A `None` return drops that run rather than crashing. **No
+  numbers are claimed** until a real model is wired in.
+- Exported from the package surface; roadmap Stage-4 + feature-status carry the
+  "ruler built, run pending a local model" status.
+
 ## v0.38.0 — 2026-07-23 — One-command onboarding + harness/trust honesty (roadmap Stages 5–7)
 
 Closes the implementable remainder of the roadmap and resolves Stage 1's one

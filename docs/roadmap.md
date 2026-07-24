@@ -223,6 +223,17 @@ deltas published with confidence intervals in the honest scorecard, whether or
 not they flatter; and the safety direction checked too — pathway-warm runs must
 not increase denial or violation attempts relative to cold ones.
 
+**Status (v0.39.0):** the *ruler* is built and tested — `opendaisugi.benchmark`
+provides seeded, content-addressed paired runs (cold/warm share a seed), t-based
+95% confidence intervals on the token/latency deltas, outcome rates, the
+safety-direction check (warm must not attempt more denials/violations than
+cold), and `meets_stage4_bar` (≥20 tasks × ≥5 repeats) so a thin sample can't be
+published as settled. What is **still open — by the stage's own design** — is
+running it: execution is an injected runner, and the real numbers wait on a
+local-model-backed runner and real tool-using transcripts (which Stages 1–2 now
+produce). The harness is verified with a deterministic fake runner; no numbers
+are claimed until a real model is wired in.
+
 ## Stage 5 — The harness problem
 *Honesty about where enforcement is possible.*
 

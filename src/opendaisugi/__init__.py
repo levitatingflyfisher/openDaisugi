@@ -24,6 +24,14 @@ from opendaisugi.accounting import TierStats, classify_tier, tier_stats
 from opendaisugi.agentic_executor import AgenticExecutor
 from opendaisugi.aliases import Alias, AliasRegistry
 from opendaisugi.approval import ApprovalDecision, ApprovalStrategy
+from opendaisugi.benchmark import (
+    PairedResult,
+    RunMetric,
+    meets_stage4_bar,
+    run_paired_benchmark,
+    summarize,
+    tasks_hash,
+)
 from opendaisugi.budget import BudgetExceeded, BudgetReport, BudgetTracker, StepCost
 from opendaisugi.config import Config, load_config, save_config
 from opendaisugi.contracts import (
@@ -758,6 +766,13 @@ __all__ = [
     # v0.36.0: tool-using delegation inside the envelope (roadmap Stage 2)
     "AgenticStep",
     "AgenticExecutor",
+    # v0.39.0: distillation-fidelity benchmark harness (roadmap Stage 4)
+    "RunMetric",
+    "PairedResult",
+    "run_paired_benchmark",
+    "summarize",
+    "tasks_hash",
+    "meets_stage4_bar",
     # v0.33.0: verified swarm tasking
     "verify_swarm_tasking",
     "partition_and_assign",
