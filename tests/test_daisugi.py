@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import opendaisugi
 from opendaisugi import Daisugi
 from opendaisugi.exceptions import TaskTooLongError
 
@@ -13,7 +14,9 @@ def test_daisugi_default_construction():
     assert dai.model == "anthropic/claude-sonnet-4-20250514"
     assert dai.max_task_chars == 4000
     assert dai.z3_timeout_ms == 500
-    assert dai.data_dir == Path.home() / ".opendaisugi"
+    # The default resolves to DEFAULT_DATA_DIR (redirected to a tmp dir under
+    # test by the autouse isolation fixture, never the real ~/.opendaisugi).
+    assert dai.data_dir == opendaisugi.DEFAULT_DATA_DIR
 
 
 def test_daisugi_kwargs_override_defaults():

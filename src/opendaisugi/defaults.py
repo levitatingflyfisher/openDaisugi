@@ -5,6 +5,7 @@ CLI uses when ``--stakes low`` is passed without ``--low-stakes-envelope``, and
 that ``Daisugi.with_default_low_stakes()`` injects into the facade. It is
 intentionally NOT the library default for ``Daisugi()`` — callers must opt in.
 """
+
 from __future__ import annotations
 
 from opendaisugi.models import Envelope, FallbackStrategy, Permission

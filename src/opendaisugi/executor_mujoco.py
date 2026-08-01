@@ -109,9 +109,7 @@ class MuJoCoExecutor:
         elif isinstance(step, CartesianMoveStep):
             outcome = self._do_cartesian_move(step)
         else:
-            raise TypeError(
-                f"MuJoCoExecutor cannot run step of type {type(step).__name__}"
-            )
+            raise TypeError(f"MuJoCoExecutor cannot run step of type {type(step).__name__}")
         duration_ms = (time.monotonic() - start) * 1000.0
         return ExecutorResult(
             rc=outcome.rc,
@@ -173,9 +171,7 @@ class MuJoCoExecutor:
         violation = self._step_with_guards(hold_steps, where=f"gripper {step.id}")
         if violation is not None:
             return violation
-        return _RolloutOutcome(
-            stdout=f"gripper {step.action}; applied=[{', '.join(applied)}]"
-        )
+        return _RolloutOutcome(stdout=f"gripper {step.action}; applied=[{', '.join(applied)}]")
 
     def _do_cartesian_move(self, step: CartesianMoveStep) -> _RolloutOutcome:
         """Solve IK, drive hinge actuators, settle, report final ee position.
@@ -229,7 +225,7 @@ class MuJoCoExecutor:
         scratch.qpos[:] = self.data.qpos
         target = np.asarray(target_pos, dtype=float)
         jacp = np.zeros((3, self.model.nv))
-        damping2 = self.ik_damping ** 2
+        damping2 = self.ik_damping**2
 
         for _ in range(self.ik_max_iter):
             mj.mj_forward(self.model, scratch)
@@ -267,7 +263,9 @@ class MuJoCoExecutor:
         for _ in range(n_steps):
             self._mujoco.mj_step(self.model, self.data)
             if self.torque_limit is not None:
-                peak = max(abs(float(f)) for f in self.data.actuator_force) if self.model.nu else 0.0
+                peak = (
+                    max(abs(float(f)) for f in self.data.actuator_force) if self.model.nu else 0.0
+                )
                 if peak > self.torque_limit:
                     return _RolloutOutcome(
                         rc=RC_TORQUE_VIOLATION,
@@ -281,8 +279,7 @@ class MuJoCoExecutor:
                 return _RolloutOutcome(
                     rc=RC_CONTACT_VIOLATION,
                     stdout=(
-                        f"contact detected during {where} (ncon={self.data.ncon}); "
-                        f"pairs={pairs}"
+                        f"contact detected during {where} (ncon={self.data.ncon}); pairs={pairs}"
                     ),
                 )
         return None

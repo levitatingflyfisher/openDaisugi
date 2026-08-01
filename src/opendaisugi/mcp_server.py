@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
+from dataclasses import asdict
 from typing import Any
 
-from opendaisugi import Daisugi
+from opendaisugi import Daisugi, gateway_answers, gateway_recall
 from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.stage2 import verify_completed_step as _verify_completed_step
 
@@ -23,9 +25,7 @@ from opendaisugi.stage2 import verify_completed_step as _verify_completed_step
 # Without this, a hung delegated step blocks the FastMCP stdio transport
 # indefinitely — and stdio is single-threaded, so the entire agent session
 # calling our server hangs with it.
-_DEFAULT_RUN_PLAN_TIMEOUT = float(
-    os.environ.get("OPENDAISUGI_MCP_RUN_TIMEOUT", "300")
-)
+_DEFAULT_RUN_PLAN_TIMEOUT = float(os.environ.get("OPENDAISUGI_MCP_RUN_TIMEOUT", "300"))
 
 
 def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
@@ -87,6 +87,105 @@ def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
         }
 
     @mcp.tool()
+    async def recall(
+        task: str,
+        envelope: dict[str, Any],
+        z3_timeout_ms: int = 500,
+    ) -> dict[str, Any]:
+        """Recall a verified, reusable plan for ``task`` (ADR-0012 §2C).
+
+        Call this BEFORE the model. Finds a matching compiled pathway
+        (frozen served verbatim, typed bound to this task), then
+        re-verifies the candidate plan against ``envelope`` — the CALLER's
+        envelope, not the pathway's own. On a miss (no match) or a
+        verification failure, returns ``{"hit": False, ...}`` so the
+        caller falls open to the model. An unverified plan is never
+        returned as a hit.
+
+        Returns ``{"hit": bool, "reason": str | None, "plan": dict | None,
+        "provenance": dict | None}``. ``provenance`` (pathway id,
+        similarity, frozen/typed tier, source trace count, distilled_at,
+        hit_count) travels with every hit so a caller never treats a stale
+        reuse as fresh fact.
+        """
+        store = d.pathway_store
+        if store is None:
+            return {"hit": False, "reason": "no pathway store", "plan": None, "provenance": None}
+        env_obj = Envelope.model_validate(envelope)
+        result = await gateway_recall.recall(
+            task,
+            env_obj,
+            pathway_store=store,
+            model=d.model,
+            z3_timeout_ms=z3_timeout_ms,
+        )
+        return {
+            "hit": result.hit,
+            "reason": result.reason,
+            "plan": result.plan.model_dump(mode="json") if result.plan is not None else None,
+            "provenance": asdict(result.provenance) if result.provenance is not None else None,
+        }
+
+    @mcp.tool()
+    def recall_answer(
+        task: str,
+        current_ground_hash: str | None = None,
+        max_age_seconds: float = gateway_answers.DEFAULT_ANSWER_MAX_AGE_SECONDS,
+    ) -> dict[str, Any]:
+        """Recall a freshness-gated past answer for ``task`` (ADR-0012 §2D).
+
+        The plan-less sibling of ``recall`` (2C): some repeated asks produce a
+        plain text answer with no plan to verify, so this tier substitutes
+        FRESHNESS for verification. Retrieves the nearest past answer by
+        embedding and serves it only if it clears confidence, age, and
+        ground-shift gates; any gate failure (or an empty/disabled store, or
+        a missing ``[search]`` extra) is a miss, so the caller falls open to
+        the model. Never overrides ``recall`` — a repeat that has a plan
+        always goes the assured way; this tool only serves plan-less repeats.
+
+        Args:
+            task: The ask to match against past captured answers.
+            current_ground_hash: Hash of the files/context this ask depends
+                on now, if known. Only blocks a match when BOTH this and the
+                stored answer's ground_hash are known and differ.
+            max_age_seconds: Ceiling on how old a served answer may be.
+
+        Returns ``{"hit": bool, "reason": str | None, "answer": str | None,
+        "provenance": dict | None}``. ``provenance`` (similarity, age_seconds,
+        created_at, ground_hash) travels with every hit so a caller never
+        treats a freshness-served answer as proven fact.
+        """
+        store = d.answer_store
+        if store is None:
+            return {"hit": False, "reason": "no answer store", "answer": None, "provenance": None}
+        entries = store.load()
+        try:
+            result = gateway_answers.recall_answer(
+                task,
+                entries,
+                now=time.time(),
+                current_ground_hash=current_ground_hash,
+                max_age_seconds=max_age_seconds,
+            )
+        except ImportError:
+            # _lazy_embed raises when the [search] extra is missing — a direct
+            # caller of gateway_answers deserves that install hint, but this is
+            # the fail-open MCP boundary (ADR-0012 §2D): report a clean miss so
+            # the caller proceeds to the model instead of the tool call erroring.
+            return {
+                "hit": False,
+                "reason": "answer recall unavailable: install the [search] extra",
+                "answer": None,
+                "provenance": None,
+            }
+        return {
+            "hit": result.hit,
+            "reason": result.reason,
+            "answer": result.answer,
+            "provenance": asdict(result.provenance) if result.provenance is not None else None,
+        }
+
+    @mcp.tool()
     def verify_plan(plan: dict[str, Any], envelope: dict[str, Any]) -> dict[str, Any]:
         """Statically verify a plan against an envelope.
 
@@ -100,9 +199,7 @@ def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
         return result.model_dump(mode="json")
 
     @mcp.tool()
-    def verify_completed_step(
-        step: dict[str, Any], envelope: dict[str, Any]
-    ) -> dict[str, Any]:
+    def verify_completed_step(step: dict[str, Any], envelope: dict[str, Any]) -> dict[str, Any]:
         """Stage 2: verify a post-execution step against envelope postconditions.
 
         Call immediately after the step runs and before its effect
@@ -213,9 +310,7 @@ def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
         # construction (confused deputy). Use the real approval gate (allowlist /
         # DAISUGI_APPROVE) for live runs — the operator opts into live execution,
         # not a possibly-injected MCP client. Dry-run touches nothing → auto-ok.
-        approval = (
-            CallbackStrategy(lambda step, env: True) if dry_run else default_strategy()
-        )
+        approval = CallbackStrategy(lambda step, env: True) if dry_run else default_strategy()
         sup = Supervisor(
             journal=d.journal,
             approval=approval,
@@ -241,13 +336,15 @@ def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
         receipts = []
         if d.journal is not None:
             for r in d.journal.receipts_for_run(session.id):
-                receipts.append({
-                    "step_id": r.step_id,
-                    "timestamp": r.timestamp,
-                    "evidence_hash": r.evidence_hash,
-                    "verify_result": r.verify_result,
-                    "model_id": r.model_id,
-                })
+                receipts.append(
+                    {
+                        "step_id": r.step_id,
+                        "timestamp": r.timestamp,
+                        "evidence_hash": r.evidence_hash,
+                        "verify_result": r.verify_result,
+                        "model_id": r.model_id,
+                    }
+                )
         return {
             "run_id": session.id,
             "status": session.status.value,

@@ -21,7 +21,8 @@ from opendaisugi.verify import verify
 
 def _env(allowlist):
     return Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=allowlist),
     )
 
@@ -50,7 +51,8 @@ def test_verify_emits_pass_record(caplog):
 
 def test_verify_emits_fail_record_with_stages(caplog):
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=False, shell_allowlist=[]),
     )
     plan = _plan(ShellStep(id="s1", command="echo hi"))
@@ -58,8 +60,7 @@ def test_verify_emits_fail_record_with_stages(caplog):
         result = verify(plan, env)
     assert not result.ok
     fail_records = [
-        r for r in caplog.records
-        if r.name == "opendaisugi.verify" and r.message == "verify.fail"
+        r for r in caplog.records if r.name == "opendaisugi.verify" and r.message == "verify.fail"
     ]
     assert len(fail_records) == 1
     assert fail_records[0].violation_count >= 1
@@ -88,7 +89,8 @@ async def test_supervisor_emits_run_lifecycle(tmp_path, caplog):
 @pytest.mark.asyncio
 async def test_supervisor_logs_verify_rejection(tmp_path, caplog):
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=False, shell_allowlist=[]),
     )
     plan = _plan(ShellStep(id="s1", command="echo hi"))
@@ -100,7 +102,8 @@ async def test_supervisor_logs_verify_rejection(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="opendaisugi.supervisor"):
         await sup.run(plan, env)
     records = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.name == "opendaisugi.supervisor" and r.message == "run.rejected_by_verify"
     ]
     assert len(records) == 1
@@ -119,7 +122,8 @@ async def test_supervisor_logs_approval_denial(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="opendaisugi.supervisor"):
         await sup.run(plan, env)
     records = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.name == "opendaisugi.supervisor" and r.message == "run.approval_denied"
     ]
     assert len(records) == 1
@@ -131,7 +135,9 @@ def test_contracts_logger_emits_on_delegation(caplog):
 
     env = _env(["echo"])
     contract = Contract(
-        contract_id="c1", skill_id="s1", version="0.1.0",
+        contract_id="c1",
+        skill_id="s1",
+        version="0.1.0",
         envelope=env,
     )
     with caplog.at_level(logging.INFO, logger="opendaisugi.contracts"):

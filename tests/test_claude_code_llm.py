@@ -201,15 +201,17 @@ async def test_instructor_shim_without_response_model_returns_text():
 
 # --------------------- arg-injection + stdin guards (SGCM review) ---------------------
 
+
 def test_sync_model_and_prompt_cannot_inject_flags(monkeypatch):
     import subprocess as _sp
 
     from opendaisugi.claude_code_llm import call_claude_p_sync
+
     captured = {}
 
     def fake_run(args, **kwargs):
         captured["args"] = args
-        captured["stdin"] = kwargs.get("stdin")
+        captured["input"] = kwargs.get("input")
         return _sp.CompletedProcess(args, 0, stdout="ok", stderr="")
 
     monkeypatch.setattr("subprocess.run", fake_run)
@@ -219,39 +221,51 @@ def test_sync_model_and_prompt_cannot_inject_flags(monkeypatch):
     # model bound with '=' form (value can't be reparsed as a flag)
     assert "--model=--output-format" in args
     assert "--output-format" not in args  # never a bare token
-    # prompt placed after a '--' separator (parser treats it as positional, not a flag)
-    assert "--" in args
-    assert args.index("--") < args.index("--dangerously-skip-permissions")
-    # stdin closed so claude -p doesn't block waiting for piped input
-    assert captured["stdin"] is _sp.DEVNULL
+    # prompt rides stdin — never an argv element, so it can't be reparsed as a flag
+    assert captured["input"] == "--dangerously-skip-permissions"
+    assert "--dangerously-skip-permissions" not in args
 
 
-def test_sync_prompt_after_separator(monkeypatch):
+def test_sync_prompt_rides_stdin(monkeypatch):
     import subprocess as _sp
 
     from opendaisugi.claude_code_llm import call_claude_p_sync
+
     captured = {}
-    monkeypatch.setattr("subprocess.run",
-                        lambda args, **k: captured.update(args=args) or _sp.CompletedProcess(args, 0, stdout="x", stderr=""))
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda args, **k: (
+            captured.update(args=args, input=k.get("input"))
+            or _sp.CompletedProcess(args, 0, stdout="x", stderr="")
+        ),
+    )
     call_claude_p_sync("hello", model=None, timeout_s=1)
     args = captured["args"]
-    assert args[-2:] == ["--", "hello"]  # prompt is the final positional
+    assert captured["input"] == "hello"  # prompt is fed on stdin
+    assert "hello" not in args and "--" not in args  # never an argv positional
 
 
 # --------------------- metered accounting (SGCM review) ---------------------
+
 
 def test_metered_counts_all_token_kinds_including_cache(monkeypatch):
     import json as _json
 
     from opendaisugi.claude_code_llm import call_claude_p_metered
+
     envelope = {
         "result": "the answer",
         "total_cost_usd": 0.0126,
-        "usage": {"input_tokens": 10, "output_tokens": 166,
-                  "cache_creation_input_tokens": 4800, "cache_read_input_tokens": 22011},
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 166,
+            "cache_creation_input_tokens": 4800,
+            "cache_read_input_tokens": 22011,
+        },
     }
-    monkeypatch.setattr("opendaisugi.claude_code_llm.call_claude_p_sync",
-                        lambda *a, **k: _json.dumps(envelope))
+    monkeypatch.setattr(
+        "opendaisugi.claude_code_llm.call_claude_p_sync", lambda *a, **k: _json.dumps(envelope)
+    )
     text, meter = call_claude_p_metered("x", timeout_s=1)
     assert text == "the answer"
     assert meter["tokens"] == 10 + 166 + 4800 + 22011  # NOT just 176
@@ -263,26 +277,31 @@ def test_metered_raises_on_is_error(monkeypatch):
 
     from opendaisugi.claude_code_llm import call_claude_p_metered
     from opendaisugi.exceptions import EnvelopeGenerationError
+
     envelope = {"result": "hit max turns", "is_error": True, "usage": {}}
-    monkeypatch.setattr("opendaisugi.claude_code_llm.call_claude_p_sync",
-                        lambda *a, **k: _json.dumps(envelope))
+    monkeypatch.setattr(
+        "opendaisugi.claude_code_llm.call_claude_p_sync", lambda *a, **k: _json.dumps(envelope)
+    )
     with pytest.raises(EnvelopeGenerationError):
         call_claude_p_metered("x", timeout_s=1)
 
 
 # --------------------- metered JSON path (honest prose diagnostics) ---------------------
 
+
 def test_json_metered_returns_body_and_meter(monkeypatch):
     import json as _json
 
     from opendaisugi.claude_code_llm import call_claude_p_json_metered
+
     envelope = {
         "result": 'preamble {"first_line": "# hi"} trailing',
         "total_cost_usd": 0.003,
         "usage": {"input_tokens": 5, "output_tokens": 7},
     }
-    monkeypatch.setattr("opendaisugi.claude_code_llm.call_claude_p_sync",
-                        lambda *a, **k: _json.dumps(envelope))
+    monkeypatch.setattr(
+        "opendaisugi.claude_code_llm.call_claude_p_sync", lambda *a, **k: _json.dumps(envelope)
+    )
     body, meter = call_claude_p_json_metered("x", timeout_s=1)
     assert body == {"first_line": "# hi"}
     assert meter["tokens"] == 12
@@ -296,13 +315,15 @@ def test_json_metered_prose_reply_names_the_real_cause(monkeypatch):
     import json as _json
 
     from opendaisugi.claude_code_llm import call_claude_p_json_metered
+
     envelope = {
         "result": "The README.md file does not exist in the current directory.",
         "total_cost_usd": 0.002,
         "usage": {"input_tokens": 5, "output_tokens": 9},
     }
-    monkeypatch.setattr("opendaisugi.claude_code_llm.call_claude_p_sync",
-                        lambda *a, **k: _json.dumps(envelope))
+    monkeypatch.setattr(
+        "opendaisugi.claude_code_llm.call_claude_p_sync", lambda *a, **k: _json.dumps(envelope)
+    )
     with pytest.raises(EnvelopeGenerationError) as excinfo:
         call_claude_p_json_metered("read a file", timeout_s=1)
     msg = str(excinfo.value)
@@ -315,40 +336,45 @@ def test_json_metered_propagates_is_error(monkeypatch):
     import json as _json
 
     from opendaisugi.claude_code_llm import call_claude_p_json_metered
+
     envelope = {"result": "hit max turns", "is_error": True, "usage": {}}
-    monkeypatch.setattr("opendaisugi.claude_code_llm.call_claude_p_sync",
-                        lambda *a, **k: _json.dumps(envelope))
+    monkeypatch.setattr(
+        "opendaisugi.claude_code_llm.call_claude_p_sync", lambda *a, **k: _json.dumps(envelope)
+    )
     with pytest.raises(EnvelopeGenerationError, match="is_error"):
         call_claude_p_json_metered("x", timeout_s=1)
 
 
 # --------------------- DAISUGI_CLAUDE_ARGS passthrough (issue: --dangerously-skip-permissions) ---
 
+
 def test_build_args_merges_configured_claude_args(monkeypatch):
     from opendaisugi.claude_code_llm import _build_claude_args
+
     monkeypatch.setenv("DAISUGI_CLAUDE_ARGS", "--dangerously-skip-permissions")
-    args = _build_claude_args("claude", "do the thing", "haiku", ())
+    args = _build_claude_args("claude", "haiku", ())
     assert "--dangerously-skip-permissions" in args
-    # still injection-safe: model bound with =, prompt after the -- separator
+    # injection-safe: model bound with =, and the prompt is no longer an argv
+    # element at all (it rides stdin), so there's no positional to protect.
     assert "--model=haiku" in args
-    sep = args.index("--")
-    assert args[sep + 1] == "do the thing"
-    assert args.index("--dangerously-skip-permissions") < sep  # a real flag, before --
+    assert "--" not in args  # no end-of-options separator needed without a positional
 
 
 def test_build_args_shlex_splits_quoted_allowed_tools(monkeypatch):
     from opendaisugi.claude_code_llm import _build_claude_args
+
     monkeypatch.setenv("DAISUGI_CLAUDE_ARGS", '--allowedTools "Bash(ls:*) Read"')
-    args = _build_claude_args("claude", "q", None, ())
+    args = _build_claude_args("claude", None, ())
     assert "--allowedTools" in args
     assert "Bash(ls:*) Read" in args  # the quoted value stays one token
 
 
 def test_build_args_no_env_is_noop(monkeypatch):
     from opendaisugi.claude_code_llm import _build_claude_args
+
     monkeypatch.delenv("DAISUGI_CLAUDE_ARGS", raising=False)
-    args = _build_claude_args("claude", "q", "haiku", ("--output-format", "json"))
-    assert args == ["claude", "-p", "--model=haiku", "--output-format", "json", "--", "q"]
+    args = _build_claude_args("claude", "haiku", ("--output-format", "json"))
+    assert args == ["claude", "-p", "--model=haiku", "--output-format", "json"]
 
 
 async def test_tier1_uses_safe_builder_and_configured_args(monkeypatch):
@@ -363,10 +389,15 @@ async def test_tier1_uses_safe_builder_and_configured_args(monkeypatch):
 
     class _Proc:
         returncode = 0
-        async def communicate(self): return (b"{}", b"")
+
+        async def communicate(self, input=None):
+            captured["input"] = input
+            return (b"{}", b"")
+
         def terminate(self): ...
         def kill(self): ...
-        async def wait(self): return 0
+        async def wait(self):
+            return 0
 
     async def fake_exec(*args, **kwargs):
         captured["args"] = list(args)
@@ -376,5 +407,37 @@ async def test_tier1_uses_safe_builder_and_configured_args(monkeypatch):
         await ClaudeCodeTier1Provider(model_flag="haiku").generate_envelope("t")
     a = captured["args"]
     assert "--dangerously-skip-permissions" in a
-    assert "--model=haiku" in a           # = form, not the old ["--model","haiku"]
-    assert a[-2] == "--" and a[-1]         # prompt after the separator
+    assert "--model=haiku" in a  # = form, not the old ["--model","haiku"]
+    assert "--" not in a  # prompt is no longer a positional
+    assert captured["input"]  # the prompt rode stdin instead
+
+
+# --------------------- E2BIG: a huge prompt must go via stdin, not argv ---------
+# Regression: onboarding a large episode passed the whole prompt as an argv
+# element; Linux MAX_ARG_STRLEN (~128KB per arg) made execve fail with
+# [Errno 7] Argument list too long. The prompt must ride on stdin instead.
+
+# ~300KB — comfortably past MAX_ARG_STRLEN (131072) so the old argv form E2BIGs.
+_HUGE_PROMPT = "x" * 300_000
+
+
+def _echo_stdin_stub(tmp_path):
+    """A fake `claude` binary that ignores its args and echoes stdin verbatim."""
+    stub = tmp_path / "fakeclaude"
+    stub.write_text("#!/bin/sh\ncat\n")
+    stub.chmod(0o755)
+    return str(stub)
+
+
+def test_sync_huge_prompt_rides_stdin_not_argv(tmp_path):
+    out = call_claude_p_sync(
+        _HUGE_PROMPT, binary=_echo_stdin_stub(tmp_path), model=None, timeout_s=15
+    )
+    assert out == _HUGE_PROMPT  # round-tripped through stdin; no E2BIG
+
+
+async def test_async_huge_prompt_rides_stdin_not_argv(tmp_path):
+    out = await call_claude_p_async(
+        _HUGE_PROMPT, binary=_echo_stdin_stub(tmp_path), model=None, timeout_s=15
+    )
+    assert out == _HUGE_PROMPT

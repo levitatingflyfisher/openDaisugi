@@ -28,37 +28,41 @@ FIXTURE = Path(__file__).parent / "fixtures" / "mjcf" / "two_joint_arm.xml"
 
 
 def test_pick_and_place_sequence_executes_cleanly():
-    plan = ActionPlan(source="test", task="pick and place a block", steps=[
-        SimulationResetStep(id="reset"),
-        JointMoveStep(
-            id="home",
-            joint_targets={"j1": 0.0, "j2": 0.0},
-            duration_s=0.5,
-            depends_on=["reset"],
-        ),
-        CartesianMoveStep(
-            id="approach",
-            target_position=(0.35, 0.20, 0.0),
-            depends_on=["home"],
-        ),
-        GripperStep(id="grasp", action="close", hold_s=0.3, depends_on=["approach"]),
-        CartesianMoveStep(
-            id="lift",
-            target_position=(0.35, 0.15, 0.0),
-            depends_on=["grasp"],
-        ),
-        CartesianMoveStep(
-            id="transport",
-            target_position=(0.20, 0.35, 0.0),
-            depends_on=["lift"],
-        ),
-        GripperStep(id="release", action="open", hold_s=0.3, depends_on=["transport"]),
-        CartesianMoveStep(
-            id="retreat",
-            target_position=(0.30, 0.30, 0.0),
-            depends_on=["release"],
-        ),
-    ])
+    plan = ActionPlan(
+        source="test",
+        task="pick and place a block",
+        steps=[
+            SimulationResetStep(id="reset"),
+            JointMoveStep(
+                id="home",
+                joint_targets={"j1": 0.0, "j2": 0.0},
+                duration_s=0.5,
+                depends_on=["reset"],
+            ),
+            CartesianMoveStep(
+                id="approach",
+                target_position=(0.35, 0.20, 0.0),
+                depends_on=["home"],
+            ),
+            GripperStep(id="grasp", action="close", hold_s=0.3, depends_on=["approach"]),
+            CartesianMoveStep(
+                id="lift",
+                target_position=(0.35, 0.15, 0.0),
+                depends_on=["grasp"],
+            ),
+            CartesianMoveStep(
+                id="transport",
+                target_position=(0.20, 0.35, 0.0),
+                depends_on=["lift"],
+            ),
+            GripperStep(id="release", action="open", hold_s=0.3, depends_on=["transport"]),
+            CartesianMoveStep(
+                id="retreat",
+                target_position=(0.30, 0.30, 0.0),
+                depends_on=["release"],
+            ),
+        ],
+    )
     ex = MuJoCoExecutor(str(FIXTURE))
     for step in plan.steps:
         result = ex.run(step, timeout_s=5, max_output_bytes=4096)

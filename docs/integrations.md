@@ -20,6 +20,7 @@ committed at the level of documentation. Three classes:
 | Harness | Plan-time verify | Call-time gate | Basis |
 |---|---|---|---|
 | **Claude Code** | Hard (library call) | **Hard**, contract-tested | `tests/test_hook_gate_contract.py` on the pinned CLI: `--settings` hooks fire in `-p`, exit-2 blocks, the real gate denies a real Read, and a crashed gate still denies (`\|\| exit 2`). |
+| **Codex** | Hard (library call) | **Soft** (deny works; the host fails open) | `hooks.json` PreToolUse (v0.114+, experimental): same stdin shape and exit-2 deny as Claude Code, installed by `daisugi install --gate --runtime codex`. Codex documents hooks as fail-open — a crashed or timed-out hook lets the call run — so this can never be classed Hard, and no live contract test exists yet. |
 | **Hermes** | Hard (library call) | **Unverified** (soft/observation) | Block-shape emitted belt-and-braces (both `decision` and `action` keys); no live contract test yet. Treat as observation until one exists. |
 | **OpenClaw** | Hard (library call) | **Unverified** (soft/observation) | Block-shape emitted; no live contract test yet. |
 

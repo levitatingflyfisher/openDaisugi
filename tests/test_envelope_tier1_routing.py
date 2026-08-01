@@ -11,7 +11,9 @@ from opendaisugi.envelope_cache import EnvelopeCache, make_cache_key
 from opendaisugi.models import Envelope, Permission, Postcondition
 
 
-def _mk_envelope(*, task: str, generated_by: str = "anthropic/claude-sonnet-4-20250514") -> Envelope:
+def _mk_envelope(
+    *, task: str, generated_by: str = "anthropic/claude-sonnet-4-20250514"
+) -> Envelope:
     return Envelope(
         generated_by=generated_by,
         task=task,
@@ -23,6 +25,7 @@ def _mk_envelope(*, task: str, generated_by: str = "anthropic/claude-sonnet-4-20
 
 class _StaticTier1:
     """Tier-1 provider that returns a fixed envelope."""
+
     def __init__(self, name: str, env: Envelope | None) -> None:
         self.name = name
         self._env = env
@@ -37,6 +40,7 @@ class _StaticTier1:
 
 class _BoomTier1:
     """Tier-1 provider that raises. Must be treated as a decline."""
+
     name = "boom"
 
     async def generate_envelope(self, task, *, context=None):
@@ -104,8 +108,10 @@ async def test_tier1_inconsistent_envelope_falls_through(tmp_path) -> None:
         generated_by="tier1-source",
         task="t",
         permissions=Permission(
-            file_read=[], file_write=[],
-            network=False, shell=False,
+            file_read=[],
+            file_write=[],
+            network=False,
+            shell=False,
             shell_allowlist=["grep"],
         ),
         invariants=[],
@@ -152,12 +158,18 @@ async def test_tier1_cache_hit_reused(tmp_path) -> None:
 def test_make_cache_key_backward_compat() -> None:
     """Omitting tier1_provider_name must produce the pre-v0.4 key (byte-for-byte)."""
     k1 = make_cache_key(
-        task="t", context=None, model="m",
-        parent_envelope_id=None, summarize=False,
+        task="t",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
     )
     k2 = make_cache_key(
-        task="t", context=None, model="m",
-        parent_envelope_id=None, summarize=False,
+        task="t",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
         tier1_provider_name=None,
     )
     assert k1 == k2
@@ -166,13 +178,19 @@ def test_make_cache_key_backward_compat() -> None:
 def test_make_cache_key_tier1_name_matters() -> None:
     """Different tier1 names must produce different keys."""
     k_a = make_cache_key(
-        task="t", context=None, model="m",
-        parent_envelope_id=None, summarize=False,
+        task="t",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
         tier1_provider_name="alpha",
     )
     k_b = make_cache_key(
-        task="t", context=None, model="m",
-        parent_envelope_id=None, summarize=False,
+        task="t",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
         tier1_provider_name="beta",
     )
     assert k_a != k_b

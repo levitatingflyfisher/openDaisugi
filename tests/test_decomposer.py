@@ -73,16 +73,18 @@ async def test_rejects_missing_required_field():
 
 async def test_envelope_gate_passes_in_policy_plan():
     result = _dp(DecomposedStep(id="s1", type="shell", command="ls"))
-    env = Envelope(generated_by="t", task="x",
-                   permissions=Permission(shell=True, shell_allowlist=["ls"]))
+    env = Envelope(
+        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["ls"])
+    )
     plan = await decompose("x", client=_FakeClient(result), envelope=env)
     assert plan.steps[0].command == "ls"
 
 
 async def test_envelope_gate_rejects_out_of_policy_plan():
     result = _dp(DecomposedStep(id="s1", type="shell", command="rm -rf /"))
-    env = Envelope(generated_by="t", task="x",
-                   permissions=Permission(shell=True, shell_allowlist=["ls"]))
+    env = Envelope(
+        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["ls"])
+    )
     with pytest.raises(DecompositionError) as ei:
         await decompose("x", client=_FakeClient(result), envelope=env)
     assert "verify" in str(ei.value).lower() or "policy" in str(ei.value).lower()
@@ -90,6 +92,7 @@ async def test_envelope_gate_rejects_out_of_policy_plan():
 
 class _CapturingClient:
     """Captures the messages sent to the decomposer and returns a canned plan."""
+
     def __init__(self, result):
         self.result = result
         self.messages = None
@@ -113,8 +116,12 @@ async def test_empty_inventory_instructs_task_only():
 
 async def test_inventory_lists_available_skills_and_tools():
     client = _CapturingClient(_dp(DecomposedStep(id="t1", type="task", prompt="x")))
-    await decompose("do a thing", client=client,
-                    available_skills=["tidy-inbox"], available_mcp_tools=["github/create_issue"])
+    await decompose(
+        "do a thing",
+        client=client,
+        available_skills=["tidy-inbox"],
+        available_mcp_tools=["github/create_issue"],
+    )
     user_msg = client.messages[-1]["content"]
     assert "tidy-inbox" in user_msg
     assert "github/create_issue" in user_msg

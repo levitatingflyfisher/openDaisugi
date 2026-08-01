@@ -46,8 +46,8 @@ def test_ignores_non_jsonl_and_empty_files(tmp_path):
     root = tmp_path / "t"
     root.mkdir()
     (root / "real.jsonl").write_text('{"type":"user"}\n')
-    (root / "notes.md").write_text("hello")          # wrong extension
-    (root / "empty.jsonl").write_text("")            # empty
+    (root / "notes.md").write_text("hello")  # wrong extension
+    (root / "empty.jsonl").write_text("")  # empty
 
     found = discover_transcripts(roots={"h": root})
     names = {f.path.name for f in found}
@@ -57,6 +57,21 @@ def test_ignores_non_jsonl_and_empty_files(tmp_path):
 def test_missing_root_returns_empty(tmp_path):
     found = discover_transcripts(roots={"h": tmp_path / "does-not-exist"})
     assert found == []
+
+
+def test_skips_journal_files(tmp_path):
+    """``journal.jsonl`` is openDaisugi's own output (and Claude Code Workflow
+    run-journals share the name) — not a conversation transcript. Discovering it
+    would feed the journal back into ingest as a feedback loop.
+    """
+    root = tmp_path / "t"
+    wf = root / "subagents" / "workflows" / "wf_1"
+    wf.mkdir(parents=True)
+    (root / "session-real.jsonl").write_text('{"type":"user"}\n')
+    (wf / "journal.jsonl").write_text('{"trace_id":"import-x","task":"y"}\n')
+
+    found = discover_transcripts(roots={"claude-code": root})
+    assert {f.path.name for f in found} == {"session-real.jsonl"}
 
 
 def test_results_are_newest_first(tmp_path):

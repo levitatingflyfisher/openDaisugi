@@ -119,9 +119,7 @@ def _shell_head_in_allowlist(cmd_var: z3.ExprRef, allowlist: list[str]) -> z3.Bo
     return z3.Or(*pieces)
 
 
-def _encode_shell_admission(
-    perms: Permission, cmd_var: z3.ExprRef
-) -> z3.BoolRef:
+def _encode_shell_admission(perms: Permission, cmd_var: z3.ExprRef) -> z3.BoolRef:
     """Step is an admissible ShellStep under ``perms``."""
     if not perms.shell:
         return z3.BoolVal(False)
@@ -160,15 +158,18 @@ def _patterns_subsume(
     # fail-open. Refuse to rely on it: if any outer pattern isn't soundly
     # encodable, we can't prove containment → fail closed.
     if any(_glob_unsupported(g) for g in outer_patterns):
-        return (f"{label}: outer declares a glob shape that cannot be soundly "
-                f"encoded ({[g for g in outer_patterns if _glob_unsupported(g)]}); "
-                f"cannot prove subsumption → denied")
+        return (
+            f"{label}: outer declares a glob shape that cannot be soundly "
+            f"encoded ({[g for g in outer_patterns if _glob_unsupported(g)]}); "
+            f"cannot prove subsumption → denied"
+        )
     solver = z3.Solver()
     solver.set("timeout", timeout_ms)
     v = z3.String("v")
     inner_ok = z3.Or(*[_glob_to_z3(v, g) for g in inner_patterns])
-    outer_ok = (z3.Or(*[_glob_to_z3(v, g) for g in outer_patterns])
-                if outer_patterns else z3.BoolVal(False))
+    outer_ok = (
+        z3.Or(*[_glob_to_z3(v, g) for g in outer_patterns]) if outer_patterns else z3.BoolVal(False)
+    )
     solver.add(inner_ok, z3.Not(outer_ok))
     result = solver.check()
     if result == z3.sat:
@@ -202,8 +203,7 @@ def _network_scope_violation(outer: Permission, inner: Permission) -> str | None
         return None  # outer admits any host → any inner scope is within it
     # outer is restricted to a host set
     if not inner.network_hosts:
-        return ("network: inner admits any host but outer restricts to "
-                f"{outer.network_hosts}")
+        return f"network: inner admits any host but outer restricts to {outer.network_hosts}"
     outer_set = {h.lower() for h in outer.network_hosts}
     extra = [h for h in inner.network_hosts if h.lower() not in outer_set]
     if extra:
@@ -221,6 +221,11 @@ def _permission_scope_violation(
     the outer was silently 'subsumed' — the core delegation-safety hole. This
     proves each of those axes is contained too.
     """
+    # ADR-0010's opt-in widens what a given allowlist admits (`a && b` rather
+    # than `a` alone), so it is a capability the inner cannot grant itself. The
+    # Z3 admission formula reasons over one simple command and cannot see it.
+    if inner.shell_allow_decomposition and not outer.shell_allow_decomposition:
+        return "shell_allow_decomposition: inner admits compound shell but outer does not"
     for label, inner_p, outer_p in (
         ("file_read", inner.file_read, outer.file_read),
         ("file_write", inner.file_write, outer.file_write),
@@ -336,13 +341,17 @@ def _robot_capability_violation(outer: Permission, inner: Permission) -> str | N
     # workspace_bounds: ((min_x,min_y,min_z),(max_x,max_y,max_z)).
     if outer.workspace_bounds is not None:
         if inner.workspace_bounds is None:
-            return ("inner declares no workspace_bounds but outer constrains the "
-                    "workspace (undeclared = unbounded → denied)")
+            return (
+                "inner declares no workspace_bounds but outer constrains the "
+                "workspace (undeclared = unbounded → denied)"
+            )
         (o_min, o_max) = outer.workspace_bounds
         (i_min, i_max) = inner.workspace_bounds
         if any(i_min[k] < o_min[k] or i_max[k] > o_max[k] for k in range(3)):
-            return (f"inner workspace_bounds {inner.workspace_bounds} exceed outer "
-                    f"{outer.workspace_bounds}")
+            return (
+                f"inner workspace_bounds {inner.workspace_bounds} exceed outer "
+                f"{outer.workspace_bounds}"
+            )
 
     for axis in ("velocity_limit", "torque_limit"):
         o_lim = getattr(outer, axis)
@@ -365,8 +374,10 @@ def _robot_capability_violation(outer: Permission, inner: Permission) -> str | N
 
     missing = _freeze(outer.obstacles) - _freeze(inner.obstacles)
     if missing:
-        return (f"inner omits {len(missing)} obstacle region(s) the outer forbids "
-                f"(undeclared forbidden region → denied)")
+        return (
+            f"inner omits {len(missing)} obstacle region(s) the outer forbids "
+            f"(undeclared forbidden region → denied)"
+        )
 
     return None
 
@@ -532,7 +543,9 @@ def envelope_subsumes(
             holds=False,
             counterexample=None,
             unverified_invariants=sorted(
-                set(inner_opaque) | set(outer_opaque) | set(outer_strict_blocking)
+                set(inner_opaque)
+                | set(outer_opaque)
+                | set(outer_strict_blocking)
                 | {f"soft:{n}" for n in outer_soft_unique_names}
             ),
             reasons=[
@@ -557,8 +570,7 @@ def envelope_subsumes(
     interpreter_surface: set[str] = set()
     if policy != "allow":
         interpreter_surface = {
-            f"shell_interpreter:{name}"
-            for name in inner_interpreters + outer_interpreters
+            f"shell_interpreter:{name}" for name in inner_interpreters + outer_interpreters
         }
     # outer_strict_blocking holds outer opaque non-recognized invariants under
     # strict mode. Unlike inner_strict_blocking (which hard-fails delegation),
@@ -574,9 +586,7 @@ def envelope_subsumes(
     )
 
     if result == z3.unknown:
-        raise VerificationTimeout(
-            f"Z3 subsumption check exceeded {timeout_ms}ms"
-        )
+        raise VerificationTimeout(f"Z3 subsumption check exceeded {timeout_ms}ms")
     if result == z3.unsat:
         return SubsumptionResult(
             holds=True,
@@ -590,12 +600,16 @@ def envelope_subsumes(
     # programming errors (malformed substitutions, etc.) surface to the
     # auditor as tracebacks rather than being swallowed as "unknown".
     try:
-        outer_shell_val = z3.simplify(z3.substitute(outer_shell, *[
-            (v, model[v]) for v in shared_vars.values() if model[v] is not None
-        ]))
-        outer_inv_val = z3.simplify(z3.substitute(outer_inv, *[
-            (v, model[v]) for v in shared_vars.values() if model[v] is not None
-        ]))
+        outer_shell_val = z3.simplify(
+            z3.substitute(
+                outer_shell, *[(v, model[v]) for v in shared_vars.values() if model[v] is not None]
+            )
+        )
+        outer_inv_val = z3.simplify(
+            z3.substitute(
+                outer_inv, *[(v, model[v]) for v in shared_vars.values() if model[v] is not None]
+            )
+        )
     except z3.Z3Exception:
         outer_shell_val = z3.BoolVal(False)
         outer_inv_val = z3.BoolVal(False)

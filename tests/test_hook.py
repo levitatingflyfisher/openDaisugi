@@ -1,4 +1,5 @@
 """Tests for the passive hook module (v0.21)."""
+
 from __future__ import annotations
 
 import json
@@ -34,21 +35,27 @@ def test_record_call_writes_jsonl(tmp_path: Path):
 
 def test_record_call_unknown_tool_returns_none(tmp_path: Path):
     """Unknown tool names produce no record; caller emits continue:true regardless."""
-    p = record_call({
-        "session_id": "sess1",
-        "tool_name": "MysteryTool",
-        "tool_input": {},
-    }, root=tmp_path)
+    p = record_call(
+        {
+            "session_id": "sess1",
+            "tool_name": "MysteryTool",
+            "tool_input": {},
+        },
+        root=tmp_path,
+    )
     assert p is None
 
 
 def test_record_call_handles_hermes_shape(tmp_path: Path):
     """Hermes shell-hooks emit ``{tool, args, session_id}`` — also accepted."""
-    p = record_call({
-        "session_id": "sess1",
-        "tool": "shell",
-        "args": {"command": "ls"},
-    }, root=tmp_path)
+    p = record_call(
+        {
+            "session_id": "sess1",
+            "tool": "shell",
+            "args": {"command": "ls"},
+        },
+        root=tmp_path,
+    )
     assert p is not None
     rec = json.loads(p.read_text().strip())
     assert rec["step_type"] == "shell"
@@ -57,20 +64,29 @@ def test_record_call_handles_hermes_shape(tmp_path: Path):
 
 def test_record_call_strips_file_write_content(tmp_path: Path):
     """v0.21 captures store content_len, not content — captures are not exfil."""
-    p = record_call({
-        "session_id": "sess1",
-        "tool_name": "Write",
-        "tool_input": {"file_path": "/tmp/x.txt", "content": "secret data" * 100},
-    }, root=tmp_path)
+    p = record_call(
+        {
+            "session_id": "sess1",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "/tmp/x.txt", "content": "secret data" * 100},
+        },
+        root=tmp_path,
+    )
     rec = json.loads(p.read_text().strip())
     assert "content" not in rec
     assert rec["content_len"] == len("secret data") * 100
 
 
 def test_list_sessions_returns_summaries(tmp_path: Path):
-    record_call({"session_id": "a", "tool_name": "Bash", "tool_input": {"command": "ls"}}, root=tmp_path)
-    record_call({"session_id": "a", "tool_name": "Read", "tool_input": {"file_path": "f"}}, root=tmp_path)
-    record_call({"session_id": "b", "tool_name": "Bash", "tool_input": {"command": "pwd"}}, root=tmp_path)
+    record_call(
+        {"session_id": "a", "tool_name": "Bash", "tool_input": {"command": "ls"}}, root=tmp_path
+    )
+    record_call(
+        {"session_id": "a", "tool_name": "Read", "tool_input": {"file_path": "f"}}, root=tmp_path
+    )
+    record_call(
+        {"session_id": "b", "tool_name": "Bash", "tool_input": {"command": "pwd"}}, root=tmp_path
+    )
     sessions = list_sessions(root=tmp_path)
     by_id = {s["session_id"]: s for s in sessions}
     assert by_id["a"]["calls"] == 2
@@ -118,11 +134,19 @@ def test_infer_envelope_admits_observed_mcp_calls():
 def test_captures_to_trace_roundtrip(tmp_path: Path):
     """Capture → infer envelope → build plan → verify → journal.log."""
     # Capture a small session
-    record_call({"session_id": "demo", "tool_name": "Bash", "tool_input": {"command": "git status"}}, root=tmp_path)
-    record_call({"session_id": "demo", "tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}}, root=tmp_path)
+    record_call(
+        {"session_id": "demo", "tool_name": "Bash", "tool_input": {"command": "git status"}},
+        root=tmp_path,
+    )
+    record_call(
+        {"session_id": "demo", "tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}},
+        root=tmp_path,
+    )
     journal = Journal(data_dir=tmp_path / "j")
     trace_id = captures_to_trace(
-        tmp_path / "demo.jsonl", journal, task="capture demo",
+        tmp_path / "demo.jsonl",
+        journal,
+        task="capture demo",
     )
     assert trace_id
     rows = journal.list_recent(limit=5)

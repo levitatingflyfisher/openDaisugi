@@ -12,9 +12,13 @@ from opendaisugi.predicate_z3 import evaluate_predicate
 
 
 def _plan():
-    return ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo", metadata={"body": "Hi editor, thanks!"}),
-    ])
+    return ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo", metadata={"body": "Hi editor, thanks!"}),
+        ],
+    )
 
 
 def test_llm_check_passes_when_model_says_satisfied():

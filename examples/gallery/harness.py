@@ -5,15 +5,17 @@ trajectory that is gated by a REAL opendaisugi.verify / swarm check, and returns
 color-coded, captioned frames. `make_gallery.py` renders each to a GIF and tiles the
 best into a grid. Headless CPU rendering (MUJOCO_GL=egl, mesa/llvmpipe).
 """
+
 # ruff: noqa: I001  — MUJOCO_GL must be set before `import mujoco`.
 import os
+
 os.environ.setdefault("MUJOCO_GL", "egl")
 
 import mujoco
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-W, H = 340, 240                      # per-tile render size
+W, H = 340, 240  # per-tile render size
 GREEN = (0.32, 0.85, 0.46)
 AMBER = (1.0, 0.72, 0.20)
 RED = (1.0, 0.34, 0.34)
@@ -25,11 +27,13 @@ N_ZONES, N_AGENTS = 6, 4
 # Scenarios reveal/place what they need; the rest stay invisible (alpha 0 / parked).
 _ZONES = "".join(
     f'<geom name="z{i}" type="box" size="1 1 0.02" pos="0 0 0.02" rgba="0.3 0.3 0.3 0"/>'
-    for i in range(N_ZONES))
+    for i in range(N_ZONES)
+)
 _AGENTS = "".join(
     f'<body name="a{i}" mocap="true" pos="{-20 - i} 0 2">'
     f'<geom name="g{i}" type="sphere" size="0.62" rgba="0.4 0.8 0.5 0"/></body>'
-    for i in range(N_AGENTS))
+    for i in range(N_AGENTS)
+)
 XML = f"""
 <mujoco>
   <visual><global offwidth="{W}" offheight="{H}"/>
@@ -56,10 +60,19 @@ class Stage:
     def __init__(self):
         self.m = mujoco.MjModel.from_xml_string(XML)
         self.d = mujoco.MjData(self.m)
-        self.zid = [mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_GEOM, f"z{i}") for i in range(N_ZONES)]
-        self.gid = [mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_GEOM, f"g{i}") for i in range(N_AGENTS)]
+        self.zid = [
+            mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_GEOM, f"z{i}") for i in range(N_ZONES)
+        ]
+        self.gid = [
+            mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_GEOM, f"g{i}") for i in range(N_AGENTS)
+        ]
         self.cam = mujoco.MjvCamera()
-        self.cam.lookat[:], self.cam.distance, self.cam.azimuth, self.cam.elevation = [15, 6, 0.4], 40, 90, -64
+        self.cam.lookat[:], self.cam.distance, self.cam.azimuth, self.cam.elevation = (
+            [15, 6, 0.4],
+            40,
+            90,
+            -64,
+        )
         self.r = mujoco.Renderer(self.m, height=H, width=W)
         self.frames = []
 

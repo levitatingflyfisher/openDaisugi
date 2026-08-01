@@ -1,6 +1,5 @@
 """Unit tests for refinement data types."""
 
-
 from opendaisugi.models import (
     FileWriteStep,
     ShellStep,
@@ -39,8 +38,12 @@ def test_refinement_record_round_trip_json():
 def test_refinement_record_with_recomputed_step():
     replacement = ShellStep(id="s1_v2", command="echo safe")
     vr = VerificationResult(
-        ok=True, violations=[], warnings=[],
-        envelope_id="env_abc12345", plan_id="plan_x", duration_ms=1.5,
+        ok=True,
+        violations=[],
+        warnings=[],
+        envelope_id="env_abc12345",
+        plan_id="plan_x",
+        duration_ms=1.5,
     )
     record = _make_record(
         fallback_action="recomputed",
@@ -63,11 +66,19 @@ def test_refinement_record_none_z3_counterexample():
 
 def test_refinement_log_round_trip():
     r1 = _make_record(timestamp=1.0)
-    r2 = _make_record(fallback_action="recomputed", timestamp=2.0,
-                       recomputed_step=ShellStep(id="s1_v2", command="echo ok"),
-                       recomputed_verification=VerificationResult(
-                           ok=True, violations=[], warnings=[],
-                           envelope_id="env_abc12345", plan_id="p", duration_ms=0.5))
+    r2 = _make_record(
+        fallback_action="recomputed",
+        timestamp=2.0,
+        recomputed_step=ShellStep(id="s1_v2", command="echo ok"),
+        recomputed_verification=VerificationResult(
+            ok=True,
+            violations=[],
+            warnings=[],
+            envelope_id="env_abc12345",
+            plan_id="p",
+            duration_ms=0.5,
+        ),
+    )
     log = RefinementLog(session_id="run_test1234", records=[r1, r2])
     json_str = log.model_dump_json()
     restored = RefinementLog.model_validate_json(json_str)

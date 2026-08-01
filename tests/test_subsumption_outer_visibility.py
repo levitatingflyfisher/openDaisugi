@@ -2,6 +2,7 @@
 visible than non-strict. They were routed into outer_strict_blocking (discarded)
 instead of surfacing in unverified_invariants, so strict mode silently hid them.
 """
+
 from __future__ import annotations
 
 from opendaisugi.models import Envelope, Invariant, Permission
@@ -9,9 +10,12 @@ from opendaisugi.subsumption import envelope_subsumes
 
 
 def _env(invs, allowlist=("echo",)):
-    return Envelope(generated_by="t", task="t",
-                    permissions=Permission(shell=True, shell_allowlist=list(allowlist)),
-                    invariants=invs)
+    return Envelope(
+        generated_by="t",
+        task="t",
+        permissions=Permission(shell=True, shell_allowlist=list(allowlist)),
+        invariants=invs,
+    )
 
 
 def test_outer_opaque_invariant_surfaces_under_strict():

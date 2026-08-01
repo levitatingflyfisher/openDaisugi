@@ -10,6 +10,7 @@ Three scenarios:
    itself is a motor primitive, not LLM delegation; the guard fires on
    agent-authored LLM routing.)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,16 +38,20 @@ MJCF = REPO_ROOT / "tests" / "fixtures" / "mjcf" / "two_joint_arm.xml"
 
 async def run_clean(journal_dir: Path) -> dict:
     env = build_envelope()
-    plan = build_plan([
-        {"task": "approach the cup", "target_pose": (0.30, 0.20, 0.0)},
-        {"task": "pick up the cup", "target_pose": (0.20, 0.30, 0.0)},
-        {"task": "place on shelf",  "target_pose": (0.10, 0.40, 0.0)},
-    ])
+    plan = build_plan(
+        [
+            {"task": "approach the cup", "target_pose": (0.30, 0.20, 0.0)},
+            {"task": "pick up the cup", "target_pose": (0.20, 0.30, 0.0)},
+            {"task": "place on shelf", "target_pose": (0.10, 0.40, 0.0)},
+        ]
+    )
     vr = verify(plan, env)
     if not vr.ok:
-        return {"label": "scenario_1_clean", "verify_ok": False,
-                "violations": [{"stage": v.stage, "message": v.message[:200]}
-                               for v in vr.violations]}
+        return {
+            "label": "scenario_1_clean",
+            "verify_ok": False,
+            "violations": [{"stage": v.stage, "message": v.message[:200]} for v in vr.violations],
+        }
     j = Journal(data_dir=journal_dir)
     exe = MockVLAExecutor(mjcf_path=str(MJCF), num_actions=15)
     sup = Supervisor(
@@ -56,9 +61,7 @@ async def run_clean(journal_dir: Path) -> dict:
     )
     session = await sup.run(plan, env)
     receipts = j.receipts_for_run(session.id)
-    sample_evidence = (
-        json.loads(receipts[0].evidence["stdout"]) if receipts else {}
-    )
+    sample_evidence = json.loads(receipts[0].evidence["stdout"]) if receipts else {}
     return {
         "label": "scenario_1_clean",
         "verify_ok": True,
@@ -75,15 +78,16 @@ async def run_clean(journal_dir: Path) -> dict:
 def run_out_of_bounds() -> dict:
     """One skill targets a pose far outside workspace_bounds."""
     env = build_envelope()
-    plan = build_plan([
-        {"task": "reach into the void", "target_pose": (5.0, 0.0, 0.0)},
-    ])
+    plan = build_plan(
+        [
+            {"task": "reach into the void", "target_pose": (5.0, 0.0, 0.0)},
+        ]
+    )
     vr = verify(plan, env)
     return {
         "label": "scenario_2_out_of_bounds",
         "verify_ok": vr.ok,
-        "violations": [{"stage": v.stage, "message": v.message[:200]}
-                       for v in vr.violations],
+        "violations": [{"stage": v.stage, "message": v.message[:200]} for v in vr.violations],
     }
 
 
@@ -94,17 +98,17 @@ def run_delegation_attempt() -> dict:
     on a step inside a physical-stakes envelope."""
     env = build_envelope()
     bad = VLAStep(
-        id="s0", task="reach", target_pose=(0.2, 0.2, 0.0),
+        id="s0",
+        task="reach",
+        target_pose=(0.2, 0.2, 0.0),
         preferred_model="haiku",
     )
-    plan = ActionPlan(source="pi-vla-kit", task="bad: delegate motion",
-                      steps=[bad])
+    plan = ActionPlan(source="pi-vla-kit", task="bad: delegate motion", steps=[bad])
     vr = verify(plan, env)
     return {
         "label": "scenario_3_motion_delegation_attempt",
         "verify_ok": vr.ok,
-        "violations": [{"stage": v.stage, "message": v.message[:200]}
-                       for v in vr.violations],
+        "violations": [{"stage": v.stage, "message": v.message[:200]} for v in vr.violations],
     }
 
 
@@ -113,11 +117,16 @@ async def main() -> None:
     clean = await run_clean(jdir)
     oob = run_out_of_bounds()
     delegated = run_delegation_attempt()
-    print(json.dumps({
-        "scenario_1_clean": clean,
-        "scenario_2_out_of_bounds": oob,
-        "scenario_3_motion_delegation_attempt": delegated,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "scenario_1_clean": clean,
+                "scenario_2_out_of_bounds": oob,
+                "scenario_3_motion_delegation_attempt": delegated,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

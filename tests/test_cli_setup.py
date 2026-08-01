@@ -19,9 +19,9 @@ def test_setup_detects_and_recommends(tmp_path):
     res = runner.invoke(app, ["setup", "--data-dir", str(tmp_path)])
     assert res.exit_code == 0, res.output
     low = res.output.lower()
-    assert "llamafile" in low                       # recommends the onefile runtime
-    assert "qualif" in low                           # provisional-until-qualified guidance
-    assert ("ram" in low or "vram" in low or "budget" in low)  # reported the hardware budget
+    assert "llamafile" in low  # recommends the onefile runtime
+    assert "qualif" in low  # provisional-until-qualified guidance
+    assert "ram" in low or "vram" in low or "budget" in low  # reported the hardware budget
 
 
 def test_setup_json(tmp_path):

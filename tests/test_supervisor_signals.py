@@ -34,11 +34,16 @@ def test_supervisor_finalizes_and_journals_on_keyboard_interrupt(tmp_path):
     """
     import asyncio
 
-    env = Envelope(generated_by="t", task="t",
-                   permissions=Permission(shell=True, shell_allowlist=["sleep"]))
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="sleep 5"),
-    ])
+    env = Envelope(
+        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["sleep"])
+    )
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="sleep 5"),
+        ],
+    )
     journal = Journal(data_dir=tmp_path)
     sup = Supervisor(
         executors={"shell": SubprocessExecutor()},
@@ -80,16 +85,19 @@ async def test_supervisor_reaps_grandchildren_on_step_timeout(tmp_path):
     """
     marker = f"supervisor-sig-test-{os.getpid()}"
     script = tmp_path / "fork_grandchild.sh"
-    script.write_text(
-        f"#!/bin/sh\nsleep 30 &\necho {marker}\nwait\n"
-    )
+    script.write_text(f"#!/bin/sh\nsleep 30 &\necho {marker}\nwait\n")
     script.chmod(0o755)
 
-    env = Envelope(generated_by="t", task="t",
-                   permissions=Permission(shell=True, shell_allowlist=["sh"]))
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command=f"sh {script}"),
-    ])
+    env = Envelope(
+        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["sh"])
+    )
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command=f"sh {script}"),
+        ],
+    )
     sup = Supervisor(
         executors={"shell": SubprocessExecutor()},
         approval=AllowlistBypassStrategy(DenyStrategy()),
@@ -101,7 +109,9 @@ async def test_supervisor_reaps_grandchildren_on_step_timeout(tmp_path):
     assert session.steps[0].error == "timed out"
     time.sleep(0.5)
     ps_out = subprocess.run(
-        ["ps", "-eo", "pid,command"], capture_output=True, text=True,
+        ["ps", "-eo", "pid,command"],
+        capture_output=True,
+        text=True,
     ).stdout
     for line in ps_out.splitlines():
         if marker in line and "sleep" in line:
@@ -142,9 +152,7 @@ def test_subprocess_executor_reaps_on_keyboard_interrupt(tmp_path):
 
     # Give the kernel a moment to reap
     _time.sleep(0.5)
-    ps_out = _subprocess.run(
-        ["ps", "-eo", "pid,command"], capture_output=True, text=True
-    ).stdout
+    ps_out = _subprocess.run(["ps", "-eo", "pid,command"], capture_output=True, text=True).stdout
     for line in ps_out.splitlines():
         if f"sleep {unique_sleep}" in line:
             # Best-effort cleanup if the test is about to fail

@@ -21,8 +21,7 @@ from opendaisugi.adversarial import (
 def test_every_attack_in_the_deterministic_layer_is_denied():
     rep = run_deterministic_corpus()
     assert rep["unexpected_allowed_attacks"] == [], (
-        f"the gate ALLOWED attacks it must deny: "
-        f"{rep['unexpected_allowed_attacks']}"
+        f"the gate ALLOWED attacks it must deny: {rep['unexpected_allowed_attacks']}"
     )
     assert rep["attack_denial_rate"] == 1.0
 
@@ -52,8 +51,13 @@ def test_corpus_is_content_addressed_and_stable():
 def test_every_attack_category_is_represented():
     cats = {a.category for a in ATTACKS}
     assert {
-        "credential-read", "compound-shell", "out-of-pattern-shell",
-        "undeclared-mcp", "hook-rewrite", "scheme-smuggle", "unknown-tool",
+        "credential-read",
+        "compound-shell",
+        "out-of-pattern-shell",
+        "undeclared-mcp",
+        "hook-rewrite",
+        "scheme-smuggle",
+        "unknown-tool",
     } <= cats
 
 

@@ -6,6 +6,7 @@ auto-updates on `uv add --upgrade`. The only case that cannot symlink is a
 zipimport install (package left zipped, no real filesystem path); there we
 copy the tree out instead.
 """
+
 from __future__ import annotations
 
 import importlib.resources as _ir

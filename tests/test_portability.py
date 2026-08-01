@@ -54,19 +54,59 @@ def _pathway(id_: str = "pathway_abc12345") -> CompiledPathway:
     )
 
 
+def test_skill_export_declares_fixed_inputs_for_a_frozen_pathway():
+    md = export(_pathway(), "skill")
+    assert "## Inputs" in md
+    assert "**fixed**" in md  # no holes → runs verbatim
+
+
+def test_skill_export_renders_the_typed_callable_signature():
+    from opendaisugi.pathway import PathwayParameter
+
+    typed = _pathway().model_copy(
+        update={
+            "parameters": [
+                PathwayParameter(
+                    name="s1.command",
+                    step_index=0,
+                    step_id="s1",
+                    field="command",
+                    head="find",
+                    observed=["find /tmp -name '*.tmp'", "find /var -name '*.log'"],
+                )
+            ]
+        }
+    )
+    md = export(typed, "skill")
+    assert "## Inputs" in md
+    assert "typed skill" in md.lower()
+    assert "s1.command" in md  # the input name is documented
+    assert "`find`" in md  # the fixed capability head is shown
+
+
 def test_export_md_renders_orchestration_step_detail():
     # A pathway containing orchestration step types must not export blank details.
     from opendaisugi.models import MCPStep, SkillStep, TaskStep
+
     env = Envelope(generated_by="t", task="x", permissions=Permission())
-    plan = ActionPlan(source="tmpl", task="x", steps=[
-        TaskStep(id="t1", prompt="analyze the quarterly numbers"),
-        SkillStep(id="k1", skill_id="tidy-inbox", depends_on=["t1"]),
-        MCPStep(id="m1", server="github", tool="create_issue", depends_on=["k1"]),
-    ])
+    plan = ActionPlan(
+        source="tmpl",
+        task="x",
+        steps=[
+            TaskStep(id="t1", prompt="analyze the quarterly numbers"),
+            SkillStep(id="k1", skill_id="tidy-inbox", depends_on=["t1"]),
+            MCPStep(id="m1", server="github", tool="create_issue", depends_on=["k1"]),
+        ],
+    )
     pw = CompiledPathway(
-        id="pathway_orch1234", task_description="x", task_embedding=[0.1],
-        embedding_model="stub", envelope=env, plan_template=plan,
-        source_trace_ids=["t1"], distilled_at=time.time(),
+        id="pathway_orch1234",
+        task_description="x",
+        task_embedding=[0.1],
+        embedding_model="stub",
+        envelope=env,
+        plan_template=plan,
+        source_trace_ids=["t1"],
+        distilled_at=time.time(),
     )
     md = export(pw, "md")
     assert "analyze the quarterly numbers" in md
@@ -250,8 +290,16 @@ def test_cli_export_writes_skill_file(tmp_path):
     out = tmp_path / "out.md"
     r = runner.invoke(
         app,
-        ["pathways", "export", "p_cli_seed", str(out),
-         "--format", "skill", "--data-dir", str(tmp_path)],
+        [
+            "pathways",
+            "export",
+            "p_cli_seed",
+            str(out),
+            "--format",
+            "skill",
+            "--data-dir",
+            str(tmp_path),
+        ],
     )
     assert r.exit_code == 0, r.output
     assert out.exists()
@@ -262,8 +310,16 @@ def test_cli_export_rejects_unknown_format(tmp_path):
     _seed_store(tmp_path)
     r = runner.invoke(
         app,
-        ["pathways", "export", "p_cli_seed", str(tmp_path / "x"),
-         "--format", "xml", "--data-dir", str(tmp_path)],
+        [
+            "pathways",
+            "export",
+            "p_cli_seed",
+            str(tmp_path / "x"),
+            "--format",
+            "xml",
+            "--data-dir",
+            str(tmp_path),
+        ],
     )
     assert r.exit_code == 2
     assert "Unknown format" in r.output
@@ -273,8 +329,16 @@ def test_cli_export_unknown_pathway_exits_1(tmp_path):
     _seed_store(tmp_path)
     r = runner.invoke(
         app,
-        ["pathways", "export", "nonexistent", str(tmp_path / "o.json"),
-         "--format", "json", "--data-dir", str(tmp_path)],
+        [
+            "pathways",
+            "export",
+            "nonexistent",
+            str(tmp_path / "o.json"),
+            "--format",
+            "json",
+            "--data-dir",
+            str(tmp_path),
+        ],
     )
     assert r.exit_code == 1
 
@@ -287,8 +351,16 @@ def test_cli_import_roundtrip(tmp_path):
     out = tmp_path / "pkg.json"
     r = runner.invoke(
         app,
-        ["pathways", "export", "p_roundtrip", str(out),
-         "--format", "json", "--data-dir", str(tmp_path)],
+        [
+            "pathways",
+            "export",
+            "p_roundtrip",
+            str(out),
+            "--format",
+            "json",
+            "--data-dir",
+            str(tmp_path),
+        ],
     )
     assert r.exit_code == 0, r.output
 

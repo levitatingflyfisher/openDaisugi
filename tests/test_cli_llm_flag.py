@@ -35,6 +35,7 @@ def _isolate_llm_backend_env():
 
 def _make_parse_result():
     from opendaisugi.parsers import ParseResult
+
     return ParseResult(
         source="claude-code",
         source_file="stub.jsonl",
@@ -45,9 +46,7 @@ def _make_parse_result():
 
 def test_journal_parse_llm_flag_sets_env(tmp_path, monkeypatch):
     session = tmp_path / "session.jsonl"
-    session.write_text(
-        '{"type":"user","message":{"role":"user","content":"hi"}}\n'
-    )
+    session.write_text('{"type":"user","message":{"role":"user","content":"hi"}}\n')
     out = tmp_path / "episodes.yaml"
 
     seen = {"backend": None}
@@ -112,6 +111,7 @@ def test_generate_envelope_llm_flag_sets_env(monkeypatch):
     async def fake_generate_envelope(**kw):
         seen["backend"] = os.environ.get("OPENDAISUGI_LLM_BACKEND")
         from opendaisugi.models import Envelope, Permission
+
         return Envelope(
             generated_by="test-stub",
             task=kw.get("task", "t"),

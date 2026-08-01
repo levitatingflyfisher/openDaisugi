@@ -23,13 +23,20 @@ def run() -> int:
         generated_by="orchestrator",
         task="run a mixed pipeline",
         permissions=Permission(shell=True, shell_allowlist=["echo", "ls", "pytest"]),
-        invariants=[Invariant(
-            type="never_destructive",
-            description="never issue destructive shell commands",
-            expr={"op": "forall_steps", "pred": {
-                "op": "not_matches", "path": "command", "regex": r"^rm ",
-            }},
-        )],
+        invariants=[
+            Invariant(
+                type="never_destructive",
+                description="never issue destructive shell commands",
+                expr={
+                    "op": "forall_steps",
+                    "pred": {
+                        "op": "not_matches",
+                        "path": "command",
+                        "regex": r"^rm ",
+                    },
+                },
+            )
+        ],
     )
 
     echo_skill = Contract(
@@ -59,16 +66,20 @@ def run() -> int:
     print("Scenario 1: orchestrator delegates to narrow echo skill")
     decision = verify_delegation(orchestrator, echo_skill)
     print(f"  allowed:       {decision.allowed}")
-    print(f"  subsumption:   holds={decision.subsumption.holds}  "
-          f"{decision.subsumption.duration_ms:.1f} ms")
+    print(
+        f"  subsumption:   holds={decision.subsumption.holds}  "
+        f"{decision.subsumption.duration_ms:.1f} ms"
+    )
     print(f"  reason:        {decision.reason}")
     print()
 
     print("Scenario 2: orchestrator delegates to wider destroyer skill")
     decision = verify_delegation(orchestrator, destroyer_skill)
     print(f"  allowed:       {decision.allowed}")
-    print(f"  subsumption:   holds={decision.subsumption.holds}  "
-          f"{decision.subsumption.duration_ms:.1f} ms")
+    print(
+        f"  subsumption:   holds={decision.subsumption.holds}  "
+        f"{decision.subsumption.duration_ms:.1f} ms"
+    )
     if decision.counterexample is not None:
         print("  counterexample:")
         print(f"    command:             {decision.counterexample.step.command!r}")

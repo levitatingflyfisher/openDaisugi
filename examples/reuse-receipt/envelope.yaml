@@ -1,0 +1,20 @@
+# A read-only analysis boundary: read anything under the working tree, run a few
+# read-only shell tools, no network, no writes. Pass it to the CLI with
+# `--envelope envelope.yaml` so orchestration skips generating one (a model call).
+# Adapt the allowlist and globs to your task; keep it as tight as the work needs.
+generated_by: reuse-receipt
+task: local read-only analysis
+stakes: low
+permissions:
+  file_read:
+    - "**"
+  shell: true
+  shell_allowlist:
+    - grep
+    - find
+    - ls
+    - cat
+    - wc
+    - head
+    - tail
+  network: false

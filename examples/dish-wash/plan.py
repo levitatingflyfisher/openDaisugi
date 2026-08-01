@@ -1,4 +1,5 @@
 """Build dish-wash ActionPlans from plate-wash sub-DAGs."""
+
 from __future__ import annotations
 
 from step_types import (
@@ -20,11 +21,11 @@ def _plate_wash_steps(dish_index: int, base_id: int) -> list:
     Returns steps with ids of the form ``s{base_id+i}`` so the caller can
     chain multiple plate-washes via depends_on on the LAST step.
     """
-    a = ApproachDish(id=f"s{base_id+0}", dish_index=dish_index)
-    b = LocateRim(id=f"s{base_id+1}", dish_index=dish_index, depends_on=[a.id])
-    c = BeginScrub(id=f"s{base_id+2}", dish_index=dish_index, depends_on=[b.id])
-    d = RinseWithHose(id=f"s{base_id+3}", dish_index=dish_index, depends_on=[c.id])
-    e = ReturnToDock(id=f"s{base_id+4}", dish_index=dish_index, depends_on=[d.id])
+    a = ApproachDish(id=f"s{base_id + 0}", dish_index=dish_index)
+    b = LocateRim(id=f"s{base_id + 1}", dish_index=dish_index, depends_on=[a.id])
+    c = BeginScrub(id=f"s{base_id + 2}", dish_index=dish_index, depends_on=[b.id])
+    d = RinseWithHose(id=f"s{base_id + 3}", dish_index=dish_index, depends_on=[c.id])
+    e = ReturnToDock(id=f"s{base_id + 4}", dish_index=dish_index, depends_on=[d.id])
     return [a, b, c, d, e]
 
 

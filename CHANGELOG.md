@@ -1,5 +1,269 @@
 # Changelog
 
+## Unreleased
+
+- **Codex compatibility, all three pillars.** (1) *Onboarding*: a Codex rollout
+  parser (`parsers/codex.py`) translates `~/.codex/sessions` rollout JSONL —
+  `function_call` shell items (JSON-string arguments, `bash -lc` unwrapped),
+  the older `local_shell_call` argv form, `apply_patch` (one Write per file in
+  the patch envelope), messages, namespaced MCP calls — into the flat shape
+  the shared episode pipeline already understands, so merging, compound-shell
+  decomposition, and step typing are inherited; wrapper variants
+  (`type`/`payload`, `item`, bare) are all accepted and `daisugi onboard`
+  stops skipping Codex transcripts. (2) *Gateway*: the OpenAI-wire adapter
+  (`gateway_openai.py`) — `…/chat/completions` routes through its own Gateway
+  instance (`--openai-cheap-model`, default `gpt-5-mini`; a downgrade must
+  land on a model the upstream serves) to its own upstream
+  (`--openai-upstream`), with usage normalized into the meter's buckets
+  (OpenAI `prompt_tokens` includes `cached_tokens`; fresh input is the
+  difference) and an SSE sniffer for chunk deltas + the final
+  `include_usage` chunk. Codex points at it via `model_providers`
+  `base_url = "http://127.0.0.1:8787/v1"`, `wire_api = "chat"`.
+  (3) *Gate*: `daisugi install --gate --runtime codex` merges the canonical
+  gate entry into `~/.codex/hooks.json` (Codex v0.114+ copied Claude Code's
+  PreToolUse contract; the matcher becomes `.*` since Codex regex-matches),
+  and `--gateway` registers + selects the gateway provider in `config.toml`.
+  Stated plainly everywhere: Codex hooks **fail open** on hook crash/timeout —
+  deny works, a dead gate does not block — so the enforcement class is Soft,
+  never Hard ([integrations](docs/integrations.md)).
+
+- **Onboarding envelopes are inferred from evidence, not generated from task
+  text** ([ADR-0016](docs/adr/0016-evidence-inferred-onboarding-envelopes.md)).
+  Bulk ingest asked an LLM to write each episode's envelope from its task
+  sentence; the allowlist almost never named the plumbing heads the episode
+  actually used (measured: 2 recovered of 1,229 rejected). Ingest now infers
+  the envelope deterministically from the episode's own observed steps — every
+  head through decomposition, every redirect target, every path and URL —
+  with zero LLM calls, while staying fail-closed on the uninferable
+  (non-literal heads and redirect targets still FAIL and are journaled as
+  distillation data). Re-measured on the ADR-0014 corpus: 66.0% of 1,589 real
+  episodes verify end-to-end, from ~0.2%. The dominant residual loss is
+  multi-line scripts (heredocs, loops, assignments) the decomposer does not
+  yet model — queued as decomposer work. `model`/`tier1`/`concurrency` left
+  `ingest_episodes` and the `--concurrency` / ingest `--model` CLI options are
+  gone (envelope generation no longer calls anything).
+
+- **The conformance protocol: a language-neutral corpus + differential harness
+  for independent verifier clients** ([spec](docs/spec/conformance.md)). The
+  verifier is being reimplemented in other languages (Rust, Go, Lean4,
+  TypeScript); independent clients are only worth having if disagreement is
+  detectable. `opendaisugi.conformance` ships the whole loop: recording as a
+  product feature (`OPENDAISUGI_CONFORMANCE_RECORD=<dir>` harvests real
+  `verify()` calls and shell decompositions as self-contained JSONL cases;
+  alias-carrying calls and runtime-registered custom step types are skipped as
+  process state), `daisugi conformance export` (dedupe + sha256-pinned
+  manifest; plan/envelope uuid bookkeeping normalized so identical logical
+  cases content-address identically), `run` (feed a client binary the corpus
+  over a one-line-in/one-line-out wire protocol, compare verdicts
+  structurally — `ok` + (stage, step) multisets for verify, ordered heads +
+  sorted effects for decompose; messages are informative, never normative;
+  exit 1 on any mismatch), `bench` (per-case latency percentiles, in-process
+  or over the pipe), and `serve` (the Python oracle speaking its own
+  protocol, containing per-case failures as error verdicts). Reference
+  generation: 13,274 cases (306 verify, 12,968 decompose from ~12.9k real
+  transcript commands), oracle self-check 13,274/13,274, p50 0.132 ms
+  in-process.
+
+- **Do-nothing salvage: divergent clusters distill into mixed pathways** (the
+  gradual-automation inversion, after [Dan Slimmon's do-nothing scripting](https://blog.danslimmon.com/2019/07/15/do-nothing-scripting-the-key-to-gradual-automation/)
+  with the LLM as the human). A cluster whose plans agree in shape but differ in kind at
+  some positions used to freeze on the representative's concrete step — replaying an
+  action most members never took. `plan_divergence` now splits such a cluster three
+  ways: invariant steps stay concrete (zero-token replay), data-only variance stays a
+  typed hole (ADR-0008), and the genuinely divergent positions become delegated
+  `AgenticStep` leaves — prompted with the observed variants, granted only the host
+  tools mapped from the step type they replaced, and executed under the same envelope
+  through the call-time gate, so delegation widens nothing. The salvage path runs
+  before (and instead of) the LLM generalization call, falls back to the frozen flow
+  when the mixed template does not verify, and refuses clusters with no invariant left.
+  Deterministic steps are emitted in whatever stack the traces used; the laws are
+  determinism and idempotence, not a style (see the
+  [landscape mapping](docs/research/token-saving-landscape-mapping.md)).
+- **The gateway went cache-aware: sticky routing, the local rung, and cache
+  visibility** ([ADR-0015](docs/adr/0015-cache-aware-sticky-routing.md)). The provider
+  prompt cache is keyed to the model, so downgrading an easy turn out of a deep frontier
+  conversation forfeits ~0.9x of the prefix's cached reads and re-pays the write on
+  return — past ~2k prefix tokens that costs more than the downgrade saves. Easy turns
+  now fall down the routing ladder: a configured local model first (zero quota;
+  stickiness never blocks the local rung — `daisugi gateway --local-model` /
+  `gateway_local_model` in config), then sticky-to-cheap (a conversation already on the
+  cheap model keeps its own warm cache), then sticky-to-frontier past the prefix
+  threshold, then the cheap cloud model as before. Hard turns and no-signal turns are
+  untouched, as always. `gateway-report` now shows the measured cache split — read
+  tokens, write tokens, hit rate as a share of all input — plus local-rung turn counts.
+  The industry survey that motivated this, and the mapping of its levers onto this
+  codebase (which we ship, which we deliberately reject), is committed under
+  [docs/research/](docs/research/token-saving-landscape-mapping.md).
+- **Shell effects became envelope-checkable — the bulk-onboarding ceiling is gone**
+  ([ADR-0014](docs/adr/0014-envelope-checkable-shell-effects.md)). Under the existing
+  `shell_allow_decomposition` opt-in, the decomposer now proves *effects*, not just
+  structure: literal redirect targets are checked against the envelope's own
+  `file_read`/`file_write` scopes (`> /etc/passwd` rejects by scope, `> out/x.txt`
+  under `file_write: [out/**]` is authorized; `/dev/null` and the std streams are
+  sanctioned sinks), substitution bodies (`$()`, backticks, `<()`) are recursively
+  decomposed so inner heads face the allowlist, and quoted metacharacters
+  (`grep "a|b"`) stop bouncing off the raw regex after the grammar has proved them
+  data. timeout/nice/nohup/time/stdbuf/command/setsid/ionice became transparent
+  wrappers whose payloads are recursively verified — closing a pre-existing hole
+  where a standalone `timeout 30 <anything>` ran the payload unverified —
+  and sudo/doas/watch are opaque (strict rejects). Envelope inference mirrors the
+  verifier exactly (`_observed_effects`): wrapped-payload heads, substitution heads,
+  and redirect targets all land in the inferred envelope, so it no longer rejects
+  the very traces it was inferred from. Head and redirect-scope rejections carry
+  their minimal remedy in `suggested_remediation`. Measured on the 250 largest real
+  transcripts (13,307 calls): metacharacter-bearing commands decomposing went
+  **29.4% → 95.9%**; whole-session capture→infer→verify round trips went **0% →
+  41.2%**, with every remaining failure a genuinely non-literal construct
+  (`$CMD` heads, `> $LOG`). What still fails closed: non-literal heads (268),
+  non-literal redirect targets (213), parse errors (49) — nothing else.
+
+- **The token-saving gateway.** A local proxy any harness points at with `base_url`: it
+  routes an easy turn to the cheap model, meters what that saved in frontier tokens and
+  dollars, and journals it (`daisugi gateway`, `daisugi gateway-report`). Reuse rides on
+  top as tools the harness opts into — clustered repeat detection, `daisugi
+  distill-repeats`, the `recall` / `recall_answer` MCP tools, and a freshness-gated answer
+  store enabled with `daisugi gateway --capture-answers`
+  ([ADR-0012](docs/adr/0012-gateway-reuse-and-answer-store.md)). `daisugi install
+  --gateway --gate` wires saving and verification together, per harness, with the
+  harnesses it cannot reach reported as gaps rather than faked
+  ([ADR-0013](docs/adr/0013-unified-save-and-verify-install.md)). Routing is ~3× on a
+  blended day; reuse adds only where work repeats.
+- **Compound shell became reachable.** [ADR-0010](docs/adr/0010-compound-shell-decomposition.md)'s
+  `shell_allow_decomposition` shipped as an envelope field with no way to set it — every
+  envelope the CLI generated wrote `false`, so `a && b` was denied in every gated session.
+  `daisugi gate init --allow-shell-decomposition` (and `gate quickstart`) now carries the
+  opt-in through, warning when the `opendaisugi[shell]` grammar is absent, since the
+  verifier fails closed on a missing capability. Exposing it also made two dormant
+  field-list omissions live, both fixed: `intersect_permissions` reverted the opt-in on
+  any Gardener merge (`True ∧ True` gave `False`), and envelope inheritance never checked
+  it, so a child could grant itself the capability under a parent that forbade it, and
+  envelope subsumption (delegation and skill contracts) had the same blind spot.
+  `daisugi install --gate` now also says where the envelope it checks against comes from.
+- **…and reachable from the bulk paths, where the traces are made.** The opt-in was still
+  invisible to everything that replays history into the journal, and that is where compound
+  shell actually lives: across the 250 largest real transcripts, 96.2% of captured shell
+  calls carry a metacharacter. `onboard`, `journal ingest`, `hook to-trace`, `hook auto-tend`,
+  `generate-envelope` and `install` now share one flag and one resolver, with the default
+  persisted in `config.yaml` — the only channel that reaches `hook auto-tend`, which runs
+  from cron and from a detached spawn with stdout on DEVNULL. `daisugi status` shows the
+  setting and says plainly when it is on without the grammar installed.
+- **The capture path can now verify compound shell at all.** `infer_envelope` held the real
+  commands but took only the first whitespace token as the head, so a captured
+  `cd /repo && pytest` contributed `cd` alone and failed twice over — the metachar gate,
+  and then an allowlist missing `pytest`. It now decomposes to collect every head and
+  defers head extraction to the verifier's own classifier, so an env-prefixed command no
+  longer drops out. Measured over 1,582 episodes from those transcripts: each half alone recovers
+  nothing, and together they recover 48 of the 1,229 episodes verification rejects today
+  (22.3% → 25.3% verified) — modest, because an episode passes only if every step does. The opt-in is set whenever asked, even when nothing
+  compound was captured, because the distiller ANDs permissions across a cluster and
+  re-verifies the plan template — a per-session flag would intersect it away and kill any
+  cluster mixing the two ways of doing the same task. On the ingest path the same stamp is
+  plumbed but honestly undersold: an envelope generated from task text cannot name the
+  plumbing heads, so it recovers 2 episodes of 1,229 — noise.
+
+## v0.43.0 — 2026-08-01 — The rationale-durability ledger (roadmap Stage 10)
+
+On an irreducible one-off — a heisenbug hunt, a novel design — there is no internal
+repetition to compile (Stage 9) and no prior corpus to reuse (Stage 4), and what
+compaction drops is the *deliberation*. This ships the third and last cost lever from
+[ADR-0011](docs/adr/0011-verifiable-execution-substrate.md): a typed strata store the
+harness consumes. Like the deed ledger ([ADR-0004](docs/adr/0004-layer-not-harness.md)),
+openDaisugi records and reconstructs; it does not rewrite its own prompts.
+
+- **The typed store.** `strata.StrataStore.emit` is the cheap structured-emission hook
+  over four kinds — `fact`, `hypothesis` (kept `ruled_out` so a branch is not
+  re-explored), `constraint`, `goal` — each with provenance and a monotonic, wall-clock-free
+  `seq`. In-memory with `to_json` / `from_json` durability: the property that matters is
+  *external to the transcript*, not on-disk.
+- **Context reconstruction, honestly lossy.** `reconstruct_context` rebuilds a call's
+  context from the store: pinned strata and open constraints always retained, the rest
+  filled by tag then recency under a budget, with `repage` returning any dropped stratum
+  verbatim. The boundary is stated where it lives — *a dropped fact is one the agent will
+  re-derive* — and the relevance selector is deliberately simple, the sophisticated
+  version left to the harness (this stage's own landmine).
+- **Constraint-promotion — the only path to authority, four fail-closed gates.**
+  `promote_constraint` refuses any stratum that is not a `constraint` (facts, hypotheses
+  and goals inform reasoning, never gate actions — a tested tripwire), then gates through
+  `verify_inheritance`: it must only tighten, must *actually* tighten (a no-op is refused),
+  and — via an optional `deny_witness` — must *actually* enforce, so a constraint that
+  compiled to a soft/unenforced node is refused rather than accepted (the fail-open shape
+  this stage exists to prevent).
+- **The scenario, end to end.** "Don't touch tenant X" is held under forced compaction:
+  the pinned constraint survives a JSON round-trip and a punishing reconstruction budget,
+  and the promoted envelope still makes `verify()` deny the tenant-X write while allowing
+  tenant Y.
+- **The meter.** `RederivationLedger` (store-on vs store-off output-token delta) ships as
+  labelled evidence; its at-scale numbers are deferred to a model, as in Stages 4 and 9.
+  Public surface gains `StrataStore`, `Stratum`, `reconstruct`/`repage`, `promote_constraint`,
+  and the `RederivationLedger` meter.
+
+## v0.42.0 — 2026-08-01 — Within-instance batch compilation (roadmap Stage 9)
+
+A task's own internal repetition is normally paid for turn by turn. This ships the
+second cost lever from [ADR-0011](docs/adr/0011-verifiable-execution-substrate.md): an
+agent **declares a batch** — program P, item set I, footprint F, acceptance Q — and the
+library proves the whole footprint is authorized *before any iteration*, refuses
+irreversible work, sample-validates in a deed-ledger fork, and executes all N under a
+monitor with per-element rollback.
+
+- **The declaration is authorable like an envelope.** `batch.BatchDeclaration` is a
+  JSON-round-trippable model (an `ActionPlan` template + ADR-0008 `PathwayParameter`
+  holes + a *concrete* item list + declared footprint F + acceptance postcondition Q),
+  provable from the shell with `daisugi batch prove <decl.json> -e <envelope.json>`. The
+  item set is a concrete list by construction — not a glob or generator — so the
+  footprint is enumerable before iteration.
+- **The proof uses the concrete runtime matcher, soundly.** `prove_footprint` resolves
+  every item up front and proves each write is inside both the envelope and F with the
+  *same* `verify._path_matches_any` the executor gate uses — **not** the envelope↔envelope
+  Z3 glob encoding, which diverges from it (a single `*` crosses `/`; no normalization)
+  and would let a proof admit a write the gate rejects. That divergence is now pinned as
+  a known-gap tripwire (`tests/test_subsumption_glob_known_gap.py`): a real but
+  non-blocking fail-open in `check_skill_delegations` — a false *claim*, not an
+  unauthorized *action*, since the concrete gate still denies at runtime.
+- **Irreversible work can never enter a batch.** A static kind check (only reversible
+  `file_write` and read-only `file_read` / GET-only `network`), a pre-flight
+  reversibility probe, **and** a runtime halt-on-first-`irreversible` deed — because
+  reversibility is not a property of the type (a >1 MB or non-UTF-8 target comes back
+  irreversible at runtime), the static check alone is insufficient. On halt the reversible
+  elements roll back from the ledger and the irreversible one is surfaced in `skipped`.
+- **Fork, monitor, rollback — no CoW.** `run_batch` sample-validates Q on k items in a
+  deed-ledger fork (`apply_reversal`; ADR-0004 forecloses owning workspace snapshots),
+  then runs all N under the supervisor's per-step monitor with per-element rollback.
+- **The two-ledger meter, honestly.** `NetTokenLedger` computes
+  `(output + calls saved) − (spec input injected)` and surfaces the SKILL-DISCO
+  net-cost trap when it goes negative — labelled evidence, not proof. `TwoLedgerReport`
+  keeps the within-instance and cross-instance ledgers separate and never merges them;
+  within-instance the meter reports the honest finding (the win is the proven blast
+  radius, not tokens). Publishing the cross-instance numbers *at scale* is deferred —
+  that is Stage 4's question and shares its local-model dependency.
+
+## v0.41.0 — 2026-08-01 — The deed ledger (roadmap Stage 8)
+
+A wrong-but-allowed action — in-envelope, but wrong for the task, like a
+correctly-scoped delete of the *wrong* file — should cost a rollback, not a
+token-burning recovery arc. This ships the **deed ledger**, the first of the cost
+levers reframed in [ADR-0011](docs/adr/0011-verifiable-execution-substrate.md).
+openDaisugi stays a *layer* ([ADR-0004](docs/adr/0004-layer-not-harness.md)): it
+**records** how to undo each reversible deed; the harness reverts.
+
+- **Deed-carrying receipts.** Each executed step's `Receipt` now carries an
+  `effect_class`, a `reversibility` verdict (`none` / `reversible` / `irreversible`),
+  and, when reversible, a `ReversalHandle`. The `FileWriteExecutor` captures the
+  target's pre-image *before* it mutates — and records any directories it creates — so
+  the write is undoable from the ledger alone. Threaded `ExecutorResult → StepOutcome →
+  Receipt`, thread-safe under concurrent task steps (the same path as `model_id`).
+- **`opendaisugi.deeds`.** `rollback_run(journal, run_id)` undoes a run's reversible
+  deeds newest-first **with no model, no executor, no re-run**; `touched_files`
+  reconstructs the pre-state of the files a run touched. A reversal only ever writes to
+  a path the run itself wrote, so it cannot widen the envelope (the yellow paper's
+  admissibility-preservation law, §7).
+- **Honest boundaries, tested.** `reversibility` is a *positive* claim: a refused write
+  reports `none` (never a false handle); an oversized or non-UTF-8 prior image is
+  marked `irreversible` rather than truncated; and any side-effecting step lacking a
+  handle defaults to `irreversible` — a missing handle can never read as "nothing to
+  undo". Journal schema migrates to `user_version = 7`; the ledger for the call-time
+  *gate* path (harness-performed effects) is deliberately out of scope.
+
 ## v0.39.0 — 2026-07-23 — The distillation-fidelity ruler (roadmap Stage 4 harness)
 
 Stage 4 asks the oldest question in the scorecard — does distillation actually

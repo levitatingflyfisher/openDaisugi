@@ -1,4 +1,5 @@
 """Supervisor + DelegatingExecutor integration: Receipt.model_id flows (v0.19 L6)."""
+
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,7 +14,8 @@ from opendaisugi.supervisor import Supervisor
 
 def _env() -> Envelope:
     return Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
 
@@ -27,9 +29,13 @@ async def test_supervisor_stamps_receipt_model_id_from_delegating_executor(tmp_p
         journal=j,
         approval=CallbackStrategy(lambda s, e: True),
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo a", preferred_model="sonnet"),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo a", preferred_model="sonnet"),
+        ],
+    )
     with patch.object(exe, "_call", return_value='{"ok": true}'):
         session = await sup.run(plan, _env())
     receipts = j.receipts_for_run(session.id)
@@ -55,7 +61,6 @@ async def test_supervisor_leaves_model_id_none_for_non_delegating_executor(tmp_p
     assert receipts[0].model_id is None
 
 
-
 async def test_eb7_recomputed_step_is_reverified_and_halts_when_out_of_policy():
     # EB-7 coverage: the recompute path is hard to reach statically (whole-plan
     # verify() gates first), so patch verify_step to fail per-step while the
@@ -78,16 +83,27 @@ async def test_eb7_recomputed_step_is_reverified_and_halts_when_out_of_policy():
             return FallbackOutcome(
                 action="recomputed",
                 replacement_step=ShellStep(id=step.id, command="echo replacement"),
-                replacement_result=VerificationResult(ok=True, envelope_id="e", plan_id="p", duration_ms=0.0),
+                replacement_result=VerificationResult(
+                    ok=True, envelope_id="e", plan_id="p", duration_ms=0.0
+                ),
             )
 
-    env = Envelope(generated_by="t", task="x",
-                   permissions=Permission(shell=True, shell_allowlist=["echo"]))
+    env = Envelope(
+        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"])
+    )
     plan = ActionPlan(source="t", task="x", steps=[ShellStep(id="s1", command="echo hi")])
-    bad = VerificationResult(ok=False, envelope_id="e", plan_id="p", duration_ms=0.0,
-                             violations=[Violation(stage="permissions", message="forced per-step failure")])
-    sup = Supervisor(executors={"shell": _RecordingExec()},
-                     approval=CallbackStrategy(lambda s, e: True), fallback=_Recompute())
+    bad = VerificationResult(
+        ok=False,
+        envelope_id="e",
+        plan_id="p",
+        duration_ms=0.0,
+        violations=[Violation(stage="permissions", message="forced per-step failure")],
+    )
+    sup = Supervisor(
+        executors={"shell": _RecordingExec()},
+        approval=CallbackStrategy(lambda s, e: True),
+        fallback=_Recompute(),
+    )
     # whole-plan verify() runs real (plan is in-policy → loop entered); per-step
     # verify_step always fails → recompute → EB-7 re-verify also fails → halt.
     with patch("opendaisugi.supervisor.verify_step", return_value=bad):
@@ -105,8 +121,12 @@ async def test_failed_step_surfaces_reason_in_error_not_none():
 
     class _FailExec:
         def run(self, step, *, timeout_s, max_output_bytes):
-            return ExecutorResult(rc=1, stdout="delegating_executor: exhausted retries: is_error",
-                                  duration_ms=0.0, timed_out=False)
+            return ExecutorResult(
+                rc=1,
+                stdout="delegating_executor: exhausted retries: is_error",
+                duration_ms=0.0,
+                timed_out=False,
+            )
 
     plan = ActionPlan(source="t", task="x", steps=[ShellStep(id="s1", command="echo hi")])
     sup = Supervisor(executors={"shell": _FailExec()}, approval=CallbackStrategy(lambda s, e: True))

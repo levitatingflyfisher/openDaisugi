@@ -1,4 +1,5 @@
 """Tests for PathwayBundle (v0.25)."""
+
 from __future__ import annotations
 
 import pytest
@@ -20,11 +21,16 @@ from opendaisugi.pathway_bundle import (
 
 
 def _pathway(structure_signature: str = "shell→file_read") -> CompiledPathway:
-    env = Envelope(generated_by="t", task="t",
-                   permissions=Permission(shell=True, shell_allowlist=["echo"]))
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo hi"),
-    ])
+    env = Envelope(
+        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["echo"])
+    )
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo hi"),
+        ],
+    )
     return CompiledPathway(
         id="pathway_test",
         task_description="test",
@@ -58,10 +64,10 @@ def test_unsigned_bundle_refused_by_default():
 def test_signed_bundle_roundtrips():
     pytest.importorskip("cryptography")
     from opendaisugi.signing import generate_keypair
+
     priv, pub = generate_keypair()
     p = _pathway()
-    b = pathway_to_bundle(p, publisher="alice@team",
-                          private_key_b64=priv, public_key_b64=pub)
+    b = pathway_to_bundle(p, publisher="alice@team", private_key_b64=priv, public_key_b64=pub)
     assert b.signature_b64 is not None
     assert b.signer_pubkey_b64 == pub
     # Verifies with matching trusted-signer set
@@ -72,10 +78,12 @@ def test_signed_bundle_roundtrips():
 def test_signed_bundle_refused_by_untrusted_consumer():
     pytest.importorskip("cryptography")
     from opendaisugi.signing import generate_keypair
+
     priv, pub = generate_keypair()
     _, other_pub = generate_keypair()
-    b = pathway_to_bundle(_pathway(), publisher="alice@team",
-                          private_key_b64=priv, public_key_b64=pub)
+    b = pathway_to_bundle(
+        _pathway(), publisher="alice@team", private_key_b64=priv, public_key_b64=pub
+    )
     # Consumer trusts only `other_pub`, not Alice's pub
     with pytest.raises(UntrustedSignerError):
         bundle_to_pathway(b, trusted_pubkey_b64s={other_pub})
@@ -84,9 +92,11 @@ def test_signed_bundle_refused_by_untrusted_consumer():
 def test_tampered_bundle_fails_verification():
     pytest.importorskip("cryptography")
     from opendaisugi.signing import generate_keypair
+
     priv, pub = generate_keypair()
-    b = pathway_to_bundle(_pathway(), publisher="alice@team",
-                          private_key_b64=priv, public_key_b64=pub)
+    b = pathway_to_bundle(
+        _pathway(), publisher="alice@team", private_key_b64=priv, public_key_b64=pub
+    )
     # Mutate the publisher field after signing — signature no longer
     # covers the new bytes.
     b = b.model_copy(update={"publisher": "mallory@evil"})
@@ -128,6 +138,7 @@ def test_signed_bundle_rejected_without_trusted_set():
     # against its own embedded key proves nothing (any attacker key self-verifies).
     pytest.importorskip("cryptography")
     from opendaisugi.signing import generate_keypair
+
     priv, pub = generate_keypair()
     p = _pathway()
     b = pathway_to_bundle(p, publisher="evil@home", private_key_b64=priv, public_key_b64=pub)

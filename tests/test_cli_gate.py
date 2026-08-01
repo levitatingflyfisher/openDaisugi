@@ -32,18 +32,27 @@ def _envelope_file(tmp_path, **perm_kwargs):
 
 
 def _payload(path="/allowed/x.txt", session="cli-sess"):
-    return json.dumps({
-        "tool_name": "Read",
-        "tool_input": {"file_path": path},
-        "session_id": session,
-    })
+    return json.dumps(
+        {
+            "tool_name": "Read",
+            "tool_input": {"file_path": path},
+            "session_id": session,
+        }
+    )
 
 
 def _register(tmp_path, root):
     env_file = _envelope_file(tmp_path)
-    res = runner.invoke(app, [
-        "gate", "register", str(env_file), "--root", str(root),
-    ])
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "register",
+            str(env_file),
+            "--root",
+            str(root),
+        ],
+    )
     assert res.exit_code == 0, res.output
     return env_file
 
@@ -60,18 +69,36 @@ def test_gate_register_and_status(tmp_path):
 def test_gate_check_enforce_denies_with_exit_2(tmp_path):
     root = tmp_path / "gateroot"
     _register(tmp_path, root)
-    res = runner.invoke(app, [
-        "gate", "check", "--mode", "enforce", "--root", str(root),
-    ], input=_payload("/etc/passwd"))
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "check",
+            "--mode",
+            "enforce",
+            "--root",
+            str(root),
+        ],
+        input=_payload("/etc/passwd"),
+    )
     assert res.exit_code == 2
 
 
 def test_gate_check_enforce_allows_in_envelope(tmp_path):
     root = tmp_path / "gateroot"
     _register(tmp_path, root)
-    res = runner.invoke(app, [
-        "gate", "check", "--mode", "enforce", "--root", str(root),
-    ], input=_payload("/allowed/x.txt"))
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "check",
+            "--mode",
+            "enforce",
+            "--root",
+            str(root),
+        ],
+        input=_payload("/allowed/x.txt"),
+    )
     assert res.exit_code == 0
     assert json.loads(res.stdout.strip()) == {"continue": True}
 
@@ -79,9 +106,16 @@ def test_gate_check_enforce_allows_in_envelope(tmp_path):
 def test_gate_check_shadow_never_exits_nonzero(tmp_path):
     root = tmp_path / "gateroot"
     _register(tmp_path, root)
-    res = runner.invoke(app, [
-        "gate", "check", "--root", str(root),
-    ], input=_payload("/etc/passwd"))
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "check",
+            "--root",
+            str(root),
+        ],
+        input=_payload("/etc/passwd"),
+    )
     assert res.exit_code == 0
 
 
@@ -89,22 +123,39 @@ def test_gate_disarm_and_arm_roundtrip_via_cli(tmp_path):
     root = tmp_path / "gateroot"
     _register(tmp_path, root)
     assert runner.invoke(app, ["gate", "disarm", "--root", str(root)]).exit_code == 0
-    res = runner.invoke(app, [
-        "gate", "check", "--mode", "enforce", "--root", str(root),
-    ], input=_payload("/etc/passwd"))
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "check",
+            "--mode",
+            "enforce",
+            "--root",
+            str(root),
+        ],
+        input=_payload("/etc/passwd"),
+    )
     assert res.exit_code == 0  # disarmed gate allows
     assert runner.invoke(app, ["gate", "arm", "--root", str(root)]).exit_code == 0
-    res = runner.invoke(app, [
-        "gate", "check", "--mode", "enforce", "--root", str(root),
-    ], input=_payload("/etc/passwd"))
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "check",
+            "--mode",
+            "enforce",
+            "--root",
+            str(root),
+        ],
+        input=_payload("/etc/passwd"),
+    )
     assert res.exit_code == 2
 
 
 def test_gate_report_shows_would_denies(tmp_path):
     root = tmp_path / "gateroot"
     _register(tmp_path, root)
-    runner.invoke(app, ["gate", "check", "--root", str(root)],
-                  input=_payload("/etc/passwd"))
+    runner.invoke(app, ["gate", "check", "--root", str(root)], input=_payload("/etc/passwd"))
     res = runner.invoke(app, ["gate", "report", "--root", str(root), "--json"])
     assert res.exit_code == 0
     rep = json.loads(res.stdout)
@@ -114,13 +165,29 @@ def test_gate_report_shows_would_denies(tmp_path):
 def test_gate_replay_reports_from_captures(tmp_path):
     env_file = _envelope_file(tmp_path)
     captures = tmp_path / "cap.jsonl"
-    captures.write_text(json.dumps({
-        "captured_at": 1.0, "session_id": "s", "tool_name": "Read",
-        "step_type": "file_read", "path": "/nope/x",
-    }) + "\n")
-    res = runner.invoke(app, [
-        "gate", "replay", str(captures), "--envelope", str(env_file), "--json",
-    ])
+    captures.write_text(
+        json.dumps(
+            {
+                "captured_at": 1.0,
+                "session_id": "s",
+                "tool_name": "Read",
+                "step_type": "file_read",
+                "path": "/nope/x",
+            }
+        )
+        + "\n"
+    )
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "replay",
+            str(captures),
+            "--envelope",
+            str(env_file),
+            "--json",
+        ],
+    )
     assert res.exit_code == 0
     rep = json.loads(res.stdout)
     assert rep["calls"] == 1
@@ -128,9 +195,16 @@ def test_gate_replay_reports_from_captures(tmp_path):
 
 
 def test_gate_settings_prints_hooks_json(tmp_path):
-    res = runner.invoke(app, [
-        "gate", "settings", "--root", str(tmp_path), "--enforce",
-    ])
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "settings",
+            "--root",
+            str(tmp_path),
+            "--enforce",
+        ],
+    )
     assert res.exit_code == 0
     settings = json.loads(res.stdout)
     entry = settings["hooks"]["PreToolUse"][0]
@@ -154,7 +228,8 @@ def test_lean_entry_main_enforce_denies(tmp_path, monkeypatch, capsys):
     root = tmp_path / "gateroot"
     _register(tmp_path, root)
     monkeypatch.setattr(
-        sys, "stdin",
+        sys,
+        "stdin",
         type("S", (), {"buffer": io.BytesIO(_payload("/etc/passwd").encode())})(),
     )
     code = gate_main(["--mode", "enforce", "--root", str(root)])
@@ -163,9 +238,17 @@ def test_lean_entry_main_enforce_denies(tmp_path, monkeypatch, capsys):
 
 
 def test_gate_settings_session_pin_flows_into_command(tmp_path):
-    res = runner.invoke(app, [
-        "gate", "settings", "--root", str(tmp_path), "--session", "job7",
-    ])
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "settings",
+            "--root",
+            str(tmp_path),
+            "--session",
+            "job7",
+        ],
+    )
     assert res.exit_code == 0
     cmd = json.loads(res.stdout)["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "--session job7" in cmd
@@ -191,9 +274,17 @@ def test_gate_init_registers_a_starter_envelope(tmp_path):
     root = tmp_path / "gate"
     ws = tmp_path / "proj"
     ws.mkdir()
-    res = runner.invoke(app, [
-        "gate", "init", "--workspace", str(ws), "--root", str(root),
-    ])
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "init",
+            "--workspace",
+            str(ws),
+            "--root",
+            str(root),
+        ],
+    )
     assert res.exit_code == 0
     assert (root / "envelopes" / "default.json").exists()
     # It tells the operator to review it and how to launch.
@@ -205,9 +296,17 @@ def test_gate_quickstart_prints_the_full_shadow_flow(tmp_path):
     root = tmp_path / "gate"
     ws = tmp_path / "proj"
     ws.mkdir()
-    res = runner.invoke(app, [
-        "gate", "quickstart", "--workspace", str(ws), "--root", str(root),
-    ])
+    res = runner.invoke(
+        app,
+        [
+            "gate",
+            "quickstart",
+            "--workspace",
+            str(ws),
+            "--root",
+            str(root),
+        ],
+    )
     assert res.exit_code == 0
     out = res.output
     # A copy-pasteable shadow launch line, plus how to report / enforce / disarm.
@@ -226,7 +325,16 @@ def test_gate_init_refuses_to_clobber_without_force(tmp_path):
     res = runner.invoke(app, ["gate", "init", "--workspace", str(ws), "--root", str(root)])
     assert res.exit_code != 0
     assert "already" in res.output.lower()
-    forced = runner.invoke(app, [
-        "gate", "init", "--workspace", str(ws), "--root", str(root), "--force",
-    ])
+    forced = runner.invoke(
+        app,
+        [
+            "gate",
+            "init",
+            "--workspace",
+            str(ws),
+            "--root",
+            str(root),
+            "--force",
+        ],
+    )
     assert forced.exit_code == 0

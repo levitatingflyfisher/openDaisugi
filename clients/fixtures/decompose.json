@@ -1,0 +1,755 @@
+[
+ {
+  "label": "simple",
+  "command": "echo hello",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "pipe",
+  "command": "cat foo.txt | grep bar",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "cat",
+    "grep"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "cat",
+    "grep"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "andor",
+  "command": "make build && make test",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "make",
+    "make"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "make",
+    "make"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "seq",
+  "command": "cd src; ls -la",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "cd",
+    "ls"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "cd",
+    "ls"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "redir-write",
+  "command": "echo hi > out.txt",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": [
+    "out.txt"
+   ]
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": [
+    "out.txt"
+   ]
+  }
+ },
+ {
+  "label": "redir-read",
+  "command": "sort < in.txt",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "sort"
+   ],
+   "reads": [
+    "in.txt"
+   ],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "sort"
+   ],
+   "reads": [
+    "in.txt"
+   ],
+   "writes": []
+  }
+ },
+ {
+  "label": "cmdsubst",
+  "command": "echo $(date)",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "date"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "date"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "dquote-subst",
+  "command": "echo \"today is $(date)\"",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "date"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "date"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "arith-arg",
+  "command": "echo $((1 + 2))",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "arith-mid",
+  "command": "printf %d $((a * b)) done",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "printf"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "printf"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "paramexp-arg",
+  "command": "echo ${HOME}",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "paramexp-default",
+  "command": "echo \"${name:-nobody}\"",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "paramexp-two",
+  "command": "cp ${src} ${dst}",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "cp"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "cp"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "backtick",
+  "command": "echo `whoami`",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "whoami"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "whoami"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "backtick-arg",
+  "command": "tar czf out.tgz `cat filelist`",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "tar",
+    "cat"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "tar",
+    "cat"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "subshell",
+  "command": "( cd build && cmake .. )",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "cd",
+    "cmake"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "cd",
+    "cmake"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "brace-group",
+  "command": "{ echo a; echo b; }",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "for-loop",
+  "command": "for f in a b c; do echo $f; done",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "if-block",
+  "command": "if test -f x; then echo yes; fi",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "test",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "test",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "while-loop",
+  "command": "while read line; do echo $line; done",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "read",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "read",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "case-block",
+  "command": "case $x in a) echo A;; *) echo other;; esac",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "for-with-cmd",
+  "command": "for f in $(ls); do rm $f; done",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "ls",
+    "rm"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "ls",
+    "rm"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "heredoc",
+  "command": "cat <<EOF\nhello world\nEOF",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "cat"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "cat"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "heredoc-quoted",
+  "command": "cat <<'EOF'\nliteral $stuff\nEOF",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "cat"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "cat"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "heredoc-dash",
+  "command": "cat <<-END\n\tindented\n\tEND",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "cat"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "cat"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "heredoc-sql",
+  "command": "sqlite3 db <<SQL\nSELECT 1;\nSQL",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "sqlite3"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "sqlite3"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "assign-subst",
+  "command": "RID=$(gh run list) gh view $RID",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "gh",
+    "gh"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "gh",
+    "gh"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "assign-subst-only",
+  "command": "gz=$(gzip -c f | wc -c)",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "gzip",
+    "wc"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "gzip",
+    "wc"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "assign-two",
+  "command": "a=$(one) b=$(two) run arg",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "run",
+    "one",
+    "two"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "run",
+    "one",
+    "two"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "assign-then-arg-subst",
+  "command": "FOO=$(echo x) realcmd $(echo y)",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "realcmd",
+    "echo",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "realcmd",
+    "echo",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "multiline",
+  "command": "cd repo\ngit add .\ngit status",
+  "kind": "match",
+  "expected": {
+   "ok": true,
+   "heads": [
+    "cd",
+    "git",
+    "git"
+   ],
+   "reads": [],
+   "writes": []
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "cd",
+    "git",
+    "git"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "procsubst",
+  "command": "diff <(sort a.txt) <(sort b.txt)",
+  "kind": "reject",
+  "expected": {
+   "ok": false
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "diff",
+    "sort",
+    "sort"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "heredoc-with-subst",
+  "command": "cat <<EOF\nresult: $(date)\nEOF",
+  "kind": "reject",
+  "expected": {
+   "ok": false
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "cat",
+    "date"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ },
+ {
+  "label": "nested-backtick",
+  "command": "echo `echo \\`date\\``",
+  "kind": "reject",
+  "expected": {
+   "ok": false
+  },
+  "oracle": {
+   "ok": true,
+   "heads": [
+    "echo",
+    "echo"
+   ],
+   "reads": [],
+   "writes": []
+  }
+ }
+]

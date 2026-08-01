@@ -1,6 +1,7 @@
 """The capture hook fires on every tool call, so `import opendaisugi` must not
 eagerly drag in litellm/instructor (~2.4s). Those load lazily on first LLM use.
 """
+
 from __future__ import annotations
 
 import subprocess

@@ -24,6 +24,21 @@ from opendaisugi.accounting import TierStats, classify_tier, tier_stats
 from opendaisugi.agentic_executor import AgenticExecutor
 from opendaisugi.aliases import Alias, AliasRegistry
 from opendaisugi.approval import ApprovalDecision, ApprovalStrategy
+from opendaisugi.batch import (
+    BatchClassification,
+    BatchDeclaration,
+    BatchResult,
+    FootprintProof,
+    NetTokenLedger,
+    TwoLedgerReport,
+    classify_declaration,
+    is_batchable_type,
+    prove_footprint,
+    rollback_result,
+    run_batch,
+    two_ledger_report,
+    would_be_reversible,
+)
 from opendaisugi.benchmark import (
     PairedResult,
     RunMetric,
@@ -44,6 +59,13 @@ from opendaisugi.decomposer import (
     DecomposedStep,
     DecompositionError,
     decompose,
+)
+from opendaisugi.deeds import (
+    PathState,
+    RollbackReport,
+    apply_reversal,
+    rollback_run,
+    touched_files,
 )
 from opendaisugi.defaults import DEFAULT_LOW_STAKES_ENVELOPE
 from opendaisugi.distiller import Distiller, TendReport
@@ -92,6 +114,23 @@ from opendaisugi.gardener import (
     regression_check,
     run_gardener,
 )
+from opendaisugi.gateway import (
+    RouteDecision,
+    TurnCost,
+    TurnSaving,
+    measure_turn,
+    price_turn,
+    route_turn,
+)
+from opendaisugi.gateway_answers import AnswerStore
+from opendaisugi.gateway_journal import (
+    GatewayJournal,
+    GatewaySummary,
+    GatewayTurnRecord,
+    RepeatGroup,
+    record_turn,
+)
+from opendaisugi.gateway_pipeline import Gateway, PreparedTurn
 from opendaisugi.inheritance import EnvelopeInheritanceError, verify_inheritance
 from opendaisugi.journal import (
     Journal,
@@ -132,6 +171,7 @@ from opendaisugi.models import (
     NetworkStep,
     Permission,
     Postcondition,
+    ReversalHandle,
     ShellStep,
     SimulationResetStep,
     SkillStep,
@@ -188,6 +228,14 @@ from opendaisugi.refinement import RefinementLog, RefinementRecord
 from opendaisugi.regex_to_z3 import UnsupportedRegexError
 from opendaisugi.run_session import RunSession, RunStatus, StepOutcome
 from opendaisugi.stage2 import verify_completed_step
+from opendaisugi.strata import (
+    PromotionResult,
+    ReconstructedContext,
+    RederivationLedger,
+    StrataStore,
+    Stratum,
+    promote_constraint,
+)
 from opendaisugi.subagent import DelegationDenied, SafeSubagent
 from opendaisugi.subsumption import (
     Counterexample,
@@ -239,6 +287,13 @@ except ImportError:
     pass
 
 
+# The default on-disk home for envelope cache, journal, and pathway store when a
+# caller passes no ``data_dir``. Kept a module attribute (not an inline literal)
+# so the test suite can redirect it to a tmp dir via one autouse fixture — a bare
+# ``Daisugi()`` in a test must never touch the user's real ``~/.opendaisugi``.
+DEFAULT_DATA_DIR = Path.home() / ".opendaisugi"
+
+
 class Daisugi:
     """Composition root for opendaisugi.
 
@@ -257,6 +312,7 @@ class Daisugi:
         data_dir: str | os.PathLike[str] | None = None,
         cache: bool | EnvelopeCache = True,
         pathway_store: bool | PathwayStore = True,
+        answer_store: bool | AnswerStore = True,
         pathway_threshold: float = DEFAULT_PATHWAY_THRESHOLD,
         low_stakes_envelope: Envelope | None = None,
         tier1: Tier1Provider | None = None,
@@ -271,7 +327,7 @@ class Daisugi:
         # stake-based default. Setting True opts low/medium-stakes envelopes
         # into strict mode through this facade — previously unreachable.
         self._strict = strict
-        self.data_dir = Path(data_dir) if data_dir is not None else Path.home() / ".opendaisugi"
+        self.data_dir = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
         self._tier1 = tier1
         if isinstance(cache, EnvelopeCache):
             self._cache: EnvelopeCache | None = cache
@@ -291,6 +347,15 @@ class Daisugi:
         else:
             self._pathway_store = None
             self._pathway_store_auto = False
+        if isinstance(answer_store, AnswerStore):
+            self._answer_store: AnswerStore | None = answer_store
+        elif answer_store is True:
+            # Lazy — create on first access via the property, mirroring pathway_store.
+            self._answer_store = None
+            self._answer_store_auto = True
+        else:
+            self._answer_store = None
+            self._answer_store_auto = False
         self._low_stakes_envelope = low_stakes_envelope
         self._tend_after = tend_after
         self._runs_since_tend: int = 0
@@ -393,7 +458,9 @@ class Daisugi:
                     _log.warning(
                         "auto-tend after run %s raised %s: %s — "
                         "run already succeeded and journaled, swallowing",
-                        session.id, type(e).__name__, e,
+                        session.id,
+                        type(e).__name__,
+                        e,
                     )
         return session
 
@@ -425,6 +492,8 @@ class Daisugi:
         ladder: "ModelLadder | None" = None,
         strict: bool | None = None,
         strict_budget: bool = False,
+        synth_llm: bool = True,
+        max_parallel: int = 1,
     ) -> "OrchestrationResult":
         """Run ``prompt`` end to end: decompose → size → execute → synthesize.
 
@@ -434,7 +503,9 @@ class Daisugi:
         orchestrator reuses this facade's pathway store (Tier-0 reuse for repeat
         prompts) and journal, and routes each executed step to the cheapest
         capable model under ``budget_tokens`` (None = unbudgeted; the decompose
-        and synthesize calls are overhead, not drawn from it).
+        and synthesize calls are overhead, not drawn from it). ``synth_llm=False``
+        assembles the answer deterministically — with a reused deterministic
+        pathway, a run that spends zero tokens.
         """
         from opendaisugi.model_sizer import build_ladder
         from opendaisugi.orchestrator import Orchestrator
@@ -471,6 +542,7 @@ class Daisugi:
             z3_timeout_ms=self.z3_timeout_ms,
             pathway_threshold=self._pathway_threshold,
             endpoint_overrides=endpoint_overrides,
+            max_parallel=max_parallel,
         )
         return await orch.orchestrate(
             prompt,
@@ -478,6 +550,7 @@ class Daisugi:
             budget_tokens=budget_tokens,
             strict=strict if strict is not None else self._strict,
             strict_budget=strict_budget,
+            synth_llm=synth_llm,
         )
 
     async def find_pathway(
@@ -495,10 +568,9 @@ class Daisugi:
         if self.pathway_store is None:
             return None
         import asyncio
+
         eff = threshold if threshold is not None else self._pathway_threshold
-        return await asyncio.to_thread(
-            lambda: self.pathway_store.find(task, threshold=eff)
-        )
+        return await asyncio.to_thread(lambda: self.pathway_store.find(task, threshold=eff))
 
     async def adapt_plan(
         self,
@@ -515,7 +587,8 @@ class Daisugi:
         from opendaisugi.distiller import adapt_plan as _adapt_plan
 
         return await _adapt_plan(
-            match, task,
+            match,
+            task,
             model=model if model is not None else self.model,
             z3_timeout_ms=self.z3_timeout_ms,
         )
@@ -560,6 +633,25 @@ class Daisugi:
         return None
 
     @property
+    def answer_store(self) -> AnswerStore | None:
+        """Lazy AnswerStore rooted at ``data_dir / "gateway" / "answers.jsonl"`` (ADR-0012 §2D).
+
+        Returns None if the facade was constructed with ``answer_store=False``.
+        Auto-constructs on first access when ``answer_store=True`` (the default),
+        mirroring ``pathway_store``. Unlike ``pathway_store`` this is an append-only
+        JSONL ring rather than a SQLite file, so there is no embedder/schema cost to
+        defer at construction — the opt-out flag exists purely so a caller who wants
+        no 2D footprint at all (no retained answer text, ever) can construct one
+        cleanly, the same shape as opting out of the pathway store.
+        """
+        if self._answer_store is not None:
+            return self._answer_store
+        if getattr(self, "_answer_store_auto", False):
+            self._answer_store = AnswerStore(path=self.data_dir / "gateway" / "answers.jsonl")
+            return self._answer_store
+        return None
+
+    @property
     def journal(self) -> Journal:
         """Lazy Journal instance rooted at ``self.data_dir``.
 
@@ -579,11 +671,12 @@ def __getattr__(name: str):
     # Lazy: keep mujoco/numpy off the default import path.
     if name == "MuJoCoExecutor":
         from opendaisugi.executor_mujoco import MuJoCoExecutor
+
         return MuJoCoExecutor
     raise AttributeError(f"module 'opendaisugi' has no attribute {name!r}")
 
 
-__version__ = "0.34.2"
+__version__ = "0.43.0"
 
 __all__ = [
     "__version__",
@@ -598,6 +691,51 @@ __all__ = [
     "DryRunExecutor",
     "FakeExecutor",
     "ExecutorResult",
+    # Deed ledger — reversibility (v0.41.0, roadmap Stage 8)
+    "ReversalHandle",
+    "rollback_run",
+    "touched_files",
+    "apply_reversal",
+    "RollbackReport",
+    "PathState",
+    # Within-instance batch compilation (v0.42.0, roadmap Stage 9)
+    "BatchDeclaration",
+    "BatchClassification",
+    "FootprintProof",
+    "BatchResult",
+    "NetTokenLedger",
+    "TwoLedgerReport",
+    "is_batchable_type",
+    "classify_declaration",
+    "prove_footprint",
+    "would_be_reversible",
+    "two_ledger_report",
+    "run_batch",
+    "rollback_result",
+    # Rationale-durability ledger (v0.43.0, roadmap Stage 10)
+    "Stratum",
+    "StrataStore",
+    "ReconstructedContext",
+    "RederivationLedger",
+    "PromotionResult",
+    "promote_constraint",
+    # Token-saving gateway — turn-level routing + meter (MVP)
+    "route_turn",
+    "RouteDecision",
+    "measure_turn",
+    "TurnSaving",
+    "TurnCost",
+    "price_turn",
+    # Token-saving gateway — turn journal + pipeline (tokens the constraint, dollars alongside)
+    "Gateway",
+    "PreparedTurn",
+    "GatewayJournal",
+    "GatewaySummary",
+    "GatewayTurnRecord",
+    "RepeatGroup",
+    "record_turn",
+    # Token-saving gateway — the answer store (ADR-0012 §2D)
+    "AnswerStore",
     "ApprovalStrategy",
     "ApprovalDecision",
     "CalibrationReport",

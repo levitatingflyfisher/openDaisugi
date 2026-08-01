@@ -1,13 +1,27 @@
 """Plug-and-play installation of openDaisugi into agent runtimes.
 
 ``daisugi install`` detects Claude Code, Codex, Hermes, and OpenClaw on the
-local machine and installs three layers per harness:
+local machine and installs four layers per harness by default:
 
   - Skill: symlink the bundled opendaisugi-checklist skill into the harness's
     discovery path (cross-vendor ~/.agents/skills first). Discovered on demand
     — no per-session token cost.
   - MCP: register the ``daisugi mcp serve`` tool server (per-harness syntax).
   - Capture: a pre-tool-call hook feeding distillation (per-harness surface).
+  - Instructions: append pathway-routing guidance to the harness's always-on
+    instructions file (CLAUDE.md / AGENTS.md).
+
+Two more layers exist but are opt-in (ADR-0013, "one install that both saves
+and verifies"), since they are safety/cost relevant and must never be
+installed by surprise:
+
+  - Gate: the ADR-0007 fail-closed PreToolUse verify hook. Claude Code only;
+    shadow-by-default, ``--enforce`` an explicit opt-in.
+  - Base URL: points the harness at the local token-saving gateway
+    (ADR-0012). Claude Code (env var) and OpenClaw (a registered provider,
+    both speak Anthropic Messages) are wired; Codex and Hermes are not (their
+    custom endpoints expect an OpenAI wire) — this is surfaced honestly via
+    ``Runtime.unsupported_layers()``, never silently skipped.
 
 All writes are idempotent, backed up before modification, and reversible via
 ``daisugi install --uninstall``.
@@ -92,11 +106,29 @@ def _install_skill(home: Path, fallback_subdir: str) -> Path:
 # Data types
 # ---------------------------------------------------------------------------
 
+
 class Layer(str, Enum):
     SKILL = "skill"
     MCP = "mcp"
     CAPTURE = "capture"
     INSTRUCTIONS = "instructions"
+    GATE = "gate"
+    BASE_URL = "base_url"
+
+
+# The four layers installed by default, unchanged since before ADR-0013.
+# GATE and BASE_URL are opt-in only — never added here.
+DEFAULT_LAYERS: frozenset[Layer] = frozenset(
+    {Layer.SKILL, Layer.MCP, Layer.CAPTURE, Layer.INSTRUCTIONS}
+)
+
+# The gateway's default bind address (mirrors `daisugi gateway`'s --port 8787).
+DEFAULT_GATEWAY_BASE_URL = "http://127.0.0.1:8787"
+
+
+def _resolve_layers(layers: "set[Layer] | None") -> "set[Layer]":
+    """``None`` means "the current default four" — never GATE/BASE_URL by accident."""
+    return set(DEFAULT_LAYERS) if layers is None else set(layers)
 
 
 @dataclass
@@ -104,6 +136,11 @@ class InstallStep:
     layer: Layer
     description: str
     target: Path | None = None
+    # False marks a "capability gap" note (an unsupported (runtime, layer)
+    # combo surfaced honestly rather than silently skipped) rather than a
+    # real, applied change — _format_summary and the CLI must not count
+    # these toward "N change(s)".
+    supported: bool = True
 
 
 @dataclass
@@ -118,25 +155,63 @@ class InstallResult:
 # Runtime protocol
 # ---------------------------------------------------------------------------
 
+
 class Runtime(Protocol):
     """An agent harness openDaisugi can install into.
 
     ``plan`` returns layer-aware :class:`InstallStep` rows for dry-run preview;
-    ``apply`` performs the writes and returns the modified paths. Each runtime
-    composes three layers internally: skill symlink, MCP registration, and a
-    pre-tool-call capture hook.
+    ``apply`` performs the writes and returns the modified paths. ``layers``
+    selects which layers to act on (``None`` = the current default four —
+    back-compat for every existing call site); GATE and BASE_URL are opt-in
+    only. ``enforce``/``base_url`` only matter to runtimes that support those
+    two layers — everyone else ignores them. ``reverse`` (optional) always
+    reverses everything it manages unconditionally (idempotent no-ops for
+    anything absent) — it does not take a ``layers`` selection.
+
+    ``unsupported_layers`` (optional; treat a missing one as ``{}``) maps each
+    (runtime, layer) combination this runtime does NOT wire to a one-line,
+    human-readable reason — ADR-0013's "encode the rest as an honest
+    capability matrix rather than faking it."
     """
 
     name: str
 
     def detect(self, home: Path) -> bool: ...
-    def plan(self, home: Path) -> list[InstallStep]: ...
-    def apply(self, home: Path) -> list[Path]: ...
+    def plan(
+        self,
+        home: Path,
+        layers: "set[Layer] | None" = None,
+        *,
+        enforce: bool = False,
+        base_url: str | None = None,
+    ) -> list[InstallStep]: ...
+    def apply(
+        self,
+        home: Path,
+        layers: "set[Layer] | None" = None,
+        *,
+        enforce: bool = False,
+        base_url: str | None = None,
+    ) -> list[Path]: ...
+    def unsupported_layers(self) -> dict[Layer, str]: ...
+
+
+def _append_unsupported_steps(steps: list[InstallStep], rt, sel: "set[Layer]") -> None:
+    """Append an honest gap InstallStep for every selected, unsupported layer.
+
+    Shared by every runtime's ``plan`` so a selected-but-unsupported (runtime,
+    layer) combo always shows up in the plan/dry-run output — never a silent
+    skip.
+    """
+    for layer, reason in rt.unsupported_layers().items():
+        if layer in sel:
+            steps.append(InstallStep(layer, f"Not wired: {reason}", None, supported=False))
 
 
 # ---------------------------------------------------------------------------
 # Claude Code
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ClaudeCodeRuntime:
@@ -145,25 +220,88 @@ class ClaudeCodeRuntime:
     def detect(self, home: Path) -> bool:
         return (home / ".claude").is_dir()
 
-    def plan(self, home: Path) -> list[InstallStep]:
-        claude_dir = home / ".claude"
-        return [
-            InstallStep(Layer.SKILL, "Symlink opendaisugi-checklist skill",
-                        _agents_skill_target(home, ".claude/skills")),
-            InstallStep(Layer.MCP, 'Register MCP server "opendaisugi"',
-                        home / ".claude.json"),
-            InstallStep(Layer.CAPTURE, "Add PreToolUse capture hook",
-                        claude_dir / "settings.json"),
-            InstallStep(Layer.INSTRUCTIONS, "Append pathway guidance",
-                        claude_dir / "CLAUDE.md"),
-        ]
+    def unsupported_layers(self) -> dict[Layer, str]:
+        return {}  # fully wired — the reference harness for ADR-0013
 
-    def apply(self, home: Path) -> list[Path]:
+    def plan(
+        self,
+        home: Path,
+        layers: "set[Layer] | None" = None,
+        *,
+        enforce: bool = False,
+        base_url: str | None = None,
+    ) -> list[InstallStep]:
+        sel = _resolve_layers(layers)
         claude_dir = home / ".claude"
-        modified: list[Path] = [_install_skill(home, ".claude/skills")]
-        modified += _patch_claude_mcp(home / ".claude.json")
-        modified += _patch_claude_settings(claude_dir / "settings.json")
-        modified += _patch_claude_md(claude_dir / "CLAUDE.md")
+        steps: list[InstallStep] = []
+        if Layer.SKILL in sel:
+            steps.append(
+                InstallStep(
+                    Layer.SKILL,
+                    "Symlink opendaisugi-checklist skill",
+                    _agents_skill_target(home, ".claude/skills"),
+                )
+            )
+        if Layer.MCP in sel:
+            steps.append(
+                InstallStep(Layer.MCP, 'Register MCP server "opendaisugi"', home / ".claude.json")
+            )
+        if Layer.CAPTURE in sel:
+            steps.append(
+                InstallStep(
+                    Layer.CAPTURE, "Add PreToolUse capture hook", claude_dir / "settings.json"
+                )
+            )
+        if Layer.INSTRUCTIONS in sel:
+            steps.append(
+                InstallStep(Layer.INSTRUCTIONS, "Append pathway guidance", claude_dir / "CLAUDE.md")
+            )
+        if Layer.GATE in sel:
+            mode = "ENFORCE" if enforce else "shadow"
+            steps.append(
+                InstallStep(
+                    Layer.GATE,
+                    f"Install fail-closed gate PreToolUse hook ({mode})",
+                    claude_dir / "settings.json",
+                )
+            )
+        if Layer.BASE_URL in sel:
+            url = base_url or DEFAULT_GATEWAY_BASE_URL
+            steps.append(
+                InstallStep(
+                    Layer.BASE_URL,
+                    f"Point ANTHROPIC_BASE_URL at {url}",
+                    claude_dir / "settings.json",
+                )
+            )
+        _append_unsupported_steps(steps, self, sel)
+        return steps
+
+    def apply(
+        self,
+        home: Path,
+        layers: "set[Layer] | None" = None,
+        *,
+        enforce: bool = False,
+        base_url: str | None = None,
+    ) -> list[Path]:
+        sel = _resolve_layers(layers)
+        claude_dir = home / ".claude"
+        modified: list[Path] = []
+        if Layer.SKILL in sel:
+            modified.append(_install_skill(home, ".claude/skills"))
+        if Layer.MCP in sel:
+            modified += _patch_claude_mcp(home / ".claude.json")
+        if Layer.CAPTURE in sel:
+            modified += _patch_claude_settings(claude_dir / "settings.json")
+        if Layer.INSTRUCTIONS in sel:
+            modified += _patch_claude_md(claude_dir / "CLAUDE.md")
+        if Layer.GATE in sel:
+            modified += _patch_claude_gate(claude_dir / "settings.json", enforce=enforce)
+        if Layer.BASE_URL in sel:
+            modified += _patch_claude_base_url(
+                claude_dir / "settings.json", base_url or DEFAULT_GATEWAY_BASE_URL
+            )
         return modified
 
     def reverse(self, home: Path) -> list[Path]:
@@ -172,8 +310,14 @@ class ClaudeCodeRuntime:
         modified += _remove_skill_both(home, ".claude/skills")
         modified += _pop_json_mcp(home / ".claude.json", mcp_key="mcpServers")
         modified += _pop_json_hook(
-            claude_dir / "settings.json", hook_substr="daisugi hook record",
+            claude_dir / "settings.json",
+            hook_substr="daisugi hook record",
         )
+        modified += _pop_json_hook(
+            claude_dir / "settings.json",
+            hook_substr=_GATE_HOOK_SUBSTR,
+        )
+        modified += _pop_json_env_key(claude_dir / "settings.json", key="ANTHROPIC_BASE_URL")
         modified += _unpatch_instructions(claude_dir / "CLAUDE.md")
         return modified
 
@@ -181,6 +325,7 @@ class ClaudeCodeRuntime:
 @dataclass(frozen=True)
 class _ConfigFormat:
     """A (parse, dump) pair for a structured config dialect."""
+
     parse: "Callable[[str], dict]"
     dump: "Callable[[dict], str]"
 
@@ -210,12 +355,23 @@ _JSON5 = _ConfigFormat(_json5_parse, _json_dump)
 _JSON5_COMMENT_RE = re.compile(r"//|/\*")
 
 
-def _patch_mcp(path: Path, fmt: _ConfigFormat, key_path: tuple[str, ...], entry: dict) -> list[Path]:
-    """Register the opendaisugi MCP entry at ``key_path`` in a structured config.
+def _patch_mcp(
+    path: Path,
+    fmt: _ConfigFormat,
+    key_path: tuple[str, ...],
+    entry: dict,
+    *,
+    what: str = "MCP registration",
+) -> list[Path]:
+    """Set ``leaf["opendaisugi"] = entry`` at ``key_path`` in a structured config.
 
-    Generic over JSON / JSON5 via ``fmt``. Never clobbers an unparseable file
-    (these hold real user state — project history, auth): warns and skips.
-    Idempotent, and backs up only when it actually writes.
+    Generic over JSON / JSON5 via ``fmt``, and over what's being registered
+    via ``what`` (the noun used in the skip-warning — "MCP registration" by
+    default; callers register other opendaisugi-keyed leaves under this same
+    idempotent/backed-up/skip-on-unparseable primitive, e.g. OpenClaw's
+    gateway provider block). Never clobbers an unparseable file (these hold
+    real user state — project history, auth): warns and skips. Idempotent,
+    and backs up only when it actually writes.
 
     When writing a JSON5 file that had comments, emits a UserWarning before
     the write so the operator sees the comment loss in the CLI output
@@ -228,9 +384,10 @@ def _patch_mcp(path: Path, fmt: _ConfigFormat, key_path: tuple[str, ...], entry:
             cfg: dict = fmt.parse(raw_text)
         except (json.JSONDecodeError, OSError):
             warnings.warn(
-                f"{path} is not valid; skipping MCP registration to avoid "
+                f"{path} is not valid; skipping {what} to avoid "
                 "overwriting user state. Fix the file and re-run `daisugi install`.",
-                UserWarning, stacklevel=2,
+                UserWarning,
+                stacklevel=2,
             )
             return []
     else:
@@ -243,17 +400,14 @@ def _patch_mcp(path: Path, fmt: _ConfigFormat, key_path: tuple[str, ...], entry:
         return []
     if path.exists():
         # v0.28.6 — warn before clobbering JSON5 comments on disk.
-        if (
-            fmt is _JSON5
-            and raw_text is not None
-            and _JSON5_COMMENT_RE.search(raw_text)
-        ):
+        if fmt is _JSON5 and raw_text is not None and _JSON5_COMMENT_RE.search(raw_text):
             warnings.warn(
                 f"{path} contains JSON5 comments which will not survive the "
                 f"rewrite (the writer emits plain JSON). The pre-write backup "
                 f"at {path}.bak* preserves the original text — restore from it "
                 f"if you need the comments back. Tracked as M7 in REVIEW_FINDINGS.md.",
-                UserWarning, stacklevel=2,
+                UserWarning,
+                stacklevel=2,
             )
         _backup(path)
     leaf["opendaisugi"] = entry
@@ -265,7 +419,9 @@ def _patch_claude_mcp(claude_json: Path) -> list[Path]:
     """Register MCP where Claude Code reads user-scope servers: ``~/.claude.json``
     ``mcpServers`` (NOT settings.json, which only honors allow/deny flags)."""
     return _patch_mcp(
-        claude_json, _JSON, ("mcpServers",),
+        claude_json,
+        _JSON,
+        ("mcpServers",),
         {"type": "stdio", "command": "daisugi", "args": ["mcp", "serve"]},
     )
 
@@ -283,7 +439,8 @@ def _patch_claude_settings(settings_path: Path) -> list[Path]:
                 f"{settings_path} is not valid JSON; skipping hook registration to "
                 f"avoid overwriting your Claude Code settings (permissions/env). "
                 f"Fix the file and re-run `daisugi install`.",
-                UserWarning, stacklevel=2,
+                UserWarning,
+                stacklevel=2,
             )
             return []
     else:
@@ -297,10 +454,7 @@ def _patch_claude_settings(settings_path: Path) -> list[Path]:
     # `--format claude` suffix and any future flags.
     pre = hooks.setdefault("PreToolUse", [])
     existing_pre_commands = {
-        h["command"]
-        for entry in pre
-        for h in entry.get("hooks", [])
-        if h.get("type") == "command"
+        h["command"] for entry in pre for h in entry.get("hooks", []) if h.get("type") == "command"
     }
     if not any("daisugi hook record" in c for c in existing_pre_commands):
         pre.append(_PRETOOLUSE_HOOK)
@@ -313,11 +467,13 @@ def _patch_claude_settings(settings_path: Path) -> list[Path]:
     ss = hooks.get("SessionStart")
     if ss and any(
         h.get("command") == "daisugi install --print-skill"
-        for entry in ss for h in entry.get("hooks", [])
+        for entry in ss
+        for h in entry.get("hooks", [])
     ):
         for entry in ss:
             entry["hooks"] = [
-                h for h in entry.get("hooks", [])
+                h
+                for h in entry.get("hooks", [])
                 if h.get("command") != "daisugi install --print-skill"
             ]
         hooks["SessionStart"] = [e for e in ss if e.get("hooks")]
@@ -331,6 +487,124 @@ def _patch_claude_settings(settings_path: Path) -> list[Path]:
         settings_path.write_text(json.dumps(settings, indent=2) + "\n")
         return [settings_path]
     return []
+
+
+# ADR-0013 GATE layer — the substring the gate hook's command is deduped and
+# reversed by. Distinct from the capture hook's "daisugi hook record" so both
+# coexist as separate PreToolUse entries.
+_GATE_HOOK_SUBSTR = "opendaisugi.gate"
+
+
+def _patch_claude_gate(
+    settings_path: Path,
+    *,
+    enforce: bool = False,
+    root: Path | None = None,
+    python: str | None = None,
+    verify_timeout_s: float | None = None,
+) -> list[Path]:
+    """Merge the ADR-0007 fail-closed gate's PreToolUse hook into settings.json.
+
+    Built from ``gate_settings_json`` — the one canonical source for the gate
+    command — never hand-constructed. Merges exactly like
+    ``_patch_claude_settings`` does for the capture hook: idempotent by the
+    command substring ``"opendaisugi.gate"``, skip-and-warn on unparseable
+    settings.json, backup only when actually writing. SHADOW unless
+    ``enforce=True`` — the gate never enforces without an explicit opt-in.
+
+    Idempotency is by *presence*, not by content: re-running with the same
+    flags is a true no-op, but asking for a different mode than what is
+    already installed does NOT silently rewrite it (that could just as
+    easily silently escalate a shadow install into enforce as the reverse).
+    Instead it warns — the honest signal is "run --uninstall first", not a
+    config file that quietly disagrees with what the user just asked for.
+    """
+    from opendaisugi.gate import DEFAULT_GATE_ROOT, gate_settings_json
+
+    kwargs: dict = {
+        "mode": "enforce" if enforce else "shadow",
+        "fmt": "claude",
+        "root": root if root is not None else DEFAULT_GATE_ROOT,
+    }
+    if python is not None:
+        kwargs["python"] = python
+    if verify_timeout_s is not None:
+        kwargs["verify_timeout_s"] = verify_timeout_s
+    gate_entry = json.loads(gate_settings_json(**kwargs))["hooks"]["PreToolUse"][0]
+    gate_command = gate_entry["hooks"][0]["command"]
+
+    existed = settings_path.exists()
+    if existed:
+        try:
+            settings: dict = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            warnings.warn(
+                f"{settings_path} is not valid JSON; skipping gate hook installation "
+                f"to avoid overwriting your Claude Code settings (permissions/env). "
+                f"Fix the file and re-run `daisugi install`.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return []
+    else:
+        settings = {}
+
+    hooks = settings.setdefault("hooks", {})
+    pre = hooks.setdefault("PreToolUse", [])
+    existing_commands = {
+        h["command"] for entry in pre for h in entry.get("hooks", []) if h.get("type") == "command"
+    }
+    if any(_GATE_HOOK_SUBSTR in c for c in existing_commands):
+        if not any(c == gate_command for c in existing_commands):
+            warnings.warn(
+                f"a gate hook is already installed in {settings_path} with a "
+                f"different mode/config; run `daisugi install --uninstall` first "
+                f"if you want to change it (idempotent by presence, not content).",
+                UserWarning,
+                stacklevel=2,
+            )
+        return []  # already installed — idempotent no-op either way
+
+    pre.append(gate_entry)
+    if existed:
+        _backup(settings_path)
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    return [settings_path]
+
+
+def _patch_claude_base_url(settings_path: Path, url: str) -> list[Path]:
+    """Merge ANTHROPIC_BASE_URL into settings.json's env, idempotently.
+
+    Points Claude Code at the local token-saving gateway (ADR-0012's BASE_URL
+    layer, ADR-0013). No-op if already set to ``url``; skip-and-warn on
+    unparseable settings.json (mirrors ``_patch_claude_settings``); backs up
+    before writing.
+    """
+    existed = settings_path.exists()
+    if existed:
+        try:
+            settings: dict = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            warnings.warn(
+                f"{settings_path} is not valid JSON; skipping ANTHROPIC_BASE_URL "
+                f"to avoid overwriting your Claude Code settings (permissions/env). "
+                f"Fix the file and re-run `daisugi install`.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return []
+    else:
+        settings = {}
+
+    env = settings.setdefault("env", {})
+    if env.get("ANTHROPIC_BASE_URL") == url:
+        return []  # already pointed at the gateway — no-op
+
+    env["ANTHROPIC_BASE_URL"] = url
+    if existed:
+        _backup(settings_path)
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    return [settings_path]
 
 
 def _patch_instructions(md_path: Path) -> list[Path]:
@@ -356,6 +630,7 @@ def _patch_claude_md(md_path: Path) -> list[Path]:
 # Hermes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class HermesRuntime:
     name: str = "Hermes"
@@ -363,22 +638,63 @@ class HermesRuntime:
     def detect(self, home: Path) -> bool:
         return (home / ".hermes").is_dir()
 
-    def plan(self, home: Path) -> list[InstallStep]:
-        h = home / ".hermes"
-        return [
-            InstallStep(Layer.SKILL, "Symlink opendaisugi-checklist skill",
-                        h / "skills" / "opendaisugi" / _SKILL_NAME),
-            InstallStep(Layer.MCP, "Register opendaisugi MCP server",
-                        h / "config.yaml"),
-            InstallStep(Layer.CAPTURE, "Add pre_tool_call capture hook",
-                        h / "config.yaml"),
-        ]
+    def unsupported_layers(self) -> dict[Layer, str]:
+        return {
+            Layer.GATE: "external/JS-shim gate not yet wired — follow-up",
+            Layer.BASE_URL: (
+                "gateway speaks Anthropic Messages; this harness's custom endpoint "
+                "expects OpenAI — not wired (needs an OpenAI-wire adapter)"
+            ),
+        }
 
-    def apply(self, home: Path) -> list[Path]:
+    def plan(
+        self,
+        home: Path,
+        layers: "set[Layer] | None" = None,
+        *,
+        enforce: bool = False,
+        base_url: str | None = None,
+    ) -> list[InstallStep]:
+        sel = _resolve_layers(layers)
+        h = home / ".hermes"
+        steps: list[InstallStep] = []
+        if Layer.SKILL in sel:
+            steps.append(
+                InstallStep(
+                    Layer.SKILL,
+                    "Symlink opendaisugi-checklist skill",
+                    h / "skills" / "opendaisugi" / _SKILL_NAME,
+                )
+            )
+        if Layer.MCP in sel:
+            steps.append(
+                InstallStep(Layer.MCP, "Register opendaisugi MCP server", h / "config.yaml")
+            )
+        if Layer.CAPTURE in sel:
+            steps.append(
+                InstallStep(Layer.CAPTURE, "Add pre_tool_call capture hook", h / "config.yaml")
+            )
+        _append_unsupported_steps(steps, self, sel)
+        return steps
+
+    def apply(
+        self,
+        home: Path,
+        layers: "set[Layer] | None" = None,
+        *,
+        enforce: bool = False,
+        base_url: str | None = None,
+    ) -> list[Path]:
+        sel = _resolve_layers(layers)
         h = home / ".hermes"
         h.mkdir(parents=True, exist_ok=True)
-        modified: list[Path] = [_link_skill(h / "skills" / "opendaisugi" / _SKILL_NAME)]
-        modified += _patch_hermes_config(h / "config.yaml")
+        modified: list[Path] = []
+        if Layer.SKILL in sel:
+            modified.append(_link_skill(h / "skills" / "opendaisugi" / _SKILL_NAME))
+        if Layer.MCP in sel or Layer.CAPTURE in sel:
+            # One writer covers both — Hermes registers the MCP server and the
+            # capture hook in a single config.yaml rewrite.
+            modified += _patch_hermes_config(h / "config.yaml")
         return modified
 
     def reverse(self, home: Path) -> list[Path]:
@@ -404,8 +720,11 @@ class HermesRuntime:
         hooks = cfg.get("hooks")
         if isinstance(hooks, dict) and isinstance(hooks.get("pre_tool_call"), list):
             pre = hooks["pre_tool_call"]
-            kept = [hk for hk in pre if not (isinstance(hk, dict)
-                    and "daisugi hook record" in hk.get("command", ""))]
+            kept = [
+                hk
+                for hk in pre
+                if not (isinstance(hk, dict) and "daisugi hook record" in hk.get("command", ""))
+            ]
             if len(kept) != len(pre):
                 changed = True
                 if kept:
@@ -433,7 +752,8 @@ def _patch_hermes_config(config_path: Path) -> list[Path]:
             warnings.warn(
                 f"{config_path} is not valid YAML; skipping to avoid overwriting your "
                 f"Hermes config. Fix the file and re-run `daisugi install`.",
-                UserWarning, stacklevel=2,
+                UserWarning,
+                stacklevel=2,
             )
             return []
     else:
@@ -465,6 +785,7 @@ def _patch_hermes_config(config_path: Path) -> list[Path]:
 # Codex (OpenAI CLI) — detected by binary presence
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class CodexRuntime:
     name: str = "Codex"
@@ -472,23 +793,82 @@ class CodexRuntime:
     def detect(self, home: Path) -> bool:
         return shutil.which("codex") is not None or (home / ".codex").is_dir()
 
-    def plan(self, home: Path) -> list[InstallStep]:
-        codex = home / ".codex"
-        return [
-            InstallStep(Layer.SKILL, "Symlink opendaisugi-checklist skill",
-                        _agents_skill_target(home, ".codex/skills")),
-            InstallStep(Layer.MCP, "Register opendaisugi MCP server",
-                        codex / "config.toml"),
-            InstallStep(Layer.INSTRUCTIONS, "Append pathway guidance",
-                        codex / "AGENTS.md"),
-        ]
+    def unsupported_layers(self) -> dict[Layer, str]:
+        return {}  # gate wired via hooks.json (v0.114+); base_url via the OpenAI-wire adapter
 
-    def apply(self, home: Path) -> list[Path]:
+    def plan(
+        self,
+        home: Path,
+        layers: "set[Layer] | None" = None,
+        *,
+        enforce: bool = False,
+        base_url: str | None = None,
+    ) -> list[InstallStep]:
+        sel = _resolve_layers(layers)
+        codex = home / ".codex"
+        steps: list[InstallStep] = []
+        if Layer.SKILL in sel:
+            steps.append(
+                InstallStep(
+                    Layer.SKILL,
+                    "Symlink opendaisugi-checklist skill",
+                    _agents_skill_target(home, ".codex/skills"),
+                )
+            )
+        if Layer.MCP in sel:
+            steps.append(
+                InstallStep(Layer.MCP, "Register opendaisugi MCP server", codex / "config.toml")
+            )
+        if Layer.INSTRUCTIONS in sel:
+            steps.append(
+                InstallStep(Layer.INSTRUCTIONS, "Append pathway guidance", codex / "AGENTS.md")
+            )
+        if Layer.GATE in sel:
+            mode = "ENFORCE" if enforce else "shadow"
+            steps.append(
+                InstallStep(
+                    Layer.GATE,
+                    f"Install gate PreToolUse hook ({mode}) — Codex hooks fail OPEN on "
+                    "hook crash/timeout: deny works, a dead gate does not block",
+                    codex / "hooks.json",
+                )
+            )
+        if Layer.BASE_URL in sel:
+            url = base_url or DEFAULT_GATEWAY_BASE_URL
+            steps.append(
+                InstallStep(
+                    Layer.BASE_URL,
+                    f"Register gateway model provider ({url}/v1, wire_api=chat) and select it",
+                    codex / "config.toml",
+                )
+            )
+        _append_unsupported_steps(steps, self, sel)
+        return steps
+
+    def apply(
+        self,
+        home: Path,
+        layers: "set[Layer] | None" = None,
+        *,
+        enforce: bool = False,
+        base_url: str | None = None,
+    ) -> list[Path]:
+        sel = _resolve_layers(layers)
         codex = home / ".codex"
         codex.mkdir(parents=True, exist_ok=True)
-        modified: list[Path] = [_install_skill(home, ".codex/skills")]
-        modified += _patch_codex_config(codex / "config.toml")
-        modified += _patch_instructions(codex / "AGENTS.md")
+        modified: list[Path] = []
+        if Layer.SKILL in sel:
+            modified.append(_install_skill(home, ".codex/skills"))
+        if Layer.MCP in sel:
+            modified += _patch_codex_config(codex / "config.toml")
+        if Layer.INSTRUCTIONS in sel:
+            modified += _patch_instructions(codex / "AGENTS.md")
+        if Layer.GATE in sel:
+            modified += _patch_codex_gate(codex / "hooks.json", enforce=enforce)
+        if Layer.BASE_URL in sel:
+            modified += _patch_codex_base_url(
+                codex / "config.toml", base_url or DEFAULT_GATEWAY_BASE_URL
+            )
         return modified
 
     def reverse(self, home: Path) -> list[Path]:
@@ -502,15 +882,13 @@ class CodexRuntime:
             cleaned = text.replace(_CODEX_MCP_BLOCK, "").rstrip("\n")
             toml_path.write_text(cleaned + "\n" if cleaned else "")
             modified.append(toml_path)
+        modified += _pop_json_hook(codex / "hooks.json", hook_substr=_GATE_HOOK_SUBSTR)
+        modified += _unpatch_codex_base_url(codex / "config.toml")
         modified += _unpatch_instructions(codex / "AGENTS.md")
         return modified
 
 
-_CODEX_MCP_BLOCK = (
-    "\n[mcp_servers.opendaisugi]\n"
-    'command = "daisugi"\n'
-    'args = ["mcp", "serve"]\n'
-)
+_CODEX_MCP_BLOCK = '\n[mcp_servers.opendaisugi]\ncommand = "daisugi"\nargs = ["mcp", "serve"]\n'
 
 
 def _patch_codex_config(config_path: Path) -> list[Path]:
@@ -519,15 +897,114 @@ def _patch_codex_config(config_path: Path) -> list[Path]:
         return []
     if config_path.exists():
         _backup(config_path)
-    config_path.write_text(
-        existing.rstrip("\n") + ("\n" if existing else "") + _CODEX_MCP_BLOCK
+    config_path.write_text(existing.rstrip("\n") + ("\n" if existing else "") + _CODEX_MCP_BLOCK)
+    return [config_path]
+
+
+def _patch_codex_gate(hooks_path: Path, *, enforce: bool = False) -> list[Path]:
+    """Merge the fail-closed gate's PreToolUse hook into Codex ``hooks.json``.
+
+    Codex (v0.114+) copied Claude Code's hook schema — same PreToolUse stdin
+    shape (``tool_name`` + ``tool_input.command``), same exit-2 deny — so the
+    canonical gate entry from ``gate_settings_json`` serves both, with one
+    rewrite: Codex regex-matches matchers, and Claude's ``*`` glob is not a
+    valid regex, so the matcher becomes ``.*``.
+
+    Honesty note, mirrored in the plan step: Codex hooks fail OPEN — a hook
+    that crashes, times out, or emits invalid JSON lets the tool run. The
+    gate's inner verify timeout denies before the outer timeout can fail
+    open, but a dead gate process does not block. Same idempotency/backup
+    discipline as ``_patch_claude_gate``.
+    """
+    from opendaisugi.gate import gate_settings_json
+
+    gate_entry = json.loads(gate_settings_json(mode="enforce" if enforce else "shadow"))["hooks"][
+        "PreToolUse"
+    ][0]
+    gate_entry["matcher"] = ".*"
+
+    existed = hooks_path.exists()
+    if existed:
+        try:
+            hooks_cfg: dict = json.loads(hooks_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            warnings.warn(
+                f"{hooks_path} is not valid JSON; skipping gate hook installation. "
+                f"Fix the file and re-run `daisugi install`.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return []
+    else:
+        hooks_cfg = {}
+    pre = hooks_cfg.setdefault("hooks", {}).setdefault("PreToolUse", [])
+    existing_commands = {
+        h.get("command", "")
+        for entry in pre
+        for h in entry.get("hooks", [])
+        if h.get("type") == "command"
+    }
+    if any(_GATE_HOOK_SUBSTR in c for c in existing_commands):
+        return []
+    if existed:
+        _backup(hooks_path)
+    pre.append(gate_entry)
+    hooks_path.write_text(json.dumps(hooks_cfg, indent=2) + "\n")
+    return [hooks_path]
+
+
+_CODEX_PROVIDER_SELECT = 'model_provider = "opendaisugi"'
+
+
+def _codex_provider_block(url: str) -> str:
+    return (
+        "\n[model_providers.opendaisugi]\n"
+        'name = "openDaisugi gateway"\n'
+        f'base_url = "{url}/v1"\n'
+        'wire_api = "chat"\n'
     )
+
+
+def _patch_codex_base_url(config_path: Path, url: str) -> list[Path]:
+    """Register the gateway as a Codex model provider and select it.
+
+    Two edits, both idempotent: the ``[model_providers.opendaisugi]`` table is
+    appended, and the top-level ``model_provider`` selector is PREPENDED —
+    top-level TOML keys must precede any table header or they silently nest
+    under the last table.
+    """
+    existing = config_path.read_text() if config_path.exists() else ""
+    if "[model_providers.opendaisugi]" in existing:
+        return []
+    if config_path.exists():
+        _backup(config_path)
+    text = existing
+    if _CODEX_PROVIDER_SELECT not in text:
+        text = _CODEX_PROVIDER_SELECT + "\n" + text
+    config_path.write_text(text.rstrip("\n") + "\n" + _codex_provider_block(url))
+    return [config_path]
+
+
+def _unpatch_codex_base_url(config_path: Path) -> list[Path]:
+    if not config_path.exists():
+        return []
+    text = config_path.read_text()
+    if "[model_providers.opendaisugi]" not in text and _CODEX_PROVIDER_SELECT not in text:
+        return []
+    _backup(config_path)
+    import re as _re
+
+    text = _re.sub(r"\n?\[model_providers\.opendaisugi\][^\[]*", "\n", text, count=1)
+    text = text.replace(_CODEX_PROVIDER_SELECT + "\n", "", 1)
+    cleaned = text.strip("\n")
+    config_path.write_text(cleaned + "\n" if cleaned else "")
     return [config_path]
 
 
 # ---------------------------------------------------------------------------
 # OpenClaw
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class OpenClawRuntime:
@@ -539,27 +1016,87 @@ class OpenClawRuntime:
     def _workspace(self, home: Path) -> Path:
         return home / ".openclaw" / "workspace"
 
-    def plan(self, home: Path) -> list[InstallStep]:
-        oc = home / ".openclaw"
-        return [
-            InstallStep(Layer.SKILL, "Symlink opendaisugi-checklist skill",
-                        self._workspace(home) / "skills" / _SKILL_NAME),
-            InstallStep(Layer.MCP, "Register opendaisugi MCP server",
-                        oc / "openclaw.json"),
-            InstallStep(Layer.CAPTURE, "Install before_tool_call capture plugin",
-                        oc / "extensions" / "opendaisugi"),
-            InstallStep(Layer.INSTRUCTIONS, "Append pathway guidance",
-                        self._workspace(home) / "AGENTS.md"),
-        ]
+    def unsupported_layers(self) -> dict[Layer, str]:
+        # BASE_URL IS wired (below) — OpenClaw speaks Anthropic Messages.
+        return {Layer.GATE: "external/JS-shim gate not yet wired — follow-up"}
 
-    def apply(self, home: Path) -> list[Path]:
+    def plan(
+        self,
+        home: Path,
+        layers: "set[Layer] | None" = None,
+        *,
+        enforce: bool = False,
+        base_url: str | None = None,
+    ) -> list[InstallStep]:
+        sel = _resolve_layers(layers)
+        oc = home / ".openclaw"
+        steps: list[InstallStep] = []
+        if Layer.SKILL in sel:
+            steps.append(
+                InstallStep(
+                    Layer.SKILL,
+                    "Symlink opendaisugi-checklist skill",
+                    self._workspace(home) / "skills" / _SKILL_NAME,
+                )
+            )
+        if Layer.MCP in sel:
+            steps.append(
+                InstallStep(Layer.MCP, "Register opendaisugi MCP server", oc / "openclaw.json")
+            )
+        if Layer.CAPTURE in sel:
+            steps.append(
+                InstallStep(
+                    Layer.CAPTURE,
+                    "Install before_tool_call capture plugin",
+                    oc / "extensions" / "opendaisugi",
+                )
+            )
+        if Layer.INSTRUCTIONS in sel:
+            steps.append(
+                InstallStep(
+                    Layer.INSTRUCTIONS,
+                    "Append pathway guidance",
+                    self._workspace(home) / "AGENTS.md",
+                )
+            )
+        if Layer.BASE_URL in sel:
+            url = base_url or DEFAULT_GATEWAY_BASE_URL
+            steps.append(
+                InstallStep(
+                    Layer.BASE_URL,
+                    f"Register opendaisugi gateway provider (anthropic-messages) at {url} "
+                    f"— select it as the active provider manually",
+                    oc / "openclaw.json",
+                )
+            )
+        _append_unsupported_steps(steps, self, sel)
+        return steps
+
+    def apply(
+        self,
+        home: Path,
+        layers: "set[Layer] | None" = None,
+        *,
+        enforce: bool = False,
+        base_url: str | None = None,
+    ) -> list[Path]:
+        sel = _resolve_layers(layers)
         oc = home / ".openclaw"
         ws = self._workspace(home)
         ws.mkdir(parents=True, exist_ok=True)
-        modified: list[Path] = [_link_skill(ws / "skills" / _SKILL_NAME)]
-        modified += _patch_openclaw_config(oc / "openclaw.json")
-        modified += _patch_instructions(ws / "AGENTS.md")
-        modified.append(_install_openclaw_plugin(home))
+        modified: list[Path] = []
+        if Layer.SKILL in sel:
+            modified.append(_link_skill(ws / "skills" / _SKILL_NAME))
+        if Layer.MCP in sel:
+            modified += _patch_openclaw_config(oc / "openclaw.json")
+        if Layer.INSTRUCTIONS in sel:
+            modified += _patch_instructions(ws / "AGENTS.md")
+        if Layer.CAPTURE in sel:
+            modified.append(_install_openclaw_plugin(home))
+        if Layer.BASE_URL in sel:
+            modified += _patch_openclaw_base_url(
+                oc / "openclaw.json", base_url or DEFAULT_GATEWAY_BASE_URL
+            )
         return modified
 
     def reverse(self, home: Path) -> list[Path]:
@@ -576,16 +1113,28 @@ class OpenClawRuntime:
                     cfg = json.loads(_strip_json5_comments(cfg_path.read_text()))
                 except json.JSONDecodeError:
                     cfg = None
-            servers = cfg.get("mcp", {}).get("servers", {}) if isinstance(cfg, dict) else {}
-            if "opendaisugi" in servers:  # only rewrite if ours is actually present
-                _backup(cfg_path)
-                del servers["opendaisugi"]
-                if not servers:
-                    cfg["mcp"].pop("servers", None)
-                    if not cfg["mcp"]:
-                        del cfg["mcp"]
-                cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
-                modified.append(cfg_path)
+            if isinstance(cfg, dict):
+                changed = False
+                servers = cfg.get("mcp", {}).get("servers", {})
+                if "opendaisugi" in servers:  # only rewrite if ours is actually present
+                    del servers["opendaisugi"]
+                    if not servers:
+                        cfg["mcp"].pop("servers", None)
+                        if not cfg["mcp"]:
+                            del cfg["mcp"]
+                    changed = True
+                providers = cfg.get("models", {}).get("providers", {})
+                if "opendaisugi" in providers:
+                    del providers["opendaisugi"]
+                    if not providers:
+                        cfg["models"].pop("providers", None)
+                        if not cfg["models"]:
+                            del cfg["models"]
+                    changed = True
+                if changed:
+                    _backup(cfg_path)
+                    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
+                    modified.append(cfg_path)
         modified += _remove_dir(oc / "extensions" / "opendaisugi")
         modified += _unpatch_instructions(ws / "AGENTS.md")
         return modified
@@ -652,8 +1201,29 @@ def _strip_json5_comments(text: str) -> str:
 def _patch_openclaw_config(config_path: Path) -> list[Path]:
     """Register MCP under ``mcp.servers`` in OpenClaw's JSON5 ``openclaw.json``."""
     return _patch_mcp(
-        config_path, _JSON5, ("mcp", "servers"),
+        config_path,
+        _JSON5,
+        ("mcp", "servers"),
         {"command": "daisugi", "args": ["mcp", "serve"]},
+    )
+
+
+def _patch_openclaw_base_url(config_path: Path, url: str) -> list[Path]:
+    """Register the gateway as an OpenClaw model provider (ADR-0013 BASE_URL).
+
+    OpenClaw can speak Anthropic Messages, so the gateway is wire-compatible
+    and this is genuinely wired (unlike Codex/Hermes). Registers the provider
+    block under ``models.providers.opendaisugi`` but deliberately does NOT
+    flip whatever key selects the *active* provider — that key's shape isn't
+    verified here, and guessing wrong would silently redirect a live session.
+    Register-and-note, not register-and-switch.
+    """
+    return _patch_mcp(
+        config_path,
+        _JSON5,
+        ("models", "providers"),
+        {"baseUrl": url, "api": "anthropic-messages"},
+        what="gateway provider registration",
     )
 
 
@@ -661,9 +1231,11 @@ def _patch_openclaw_config(config_path: Path) -> list[Path]:
 # Uninstall helpers
 # ---------------------------------------------------------------------------
 
+
 def _remove_skill(target: Path) -> list[Path]:
     """Remove a symlinked (or copied) skill directory if present (symlink-safe)."""
     from opendaisugi.skill_paths import _clear
+
     return [target] if _clear(target) else []
 
 
@@ -692,6 +1264,7 @@ def _remove_skill_both(home: Path, fallback_subdir: str) -> list[Path]:
 def _remove_dir(target: Path) -> list[Path]:
     """Remove a materialized directory (e.g. an OpenClaw plugin), symlink-safe."""
     from opendaisugi.skill_paths import _clear
+
     if _clear(target):
         return [target]
     return []
@@ -747,8 +1320,7 @@ def _pop_json_hook(settings_path: Path, *, hook_substr: str) -> list[Path]:
         return []
     pre = s.get("hooks", {}).get("PreToolUse")
     if not pre or not any(
-        hook_substr in h.get("command", "")
-        for e in pre for h in e.get("hooks", [])
+        hook_substr in h.get("command", "") for e in pre for h in e.get("hooks", [])
     ):
         return []  # nothing of ours present
     _backup(settings_path)
@@ -763,12 +1335,38 @@ def _pop_json_hook(settings_path: Path, *, hook_substr: str) -> list[Path]:
     return [settings_path]
 
 
+def _pop_json_env_key(settings_path: Path, *, key: str) -> list[Path]:
+    """Remove one key from settings.json's ``env`` block; no-op if absent.
+
+    Used to reverse the BASE_URL layer's ``ANTHROPIC_BASE_URL``. Leaves every
+    other env key untouched, and drops ``env`` itself only once it's empty.
+    """
+    if not settings_path.exists():
+        return []
+    try:
+        s = json.loads(settings_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    env = s.get("env")
+    if not isinstance(env, dict) or key not in env:
+        return []  # nothing of ours present
+    _backup(settings_path)
+    del env[key]
+    if not env:
+        del s["env"]
+    settings_path.write_text(json.dumps(s, indent=2) + "\n")
+    return [settings_path]
+
+
 # ---------------------------------------------------------------------------
 # Core
 # ---------------------------------------------------------------------------
 
 _ALL_RUNTIMES: list = [
-    ClaudeCodeRuntime(), CodexRuntime(), HermesRuntime(), OpenClawRuntime(),
+    ClaudeCodeRuntime(),
+    CodexRuntime(),
+    HermesRuntime(),
+    OpenClawRuntime(),
 ]
 
 
@@ -798,8 +1396,7 @@ def _select_runtimes(names: list[str]) -> list:
         if len(matches) != 1:
             valid = ", ".join(_RUNTIME_KEYS)
             raise ValueError(
-                f"--runtime {raw!r} matched {len(matches)} runtimes; "
-                f"use one of: {valid}"
+                f"--runtime {raw!r} matched {len(matches)} runtimes; use one of: {valid}"
             )
         name = _RUNTIME_KEYS[matches[0]]
         selected[name] = by_name[name]
@@ -842,7 +1439,18 @@ def install(
     dry_run: bool = False,
     yes: bool = False,
     runtimes: list | None = None,
+    layers: "set[Layer] | None" = None,
+    enforce: bool = False,
+    base_url: str | None = None,
 ) -> InstallResult:
+    """Install the selected layers into every active runtime.
+
+    ``layers=None`` (the default) installs the current four — SKILL, MCP,
+    CAPTURE, INSTRUCTIONS — byte-identical to pre-ADR-0013 behavior. GATE and
+    BASE_URL are opt-in only: pass a set that includes them explicitly.
+    ``enforce`` and ``base_url`` are only consumed by runtimes/layers that
+    support them; everyone else ignores them.
+    """
     home = home or Path.home()
     active = runtimes if runtimes is not None else detect_runtimes(home=home)
 
@@ -856,7 +1464,7 @@ def install(
 
     planned: list[InstallStep] = []
     for rt in active:
-        planned.extend(rt.plan(home))
+        planned.extend(rt.plan(home, layers, enforce=enforce, base_url=base_url))
 
     if dry_run:
         return InstallResult(
@@ -870,7 +1478,7 @@ def install(
     failures: list[str] = []
     for rt in active:
         try:
-            modified.extend(rt.apply(home))
+            modified.extend(rt.apply(home, layers, enforce=enforce, base_url=base_url))
         except Exception as exc:  # one malformed config must not abort the rest
             failures.append(f"{rt.name}: {exc}")
 
@@ -890,6 +1498,7 @@ def install(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _backup(path: Path) -> None:
     stamp = time.time_ns()
     dest = path.with_name(f"{path.name}.bak{stamp}")
@@ -903,10 +1512,16 @@ def _backup(path: Path) -> None:
 def _format_summary(active: list, planned: list[InstallStep], modified: list[Path]) -> str:
     lines = [f"Runtimes: {', '.join(r.name for r in active)}"]
     by_layer: dict[str, int] = {}
+    gaps = 0
     for s in planned:
+        if not s.supported:
+            gaps += 1  # a capability-gap note, not a real change — don't count it
+            continue
         by_layer[s.layer.value] = by_layer.get(s.layer.value, 0) + 1
     for layer, count in by_layer.items():
         lines.append(f"  [{layer}] {count} change(s)")
+    if gaps:
+        lines.append(f"  ({gaps} capability gap note(s) — not applied)")
     if modified:
         lines.append(f"Files written: {len(modified)}")
     else:
@@ -921,5 +1536,6 @@ def print_skill() -> str:
     ``uv add opendaisugi`` — not just from a source-tree dev checkout.
     """
     import importlib.resources as _ir
+
     ref = _ir.files("opendaisugi").joinpath("skills", "opendaisugi-checklist", "SKILL.md")
     return ref.read_text(encoding="utf-8")

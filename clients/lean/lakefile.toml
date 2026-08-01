@@ -1,0 +1,17 @@
+name = "daisugi_verify"
+defaultTargets = ["conform"]
+
+[[lean_lib]]
+name = "DaisugiVerify"
+
+[[lean_exe]]
+name = "conform"
+root = "Main"
+
+[[lean_exe]]
+name = "test_semantics"
+root = "Test.Semantics"
+
+[[lean_exe]]
+name = "test_decompose"
+root = "Test.Decompose"

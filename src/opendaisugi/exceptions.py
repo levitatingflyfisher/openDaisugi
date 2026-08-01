@@ -1,4 +1,5 @@
 """Custom exception hierarchy for opendaisugi."""
+
 from __future__ import annotations
 
 

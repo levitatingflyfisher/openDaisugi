@@ -51,64 +51,97 @@ def verify_inheritance(child: Envelope, parent: Envelope) -> list[Violation]:
         )
 
     _check_set_subset(
-        violations, "file_read",
-        child.permissions.file_read, parent.permissions.file_read,
+        violations,
+        "file_read",
+        child.permissions.file_read,
+        parent.permissions.file_read,
     )
     _check_set_subset(
-        violations, "file_write",
-        child.permissions.file_write, parent.permissions.file_write,
+        violations,
+        "file_write",
+        child.permissions.file_write,
+        parent.permissions.file_write,
     )
     _check_bool_le(
-        violations, "network",
-        child.permissions.network, parent.permissions.network,
+        violations,
+        "network",
+        child.permissions.network,
+        parent.permissions.network,
     )
     _check_network_hosts(
         violations,
-        child.permissions.network_hosts, parent.permissions.network_hosts,
+        child.permissions.network_hosts,
+        parent.permissions.network_hosts,
     )
     _check_bool_le(
-        violations, "shell",
-        child.permissions.shell, parent.permissions.shell,
+        violations,
+        "shell",
+        child.permissions.shell,
+        parent.permissions.shell,
     )
     _check_set_subset(
-        violations, "shell_allowlist",
-        child.permissions.shell_allowlist, parent.permissions.shell_allowlist,
+        violations,
+        "shell_allowlist",
+        child.permissions.shell_allowlist,
+        parent.permissions.shell_allowlist,
+    )
+    # ADR-0010's opt-in is a capability, not a formatting detail: with it on, the
+    # same allowlist admits `a && b` where it previously admitted only `a`. A
+    # child granting itself the opt-in is therefore widening.
+    _check_bool_le(
+        violations,
+        "shell_allow_decomposition",
+        child.permissions.shell_allow_decomposition,
+        parent.permissions.shell_allow_decomposition,
     )
     _check_int_le(
-        violations, "max_execution_time_s",
+        violations,
+        "max_execution_time_s",
         child.permissions.max_execution_time_s,
         parent.permissions.max_execution_time_s,
     )
     _check_int_le(
-        violations, "max_output_size_mb",
+        violations,
+        "max_output_size_mb",
         child.permissions.max_output_size_mb,
         parent.permissions.max_output_size_mb,
     )
     _check_set_subset(
-        violations, "mcp_allowlist",
-        child.permissions.mcp_allowlist, parent.permissions.mcp_allowlist,
+        violations,
+        "mcp_allowlist",
+        child.permissions.mcp_allowlist,
+        parent.permissions.mcp_allowlist,
     )
     # Robotics capabilities (workspace_bounds/velocity/torque/joint/obstacles) —
     # reuse the fail-closed subsumption check: the child must not exceed OR leave
     # undeclared any physical bound the parent constrains. (v0.1.2's field-by-field
     # inheritance predates v0.8 robotics, so these were silently unchecked.)
     from opendaisugi.subsumption import _robot_capability_violation
+
     robot_reason = _robot_capability_violation(parent.permissions, child.permissions)
     if robot_reason is not None:
-        violations.append(Violation(
-            stage=_STAGE, message=f"robot capability relaxed: {robot_reason}",
-        ))
+        violations.append(
+            Violation(
+                stage=_STAGE,
+                message=f"robot capability relaxed: {robot_reason}",
+            )
+        )
     # Stakes may be tightened (escalated) but never downgraded — downgrading
     # physical→low re-enables probabilistic primitives the parent locked out.
     _stakes_rank = {"low": 0, "medium": 1, "high": 2, "physical": 3}
     if _stakes_rank.get(child.stakes, 0) < _stakes_rank.get(parent.stakes, 0):
-        violations.append(Violation(
-            stage=_STAGE,
-            message=f"stakes: child '{child.stakes}' downgrades parent '{parent.stakes}'",
-        ))
+        violations.append(
+            Violation(
+                stage=_STAGE,
+                message=f"stakes: child '{child.stakes}' downgrades parent '{parent.stakes}'",
+            )
+        )
     _check_superset(violations, "invariants", child.invariants, parent.invariants)
     _check_superset(
-        violations, "postconditions", child.postconditions, parent.postconditions,
+        violations,
+        "postconditions",
+        child.postconditions,
+        parent.postconditions,
     )
     return violations
 
@@ -213,9 +246,6 @@ def _check_superset(
         violations.append(
             Violation(
                 stage=_STAGE,
-                message=(
-                    f"{field}: child is missing parent {field} "
-                    f"{frozenset(missing)}"
-                ),
+                message=(f"{field}: child is missing parent {field} {frozenset(missing)}"),
             )
         )

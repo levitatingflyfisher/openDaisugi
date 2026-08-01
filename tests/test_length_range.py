@@ -37,9 +37,14 @@ def test_parse_length_range_minimal():
 
 
 def test_parse_length_range_full():
-    expr = parse_expression({
-        "op": "length_range", "path": "x", "min": 10, "max": 100,
-    })
+    expr = parse_expression(
+        {
+            "op": "length_range",
+            "path": "x",
+            "min": 10,
+            "max": 100,
+        }
+    )
     assert isinstance(expr, LengthRange)
     assert (expr.min, expr.max) == (10, 100)
 

@@ -7,6 +7,7 @@ Perceptual claims (LLM-as-judge): each AgentReview step's reviewing agent
 produces its verdict; opendaisugi doesn't try to second-guess the perceptual
 judgement. Z3 counts verdicts and checks structural properties.
 """
+
 from __future__ import annotations
 
 from opendaisugi.models import Envelope, Invariant, Permission

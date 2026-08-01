@@ -17,14 +17,23 @@ def test_plan_structure_signature_canonical():
     task wording, step ids, or step field values."""
     from opendaisugi.distiller import plan_structure_signature
     from opendaisugi.models import ActionPlan, FileReadStep, ShellStep
-    a = ActionPlan(source="x", task="wash dishes", steps=[
-        ShellStep(id="a1", command="echo a"),
-        FileReadStep(id="a2", path="/etc/hosts", depends_on=["a1"]),
-    ])
-    b = ActionPlan(source="x", task="totally different wording", steps=[
-        ShellStep(id="b1", command="echo z"),
-        FileReadStep(id="b2", path="/proc/cpuinfo", depends_on=["b1"]),
-    ])
+
+    a = ActionPlan(
+        source="x",
+        task="wash dishes",
+        steps=[
+            ShellStep(id="a1", command="echo a"),
+            FileReadStep(id="a2", path="/etc/hosts", depends_on=["a1"]),
+        ],
+    )
+    b = ActionPlan(
+        source="x",
+        task="totally different wording",
+        steps=[
+            ShellStep(id="b1", command="echo z"),
+            FileReadStep(id="b2", path="/proc/cpuinfo", depends_on=["b1"]),
+        ],
+    )
     assert plan_structure_signature(a) == plan_structure_signature(b)
     assert plan_structure_signature(a) == "shell→file_read"
 
@@ -32,14 +41,23 @@ def test_plan_structure_signature_canonical():
 def test_plan_structure_signature_distinguishes_different_shapes():
     from opendaisugi.distiller import plan_structure_signature
     from opendaisugi.models import ActionPlan, FileReadStep, ShellStep
-    shell_then_read = ActionPlan(source="x", task="t", steps=[
-        ShellStep(id="s1", command="echo"),
-        FileReadStep(id="s2", path="/x", depends_on=["s1"]),
-    ])
-    read_then_shell = ActionPlan(source="x", task="t", steps=[
-        FileReadStep(id="s1", path="/x"),
-        ShellStep(id="s2", command="echo", depends_on=["s1"]),
-    ])
+
+    shell_then_read = ActionPlan(
+        source="x",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo"),
+            FileReadStep(id="s2", path="/x", depends_on=["s1"]),
+        ],
+    )
+    read_then_shell = ActionPlan(
+        source="x",
+        task="t",
+        steps=[
+            FileReadStep(id="s1", path="/x"),
+            ShellStep(id="s2", command="echo", depends_on=["s1"]),
+        ],
+    )
     assert plan_structure_signature(shell_then_read) != plan_structure_signature(read_then_shell)
 
 
@@ -56,8 +74,11 @@ def test_distiller_clusters_cross_wording_when_structure_matches(tmp_path, monke
     journal = Journal(data_dir=tmp_path)
     store = PathwayStore(tmp_path / "pw.db")
     distiller = Distiller(
-        journal=journal, pathway_store=store, model="test",
-        min_traces=2, structure_weight=0.5,
+        journal=journal,
+        pathway_store=store,
+        model="test",
+        min_traces=2,
+        structure_weight=0.5,
     )
 
     # Mock both embedders deterministically. Task vecs are FAR apart on
@@ -65,7 +86,7 @@ def test_distiller_clusters_cross_wording_when_structure_matches(tmp_path, monke
     def fake_task_embed(tasks):
         # 3 traces with three orthogonal task vectors
         v = np.eye(3, dtype=float)
-        return v[:len(tasks)]
+        return v[: len(tasks)]
 
     def fake_struct_embed(sigs):
         # all same structure → same vector
@@ -81,7 +102,7 @@ def test_distiller_clusters_cross_wording_when_structure_matches(tmp_path, monke
     task_vecs = fake_task_embed(tasks)
     struct_vecs = fake_struct_embed(sigs)
     tw = (1.0 - distiller.structure_weight) ** 0.5
-    sw = distiller.structure_weight ** 0.5
+    sw = distiller.structure_weight**0.5
     combined = np.concatenate([task_vecs * tw, struct_vecs * sw], axis=1)
 
     # Cosine similarity between any two of these in 6-dim should be
@@ -93,8 +114,10 @@ def test_distiller_clusters_cross_wording_when_structure_matches(tmp_path, monke
     # similarity, so a shared step-shape clusters even when task text diverges.
     assert cos[0, 1] >= 0.5  # weighted: structure match is half the energy
     # Sanity: pure task vectors are orthogonal (would NOT cluster under v0.23)
-    task_cos = task_vecs @ task_vecs.T / np.outer(
-        np.linalg.norm(task_vecs, axis=1), np.linalg.norm(task_vecs, axis=1)
+    task_cos = (
+        task_vecs
+        @ task_vecs.T
+        / np.outer(np.linalg.norm(task_vecs, axis=1), np.linalg.norm(task_vecs, axis=1))
     )
     assert task_cos[0, 1] < 0.1
 
@@ -169,13 +192,15 @@ def test_tend_report_roundtrips():
 
 def test_cluster_by_similarity_groups_close_vectors():
     # Two tight clusters + one outlier.
-    vecs = np.array([
-        [1.0, 0.0, 0.0],
-        [0.99, 0.01, 0.0],   # close to first
-        [0.0, 1.0, 0.0],
-        [0.01, 0.99, 0.0],   # close to third
-        [0.0, 0.0, 1.0],     # outlier
-    ])
+    vecs = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.99, 0.01, 0.0],  # close to first
+            [0.0, 1.0, 0.0],
+            [0.01, 0.99, 0.0],  # close to third
+            [0.0, 0.0, 1.0],  # outlier
+        ]
+    )
     indices = list(range(5))
     clusters = _cluster_by_similarity(indices, vecs, threshold=0.95)
     # Three clusters: {0,1}, {2,3}, {4}
@@ -254,9 +279,10 @@ def _refinement(stage: str, message: str) -> RefinementRecord:
 
 def test_extract_pitfalls_dedupes():
     from opendaisugi.distiller import _extract_pitfalls
+
     records = [
         _refinement("permissions", "shell not allowed"),
-        _refinement("permissions", "shell not allowed"),   # duplicate
+        _refinement("permissions", "shell not allowed"),  # duplicate
         _refinement("invariants", "file_unchanged violated"),
     ]
     result = _extract_pitfalls(records)
@@ -267,11 +293,13 @@ def test_extract_pitfalls_dedupes():
 
 def test_extract_pitfalls_empty():
     from opendaisugi.distiller import _extract_pitfalls
+
     assert _extract_pitfalls([]) == []
 
 
 def test_extract_pitfalls_preserves_order_of_first_occurrence():
     from opendaisugi.distiller import _extract_pitfalls
+
     records = [
         _refinement("postconditions", "Z"),
         _refinement("permissions", "A"),
@@ -319,7 +347,9 @@ async def test_generalize_template_calls_llm_and_returns_pair(monkeypatch):
     monkeypatch.setattr(dist_mod, "get_instructor_client", lambda _m: fake)
 
     result = await _generalize_template(
-        plan=plan, envelope=env, pitfalls=pitfalls,
+        plan=plan,
+        envelope=env,
+        pitfalls=pitfalls,
         model="anthropic/test-model",
     )
     assert result.task_description == "generalized task"
@@ -337,15 +367,18 @@ def test_validate_envelope_scores_test_plans():
     from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 
     env = Envelope(
-        generated_by="test", task="T",
+        generated_by="test",
+        task="T",
         permissions=Permission(shell=True, shell_allowlist=["find"]),
     )
     pass_plan = ActionPlan(
-        source="t", task="T",
+        source="t",
+        task="T",
         steps=[ShellStep(id="s1", command="find /tmp -name '*.tmp'")],
     )
     fail_plan = ActionPlan(
-        source="t", task="T",
+        source="t",
+        task="T",
         steps=[ShellStep(id="s1", command="rm -rf /tmp/x")],  # rm not allowed
     )
     score, failing = _validate_envelope(env, [pass_plan, fail_plan])
@@ -356,6 +389,7 @@ def test_validate_envelope_scores_test_plans():
 
 def test_validate_envelope_empty_plans_returns_zero():
     from opendaisugi.models import Envelope, Permission
+
     env = Envelope(generated_by="test", task="T", permissions=Permission(shell=True))
     score, failing = _validate_envelope(env, [])
     assert score == 0.0
@@ -368,15 +402,18 @@ async def test_improve_envelope_calls_llm_with_failure_context(monkeypatch):
     from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 
     tight = Envelope(
-        generated_by="test", task="T",
+        generated_by="test",
+        task="T",
         permissions=Permission(shell=True, shell_allowlist=["find"]),
     )
     loose = Envelope(
-        generated_by="test", task="T",
+        generated_by="test",
+        task="T",
         permissions=Permission(shell=True, shell_allowlist=["find", "rm"]),
     )
     failing_plan = ActionPlan(
-        source="t", task="T",
+        source="t",
+        task="T",
         steps=[ShellStep(id="s1", command="rm -rf /tmp/x")],
     )
 
@@ -396,7 +433,79 @@ async def test_improve_envelope_calls_llm_with_failure_context(monkeypatch):
     monkeypatch.setattr(dist_mod, "get_instructor_client", lambda _m: _FakeClient())
 
     result = await _improve_envelope(
-        envelope=tight, failing_plans=[failing_plan], model="test-model",
+        envelope=tight,
+        failing_plans=[failing_plan],
+        model="test-model",
     )
     assert result.id != tight.id or "rm" in (result.permissions.shell_allowlist or [])
     assert "rm -rf /tmp/x" in captured["messages"][1]["content"]
+
+
+def test_intersect_permissions_preserves_shell_decomposition_when_all_allow():
+    """A merged pathway must keep an opt-in every input shared — dropping it
+    silently reverts the operator's `--allow-shell-decomposition` (ADR-0010)."""
+    p1 = Permission(shell=True, shell_allow_decomposition=True)
+    p2 = Permission(shell=True, shell_allow_decomposition=True)
+    assert _intersect_permissions([p1, p2]).shell_allow_decomposition is True
+
+
+def test_intersect_permissions_drops_shell_decomposition_when_any_denies():
+    p1 = Permission(shell=True, shell_allow_decomposition=True)
+    p2 = Permission(shell=True, shell_allow_decomposition=False)
+    assert _intersect_permissions([p1, p2]).shell_allow_decomposition is False
+
+
+def test_a_mixed_cluster_keeps_the_shell_decomposition_opt_in():
+    """Why ``infer_envelope`` sets the field unconditionally when asked.
+
+    ``_distill_cluster`` ANDs permissions across the cluster's train envelopes
+    and then re-verifies the plan template against the result. A cluster is the
+    same task done repeatedly, and the same task gets done both ways: one
+    session runs ``cd /repo && pytest``, the next runs the two commands
+    separately. The heads match either way, so only the opt-in distinguishes
+    them — and had the session with no compound reported it as False, the
+    intersection would revert it and reject a template that is otherwise
+    identical to what both sessions did.
+    """
+    from opendaisugi.hook import infer_envelope
+    from opendaisugi.models import ActionPlan, ShellStep
+    from opendaisugi.verify import verify
+
+    compound_session = infer_envelope(
+        [{"step_type": "shell", "command": "cd /repo && pytest -q"}],
+        task="t",
+        allow_shell_decomposition=True,
+    )
+    step_by_step_session = infer_envelope(
+        [
+            {"step_type": "shell", "command": "cd /repo"},
+            {"step_type": "shell", "command": "pytest -q"},
+        ],
+        task="t",
+        allow_shell_decomposition=True,
+    )
+    intersected = _intersect_permissions(
+        [compound_session.permissions, step_by_step_session.permissions]
+    )
+    assert intersected.shell_allowlist == ["cd", "pytest"]
+    assert intersected.shell_allow_decomposition is True
+
+    template = ActionPlan(
+        source="distilled",
+        task="t",
+        steps=[ShellStep(id="s0", command="cd /repo && pytest -q")],
+    )
+    distilled = compound_session.model_copy(update={"permissions": intersected})
+    assert verify(template, distilled).ok
+
+    # And the counterfactual the design rejects: had the step-by-step session
+    # reported the opt-in as False, the same cluster would have died here.
+    minimal = _intersect_permissions(
+        [
+            compound_session.permissions,
+            step_by_step_session.permissions.model_copy(
+                update={"shell_allow_decomposition": False}
+            ),
+        ]
+    )
+    assert not verify(template, compound_session.model_copy(update={"permissions": minimal})).ok

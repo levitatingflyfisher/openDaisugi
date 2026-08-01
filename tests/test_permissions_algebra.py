@@ -46,4 +46,5 @@ def test_int_fields_minimum() -> None:
 def test_distiller_backward_compat_alias() -> None:
     """The distiller's original name must still resolve for any existing callers."""
     from opendaisugi.distiller import _intersect_permissions
+
     assert _intersect_permissions is intersect_permissions

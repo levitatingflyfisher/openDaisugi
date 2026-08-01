@@ -28,9 +28,9 @@ Tier = Literal["tier0", "tier1", "tier2"]
 # input tokens and ~500 output. These are conservative and intended for
 # order-of-magnitude ROI comparison, not billing.
 _ESTIMATED_TOKENS_PER_CALL = {
-    "tier0": 0,       # deterministic pathway hit, no LLM round-trip
-    "tier1": 2000,    # small model, short prompt
-    "tier2": 4500,    # frontier model, full envelope prompt + examples
+    "tier0": 0,  # deterministic pathway hit, no LLM round-trip
+    "tier1": 2000,  # small model, short prompt
+    "tier2": 4500,  # frontier model, full envelope prompt + examples
 }
 
 
@@ -46,13 +46,14 @@ def classify_tier(generated_by: str) -> Tier:
 def tier1_provider_name(generated_by: str) -> str | None:
     """Return the Tier-1 provider name, or None if not a Tier-1 trace."""
     if generated_by.startswith("tier1:"):
-        return generated_by[len("tier1:"):]
+        return generated_by[len("tier1:") :]
     return None
 
 
 @dataclass
 class TierStats:
     """Aggregate counts + token estimates grouped by tier."""
+
     window_days: int
     total: int = 0
     by_tier: dict[str, int] = field(default_factory=dict)
@@ -128,6 +129,7 @@ def _row_ts(row) -> float | None:
     if isinstance(raw, str):
         # ISO-8601 "2026-04-17T12:34:56Z" form — convert via datetime.
         from datetime import datetime
+
         try:
             if raw.endswith("Z"):
                 raw = raw[:-1] + "+00:00"

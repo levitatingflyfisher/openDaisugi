@@ -84,8 +84,7 @@ def test_smoke_envelope_generation_via_claude_p():
     corpus = yaml.safe_load(CORPUS_PATH.read_text())
     smoke_entries = [e for e in corpus if e["id"] in SMOKE_IDS]
     assert len(smoke_entries) == len(SMOKE_IDS), (
-        f"Smoke fixture drift: expected {SMOKE_IDS}, "
-        f"found {sorted(e['id'] for e in smoke_entries)}"
+        f"Smoke fixture drift: expected {SMOKE_IDS}, found {sorted(e['id'] for e in smoke_entries)}"
     )
 
     failures: list[tuple[str, str]] = []

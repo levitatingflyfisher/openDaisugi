@@ -51,17 +51,16 @@ def get_parser(format_name: str = "claude-code", **kwargs) -> ConversationParser
     """
     if format_name not in _PARSERS:
         available = sorted(_PARSERS) or ["(none registered)"]
-        raise ValueError(
-            f"Unknown parser format: {format_name!r}. "
-            f"Available: {available}"
-        )
+        raise ValueError(f"Unknown parser format: {format_name!r}. Available: {available}")
     return _PARSERS[format_name](**kwargs)
 
 
 def _register_builtin_parsers() -> None:
     from opendaisugi.parsers.claude_code import ClaudeCodeParser
+    from opendaisugi.parsers.codex import CodexParser
 
     register_parser("claude-code", ClaudeCodeParser)
+    register_parser("codex", CodexParser)
 
 
 _register_builtin_parsers()

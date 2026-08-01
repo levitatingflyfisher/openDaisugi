@@ -40,7 +40,9 @@ def test_fan_in_raises_difficulty():
 
 def test_easy_step_sizes_to_a_cheap_rung_hard_to_frontier():
     easy = size_step(TaskStep(id="t1", prompt="say hi"))
-    hard = size_step(TaskStep(id="t2", prompt="prove this concurrency algorithm is deadlock-free and race-free"))
+    hard = size_step(
+        TaskStep(id="t2", prompt="prove this concurrency algorithm is deadlock-free and race-free")
+    )
     assert easy.tier != "frontier"
     assert hard.tier == "frontier"
     assert isinstance(easy, StepSizing)
@@ -55,7 +57,9 @@ def test_plain_reasoning_task_routes_to_cheapest_available():
 
 
 def test_budget_pressure_downgrades_model():
-    hard = TaskStep(id="t2", prompt="prove this concurrency algorithm is deadlock-free and optimize the schema")
+    hard = TaskStep(
+        id="t2", prompt="prove this concurrency algorithm is deadlock-free and optimize the schema"
+    )
     # Unbudgeted: routes to frontier.
     assert size_step(hard).tier == "frontier"
     # A budget too small for the frontier rung forces a downgrade.
@@ -66,17 +70,23 @@ def test_budget_pressure_downgrades_model():
 
 
 def test_unaffordable_even_at_cheapest_is_flagged():
-    hard = TaskStep(id="t2", prompt="design a fault-tolerant distributed migration and prove correctness")
+    hard = TaskStep(
+        id="t2", prompt="design a fault-tolerant distributed migration and prove correctness"
+    )
     broke = BudgetTracker(total_tokens=10)  # cannot afford any rung
     sized = size_step(hard, budget=broke)
     assert sized.affordable is False
 
 
 def test_size_plan_returns_one_sizing_per_step():
-    plan = ActionPlan(source="t", task="demo", steps=[
-        TaskStep(id="t1", prompt="a"),
-        ShellStep(id="s1", command="ls", depends_on=["t1"]),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="demo",
+        steps=[
+            TaskStep(id="t1", prompt="a"),
+            ShellStep(id="s1", command="ls", depends_on=["t1"]),
+        ],
+    )
     sizings = size_plan(plan)
     assert [s.step_id for s in sizings] == ["t1", "s1"]
 
@@ -108,9 +118,11 @@ def test_rung_for_model_lookup():
 
 
 def test_custom_ladder_is_honored():
-    ladder = ModelLadder([
-        ModelRung(name="tiny", model="tiny-model", max_difficulty=1.0, est_tokens=500),
-    ])
+    ladder = ModelLadder(
+        [
+            ModelRung(name="tiny", model="tiny-model", max_difficulty=1.0, est_tokens=500),
+        ]
+    )
     sized = size_step(TaskStep(id="t1", prompt="anything at all here"), ladder=ladder)
     assert sized.model == "tiny-model"
     assert sized.tier == "tiny"

@@ -1,6 +1,6 @@
 [project]
 name = "opendaisugi"
-version = "0.39.0"
+version = "0.43.0"
 description = "Runtime assurance library: envelope generation, static verification, supervised execution, and journaling for agent actions."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,7 +34,9 @@ dev = [
     # Heavy extras (lora=torch+peft+trl, robotics=mujoco) stay opt-in.
     "opendaisugi[search]",
     "opendaisugi[mcp]",
+    "opendaisugi[shell]",
     "opendaisugi[sign]",
+    "opendaisugi[gateway]",
 ]
 search = [
     "numpy>=1.26",
@@ -42,6 +44,22 @@ search = [
 ]
 mcp = [
     "mcp>=1.27",
+]
+# v0.44: the token-saving gateway's async transport — an OpenAI/Anthropic-compatible proxy
+# any harness points at via base_url. Pure-Python (httpx); the ASGI app runs under any
+# ASGI server (uvicorn, hypercorn). Absent => the routing/meter/journal layer still imports
+# and works; only opendaisugi.gateway_asgi.make_gateway_app needs it.
+gateway = [
+    "httpx>=0.27",
+    "uvicorn>=0.30",
+]
+# v0.40: real bash-grammar parsing for opt-in compound-shell decomposition
+# (shell_allow_decomposition). Native-C but ships prebuilt abi3 wheels, so no
+# build toolchain. See ADR-0010. Absent => decomposition is unavailable and an
+# opted-in command is rejected fail-closed.
+shell = [
+    "tree-sitter>=0.23",
+    "tree-sitter-bash>=0.23",
 ]
 robotics = [
     "mujoco>=3.0,<4.0",
@@ -72,6 +90,7 @@ packages = ["src/opendaisugi"]
 artifacts = [
     "src/opendaisugi/skills/**/*.md",
     "src/opendaisugi/install_assets/**/*",
+    "src/opendaisugi/viz_dag_template.html",
 ]
 
 [tool.pytest.ini_options]
@@ -88,6 +107,10 @@ markers = [
 # are grandfathered; see docs/architecture/CONVENTIONS.md).
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.format]
+# ADR-0009: adopt ruff format as the one formatter. Defaults (double quotes,
+# 100-col from [tool.ruff] above). Enforced in CI via `ruff format --check`.
 
 [tool.ruff.lint]
 # Real-bug + import-hygiene rules only. Deliberately NOT: E501 (line length — noise,

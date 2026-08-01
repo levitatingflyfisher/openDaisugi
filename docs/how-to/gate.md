@@ -95,6 +95,33 @@ and host tools the classification map doesn't know (deny-by-default sweeps
 those up wholesale). Tune the envelope until the would-denies are the calls
 you actually want denied.
 
+### Letting `a && b` through, soundly
+
+Compound commands are the first over-denial most sessions hit. You can admit
+them without loosening the allowlist ([ADR-0010](../adr/)):
+
+```bash
+uv add 'opendaisugi[shell]'                    # the bash grammar this needs
+daisugi gate init --allow-shell-decomposition  # --force to regenerate an existing one
+```
+
+The verifier then parses the command with a real bash grammar and checks
+**every** head against the allowlist, so `git status && ls` passes while
+`git status && rm -rf /` still denies on `rm`. Redirection, `$(…)`, a
+non-literal head like `$CMD`, and command-taking wrappers (`xargs`, `sh -c`)
+are still rejected outright — the opt-in is "check each command", never
+"allow compound shell".
+
+It fails closed on a missing capability: with the field on and the grammar
+absent, compound commands are **denied**, not waved through. `gate init` warns
+when that is the case. Note that `--force` regenerates the envelope from
+scratch, discarding any hand-tuning.
+
+The same opt-in governs the bulk paths that replay history — `onboard`,
+`journal ingest`, `hook to-trace`, `hook auto-tend` — with the default persisted
+in `config.yaml`. See **[Let `a && b` through](compound-shell.md)** for that
+side, including what the opt-in measurably recovers and what it does not.
+
 You can also tune offline against an existing passive capture, without
 running an agent at all:
 
@@ -171,4 +198,4 @@ of the allow path.
 | Disarmed | allow | allow |
 
 Passive capture (`daisugi hook record`) is unchanged and still never
-blocks — capture and gate share a seam, not a failure policy.
+blocks — capture and gate share a code path, not a failure policy.

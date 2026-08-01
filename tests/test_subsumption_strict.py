@@ -1,4 +1,5 @@
 """v0.27.0 — strict subsumption hard-fails on unprovable opaque inner invariants."""
+
 from __future__ import annotations
 
 from opendaisugi.models import Envelope, Invariant, Permission
@@ -6,9 +7,13 @@ from opendaisugi.subsumption import envelope_subsumes
 
 
 def _env(invs, stakes="high"):
-    return Envelope(generated_by="t", task="t",
-                    permissions=Permission(shell=True, shell_allowlist=["ls"]),
-                    stakes=stakes, invariants=invs)
+    return Envelope(
+        generated_by="t",
+        task="t",
+        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        stakes=stakes,
+        invariants=invs,
+    )
 
 
 def test_strict_subsumption_fails_on_opaque_inner_invariant():

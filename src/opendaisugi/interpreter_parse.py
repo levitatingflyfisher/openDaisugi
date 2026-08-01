@@ -20,27 +20,91 @@ from typing import Final
 
 from opendaisugi.models import SHELL_INTERPRETERS
 
-_SHELL_C_INTERPRETERS: Final[frozenset[str]] = frozenset({
-    "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh",
-})
+_SHELL_C_INTERPRETERS: Final[frozenset[str]] = frozenset(
+    {
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "ksh",
+        "fish",
+        "csh",
+        "tcsh",
+    }
+)
 
-_OPAQUE_INTERPRETERS: Final[frozenset[str]] = frozenset({
-    "python", "python3", "python2",
-    "perl", "ruby", "node", "deno",
-    "awk", "gawk", "sed",
-    "make",
-    "eval", "exec", "source",
-})
+_OPAQUE_INTERPRETERS: Final[frozenset[str]] = frozenset(
+    {
+        "python",
+        "python3",
+        "python2",
+        "perl",
+        "ruby",
+        "node",
+        "deno",
+        "awk",
+        "gawk",
+        "sed",
+        "make",
+        "eval",
+        "exec",
+        "source",
+        # ADR-0014: privilege/re-execution wrappers stay opaque — sudo's -i/-s
+        # open shells and watch re-runs its payload; a transparent parse that
+        # got their flag grammar subtly wrong would under-verify. Strict policy
+        # rejects them; that is the fail-closed direction.
+        "sudo",
+        "doas",
+        "watch",
+    }
+)
 
-_XARGS_VALUE_FLAGS: Final[frozenset[str]] = frozenset({
-    "-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a",
-    "--max-args", "--replace", "--max-procs", "--max-lines",
-    "--delimiter", "--eof", "--max-chars", "--arg-file",
-})
+# ADR-0014 transparent wrappers: ``head [FLAGS] [POSITIONALS] CMD [ARGS]``
+# runs CMD with an adjusted execution context (a timeout, a niceness, a
+# detached tty, …). Values: (flags that consume the next token, count of
+# non-flag positionals before CMD — timeout's DURATION). Before these were
+# recognized, allowlisting ``timeout`` ran ``timeout 30 <anything>`` with
+# <anything> completely unverified.
+_TRANSPARENT_WRAPPERS: Final[dict[str, tuple[frozenset[str], int]]] = {
+    "timeout": (frozenset({"-k", "--kill-after", "-s", "--signal"}), 1),
+    "nice": (frozenset({"-n", "--adjustment"}), 0),
+    "nohup": (frozenset(), 0),
+    "time": (frozenset(), 0),
+    "stdbuf": (frozenset({"-i", "-o", "-e"}), 0),
+    "command": (frozenset(), 0),
+    "setsid": (frozenset(), 0),
+    "ionice": (frozenset({"-c", "-n", "-t"}), 0),
+}
 
-_FIND_EXEC_FLAGS: Final[frozenset[str]] = frozenset({
-    "-exec", "-execdir", "-ok", "-okdir",
-})
+_XARGS_VALUE_FLAGS: Final[frozenset[str]] = frozenset(
+    {
+        "-n",
+        "-I",
+        "-P",
+        "-L",
+        "-d",
+        "-E",
+        "-s",
+        "-a",
+        "--max-args",
+        "--replace",
+        "--max-procs",
+        "--max-lines",
+        "--delimiter",
+        "--eof",
+        "--max-chars",
+        "--arg-file",
+    }
+)
+
+_FIND_EXEC_FLAGS: Final[frozenset[str]] = frozenset(
+    {
+        "-exec",
+        "-execdir",
+        "-ok",
+        "-okdir",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -92,6 +156,8 @@ def parse_interpreter(command: str) -> InterpreterPayload | None:
         return _parse_find(head, tokens)
     if head == "env":
         return _parse_env(head, tokens)
+    if head in _TRANSPARENT_WRAPPERS:
+        return _parse_wrapper(head, tokens)
     return InterpreterPayload(head=head, opaque=True)
 
 
@@ -118,12 +184,42 @@ def _parse_shell_c(head: str, tokens: list[str]) -> InterpreterPayload:
         # Chars before 'c' must look like clustered short flags (letters).
         if cluster[:cpos] and not cluster[:cpos].isalpha():
             continue
-        attached = cluster[cpos + 1:]
+        attached = cluster[cpos + 1 :]
         if attached:  # ``-cSCRIPT`` / ``-ecSCRIPT`` — command attached to the token
             return InterpreterPayload(head=head, inner_commands=[attached])
         if i + 1 < len(tokens):  # ``-c SCRIPT`` / ``-ec SCRIPT`` — next token
             return InterpreterPayload(head=head, inner_commands=[tokens[i + 1]])
         return InterpreterPayload(head=head)
+    return InterpreterPayload(head=head)
+
+
+def _parse_wrapper(head: str, tokens: list[str]) -> InterpreterPayload:
+    """``timeout [FLAGS] DURATION CMD…`` / ``nice [FLAGS] CMD…`` and friends.
+
+    Skips the wrapper's own flags (value flags consume the next token; a
+    ``--flag=value`` form is self-contained) and its leading positionals, then
+    treats everything left as the wrapped command. No remainder — a bare
+    ``timeout 30`` — yields no inner command, which the caller treats as a
+    benign invocation (allowlist check on the head only).
+    """
+    value_flags, positional_skip = _TRANSPARENT_WRAPPERS[head]
+    i = 1
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "--":
+            i += 1
+            break
+        if t.startswith("-") and t != "-":
+            if t in value_flags and i + 1 < len(tokens):
+                i += 2
+                continue
+            i += 1
+            continue
+        break
+    i += min(positional_skip, max(0, len(tokens) - i))
+    if i < len(tokens):
+        inner = " ".join(shlex.quote(t) for t in tokens[i:])
+        return InterpreterPayload(head=head, inner_commands=[inner])
     return InterpreterPayload(head=head)
 
 

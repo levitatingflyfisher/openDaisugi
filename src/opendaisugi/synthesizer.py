@@ -120,7 +120,9 @@ async def synthesize(
     outputs = collect_outputs(session, plan)
 
     def _fallback() -> SynthesisResult:
-        return SynthesisResult(_deterministic_answer(prompt, outputs), used_llm=False, outputs=outputs)
+        return SynthesisResult(
+            _deterministic_answer(prompt, outputs), used_llm=False, outputs=outputs
+        )
 
     if not use_llm:
         return _fallback()
@@ -132,10 +134,7 @@ async def synthesize(
             _log.info("synthesize.no_client", extra={"error": str(e)})
             return _fallback()
 
-    user_content = (
-        f"Original request:\n{prompt}\n\n"
-        f"Step outputs:\n{_render_steps_for_llm(outputs)}"
-    )
+    user_content = f"Original request:\n{prompt}\n\nStep outputs:\n{_render_steps_for_llm(outputs)}"
     try:
         resp = await client.chat.completions.create(
             model=model,

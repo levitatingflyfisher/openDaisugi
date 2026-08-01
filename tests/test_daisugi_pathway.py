@@ -41,14 +41,20 @@ from opendaisugi.pathway import CompiledPathway
 
 
 def _put_pathway(store):
-    env = Envelope(generated_by="distilled", task="T",
-                   permissions=Permission(shell=True, shell_allowlist=["find"]))
-    plan = ActionPlan(source="t", task="T",
-                      steps=[ShellStep(id="s1", command="find /tmp")])
+    env = Envelope(
+        generated_by="distilled",
+        task="T",
+        permissions=Permission(shell=True, shell_allowlist=["find"]),
+    )
+    plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="find /tmp")])
     p = CompiledPathway(
-        id="pathway_m00000001", task_description="find stale files",
-        task_embedding=[1.0, 0.0], envelope=env, plan_template=plan,
-        source_trace_ids=[],        distilled_at=time.time(),
+        id="pathway_m00000001",
+        task_description="find stale files",
+        task_embedding=[1.0, 0.0],
+        envelope=env,
+        plan_template=plan,
+        source_trace_ids=[],
+        distilled_at=time.time(),
     )
     store.put(p)
     return p
@@ -97,7 +103,8 @@ async def test_adapt_plan_returns_adapted_or_falls_back(tmp_path, monkeypatch):
 
     # Stub the instructor client to return a new plan.
     adapted_plan = ActionPlan(
-        source="adapted", task="specific",
+        source="adapted",
+        task="specific",
         steps=[ShellStep(id="s1", command="find /var/tmp")],
     )
 
@@ -112,6 +119,7 @@ async def test_adapt_plan_returns_adapted_or_falls_back(tmp_path, monkeypatch):
         chat = _FakeChat()
 
     from opendaisugi import llm
+
     monkeypatch.setattr(llm, "get_instructor_client", lambda _m: _FakeClient())
 
     result = await d.adapt_plan(match, "find stale /var/tmp files")

@@ -27,8 +27,7 @@ def _mk_envelope(
         task="T",
         permissions=permissions or Permission(shell=True),
         invariants=[],
-        postconditions=postconditions
-        or [Postcondition(type="exit_code", expected=0)],
+        postconditions=postconditions or [Postcondition(type="exit_code", expected=0)],
     )
 
 
@@ -66,9 +65,7 @@ async def test_divergent_postconditions_flagged() -> None:
     pathway = _mk_pathway(env)
 
     async def gen(task: str) -> Envelope:
-        return _mk_envelope(
-            postconditions=[Postcondition(type="file_exists", path="/tmp/out")]
-        )
+        return _mk_envelope(postconditions=[Postcondition(type="file_exists", path="/tmp/out")])
 
     result = await ab_test(pathway, "do X", tier2_generator=gen)
     assert not result.postconditions_match
@@ -144,13 +141,17 @@ async def test_v028_4_postcondition_equivalence_detects_min_max_drift() -> None:
     """v0.28.4 — _postconditions_equivalent now compares full shape, not
     just (type, expected). Pre-fix two file_size_range postconditions
     with different min/max bounds were treated as equivalent."""
-    tier0_env = _mk_envelope(postconditions=[
-        Postcondition(type="file_size_range", path="out/x.png", min=100, max=1000),
-    ])
+    tier0_env = _mk_envelope(
+        postconditions=[
+            Postcondition(type="file_size_range", path="out/x.png", min=100, max=1000),
+        ]
+    )
     pathway = _mk_pathway(tier0_env)
-    drifted_env = _mk_envelope(postconditions=[
-        Postcondition(type="file_size_range", path="out/x.png", min=100, max=999_999),
-    ])
+    drifted_env = _mk_envelope(
+        postconditions=[
+            Postcondition(type="file_size_range", path="out/x.png", min=100, max=999_999),
+        ]
+    )
 
     async def gen(task: str) -> Envelope:
         return drifted_env
@@ -164,13 +165,17 @@ async def test_v028_4_postcondition_equivalence_detects_min_max_drift() -> None:
 @pytest.mark.asyncio
 async def test_v028_4_postcondition_equivalence_detects_path_drift() -> None:
     """v0.28.4 — `path` is now part of the comparison shape."""
-    tier0_env = _mk_envelope(postconditions=[
-        Postcondition(type="file_exists", path="out/a.png"),
-    ])
+    tier0_env = _mk_envelope(
+        postconditions=[
+            Postcondition(type="file_exists", path="out/a.png"),
+        ]
+    )
     pathway = _mk_pathway(tier0_env)
-    drifted_env = _mk_envelope(postconditions=[
-        Postcondition(type="file_exists", path="out/b.png"),
-    ])
+    drifted_env = _mk_envelope(
+        postconditions=[
+            Postcondition(type="file_exists", path="out/b.png"),
+        ]
+    )
 
     async def gen(task: str) -> Envelope:
         return drifted_env

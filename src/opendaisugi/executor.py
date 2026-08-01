@@ -32,7 +32,19 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from opendaisugi.models import ActionPlan, ActionStep, FileReadStep, FileWriteStep, NetworkStep
+from opendaisugi.models import (
+    ActionPlan,
+    ActionStep,
+    FileReadStep,
+    FileWriteStep,
+    NetworkStep,
+    ReversalHandle,
+)
+
+# Stage 8 (deed ledger): the largest prior file image the ledger will hold to
+# make a file_write reversible. A larger prior is honestly marked irreversible
+# rather than truncated — a partial pre-image is a broken undo.
+MAX_REVERSAL_BYTES = 1_000_000
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -48,6 +60,21 @@ class ExecutorResult:
     stdout: str
     duration_ms: float
     timed_out: bool
+    # v0.40: per-call attribution carried on the RESULT (a local, not shared
+    # instance state) so it stays correct when task steps run concurrently. Set
+    # by LLM-backed executors; None for deterministic ones. The supervisor reads
+    # ``model`` for receipt model_id and the budget-aware executor reads
+    # ``tokens``/``cost_usd`` — neither touches the executor's shared ``self.last``.
+    model: str | None = None
+    tokens: int | None = None
+    cost_usd: float | None = None
+    # Stage 8 (deed ledger): a side-effecting executor reports whether its effect
+    # can be undone and, if so, how. ``reversibility`` is a positive claim set by
+    # the executor that performed (or refused) the effect; ``reversal`` carries the
+    # undo handle when reversible. Deterministic non-mutating executors leave both
+    # None and the supervisor classifies from the step kind.
+    reversibility: str | None = None
+    reversal: ReversalHandle | None = None
 
 
 def truncate_output(text: str, max_output_bytes: int) -> str:
@@ -169,6 +196,22 @@ def _glob_base(glob: str) -> str:
     return base or "/"
 
 
+def _dirs_to_create(parent: str) -> list[str]:
+    """Absolute ancestor dirs that don't yet exist, deepest-first — the ones
+    ``os.makedirs(parent)`` is about to create. Recorded on a new-file reversal
+    handle so rolling the write back also removes the directories it made
+    (deepest-first, only when empty). Empty when ``parent`` already exists."""
+    dirs: list[str] = []
+    p = os.path.abspath(parent)
+    while p and not os.path.isdir(p):
+        dirs.append(p)
+        nxt = os.path.dirname(p)
+        if nxt == p:
+            break
+        p = nxt
+    return dirs
+
+
 def _resolved_path_escape(target: str, globs: list[str]) -> str | None:
     """Reason if ``target``'s realpath is NOT within any permitted glob's resolved
     base (a symlink escape), else None.
@@ -191,8 +234,7 @@ def _resolved_path_escape(target: str, globs: list[str]) -> str | None:
         base_prefix = base_real.rstrip(os.sep) + os.sep
         if target_real == base_real or target_real.startswith(base_prefix):
             return None
-    return (f"resolved path {target_real!r} is outside permitted globs {globs} "
-            f"(symlink escape)")
+    return f"resolved path {target_real!r} is outside permitted globs {globs} (symlink escape)"
 
 
 class FileReadExecutor:
@@ -214,16 +256,16 @@ class FileReadExecutor:
         max_output_bytes: int,
     ) -> ExecutorResult:
         if not isinstance(step, FileReadStep):
-            raise TypeError(
-                f"FileReadExecutor cannot run step of type {type(step).__name__}"
-            )
+            raise TypeError(f"FileReadExecutor cannot run step of type {type(step).__name__}")
         start = time.monotonic()
         if self._allowed_globs is not None:
             escape = _resolved_path_escape(step.path, self._allowed_globs)
             if escape is not None:
                 return ExecutorResult(
-                    rc=2, stdout=f"file_read refused: {escape}",
-                    duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+                    rc=2,
+                    stdout=f"file_read refused: {escape}",
+                    duration_ms=(time.monotonic() - start) * 1000.0,
+                    timed_out=False,
                 )
         try:
             with open(step.path, "rb") as f:
@@ -279,17 +321,24 @@ class FileWriteExecutor:
         max_output_bytes: int,
     ) -> ExecutorResult:
         if not isinstance(step, FileWriteStep):
-            raise TypeError(
-                f"FileWriteExecutor cannot run step of type {type(step).__name__}"
-            )
+            raise TypeError(f"FileWriteExecutor cannot run step of type {type(step).__name__}")
         start = time.monotonic()
+
+        def _refused(msg: str) -> ExecutorResult:
+            # A pre-write refusal: nothing was mutated, so the deed positively
+            # claims reversibility="none" — never a false handle.
+            return ExecutorResult(
+                rc=2,
+                stdout=msg,
+                duration_ms=(time.monotonic() - start) * 1000.0,
+                timed_out=False,
+                reversibility="none",
+            )
+
         if self._allowed_globs is not None:
             escape = _resolved_path_escape(step.path, self._allowed_globs)
             if escape is not None:
-                return ExecutorResult(
-                    rc=2, stdout=f"file_write refused: {escape}",
-                    duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
-                )
+                return _refused(f"file_write refused: {escape}")
         parent = os.path.dirname(step.path) or "."
         tmp_path = ""
         try:
@@ -299,13 +348,15 @@ class FileWriteExecutor:
             # believed they were writing to a whitelisted path that was
             # actually a link to somewhere else — treat it as an escape.
             if os.path.islink(step.path):
-                duration_ms = (time.monotonic() - start) * 1000.0
-                return ExecutorResult(
-                    rc=2,
-                    stdout=f"symlink at target rejected: {step.path}",
-                    duration_ms=duration_ms,
-                    timed_out=False,
-                )
+                return _refused(f"symlink at target rejected: {step.path}")
+
+            # Capture the pre-image BEFORE any mutation, so the write can be
+            # undone from the ledger alone. Directories makedirs is about to
+            # create are recorded so rolling back a new file leaves nothing
+            # behind. reversible is False when the prior image is too large or
+            # not UTF-8 text — an honest "no handle", not a truncated one.
+            reversal, reversible = self._capture_pre_image(step.path, parent)
+
             os.makedirs(parent, exist_ok=True)
             tmp_name = f".daisugi-tmp-{secrets.token_hex(8)}-{os.path.basename(step.path)}"
             tmp_path = os.path.join(parent, tmp_name)
@@ -326,28 +377,28 @@ class FileWriteExecutor:
             # rename and here would escape the verify-layer glob check.
             parent_real = os.path.realpath(parent)
             final_real = os.path.realpath(step.path)
-            if not (
-                final_real == parent_real
-                or final_real.startswith(parent_real + os.sep)
-            ):
+            if not (final_real == parent_real or final_real.startswith(parent_real + os.sep)):
                 try:
                     os.unlink(final_real)
                 except OSError:
                     pass
-                duration_ms = (time.monotonic() - start) * 1000.0
+                # We wrote and then tried to clean up; a full, honest undo cannot
+                # be guaranteed, so mark irreversible rather than claim a handle.
                 return ExecutorResult(
                     rc=2,
                     stdout=f"symlink escape detected: {step.path} -> {final_real}",
-                    duration_ms=duration_ms,
+                    duration_ms=(time.monotonic() - start) * 1000.0,
                     timed_out=False,
+                    reversibility="irreversible",
                 )
 
-            duration_ms = (time.monotonic() - start) * 1000.0
             return ExecutorResult(
                 rc=0,
                 stdout=f"wrote {bytes_written} bytes to {step.path}",
-                duration_ms=duration_ms,
+                duration_ms=(time.monotonic() - start) * 1000.0,
                 timed_out=False,
+                reversibility="reversible" if reversible else "irreversible",
+                reversal=reversal if reversible else None,
             )
         except OSError as e:
             if tmp_path:
@@ -355,13 +406,53 @@ class FileWriteExecutor:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
-            duration_ms = (time.monotonic() - start) * 1000.0
+            # The write may have partially happened; we cannot promise a clean undo.
             return ExecutorResult(
                 rc=1,
                 stdout=f"{type(e).__name__}: {e}",
-                duration_ms=duration_ms,
+                duration_ms=(time.monotonic() - start) * 1000.0,
                 timed_out=False,
+                reversibility="irreversible",
             )
+
+    @staticmethod
+    def _capture_pre_image(path: str, parent: str) -> tuple[ReversalHandle | None, bool]:
+        """Read the target's prior state so a write can be undone. Returns
+        ``(handle, reversible)``; reversible is False (and handle None) when the
+        prior image is too large or not UTF-8 — an honest refusal to promise an
+        undo we cannot make. Called after the symlink-at-target check, so ``path``
+        is a regular file or absent."""
+        created_dirs = _dirs_to_create(parent)
+        if not os.path.exists(path):
+            return (
+                ReversalHandle(
+                    kind="file_write",
+                    path=path,
+                    prior_existed=False,
+                    created_dirs=created_dirs,
+                ),
+                True,
+            )
+        try:
+            with open(path, "rb") as f:
+                raw = f.read(MAX_REVERSAL_BYTES + 1)
+        except OSError:
+            return (None, False)
+        if len(raw) > MAX_REVERSAL_BYTES:
+            return (None, False)
+        try:
+            prior_content = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return (None, False)
+        return (
+            ReversalHandle(
+                kind="file_write",
+                path=path,
+                prior_existed=True,
+                prior_content=prior_content,
+            ),
+            True,
+        )
 
 
 class NetworkExecutor:
@@ -382,9 +473,7 @@ class NetworkExecutor:
         max_output_bytes: int,
     ) -> ExecutorResult:
         if not isinstance(step, NetworkStep):
-            raise TypeError(
-                f"NetworkExecutor cannot run step of type {type(step).__name__}"
-            )
+            raise TypeError(f"NetworkExecutor cannot run step of type {type(step).__name__}")
         start = time.monotonic()
         # Defense in depth (verify already gates this): urllib's default opener
         # honors file://, ftp://, data: — refuse anything but http(s) so a
@@ -408,7 +497,9 @@ class NetworkExecutor:
         ):
             opener.add_handler(handler)
         req = urllib.request.Request(
-            step.url, headers=step.headers, method="GET",
+            step.url,
+            headers=step.headers,
+            method="GET",
         )
         try:
             # Wall-clock bound: `timeout_s` is only the per-recv SOCKET timeout, and
@@ -468,7 +559,10 @@ class NetworkExecutor:
 
         duration_ms = (time.monotonic() - start) * 1000.0
         return ExecutorResult(
-            rc=rc, stdout=stdout, duration_ms=duration_ms, timed_out=timed_out,
+            rc=rc,
+            stdout=stdout,
+            duration_ms=duration_ms,
+            timed_out=timed_out,
         )
 
 
@@ -555,7 +649,10 @@ class SubprocessExecutor:
         if holder["truncated"]:
             stdout += "\n... [truncated]"
         return ExecutorResult(
-            rc=rc, stdout=stdout, duration_ms=duration_ms, timed_out=timed_out,
+            rc=rc,
+            stdout=stdout,
+            duration_ms=duration_ms,
+            timed_out=timed_out,
         )
 
     @staticmethod

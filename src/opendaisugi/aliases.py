@@ -59,11 +59,23 @@ class VacuousAliasError(ValueError):
     """Raised when registering an alias whose expr is a tautology or contradiction (v0.27.0)."""
 
 
-_PATH_OPS = frozenset({
-    "equals", "not_equals", "in_set", "not_in_set",
-    "matches", "not_matches", "numeric_range", "exists", "is_empty",
-    "depends_on", "before", "alias", "llm_check",
-})
+_PATH_OPS = frozenset(
+    {
+        "equals",
+        "not_equals",
+        "in_set",
+        "not_in_set",
+        "matches",
+        "not_matches",
+        "numeric_range",
+        "exists",
+        "is_empty",
+        "depends_on",
+        "before",
+        "alias",
+        "llm_check",
+    }
+)
 
 
 def _as_dict(expr: Any) -> dict[str, Any] | None:
@@ -151,6 +163,7 @@ class AliasRegistry:
         vacuity_verdict: str = "unknown"
         try:
             from opendaisugi.vacuity import check_vacuity
+
             expr_for_check = (
                 parse_expression(alias.expr) if isinstance(alias.expr, dict) else alias.expr
             )
@@ -169,13 +182,16 @@ class AliasRegistry:
         # v0.27.0: emit provenance to the refinement sink (fail-soft — never crashes register).
         if self._refinement_sink is not None:
             import logging
+
             _log = logging.getLogger("opendaisugi.aliases")
             try:
-                self._refinement_sink.write_provenance({
-                    "alias": alias.name,
-                    "vacuity": vacuity_verdict,
-                    "tier": alias.tier,
-                })
+                self._refinement_sink.write_provenance(
+                    {
+                        "alias": alias.name,
+                        "vacuity": vacuity_verdict,
+                        "tier": alias.tier,
+                    }
+                )
             except Exception as exc:
                 _log.warning("alias provenance write failed: %s", exc)
 
@@ -194,9 +210,7 @@ class AliasRegistry:
             alias = self.lookup(expr.name)
             missing = [p for p in alias.params if p not in expr.args]
             if missing:
-                raise ValueError(
-                    f"alias '{expr.name}' missing required args: {missing}"
-                )
+                raise ValueError(f"alias '{expr.name}' missing required args: {missing}")
             substituted = _substitute_params(alias.expr, expr.args)
             if isinstance(substituted, dict):
                 substituted = parse_expression(substituted)

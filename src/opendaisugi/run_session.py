@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
-from opendaisugi.models import VerificationResult
+from opendaisugi.models import ReversalHandle, VerificationResult
 
 
 class RunStatus(str, Enum):
@@ -28,13 +28,25 @@ class RunStatus(str, Enum):
 @dataclass(frozen=True)
 class StepOutcome:
     step_id: str
-    status: Literal["succeeded", "failed", "skipped", "aborted", "rejected_halted", "rejected_recomputed"]
+    status: Literal[
+        "succeeded", "failed", "skipped", "aborted", "rejected_halted", "rejected_recomputed"
+    ]
     approved_by: Literal["allowlist", "tty", "env", "callback", "denied"] | None
     rc: int | None
     stdout: str
     duration_ms: float
     started_at: str
     error: str | None
+    # v0.40: the model that produced this step's output, read off the
+    # ExecutorResult (thread-safe) so it stays correct when task steps run
+    # concurrently. None for deterministic executors and non-executed outcomes.
+    model_id: str | None = None
+    # v0.41 (Stage 8, deed ledger): reversibility verdict and undo handle carried
+    # off the ExecutorResult (same thread-safe path as model_id), so a side effect
+    # stays undoable even when task steps run concurrently. None for executors that
+    # emit no verdict — the supervisor then classifies from the step kind.
+    reversibility: str | None = None
+    reversal: ReversalHandle | None = None
 
 
 @dataclass

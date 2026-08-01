@@ -7,6 +7,7 @@ a default source, not an authoritative one.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -20,6 +21,22 @@ class Config(BaseModel):
     max_task_chars: int = 4000
     z3_timeout_ms: int = 500
     data_dir: Path = Field(default_factory=lambda: Path.home() / ".opendaisugi")
+    # Background distillation consent (Phase A). None = never asked (distinct
+    # from an explicit no); True = distil repeated tasks in the background;
+    # False = declined. Distillation only ever affects *efficiency* (the guard
+    # enforces safety regardless), so it is safe to automate once consented.
+    auto_tend: bool | None = None
+    # ADR-0015: a qualified local model for the gateway's local rung — easy
+    # turns route here ahead of any cloud downgrade (zero quota; cache
+    # stickiness never blocks the local rung). None = no local rung. Set it to
+    # the model id `daisugi setup` qualified, and start the proxy with
+    # `daisugi gateway` (the flag --local-model overrides per run).
+    gateway_local_model: str | None = None
+    # ADR-0010 compound-shell decomposition, persisted so it also reaches the
+    # paths no CLI flag can: `hook auto-tend` runs from cron and from a detached
+    # spawn. Off by default — with it on, an envelope's allowlist admits
+    # `a && b` (every head checked) instead of the blanket metachar rejection.
+    shell_allow_decomposition: bool = False
 
 
 def default_config() -> Config:
@@ -57,3 +74,32 @@ def save_config(config: Config, path: Path | None = None) -> None:
     data = config.model_dump(mode="json")
     # Pydantic serializes Path to str in mode="json"; yaml.safe_dump is fine with it.
     path.write_text(yaml.safe_dump(data, sort_keys=True))
+
+
+def auto_tend_enabled(config: Config) -> bool:
+    """True only when the user has explicitly consented to background distillation.
+
+    Unasked (None) and declined (False) both mean "do not auto-tend" — consent
+    is opt-in, never assumed.
+    """
+    return config.auto_tend is True
+
+
+def ensure_auto_tend_consent(
+    config: Config,
+    ask: Callable[[], bool],
+    *,
+    path: Path | None = None,
+) -> Config:
+    """Ask once whether to distil in the background, persist the answer, return it.
+
+    If ``config.auto_tend`` is already set (True or False), returns ``config``
+    unchanged without calling ``ask`` — the question is asked exactly once, ever.
+    Otherwise ``ask()`` is invoked (a ``() -> bool`` the caller wires to a prompt),
+    the choice is written to ``config`` on disk, and the updated Config returned.
+    """
+    if config.auto_tend is not None:
+        return config
+    decided = config.model_copy(update={"auto_tend": bool(ask())})
+    save_config(decided, path)
+    return decided

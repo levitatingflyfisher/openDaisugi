@@ -21,7 +21,7 @@ DraftEmail(
     recipient="alice@example.com",
     body="...",
     signature="Ada",
-    preferred_model="haiku",   # cheap drafting
+    preferred_model="haiku",  # cheap drafting
 )
 ```
 
@@ -54,7 +54,7 @@ Postcondition(
     expr={
         "op": "llm_check",
         "rule": "The review body contains at least one specific critique "
-                "of the contribution, not just a thumbs-up or vague praise.",
+        "of the contribution, not just a thumbs-up or vague praise.",
     },
 )
 ```

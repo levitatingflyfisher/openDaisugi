@@ -47,6 +47,7 @@ def test_public_week2_exports_are_importable():
         Daisugi,
         generate_envelope,
     )
+
     assert Config is not None
     assert Daisugi is not None
     assert callable(generate_envelope)
@@ -54,6 +55,7 @@ def test_public_week2_exports_are_importable():
 
 def test_all_list_contains_week2_exports():
     import opendaisugi
+
     assert "Config" in opendaisugi.__all__
     assert "Daisugi" in opendaisugi.__all__
     assert "generate_envelope" in opendaisugi.__all__
@@ -61,11 +63,13 @@ def test_all_list_contains_week2_exports():
 
 def test_config_helpers_are_importable():
     from opendaisugi import Config, load_config, save_config
+
     assert callable(load_config)
     assert callable(save_config)
     # save_config should accept a Config and a path — round-trip smoke test.
     import tempfile
     from pathlib import Path as _P
+
     cfg = Config()
     with tempfile.TemporaryDirectory() as d:
         p = _P(d) / "c.yaml"
@@ -76,6 +80,7 @@ def test_config_helpers_are_importable():
 
 def test_calibration_helpers_are_importable():
     from opendaisugi import CalibrationReport, run_calibration
+
     assert callable(run_calibration)
     # CalibrationReport is a dataclass — check it constructs.
     report = CalibrationReport(total=0, passed=0, failures=[], errors={})
@@ -84,6 +89,7 @@ def test_calibration_helpers_are_importable():
 
 def test_journal_public_exports():
     from opendaisugi import Journal, JournalStats, ReplayResult, TraceRecord
+
     assert Journal is not None
     assert JournalStats is not None
     assert ReplayResult is not None
@@ -92,6 +98,7 @@ def test_journal_public_exports():
 
 def test_all_list_contains_journal_exports():
     import opendaisugi
+
     for name in ("Journal", "JournalStats", "ReplayResult", "TraceRecord"):
         assert name in opendaisugi.__all__
 
@@ -101,17 +108,26 @@ def test_v010_supervisor_exports():
         RunStatus,
         Supervisor,
     )
+
     assert Supervisor is not None
     assert RunStatus.SUCCEEDED.value == "succeeded"
 
 
 def test_v010_all_list_contains_supervisor_exports():
     import opendaisugi
+
     for name in (
-        "Supervisor", "RunSession", "RunStatus", "StepOutcome",
-        "StepExecutor", "SubprocessExecutor", "DryRunExecutor",
-        "FakeExecutor", "ExecutorResult",
-        "ApprovalStrategy", "ApprovalDecision",
+        "Supervisor",
+        "RunSession",
+        "RunStatus",
+        "StepOutcome",
+        "StepExecutor",
+        "SubprocessExecutor",
+        "DryRunExecutor",
+        "FakeExecutor",
+        "ExecutorResult",
+        "ApprovalStrategy",
+        "ApprovalDecision",
     ):
         assert name in opendaisugi.__all__, f"{name} missing from __all__"
 
@@ -157,9 +173,13 @@ async def test_daisugi_generate_envelope_uses_cache(tmp_path, mock_llm_client):
     from opendaisugi import Daisugi
     from opendaisugi.models import Envelope, Permission
 
-    mock_llm_client.set_next_envelope(Envelope(
-        generated_by="t", task="t", permissions=Permission(),
-    ))
+    mock_llm_client.set_next_envelope(
+        Envelope(
+            generated_by="t",
+            task="t",
+            permissions=Permission(),
+        )
+    )
     d = Daisugi(data_dir=tmp_path)
     await d.generate_envelope("identical task")
     await d.generate_envelope("identical task")
@@ -171,6 +191,7 @@ async def test_daisugi_generate_envelope_uses_cache(tmp_path, mock_llm_client):
 
 def test_v013_exports_present():
     import opendaisugi
+
     assert hasattr(opendaisugi, "DEFAULT_LOW_STAKES_ENVELOPE")
     assert hasattr(opendaisugi, "LowStakesNotConfigured")
     assert hasattr(opendaisugi, "ModelLadderExhausted")
@@ -179,11 +200,13 @@ def test_v013_exports_present():
     from opendaisugi import (
         LowStakesNotConfigured,
     )
+
     assert LowStakesNotConfigured is not None
 
 
 def test_v013_all_contains_new_symbols():
     from opendaisugi import __all__
+
     for name in (
         "DEFAULT_LOW_STAKES_ENVELOPE",
         "LowStakesNotConfigured",
@@ -196,11 +219,13 @@ def test_v013_all_contains_new_symbols():
 
 def test_daisugi_with_default_low_stakes_exposed():
     from opendaisugi import Daisugi
+
     assert callable(getattr(Daisugi, "with_default_low_stakes", None))
 
 
 def test_v020_exports_present():
     import opendaisugi
+
     assert hasattr(opendaisugi, "RefinementRecord")
     assert hasattr(opendaisugi, "RefinementLog")
     assert hasattr(opendaisugi, "FallbackHandler")
@@ -210,11 +235,13 @@ def test_v020_exports_present():
     from opendaisugi import (
         HaltHandler,
     )
+
     assert HaltHandler is not None
 
 
 def test_v020_all_contains_new_symbols():
     from opendaisugi import __all__
+
     for name in (
         "RefinementRecord",
         "RefinementLog",
@@ -229,16 +256,19 @@ def test_v020_all_contains_new_symbols():
 def test_v021_exports_present():
     """v0.2.1 promotes make_cache_key to the public surface."""
     from opendaisugi import make_cache_key  # must not raise
+
     assert callable(make_cache_key)
 
 
 def test_v021_all_contains_make_cache_key():
     import opendaisugi
+
     assert "make_cache_key" in opendaisugi.__all__
 
 
 def test_version_exposed():
     import opendaisugi
+
     assert isinstance(opendaisugi.__version__, str)
     assert opendaisugi.__version__.count(".") >= 2
 
@@ -252,6 +282,7 @@ def test_v030_exports_present():
         PathwayStore,
         TendReport,
     )
+
     assert CompiledPathway is not None
     assert PathwayMatch is not None
     assert PathwayStore is not None
@@ -261,5 +292,6 @@ def test_v030_exports_present():
 
 def test_v030_all_contains_distillation_types():
     import opendaisugi
+
     for name in ("CompiledPathway", "PathwayMatch", "PathwayStore", "Distiller", "TendReport"):
         assert name in opendaisugi.__all__, f"missing: {name}"

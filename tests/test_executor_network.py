@@ -153,9 +153,11 @@ def test_url_error_returns_rc2():
 
 # --------------------- URL scheme guard (SGCM review EB-1) ---------------------
 
+
 def test_network_executor_refuses_non_http_schemes(tmp_path):
     from opendaisugi.executor import NetworkExecutor
     from opendaisugi.models import NetworkStep
+
     secret = tmp_path / "secret.txt"
     secret.write_text("TOP SECRET")
     exe = NetworkExecutor()
@@ -177,12 +179,23 @@ def test_network_executor_enforces_wall_clock_deadline(monkeypatch):
         def read(self, want):
             _t.sleep(0.25)
             return b"x"  # 1 byte, never EOF → infinite drip
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
 
     import urllib.request
-    monkeypatch.setattr(urllib.request.OpenerDirector, "open", lambda self, req, timeout=None: _SlowResp())
+
+    monkeypatch.setattr(
+        urllib.request.OpenerDirector, "open", lambda self, req, timeout=None: _SlowResp()
+    )
     exe = NetworkExecutor()
-    r = exe.run(NetworkStep(id="s", url="https://slow.example.com/"), timeout_s=1, max_output_bytes=10_000_000)
+    r = exe.run(
+        NetworkStep(id="s", url="https://slow.example.com/"),
+        timeout_s=1,
+        max_output_bytes=10_000_000,
+    )
     assert r.timed_out is True
     assert r.rc == 2

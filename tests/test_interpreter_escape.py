@@ -44,8 +44,7 @@ def test_shell_interpreters_constant_covers_audit_list():
     The constant should cover at least those (plus common shells)."""
     required = {"sh", "bash", "xargs", "find", "python", "make"}
     assert required.issubset(SHELL_INTERPRETERS), (
-        f"SHELL_INTERPRETERS missing audit-required entries: "
-        f"{required - SHELL_INTERPRETERS}"
+        f"SHELL_INTERPRETERS missing audit-required entries: {required - SHELL_INTERPRETERS}"
     )
 
 
@@ -67,9 +66,9 @@ def test_interpreter_in_inner_allowlist_surfaced_under_default_policy():
     inner = _env(["echo", "find"])
     r = envelope_subsumes(outer, inner)
     # Surface independently of holds/doesn't-hold — it's "what's unverified."
-    assert any(
-        "shell_interpreter:find" in s for s in r.unverified_invariants
-    ), f"expected interpreter surface, got {r.unverified_invariants}"
+    assert any("shell_interpreter:find" in s for s in r.unverified_invariants), (
+        f"expected interpreter surface, got {r.unverified_invariants}"
+    )
 
 
 def test_interpreter_in_outer_only_also_surfaced():
@@ -79,9 +78,9 @@ def test_interpreter_in_outer_only_also_surfaced():
     outer = _env(["echo", "sh"])
     inner = _env(["echo"])
     r = envelope_subsumes(outer, inner)
-    assert any(
-        "shell_interpreter:sh" in s for s in r.unverified_invariants
-    ), f"expected sh interpreter surface, got {r.unverified_invariants}"
+    assert any("shell_interpreter:sh" in s for s in r.unverified_invariants), (
+        f"expected sh interpreter surface, got {r.unverified_invariants}"
+    )
 
 
 def test_interpreter_policy_allow_silences_surface():
@@ -91,9 +90,9 @@ def test_interpreter_policy_allow_silences_surface():
     outer = _env(["echo", "find"], policy="allow")
     inner = _env(["echo", "find"])
     r = envelope_subsumes(outer, inner)
-    assert not any(
-        s.startswith("shell_interpreter:") for s in r.unverified_invariants
-    ), f"allow policy should silence surface, got {r.unverified_invariants}"
+    assert not any(s.startswith("shell_interpreter:") for s in r.unverified_invariants), (
+        f"allow policy should silence surface, got {r.unverified_invariants}"
+    )
 
 
 def test_non_interpreter_allowlist_no_surface():
@@ -102,9 +101,9 @@ def test_non_interpreter_allowlist_no_surface():
     outer = _env(["echo", "ls", "cat", "pytest"])
     inner = _env(["echo", "ls"])
     r = envelope_subsumes(outer, inner)
-    assert not any(
-        s.startswith("shell_interpreter:") for s in r.unverified_invariants
-    ), f"non-interpreter allowlist should not surface, got {r.unverified_invariants}"
+    assert not any(s.startswith("shell_interpreter:") for s in r.unverified_invariants), (
+        f"non-interpreter allowlist should not surface, got {r.unverified_invariants}"
+    )
 
 
 def test_interpreter_policy_strict_makes_subsumption_fail_when_inner_admits_interpreter():
@@ -113,9 +112,7 @@ def test_interpreter_policy_strict_makes_subsumption_fail_when_inner_admits_inte
     outer = _env(["echo", "find"], policy="strict")
     inner = _env(["echo", "find"])
     r = envelope_subsumes(outer, inner)
-    assert not r.holds, (
-        "strict policy must block subsumption when inner admits interpreter"
-    )
+    assert not r.holds, "strict policy must block subsumption when inner admits interpreter"
     assert r.counterexample is not None
     assert r.counterexample.outer_violation == "shell_interpreter_policy"
 
@@ -126,9 +123,7 @@ def test_interpreter_policy_strict_passes_when_inner_is_clean():
     outer = _env(["echo", "find"], policy="strict")
     inner = _env(["echo"])
     r = envelope_subsumes(outer, inner)
-    assert r.holds, (
-        f"strict outer with clean inner should subsume; got {r.counterexample}"
-    )
+    assert r.holds, f"strict outer with clean inner should subsume; got {r.counterexample}"
 
 
 # --------------------- clustered shell flags (SGCM review VC-2) ---------------------

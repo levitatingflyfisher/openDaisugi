@@ -1,0 +1,152 @@
+"""Run a curated set of shell-grammar-edge-case commands through the REAL
+Python oracle's decompose_command() and dump NDJSON to stdout.
+
+This is throwaway research tooling for building the Go decompose test table
+and minimizing corpus mismatches — NOT part of the shipped client. Run from
+the repo root:
+
+    CUDA_VISIBLE_DEVICES="" uv run python clients/go/probe_gen.py \
+        > clients/go/probe_out.jsonl
+"""
+
+import json
+
+from opendaisugi.shell_decompose import decompose_command
+
+CASES = [
+    "git status",
+    "FOO=1",
+    "FOO=1 git status",
+    "FOO=1 BAR=2 git commit",
+    "1FOO=1 git",
+    "FOO=x=y git",
+    "=x git",
+    "a=(1 2)",
+    "$(which ls) -la",
+    "`which ls` -la",
+    "git $(echo status)",
+    "2>&1",
+    "a 2>&1",
+    "a 2>&-",
+    "a >&-",
+    "a <&-",
+    "a >&2",
+    "a <&0",
+    "a >&x",
+    "a >|f",
+    "a &>f",
+    "a &>>f",
+    "a >>f",
+    "a >f",
+    "a <f",
+    "a <&f",
+    'echo "$(x)"',
+    "echo '$(x)'",
+    'echo "hello"',
+    "echo 'hello'",
+    "echo hello",
+    'echo "a b"',
+    'echo "a"b',
+    'a > "out.txt"',
+    "a > 'out.txt'",
+    "a > out.txt",
+    "a > $OUT",
+    "a > out$N.txt",
+    "a > $(mktemp)",
+    'a > "$OUT"',
+    'a > "out${N}.txt"',
+    "$CMD arg",
+    "${x:-rm} arg",
+    '"git" status',
+    "'git' status",
+    'git"status"',
+    "exec 3<>f",
+    "exec 3>&-",
+    "cat <<EOF\nheredoc\nEOF",
+    "cat <<-EOF\n\theredoc\n\tEOF",
+    'cat <<< "hello"',
+    'cat <<< "$(x)"',
+    "a <(cmd)",
+    "a > <(cmd)",
+    "echo $(a) $(b)",
+    "(a; b)",
+    "{ a; b; }",
+    "a && b",
+    "a || b",
+    "a; b",
+    "a | b",
+    "a |& b",
+    "! a",
+    "a & b",
+    "if a; then b; fi",
+    "for i in 1 2; do echo $i; done",
+    "while true; do a; done",
+    "case $x in a) b;; esac",
+    "function f() { a; }",
+    "f() { a; }",
+    "((i++))",
+    "[[ -f x ]]",
+    "[ -f x ]",
+    "time a",
+    "coproc a",
+    "a; b; c",
+    "a && b && c",
+    "a || b || c",
+    "a && b || c",
+    "a;",
+    ";a",
+    "a\\\nb",
+    "a #comment",
+    "# comment",
+    "",
+    "   ",
+    '""',
+    "''",
+    'a "" b',
+    "a '' b",
+    "git status # trailing comment",
+    "a > f # comment",
+    "printf '%s\\n' \"$x\"",
+    'git commit -m "a message"',
+    "git commit -m 'a message'",
+    'git commit -m "a; b"',
+    'find . -name "*.py"',
+    "find . -exec rm {} \\;",
+    "xargs -I {} mv {} /d",
+    "ls -la /tmp",
+    'python3 -c "print(1)"',
+    'sh -c "ls"',
+    "a=1 b=2 cmd",
+    "VAR=$(cmd) other",
+    'a="$(cmd)"',
+    "echo *",
+    "echo *.txt",
+    "a$b",
+    "$((1+2))",
+    "echo $((1+2))",
+    "a > /dev/null",
+    "a 2> /dev/null",
+    "a < /dev/null",
+    "a > /dev/stdout",
+    "a > /dev/stderr",
+    "a < /dev/stdin",
+]
+
+
+def main() -> None:
+    for cmd in CASES:
+        d = decompose_command(cmd)
+        out = {
+            "command": cmd,
+            "ok": d.ok,
+            "heads": list(d.heads),
+            "commands": list(d.commands),
+            "reads": list(d.reads),
+            "writes": list(d.writes),
+            "reason": d.reason,
+        }
+        print(json.dumps(out))
+
+
+if __name__ == "__main__":
+    main()

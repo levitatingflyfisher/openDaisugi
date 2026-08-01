@@ -1,4 +1,5 @@
 """VLA executor scaffolding tests (v0.26+)."""
+
 from __future__ import annotations
 
 import json
@@ -19,9 +20,13 @@ from opendaisugi.models import (
 
 def _workspace_invariant():
     return Invariant(
-        type="end_effector_in_workspace", description="bounded reach",
-        enforce=True, expr=None,
+        type="end_effector_in_workspace",
+        description="bounded reach",
+        enforce=True,
+        expr=None,
     )
+
+
 from opendaisugi.verify import verify
 from opendaisugi.vla_executor import MockVLAExecutor, VLAExecutorBase
 
@@ -30,8 +35,7 @@ _MJCF = Path(__file__).parent / "fixtures" / "mjcf" / "two_joint_arm.xml"
 
 def test_vla_step_registers_and_validates():
     """VLAStep must be in the discriminated union and round-trip."""
-    s = VLAStep(id="s1", task="approach mug",
-                target_pose=(0.5, 0.3, 0.0), max_actions=20)
+    s = VLAStep(id="s1", task="approach mug", target_pose=(0.5, 0.3, 0.0), max_actions=20)
     s2 = VLAStep.model_validate_json(s.model_dump_json())
     assert s2 == s
     # Round-trip via ActionPlan dispatch
@@ -69,10 +73,12 @@ def test_base_class_refuses_to_run_without_subclassing():
 def test_executor_refuses_non_vla_steps():
     """Wrong step type → clean rc=1, no crash."""
     from opendaisugi.models import ShellStep
+
     exe = MockVLAExecutor(mjcf_path=str(_MJCF))
     result = exe.run(
         ShellStep(id="x", command="echo"),
-        timeout_s=1, max_output_bytes=1024,
+        timeout_s=1,
+        max_output_bytes=1024,
     )
     assert result.rc == 1
     assert "not a VLAStep" in result.stdout
@@ -83,16 +89,21 @@ def test_envelope_workspace_bounds_reject_out_of_bounds_target():
     the same way they apply to CartesianMoveStep.target_position.
     A VLA can't be asked to drive into a forbidden region."""
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(
             workspace_bounds=((-0.4, -0.4, -0.1), (0.4, 0.4, 0.1)),
         ),
         stakes="physical",
         invariants=[_workspace_invariant()],
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        VLAStep(id="s1", task="reach", target_pose=(2.0, 0.0, 0.0)),  # outside
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            VLAStep(id="s1", task="reach", target_pose=(2.0, 0.0, 0.0)),  # outside
+        ],
+    )
     vr = verify(plan, env)
     assert vr.ok is False
     assert any("workspace bounds" in v.message for v in vr.violations)
@@ -100,16 +111,21 @@ def test_envelope_workspace_bounds_reject_out_of_bounds_target():
 
 def test_envelope_workspace_bounds_accept_in_bounds_target():
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(
             workspace_bounds=((-0.4, -0.4, -0.1), (0.4, 0.4, 0.1)),
         ),
         stakes="physical",
         invariants=[_workspace_invariant()],
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        VLAStep(id="s1", task="reach", target_pose=(0.2, 0.1, 0.0)),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            VLAStep(id="s1", task="reach", target_pose=(0.2, 0.1, 0.0)),
+        ],
+    )
     vr = verify(plan, env)
     # No workspace violation; other checks may fire on stakes='physical'
     # but bounds-check should not.
@@ -121,14 +137,18 @@ def test_physical_stakes_refuses_vla_with_preferred_model():
     stakes is rejected: the VLA itself is fine, but agent-authored LLM
     delegation is not. v0.19 _check_delegation_safety still fires."""
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(),
         stakes="physical",
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        VLAStep(id="s1", task="reach", target_pose=(0.2, 0.1, 0.0),
-                preferred_model="haiku"),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            VLAStep(id="s1", task="reach", target_pose=(0.2, 0.1, 0.0), preferred_model="haiku"),
+        ],
+    )
     vr = verify(plan, env)
     assert vr.ok is False
     assert any("delegation" in v.message.lower() for v in vr.violations)
@@ -140,6 +160,7 @@ def test_transformers_executor_lazy_loads():
     memory-constrained hosts on a `Daisugi()` import path that never
     actually invokes a VLAStep."""
     from opendaisugi.vla_executor import TransformersVLAExecutor
+
     exe = TransformersVLAExecutor(
         mjcf_path=str(_MJCF),
         model_id="lerobot/smolvla_base",
@@ -178,9 +199,19 @@ def test_transformers_executor_with_mocked_predict():
     fake_model = MagicMock()
     # Pretend the policy returns a (1, 5, 2) action chunk.
     fake_output = types.SimpleNamespace(
-        actions=_FakeTensor(np.array([[
-            [0.1, 0.05], [0.2, 0.10], [0.3, 0.15], [0.4, 0.20], [0.5, 0.25],
-        ]])),
+        actions=_FakeTensor(
+            np.array(
+                [
+                    [
+                        [0.1, 0.05],
+                        [0.2, 0.10],
+                        [0.3, 0.15],
+                        [0.4, 0.20],
+                        [0.5, 0.25],
+                    ]
+                ]
+            )
+        ),
     )
     fake_model.return_value = fake_output
     fake_model.to.return_value = fake_model
@@ -193,8 +224,7 @@ def test_transformers_executor_with_mocked_predict():
     fake_transformers.AutoModel.from_pretrained = MagicMock(return_value=fake_model)
 
     with patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}):
-        step = VLAStep(id="s1", task="reach", target_pose=(0.2, 0.1, 0.0),
-                       max_actions=4)
+        step = VLAStep(id="s1", task="reach", target_pose=(0.2, 0.1, 0.0), max_actions=4)
         result = exe.run(step, timeout_s=10, max_output_bytes=1024 * 1024)
 
     # rc=0 because mock pipeline produced 5 actions; executor capped to 4
@@ -207,30 +237,45 @@ def test_transformers_executor_with_mocked_predict():
 
 
 class _NullCtx:
-    def __enter__(self): return self
-    def __exit__(self, *args): return False
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
 
 
 class _FakeTensor:
     """Minimal numpy-backed tensor stand-in for the executor's torch usage."""
+
     def __init__(self, arr):
         import numpy as _np
+
         self._arr = _np.asarray(arr)
         self.ndim = self._arr.ndim
         self.shape = self._arr.shape
-    def __getitem__(self, i): return _FakeTensor(self._arr[i])
-    def cpu(self): return self
-    def numpy(self): return self._arr
-    def to(self, device): return self
+
+    def __getitem__(self, i):
+        return _FakeTensor(self._arr[i])
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self._arr
+
+    def to(self, device):
+        return self
+
     def unsqueeze(self, axis):
         import numpy as _np
+
         return _FakeTensor(_np.expand_dims(self._arr, axis))
 
 
 @pytest.mark.skipif(
     "OPENDAISUGI_SMOLVLA_SMOKE" not in __import__("os").environ,
     reason="real-model smoke test; set OPENDAISUGI_SMOLVLA_SMOKE=1 to enable. "
-           "Downloads ~2GB of weights and loads them into memory.",
+    "Downloads ~2GB of weights and loads them into memory.",
 )
 def test_smolvla_real_load_smoke():
     """Opt-in smoke test against the real lerobot/smolvla_base model.
@@ -241,14 +286,14 @@ def test_smolvla_real_load_smoke():
     could OOM. Run only when you've confirmed you have headroom.
     """
     from opendaisugi.vla_executor import TransformersVLAExecutor
+
     exe = TransformersVLAExecutor(
         mjcf_path=str(_MJCF),
         model_id="lerobot/smolvla_base",
         device="cpu",
         action_horizon=8,
     )
-    step = VLAStep(id="s1", task="reach toward the cup",
-                   target_pose=(0.2, 0.1, 0.0), max_actions=4)
+    step = VLAStep(id="s1", task="reach toward the cup", target_pose=(0.2, 0.1, 0.0), max_actions=4)
     result = exe.run(step, timeout_s=60, max_output_bytes=4 * 1024 * 1024)
     assert result.rc == 0, f"smolvla load+predict failed: {result.stdout[:300]}"
     evidence = json.loads(result.stdout)
@@ -259,14 +304,14 @@ def test_smolvla_real_load_smoke():
 def test_max_actions_caps_runaway_policy():
     """If a (real) VLA returned 1000 actions, the executor caps by
     step.max_actions (20 here) so a misbehaving policy can't run forever."""
+
     class FloodingExecutor(VLAExecutorBase):
         def _predict_actions(self, step, observation):
             # Pretend the policy emitted way too many actions.
             return [{"j1": 0.0, "j2": 0.0}] * 1000
 
     exe = FloodingExecutor(mjcf_path=str(_MJCF), max_actions_global=200)
-    step = VLAStep(id="s1", task="anything", target_pose=(0.0, 0.0, 0.0),
-                   max_actions=20)
+    step = VLAStep(id="s1", task="anything", target_pose=(0.0, 0.0, 0.0), max_actions=20)
     result = exe.run(step, timeout_s=10, max_output_bytes=1024 * 1024)
     evidence = json.loads(result.stdout)
     # Capped at min(step.max_actions, max_actions_global) = 20

@@ -8,9 +8,16 @@
 > stage is done; until then, it isn't — no matter what the commit log says.
 >
 > Stages are ordered by *dependency*, not importance. 1 → 2 → 3 is a spine; 4
-> deliberately waits on it; 5–7 run alongside, bounded. The far-horizon problems
-> (perception-conditioned envelopes, robotics on hardware) stay in
-> [VISION](../VISION.md) — this document is the near ground.
+> deliberately waits on it; 5–7 run alongside, bounded. Stages 8–10 are a **second
+> axis** — the cost levers opened by [ADR-0011](adr/0011-verifiable-execution-substrate.md):
+> 8 (the deed ledger) and 9 (within-instance batch compilation) are **done** — 9's
+> mechanism and meter ship in v0.42, with only its *at-scale cross-instance* numbers
+> still sharing 4's local-model dependency; 10 (the rationale ledger), the far novel
+> bet, now has its mechanism too — the store, reconstruction, and constraint-promotion
+> ship in v0.43, with only its re-derivation *numbers* deferred to a model. All three
+> cost levers are now built to the mechanism line. The far-horizon problems (perception-conditioned
+> envelopes, robotics on hardware) stay in [VISION](../VISION.md) — this document is
+> the near ground.
 
 ## Where the line is today
 
@@ -21,7 +28,7 @@ distill, Z3-backed, fail-closed, ~1600 tests, CI green. What it verifies is
 As of v0.35.0 the call-time gate exists beside it: live tool calls are
 verified against a registered per-session envelope, deny-by-default, shadow
 mode first (see Stage 1's status note for the evidence). The passive capture
-seam is unchanged — it journals and fails **open** by design, correct for
+hook is unchanged — it journals and fails **open** by design, correct for
 observation. What the library still cannot do is hand a *sub-agent* real
 tools inside the parent's envelope (Stage 2), or back its fail-closed claim
 with evidence someone else authored (Stage 3). Closing those gaps — without
@@ -36,8 +43,8 @@ everything below.
 **The problem.** The library cannot yet take a live tool call — a shell command,
 a file read, an MCP invocation — synthesize it into a one-step plan, prove it
 inside the session's envelope *before it runs*, and deny by default when the
-proof fails. Turning the passive seam into that gate is not a flag flip; it
-inverts the seam's founding contract, and several sub-problems are honestly
+proof fails. Turning the passive hook into that gate is not a flag flip; it
+inverts the hook's founding contract, and several sub-problems are honestly
 unsolved:
 
 - **The host's deny contract is unverified.** Exit codes vs. structured
@@ -250,6 +257,23 @@ is deliberately deferred until a more reliable (larger) local model clears
 noise-dominated pilot. The stage is *not* solved; the pilot is the honest
 progress, not a claimed number.
 
+**Reliable-executor run (2026-07-26, `claude-code` backend, 4×3 — see
+[RESULTS-reliable-executor.md](../examples/distillation-benchmark/RESULTS-reliable-executor.md)):**
+the pilot's "obvious next experiment" — rerun with a reliable executor so the
+reuse effect is isolated from execution noise. Result: cold and warm success are
+**both 100%** with no safety regression, warm ~8 s faster (CI still spans zero at
+n=12), and the harness reported reuse firing on all 12 warm runs. The finding:
+the pilot's *warm-below-cold* was 4B execution noise, **not** a reuse defect —
+the feared "reused pathway drops a step" did not appear at this scale (a
+clamp-fixed 3×1 follow-up then reused every task cleanly, `find-todos` included —
+see the linked results). Two things this does *not*
+settle, stated plainly: it is 4×3 (does **not** meet the ≥20×5 bar), and
+`claude-code` is reliable but **not local** — so the *cheap-local-reuse* product
+pitch still needs a local model clearing ~90% success. (The run also surfaced
+and fixed a real cosine-overshoot bug in `pathway_store.find()`.) Separately, the
+guard-cost and compilable-fraction halves of the empirical thesis now have their
+own measured ruler — [`examples/jit-metrics/`](../examples/jit-metrics/).
+
 ## Stage 5 — The harness problem
 *Honesty about where enforcement is possible.*
 
@@ -319,14 +343,194 @@ us, with matching results; and the supply-chain posture — pinned dependencies,
 allowlist-based model resolution, no telemetry of any kind — is documented in
 one place a skeptic can audit in an afternoon.
 
-**Status (v0.38.0):** four of five have evidence — public CI green on every
-push with the adversarial suite as an explicit required step; the corpus is
-content-addressed and re-runnable by anyone (`daisugi gate audit`); the
-supply-chain posture is documented in one place
-([security-model.md § supply-chain](security-model.md)); pathway bundles are
-signed. The one honest gap, named there and not hidden: **release artifacts are
-not yet signed** — until artifact signing lands, install from a pinned git ref
-you have read, not an unpinned index.
+**Status (v0.39.0):** four of five are met, and the fifth now has shipped
+machinery. Met: public CI green on every push with the adversarial suite as an
+explicit required step; the corpus is content-addressed and re-runnable by
+anyone (`daisugi gate audit`); the supply-chain posture is documented in one
+place ([security-model.md § supply-chain](security-model.md)); pathway bundles
+are signed. The fifth — **release-artifact signing** — now has the machinery:
+`daisugi release sign`/`verify` produce and check a signed SHA-256 manifest over
+the artifacts, reusing the one ed25519 trust root (`opendaisugi.release`,
+tested). It is *met* only once each published release actually ships a signed
+manifest; until a given release does, install from a pinned git ref you have
+read, not an unpinned index.
+
+---
+
+## The currency levers (Stages 8–10)
+
+Stages 1–7 are the enforcement spine. Stages 8–10 are a second axis, opened by
+[ADR-0011](adr/0011-verifiable-execution-substrate.md): openDaisugi is a
+**verifiable-execution substrate** whose gate does not itself save tokens but makes
+the token-savers safe. Each lever below is gated on the substrate and reports its own
+currency honestly. They were reached independently in a
+[blind-design convergence experiment](exploration/2026-08-blind-design-gauntlet/) —
+five closed-book architects rebuilt this exact split — which is why they earn a place
+on the roadmap rather than in the "not building" list.
+
+One lever needs no new stage: **verification-underwritten cheap-model routing**
+(escalate to a strong model on *external* signals — gate rejection, postcondition
+failure, a k-failure stop-loss — never the cheap model's self-report) is an extension
+of the existing model ladder, and lands with Stage 9's batch machinery.
+
+## Stage 8 — The reversibility problem
+*A wrong-but-allowed action should cost a rollback, not a recovery arc.*
+
+**The problem.** An action can be provably in-envelope and still wrong for the task
+(a correctly-scoped deletion of the wrong file). Today that costs a full recovery
+arc — the agent reasons its way back from a bad state, burning output tokens. Every
+one of the five blind designs answered this with copy-on-write rollback; openDaisugi
+has none. But *owning* workspace snapshots is state management, which
+[ADR-0004](adr/0004-layer-not-harness.md) forecloses — that is the harness's job. The
+in-scope form is an **external deed ledger**: the layer *records* each reversible deed,
+the *harness* reverts. The Supervisor already appends a per-step `Receipt`
+(`_write_step_receipt`), but the receipt carries execution evidence, not a reversal
+handle, and nothing consumes it to undo.
+
+**Solved when:**
+- Each executed side-effecting step appends a deed receipt carrying its effect class
+  and, *where the effect is reversible*, a harness-consumable reversal handle; a
+  committed test shows a harness rolling back a wrong-but-allowed step **from the
+  ledger alone, with no model call**.
+- Irreversible effect classes (send, purchase, external POST) are marked
+  non-reversible and never claim a handle they do not have — the honest boundary,
+  tested.
+- The ledger is queryable to reconstruct the pre-state of the files a run touched
+  (those with a captured reversal handle), so a compacted agent rehydrates from
+  receipts rather than replayed history.
+
+**Status (v0.41): solved.** The deed ledger ships with committed evidence. Each
+executed step's `Receipt` now carries an `effect_class`, a `reversibility` verdict
+(`none` / `reversible` / `irreversible`), and, when reversible, a `ReversalHandle`
+(`src/opendaisugi/models.py`); the `FileWriteExecutor` captures the target's
+pre-image before it mutates (and records any directories it creates), emitting the
+verdict on every path (`src/opendaisugi/executor.py`). `deeds.rollback_run` undoes a
+run's reversible deeds **from the ledger alone — no model, no executor, no re-run** —
+and `deeds.touched_files` folds the ledger into the pre-state view
+(`src/opendaisugi/deeds.py`). `tests/test_deed_ledger.py` proves it end to end,
+including the honest boundary: a refused write claims `none` (never a false handle), an
+oversized or non-UTF-8 prior image is marked `irreversible` rather than truncated, and
+`reversibility` defaults to `irreversible` — never a silent `none` — for any
+side-effecting step lacking a handle. The one thing deliberately out of scope: this
+covers the Supervisor's *executed* steps; a deed ledger for the call-time **gate**
+path (where the harness, not openDaisugi, performs the effect) would need the harness
+to report the reversal handle, and rides with a later gate-side extension.
+
+## Stage 9 — The within-instance-compilation problem, honestly baselined
+*Collapse a single task's internal repetition into one proven program — and measure
+it against the right baseline.*
+
+**The problem.** A task's own internal repetition is paid for turn by turn. The
+library cannot yet let the agent **declare a batch** — program P, item set I, effect
+footprint F, acceptance postcondition Q — prove F ⊆ envelope *before any iteration*
+(one proof covers all N), sample-validate Q on k=2–3 items in a copy-on-write fork,
+then execute all N under a monitor that kills on first envelope exit, with per-element
+rollback. (Agent-*declares*, deliberately not an anti-unification loop detector — the
+gauntlet correctly flagged detection as a research problem dressed as a milestone.)
+
+**The two-ledger baseline — the load-bearing honesty.** The savings must be reported in
+two separate ledgers, never merged:
+
+- **Within-instance ledger** — the win is a *verified* script instead of an
+  *unverified* one. Frequency-independent, small, safety-shaped. This is the win that
+  survives the [hardest requirement](exploration/2026-08-blind-design-gauntlet/problem-statement.md):
+  a competent agent already scripts a bulk job, so the marginal contribution is the
+  proven blast radius, not the script.
+- **Cross-instance ledger** — persistence and generalization: the distilled,
+  parameterized pathway is saved off and reused on similar-not-identical tasks. This
+  is a real, *compounding* win — but it is the frequency-amortized family the hardest
+  requirement excludes as a *complete* answer, so it is reported **apart** and never
+  folded into the within-instance number. Whether it pays *at scale* is Stage 4's
+  question, not this stage's.
+
+**Solved when:** a batch-declaration API with static write-set proof (F ⊆ envelope,
+reject on any unprovable write); irreversible tools marked non-batchable so they can
+never enter a batch; a per-instance **net-token meter** — (output + calls saved) −
+(spec input injected) < 0, the trap SKILL-DISCO measured, dual-currency and labeled
+evidence not proof; and the two ledgers published separately, on internally-repetitive
+one-offs, against the honest (not manual-turn) baseline.
+
+**Status (v0.42): mechanism and meter shipped; at-scale cross-instance numbers
+deferred.** The batch machinery ships with committed evidence in
+[`src/opendaisugi/batch.py`](../src/opendaisugi/batch.py) and
+[`tests/test_batch.py`](../tests/test_batch.py). A batch is a JSON-round-trippable
+`BatchDeclaration` (program template + `PathwayParameter` holes + a *concrete* item
+list + declared footprint F + acceptance Q) an agent authors like an envelope, provable
+from the shell with `daisugi batch prove`. `prove_footprint` resolves every item up
+front and proves each write is inside both the envelope and F using the **same concrete
+matcher the runtime gate uses** (`verify._path_matches_any`), *not* the envelope↔envelope
+Z3 glob encoding — which diverges from it and would let the proof admit-then-reject (the
+divergence is itself now a pinned known-gap tripwire,
+[`tests/test_subsumption_glob_known_gap.py`](../tests/test_subsumption_glob_known_gap.py)).
+Irreversible programs can never enter a batch: a static kind check (only reversible
+`file_write` and read-only `file_read`/GET-only `network`), a pre-flight reversibility
+probe that rejects a target whose write would be un-undoable, **and** a runtime rule that
+halts the instant a deed comes back `irreversible` — reversibility is not a property of
+the type, so the type check alone is insufficient. `run_batch` sample-validates Q on k
+items in a deed-ledger fork (`apply_reversal`, no CoW — ADR-0004 forecloses it), then
+executes all N under the supervisor's per-step monitor with per-element rollback from the
+ledger alone. The per-instance **net-token meter** (`NetTokenLedger`) computes
+`(output + calls saved) − (spec input injected)` and surfaces the SKILL-DISCO trap when
+net goes negative — labelled evidence, not proof; the **two ledgers** (`TwoLedgerReport`)
+are kept separate and never merged. What is **deliberately deferred — by the stage's own
+design** — is *publishing the cross-instance ledger's numbers at scale*: that is Stage
+4's question and shares its local-model dependency. Within-instance, the meter already
+reports the honest finding — the win is the proven blast radius, not tokens; the net
+number is ≤ 0. The net-token ruler's other half has a measured primitive in
+[`examples/jit-metrics/`](../examples/jit-metrics/).
+
+## Stage 10 — The rationale-durability problem
+*Never re-derive reasoning that compaction dropped.*
+
+**The problem.** On an irreducible one-off — a heisenbug hunt, a novel design — there
+is no internal repetition to compile and no prior corpus to reuse. This is plausibly
+the *modal* rare-hard task, and every lever above is inert on it. What compaction drops
+there is the **deliberation**: discovered facts, ruled-out hypotheses and why, mid-task
+invariants. openDaisugi externalizes enforcement state (the envelope, the deed ledger)
+but not reasoning, so a compacted agent re-explores dead branches and re-discovers
+facts it already had. **None of the five blind designs built this** — it is the
+deliberate new bet.
+
+The library cannot yet hold a typed store — facts-with-provenance, ruled-out
+hypotheses, open constraints, the goal/subgoal stack — reconstruct each model call's
+context *from the store* instead of the transcript, and promote an expressible mid-task
+user invariant ("don't touch tenant X") into the enforcement envelope. The guardrail
+is strict: facts and hypotheses inform reasoning but **never gate actions**; only
+constraint-promotion touches authority, and it flows through the same
+`envelope_subsumes` monotone-narrowing check a captured invariant may only tighten.
+
+**Solved when:** a typed strata store with a cheap structured-emission hook; context
+reconstruction from relevant strata + pinned constraints, with a verbatim re-page API
+for dropped detail; the "don't touch tenant X" scenario held end-to-end under *forced*
+compaction via a promoted invariant; and a re-derivation meter — from an identical
+compaction point on one instance, re-explored branches and re-discovered facts with the
+store on versus off — publishing the output-token delta.
+
+**Status (v0.43): mechanism shipped; re-derivation numbers deferred.** The typed strata
+store ships with committed evidence in [`src/opendaisugi/strata.py`](../src/opendaisugi/strata.py)
+and [`tests/test_strata.py`](../tests/test_strata.py). `StrataStore.emit` is the cheap
+structured-emission hook over four kinds (`fact` / `hypothesis` / `constraint` / `goal`,
+each with provenance and a monotonic `seq`); `reconstruct_context` rebuilds a model call's
+context *from the store* — pinned strata and open constraints always retained, the rest
+filled by tag/recency under a budget, ruled-out hypotheses kept so a branch is not
+re-explored, and `repage` returns any dropped stratum verbatim. The honest boundary is
+stated where it lives: **reconstruction is lossy — a dropped fact is one the agent will
+re-derive** — and the relevance selector is deliberately simple, the sophisticated version
+left to the harness (this stage's own landmine). Constraint-promotion is the *only* path
+from deliberation to authority: `promote_constraint` refuses any stratum that is not a
+`constraint` (facts / hypotheses / goals inform reasoning, never gate actions — a tested
+tripwire), and gates every promotion through `verify_inheritance` on four fail-closed
+checks — kind, only-tightens, *actually*-tightens (a no-op is refused), and *actually*-
+enforces (an optional `deny_witness` the tightened envelope must reject, so a constraint
+that compiled to a soft/unenforced node is refused rather than accepted). The **"don't
+touch tenant X" scenario is held end-to-end under forced compaction**: the pinned
+constraint survives a `to_json`/`from_json` round-trip and a punishing reconstruction
+budget, and the promoted envelope still makes `verify()` deny the tenant-X write while
+allowing tenant Y (`tests/test_strata.py::test_tenant_x_held_end_to_end_under_forced_compaction`).
+The `RederivationLedger` (store-on vs store-off output-token delta) ships as the meter;
+its real, at-scale numbers are **deliberately deferred** to a model, exactly as Stages 4
+and 9 defer theirs. Like the deed ledger (ADR-0004), this is a store the harness consumes —
+openDaisugi records and reconstructs; it does not rewrite its own prompts.
 
 ---
 

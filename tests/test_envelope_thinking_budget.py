@@ -1,4 +1,5 @@
 """Tests for the per-provider thinking-budget mapping (v0.1.3)."""
+
 from __future__ import annotations
 
 import logging
@@ -52,6 +53,7 @@ class TestUnsupported:
 
     def test_unsupported_logs_warning_once(self, caplog):
         import opendaisugi.thinking as tk
+
         tk._LOGGED_UNSUPPORTED.clear()
 
         with caplog.at_level(logging.WARNING, logger="opendaisugi.thinking"):

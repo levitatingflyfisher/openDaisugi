@@ -24,44 +24,52 @@ def _plan(*steps):
 
 # --------------------------- MCPStep ---------------------------
 
+
 def test_mcp_step_denied_when_allowlist_empty():
     env = Envelope(generated_by="t", task="demo", permissions=Permission())
     r = verify(_plan(MCPStep(id="m1", server="github", tool="create_issue")), env)
     assert not r.ok
-    assert any(v.stage == "permissions" and "github/create_issue" in v.message for v in r.violations)
+    assert any(
+        v.stage == "permissions" and "github/create_issue" in v.message for v in r.violations
+    )
 
 
 def test_mcp_step_allowed_by_exact_entry():
-    env = Envelope(generated_by="t", task="demo",
-                   permissions=Permission(mcp_allowlist=["github/create_issue"]))
+    env = Envelope(
+        generated_by="t", task="demo", permissions=Permission(mcp_allowlist=["github/create_issue"])
+    )
     r = verify(_plan(MCPStep(id="m1", server="github", tool="create_issue")), env)
     assert r.ok, [v.message for v in r.violations]
 
 
 def test_mcp_step_allowed_by_glob():
-    env = Envelope(generated_by="t", task="demo",
-                   permissions=Permission(mcp_allowlist=["github/*"]))
+    env = Envelope(
+        generated_by="t", task="demo", permissions=Permission(mcp_allowlist=["github/*"])
+    )
     r = verify(_plan(MCPStep(id="m1", server="github", tool="list_issues")), env)
     assert r.ok, [v.message for v in r.violations]
 
 
 def test_mcp_step_rejected_when_server_not_matched():
-    env = Envelope(generated_by="t", task="demo",
-                   permissions=Permission(mcp_allowlist=["github/*"]))
+    env = Envelope(
+        generated_by="t", task="demo", permissions=Permission(mcp_allowlist=["github/*"])
+    )
     r = verify(_plan(MCPStep(id="m1", server="slack", tool="post")), env)
     assert not r.ok
 
 
 # --------------------------- SkillStep ---------------------------
 
+
 def _shell_env(allow):
-    return Envelope(generated_by="t", task="demo",
-                    permissions=Permission(shell=True, shell_allowlist=allow))
+    return Envelope(
+        generated_by="t", task="demo", permissions=Permission(shell=True, shell_allowlist=allow)
+    )
 
 
 def test_skill_step_rejected_when_contract_not_subsumed():
-    caller = _shell_env(["ls"])                 # caller may only run ls
-    skill_contract = _shell_env(["ls", "rm"])   # skill wants ls AND rm
+    caller = _shell_env(["ls"])  # caller may only run ls
+    skill_contract = _shell_env(["ls", "rm"])  # skill wants ls AND rm
     step = SkillStep(id="k1", skill_id="cleanup", contract_envelope=skill_contract)
     r = verify(_plan(step), caller)
     assert not r.ok
@@ -89,6 +97,7 @@ def test_opaque_skill_rejected_under_strict_surfaced_under_lenient():
 
 
 # --------------------------- TaskStep ---------------------------
+
 
 def test_task_step_verifies_under_minimal_software_envelope():
     # Pure-reasoning leaf: it does nothing, so a bare envelope admits it.

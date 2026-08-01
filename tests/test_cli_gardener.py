@@ -39,8 +39,7 @@ def _seed(data_dir, now: float) -> None:
             last_activation_at=last_activation_at,
         )
 
-    store.put(_p("stale", [0.0, 0.0, 1.0], hit_count=10,
-                 last_activation_at=now - 60 * 86_400))
+    store.put(_p("stale", [0.0, 0.0, 1.0], hit_count=10, last_activation_at=now - 60 * 86_400))
     store.put(_p("a", [1.0, 0.0, 0.0], hit_count=5, last_activation_at=now))
     store.put(_p("b", [0.99, 0.01, 0.0], hit_count=2, last_activation_at=now))
 
@@ -62,7 +61,8 @@ def test_gardener_prune_executes(tmp_path):
     _seed(tmp_path, time.time())
     runner = CliRunner()
     result = runner.invoke(
-        app, ["gardener", "prune", "--data-dir", str(tmp_path)],
+        app,
+        ["gardener", "prune", "--data-dir", str(tmp_path)],
     )
     assert result.exit_code == 0, result.output
     remaining = {p.id for p in PathwayStore(tmp_path / "pathways.db").list_all()}
@@ -86,7 +86,8 @@ def test_gardener_run_pipeline(tmp_path):
     _seed(tmp_path, time.time())
     runner = CliRunner()
     result = runner.invoke(
-        app, ["gardener", "run", "--data-dir", str(tmp_path)],
+        app,
+        ["gardener", "run", "--data-dir", str(tmp_path)],
     )
     assert result.exit_code == 0, result.output
     remaining = {p.id for p in PathwayStore(tmp_path / "pathways.db").list_all()}
@@ -97,7 +98,8 @@ def test_gardener_run_pipeline(tmp_path):
 def test_gardener_status_empty(tmp_path):
     runner = CliRunner()
     result = runner.invoke(
-        app, ["gardener", "status", "--data-dir", str(tmp_path)],
+        app,
+        ["gardener", "status", "--data-dir", str(tmp_path)],
     )
     assert result.exit_code == 0, result.output
     assert "count: 0" in result.output
@@ -107,7 +109,8 @@ def test_gardener_status_json(tmp_path):
     _seed(tmp_path, time.time())
     runner = CliRunner()
     result = runner.invoke(
-        app, ["gardener", "status", "--data-dir", str(tmp_path), "--json"],
+        app,
+        ["gardener", "status", "--data-dir", str(tmp_path), "--json"],
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)

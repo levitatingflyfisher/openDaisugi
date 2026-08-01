@@ -21,25 +21,35 @@ def test_lora_train_module_imports_without_heavy_deps():
 
 def test_lora_train_parser_requires_jsonl_and_output():
     from opendaisugi.lora.train import _build_parser
+
     parser = _build_parser()
     # Missing required args: should SystemExit.
     import pytest
+
     with pytest.raises(SystemExit):
         parser.parse_args([])
 
 
 def test_lora_train_parser_accepts_full_invocation():
     from opendaisugi.lora.train import _build_parser
+
     parser = _build_parser()
-    args = parser.parse_args([
-        "--jsonl", "train.jsonl",
-        "--base-model", "Qwen/Qwen2.5-1.5B-Instruct",
-        "--output", "adapters/robin",
-        "--qlora",
-        "--lora-r", "8",
-        "--epochs", "1",
-        "--dry-run",
-    ])
+    args = parser.parse_args(
+        [
+            "--jsonl",
+            "train.jsonl",
+            "--base-model",
+            "Qwen/Qwen2.5-1.5B-Instruct",
+            "--output",
+            "adapters/robin",
+            "--qlora",
+            "--lora-r",
+            "8",
+            "--epochs",
+            "1",
+            "--dry-run",
+        ]
+    )
     assert args.jsonl == "train.jsonl"
     assert args.base_model == "Qwen/Qwen2.5-1.5B-Instruct"
     assert args.output == "adapters/robin"
@@ -51,6 +61,7 @@ def test_lora_train_parser_accepts_full_invocation():
 
 def test_lora_train_parser_defaults():
     from opendaisugi.lora.train import _build_parser
+
     parser = _build_parser()
     args = parser.parse_args(["--jsonl", "t.jsonl", "--output", "out"])
     assert args.format == "alpaca"

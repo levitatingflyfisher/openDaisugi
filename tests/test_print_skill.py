@@ -1,6 +1,7 @@
 """print_skill() must return full skill content from package data,
 not a path relative to the source tree — so it works after uv add opendaisugi.
 """
+
 from __future__ import annotations
 
 from opendaisugi.install import print_skill
@@ -21,6 +22,7 @@ def test_print_skill_contains_key_workflow_terms():
 
 def test_skill_dir_bundles_references():
     import importlib.resources as ir
+
     skill_dir = ir.files("opendaisugi").joinpath("skills", "opendaisugi-checklist")
     assert skill_dir.joinpath("SKILL.md").is_file()
     refs = skill_dir.joinpath("references")
@@ -34,6 +36,7 @@ def test_print_skill_does_not_depend_on_source_tree(tmp_path, monkeypatch):
     """Simulate a post-install environment by pointing __file__ somewhere
     where the relative ../../../skills path definitely doesn't exist."""
     import opendaisugi.install as mod
+
     fake_file = tmp_path / "lib" / "python3.12" / "site-packages" / "opendaisugi" / "install.py"
     monkeypatch.setattr(mod, "__file__", str(fake_file))
     content = print_skill()

@@ -26,8 +26,8 @@ def test_quickstart_orients_to_this_machine(tmp_path, monkeypatch):
     res = runner.invoke(app, ["quickstart", "--data-dir", str(tmp_path / "data")])
     assert res.exit_code == 0, res.output
     low = res.output.lower()
-    assert "llamafile" in low                 # hardware-appropriate model recommendation
-    assert "transcript" in low                # discovered existing transcripts
-    assert "daisugi onboard" in res.output    # the concrete next-step command
+    assert "llamafile" in low  # hardware-appropriate model recommendation
+    assert "transcript" in low  # discovered existing transcripts
+    assert "daisugi onboard" in res.output  # the concrete next-step command
     # guided only — must NOT have spent LLM calls / written pathways
     assert not (tmp_path / "data" / "pathways.db").exists()

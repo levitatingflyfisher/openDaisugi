@@ -39,11 +39,19 @@ def test_write_refinement_and_get_back(tmp_path):
 def test_write_multiple_refinements_same_session(tmp_path):
     journal = Journal(data_dir=tmp_path)
     r1 = _make_record(timestamp=1.0)
-    r2 = _make_record(fallback_action="recomputed", timestamp=2.0,
-                       recomputed_step=ShellStep(id="s1_v2", command="echo ok"),
-                       recomputed_verification=VerificationResult(
-                           ok=True, violations=[], warnings=[],
-                           envelope_id="env_abc12345", plan_id="p", duration_ms=0.5))
+    r2 = _make_record(
+        fallback_action="recomputed",
+        timestamp=2.0,
+        recomputed_step=ShellStep(id="s1_v2", command="echo ok"),
+        recomputed_verification=VerificationResult(
+            ok=True,
+            violations=[],
+            warnings=[],
+            envelope_id="env_abc12345",
+            plan_id="p",
+            duration_ms=0.5,
+        ),
+    )
     journal.write_refinement(r1, session_id="run_multi")
     journal.write_refinement(r2, session_id="run_multi")
     log = journal.get_refinements("run_multi")
@@ -76,6 +84,7 @@ def test_write_refinement_is_best_effort(tmp_path, monkeypatch):
     record = _make_record()
 
     import sqlite3
+
     original_connect = sqlite3.connect
 
     def broken_connect(*args, **kwargs):

@@ -55,6 +55,7 @@ class DistillableTrace(BaseModel):
     Avoids loading YAML bodies — the Distiller only needs task text and
     IDs for clustering. Full TraceRecord comes from load_trace() per-cluster.
     """
+
     trace_id: str
     task: str
     envelope_id: str
@@ -152,9 +153,7 @@ _V2_MIGRATION_COLUMNS = (
     ("total_duration_ms", "REAL"),
 )
 
-_V3_REFINEMENT_COLUMNS = (
-    ("cache_key", "TEXT"),
-)
+_V3_REFINEMENT_COLUMNS = (("cache_key", "TEXT"),)
 
 
 class Journal:
@@ -181,7 +180,9 @@ class Journal:
 
         self._traces_dir.mkdir(parents=True, exist_ok=True)
         self._con = sqlite3.connect(
-            self._db_path, check_same_thread=False, isolation_level=None,
+            self._db_path,
+            check_same_thread=False,
+            isolation_level=None,
         )
         con = self._con
         con.executescript(_SCHEMA)
@@ -200,8 +201,7 @@ class Journal:
                 except sqlite3.OperationalError:
                     pass  # column already exists — idempotent
             con.execute(
-                "CREATE INDEX IF NOT EXISTS idx_refinement_cache_key "
-                "ON refinement_log(cache_key)"
+                "CREATE INDEX IF NOT EXISTS idx_refinement_cache_key ON refinement_log(cache_key)"
             )
             con.execute("PRAGMA user_version = 3")
         if version < 4:
@@ -218,14 +218,11 @@ class Journal:
             # structure without loading YAML bodies. NULL on v0.23 rows
             # (handled by the Distiller's fallback path).
             try:
-                con.execute(
-                    "ALTER TABLE traces ADD COLUMN structure_signature TEXT"
-                )
+                con.execute("ALTER TABLE traces ADD COLUMN structure_signature TEXT")
             except sqlite3.OperationalError:
                 pass  # column already exists
             con.execute(
-                "CREATE INDEX IF NOT EXISTS idx_traces_structure "
-                "ON traces(structure_signature)"
+                "CREATE INDEX IF NOT EXISTS idx_traces_structure ON traces(structure_signature)"
             )
             con.execute("PRAGMA user_version = 5")
         if version < 6:
@@ -241,6 +238,17 @@ class Journal:
             except sqlite3.OperationalError:
                 pass  # table already exists (created by _SCHEMA on fresh db)
             con.execute("PRAGMA user_version = 6")
+        if version < 7:
+            # v0.41 (Stage 8, the deed ledger): receipts gain the effect class,
+            # the reversibility verdict, and the reversal handle. ALTER adds each
+            # if missing (idempotent across fresh and upgraded DBs), mirroring the
+            # v0.19 model_id migration.
+            for col in ("effect_class TEXT", "reversibility TEXT", "reversal_json TEXT"):
+                try:
+                    con.execute(f"ALTER TABLE receipts ADD COLUMN {col}")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
+            con.execute("PRAGMA user_version = 7")
 
     def is_session_converted(self, session_id: str) -> bool:
         """v0.22+: has this captured session already been converted to a
@@ -252,7 +260,11 @@ class Journal:
         return row is not None
 
     def mark_session_converted(
-        self, session_id: str, trace_id: str, *, converted_at: float | None = None,
+        self,
+        session_id: str,
+        trace_id: str,
+        *,
+        converted_at: float | None = None,
     ) -> None:
         """v0.22+: record that a hook-captured session was converted to a
         journal trace, so subsequent auto-tend runs skip it."""
@@ -325,6 +337,7 @@ class Journal:
         yaml_path.write_text(yaml.safe_dump(payload, sort_keys=False))
         try:
             from opendaisugi.distiller import plan_structure_signature
+
             structure_signature = plan_structure_signature(plan)
         except Exception:
             structure_signature = None
@@ -393,10 +406,26 @@ class Journal:
             )
         return traces
 
-    def list_successful_traces(
-        self, *, since: float | None = None
-    ) -> list[DistillableTrace]:
-        """Return traces with run_status='succeeded', newest first.
+    def list_successful_traces(self, *, since: float | None = None) -> list[DistillableTrace]:
+        """Return traces representing trustworthy completed work, newest first.
+
+        Two kinds qualify, and they are stored differently:
+
+        * a **succeeded run** — executed by the orchestrator/supervisor via
+          ``log_run``, which sets ``run_status='succeeded'``; and
+        * a **verified import or capture** — written by ``log`` (the onboard
+          ingest path and the pre-tool-call hook), which never executes the
+          plan and so leaves ``run_status`` NULL. Its trust signal is the
+          verification verdict ``ok=1``.
+
+        Both must reach the distiller. Filtering on ``run_status='succeeded'``
+        alone silently severed *every* imported/captured trace from ``tend`` —
+        the entire "learn from your agent's real work" path produced nothing.
+        A **failed run** (``run_status='failed'``) is excluded even when its
+        plan verified: the outcome wasn't successful, so we don't learn it.
+        Refusals (imports with ``ok=0``) are excluded here; reuse re-verifies
+        against the caller's envelope regardless, so this gate is about learning
+        quality, not safety.
 
         Reads the SQLite index only — does not load YAML bodies.
         ``since`` is a Unix timestamp; only traces with created_at >= since
@@ -405,7 +434,11 @@ class Journal:
         sql = (
             "SELECT id, task, envelope_id, plan_id, run_id, run_status, "
             "created_at, structure_signature "
-            "FROM traces WHERE run_status = 'succeeded'"
+            "FROM traces "
+            # Parenthesized: the ``since`` clause below appends ` AND …`, and
+            # AND binds tighter than OR — without these parens the date filter
+            # would attach only to the second branch.
+            "WHERE (run_status = 'succeeded' OR (run_status IS NULL AND ok = 1))"
         )
         params: tuple = ()
         if since is not None:
@@ -453,9 +486,7 @@ class Journal:
     def replay(self, trace_id: str) -> ReplayResult:
         """Re-run verify() on a stored trace and report drift."""
         record = self.load_trace(trace_id)
-        replayed = verify(
-            record.plan, record.envelope, z3_timeout_ms=self.z3_timeout_ms
-        )
+        replayed = verify(record.plan, record.envelope, z3_timeout_ms=self.z3_timeout_ms)
         return ReplayResult(
             trace_id=record.id,
             original_ok=record.result.ok,
@@ -476,8 +507,7 @@ class Journal:
             from opendaisugi._search import semantic_search
         except ImportError:
             raise ImportError(
-                "Semantic search requires the [search] extra: "
-                "uv add 'opendaisugi[search]'"
+                "Semantic search requires the [search] extra: uv add 'opendaisugi[search]'"
             ) from None
         return semantic_search(self, query, limit=limit)
 
@@ -488,9 +518,7 @@ class Journal:
         """
         yaml_path = self._traces_dir / f"{trace_id}.yaml"
         if not yaml_path.exists():
-            raise FileNotFoundError(
-                f"No trace with id {trace_id!r} at {yaml_path}"
-            )
+            raise FileNotFoundError(f"No trace with id {trace_id!r} at {yaml_path}")
         raw = yaml.safe_load(yaml_path.read_text())
         return TraceRecord(
             id=raw["id"],
@@ -513,6 +541,7 @@ class Journal:
         ``cache_key`` column (indexed) for fast lookup by envelope key.
         """
         import logging
+
         _log = logging.getLogger("opendaisugi.journal")
         try:
             con = self._con
@@ -533,10 +562,10 @@ class Journal:
     def get_refinements(self, session_id: str) -> "RefinementLog":
         """Return all refinement records for a session."""
         from opendaisugi.refinement import RefinementLog, RefinementRecord
+
         con = self._con
         rows = con.execute(
-            "SELECT record_json FROM refinement_log "
-            "WHERE session_id = ? ORDER BY inserted_at ASC",
+            "SELECT record_json FROM refinement_log WHERE session_id = ? ORDER BY inserted_at ASC",
             (session_id,),
         ).fetchall()
         records = [RefinementRecord.model_validate_json(row[0]) for row in rows]
@@ -549,6 +578,7 @@ class Journal:
         and vacuity verdict in the provenance_log table.
         """
         import logging
+
         _log = logging.getLogger("opendaisugi.journal")
         try:
             self._con.execute(
@@ -576,10 +606,10 @@ class Journal:
         generation call. Ordered by ``inserted_at`` ascending.
         """
         from opendaisugi.refinement import RefinementRecord
+
         con = self._con
         rows = con.execute(
-            "SELECT record_json FROM refinement_log "
-            "WHERE cache_key = ? ORDER BY inserted_at ASC",
+            "SELECT record_json FROM refinement_log WHERE cache_key = ? ORDER BY inserted_at ASC",
             (cache_key,),
         ).fetchall()
         return [RefinementRecord.model_validate_json(row[0]) for row in rows]
@@ -612,6 +642,12 @@ class Journal:
         session_dict = asdict(session)
         session_dict["status"] = session.status.value
         session_dict["verification"] = session.verification.model_dump(mode="json")
+        # StepOutcome.reversal is a Pydantic model; asdict leaves it opaque, so the
+        # YAML dumper can't represent it. Convert to a plain dict (same handling as
+        # verification above); load_run reconstructs it.
+        for step_dict, outcome in zip(session_dict["steps"], session.steps, strict=True):
+            if outcome.reversal is not None:
+                step_dict["reversal"] = outcome.reversal.model_dump(mode="json")
 
         payload = {
             "id": trace_id,
@@ -635,6 +671,7 @@ class Journal:
         yaml_path.write_text(yaml.safe_dump(payload, sort_keys=False))
         try:
             from opendaisugi.distiller import plan_structure_signature
+
             structure_signature = plan_structure_signature(plan)
         except Exception:
             structure_signature = None
@@ -654,7 +691,9 @@ class Journal:
                     envelope.id,
                     1 if session.verification.ok else 0,
                     session.verification.duration_ms,
-                    json.dumps([v.model_dump(mode="json") for v in session.verification.violations]),
+                    json.dumps(
+                        [v.model_dump(mode="json") for v in session.verification.violations]
+                    ),
                     session.id,
                     session.status.value,
                     failed_step_id,
@@ -682,33 +721,49 @@ class Journal:
         con.execute(
             "INSERT OR REPLACE INTO receipts "
             "(run_id, step_id, timestamp, evidence_hash, verify_result, "
-            "verify_details, evidence_json, model_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "verify_details, evidence_json, model_id, "
+            "effect_class, reversibility, reversal_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                receipt.run_id, receipt.step_id, receipt.timestamp,
-                receipt.evidence_hash, int(receipt.verify_result),
+                receipt.run_id,
+                receipt.step_id,
+                receipt.timestamp,
+                receipt.evidence_hash,
+                int(receipt.verify_result),
                 receipt.verify_details,
                 json.dumps(receipt.evidence, default=str),
                 receipt.model_id,
+                receipt.effect_class,
+                receipt.reversibility,
+                receipt.reversal.model_dump_json() if receipt.reversal is not None else None,
             ),
         )
 
     def receipts_for_run(self, run_id: str) -> "list[Receipt]":
         """Return all receipts for ``run_id``, ordered by timestamp ascending."""
-        from opendaisugi.models import Receipt
+        from opendaisugi.models import Receipt, ReversalHandle
+
         con = self._con
         rows = con.execute(
             "SELECT step_id, run_id, timestamp, evidence_json, evidence_hash, "
-            "verify_result, verify_details, model_id FROM receipts WHERE run_id = ? "
+            "verify_result, verify_details, model_id, "
+            "effect_class, reversibility, reversal_json FROM receipts WHERE run_id = ? "
             "ORDER BY timestamp ASC",
             (run_id,),
         ).fetchall()
         return [
             Receipt(
-                step_id=r[0], run_id=r[1], timestamp=r[2],
-                evidence=json.loads(r[3]), evidence_hash=r[4],
-                verify_result=bool(r[5]), verify_details=r[6],
+                step_id=r[0],
+                run_id=r[1],
+                timestamp=r[2],
+                evidence=json.loads(r[3]),
+                evidence_hash=r[4],
+                verify_result=bool(r[5]),
+                verify_details=r[6],
                 model_id=r[7],
+                effect_class=r[8],
+                reversibility=r[9],
+                reversal=ReversalHandle.model_validate_json(r[10]) if r[10] else None,
             )
             for r in rows
         ]
@@ -719,9 +774,7 @@ class Journal:
 
         yaml_path = self._traces_dir / f"{trace_id}.yaml"
         if not yaml_path.exists():
-            raise FileNotFoundError(
-                f"No run trace with id {trace_id!r} at {yaml_path}"
-            )
+            raise FileNotFoundError(f"No run trace with id {trace_id!r} at {yaml_path}")
         raw = yaml.safe_load(yaml_path.read_text())
         run_data = raw.get("run")
         if run_data is None:
@@ -730,7 +783,15 @@ class Journal:
                 f"(missing 'run' section — use load_trace() for legacy entries)"
             )
         verification = VerificationResult(**run_data["verification"])
-        steps = [StepOutcome(**s) for s in run_data["steps"]]
+        from opendaisugi.models import ReversalHandle
+
+        steps = []
+        for s in run_data["steps"]:
+            s = dict(s)
+            rev = s.get("reversal")
+            if rev is not None and not isinstance(rev, ReversalHandle):
+                s["reversal"] = ReversalHandle(**rev)
+            steps.append(StepOutcome(**s))
         return RunSession(
             id=run_data["id"],
             envelope_id=run_data["envelope_id"],

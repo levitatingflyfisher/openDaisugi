@@ -28,6 +28,7 @@ import json
 import os
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -65,8 +66,7 @@ def stdout_for_format(fmt: str, *, block: bool, reason: str = "") -> str:
     """
     if fmt == "hermes":
         return json.dumps(
-            {"decision": "block", "action": "block", "reason": reason}
-            if block else {}
+            {"decision": "block", "action": "block", "reason": reason} if block else {}
         )
     if fmt == "openclaw":
         return json.dumps({"block": True, "blockReason": reason} if block else {})
@@ -133,7 +133,7 @@ def _parse_mcp_tool_name(name: str) -> tuple[str, str] | None:
     """
     if not name.startswith("mcp__"):
         return None
-    rest = name[len("mcp__"):]
+    rest = name[len("mcp__") :]
     parts = rest.split("__", 1)
     if len(parts) != 2 or not parts[0] or not parts[1]:
         return None
@@ -151,22 +151,13 @@ def _payload_to_record(payload: dict[str, Any]) -> dict[str, Any] | None:
     call. Caller is expected to skip these (still emitting continue:true
     on stdout to keep the host runtime happy).
     """
-    tool_name = (
-        payload.get("tool_name")
-        or payload.get("tool")
-        or payload.get("name")
-    )
+    tool_name = payload.get("tool_name") or payload.get("tool") or payload.get("name")
     if not tool_name:
         return None
     step_type = _classify_tool(tool_name)
     if step_type is None:
         return None
-    inp = (
-        payload.get("tool_input")
-        or payload.get("args")
-        or payload.get("input")
-        or {}
-    )
+    inp = payload.get("tool_input") or payload.get("args") or payload.get("input") or {}
     record = {
         "captured_at": time.time(),
         "session_id": _safe_session_id(payload.get("session_id")),
@@ -176,12 +167,7 @@ def _payload_to_record(payload: dict[str, Any]) -> dict[str, Any] | None:
     if step_type == "shell":
         record["command"] = inp.get("command") or inp.get("cmd") or ""
     elif step_type in ("file_read", "file_write"):
-        record["path"] = (
-            inp.get("file_path")
-            or inp.get("path")
-            or inp.get("pattern")
-            or ""
-        )
+        record["path"] = inp.get("file_path") or inp.get("path") or inp.get("pattern") or ""
         if step_type == "file_write":
             # Don't store full content — captures are for distillation,
             # not exfil. Hash + length is enough.
@@ -210,9 +196,7 @@ def _safe_session_id(raw: object) -> str:
     return safe or "no-session"
 
 
-def record_call(
-    payload: dict[str, Any], *, root: Path = DEFAULT_CAPTURES_ROOT
-) -> Path | None:
+def record_call(payload: dict[str, Any], *, root: Path = DEFAULT_CAPTURES_ROOT) -> Path | None:
     """Append a normalized tool-call capture to ``<root>/<session_id>.jsonl``.
 
     Returns the file path written, or ``None`` if the payload didn't
@@ -242,7 +226,6 @@ def record_call(
     return path
 
 
-
 def list_sessions(*, root: Path = DEFAULT_CAPTURES_ROOT) -> list[dict[str, Any]]:
     """Return a summary of captured sessions in ``root``.
 
@@ -270,12 +253,14 @@ def list_sessions(*, root: Path = DEFAULT_CAPTURES_ROOT) -> list[dict[str, Any]]
             last = json.loads(last_line)
         except json.JSONDecodeError:
             continue
-        rows.append({
-            "session_id": f.stem,
-            "calls": calls,
-            "first_at": first.get("captured_at"),
-            "last_at": last.get("captured_at"),
-        })
+        rows.append(
+            {
+                "session_id": f.stem,
+                "calls": calls,
+                "first_at": first.get("captured_at"),
+                "last_at": last.get("captured_at"),
+            }
+        )
     rows.sort(key=lambda r: r["last_at"] or 0, reverse=True)
     return rows
 
@@ -296,18 +281,89 @@ def _glob_for_path(path: str) -> str:
     return f"./{parent.rstrip('/')}/**"
 
 
-def infer_envelope(records: list[dict[str, Any]], *, task: str = "captured-session") -> Envelope:
+_MAX_OBSERVE_DEPTH = 4  # mirrors verify's _MAX_INTERPRETER_DEPTH
+
+
+def _observed_effects(command: str, *, decompose: bool) -> tuple[list[str], list[str], list[str]]:
+    """Every allowlist key and file-scope path the verifier will check for this
+    command: ``(heads, redirect_reads, redirect_writes)``.
+
+    Extraction mirrors the verifier exactly, never a local guess —
+    ``_extract_shell_head`` picks the allowlist key, ``decompose_command``
+    supplies the simple commands and redirect targets (ADR-0014), and
+    ``parse_interpreter`` supplies wrapped payloads (``timeout 30 git fetch``
+    checks ``git`` too; ``sh -c 'pytest -q'`` checks ``pytest``). Anything the
+    verifier will check that inference fails to collect silently under-admits a
+    command that really ran, so the recursion here is the verifier's recursion.
+
+    A command decomposition refuses (a non-literal target or head) is still
+    evidence: it contributes its raw head and stays rejected downstream.
+    """
+    from opendaisugi.interpreter_parse import parse_interpreter
+    from opendaisugi.verify import _extract_shell_head
+
+    heads: list[str] = []
+    reads: list[str] = []
+    writes: list[str] = []
+
+    def _collect(cmd: str, depth: int) -> None:
+        if depth > _MAX_OBSERVE_DEPTH:
+            return
+        simple_commands: tuple[str, ...] | None = None
+        if decompose:
+            from opendaisugi.shell_decompose import decompose_command
+
+            result = decompose_command(cmd)
+            if result.ok:
+                reads.extend(result.reads)
+                writes.extend(result.writes)
+                simple_commands = result.commands
+        if simple_commands is None:
+            simple_commands = (cmd,)
+        for simple in simple_commands:
+            head = _extract_shell_head(simple.strip())
+            if head:
+                heads.append(head)
+            payload = parse_interpreter(simple)
+            if payload is not None and not payload.opaque:
+                for inner in payload.inner_commands:
+                    _collect(inner, depth + 1)
+
+    _collect(command, 0)
+    return heads, reads, writes
+
+
+def infer_envelope(
+    records: list[dict[str, Any]],
+    *,
+    task: str = "captured-session",
+    allow_shell_decomposition: bool = False,
+) -> Envelope:
     """Synthesize an envelope that admits every captured tool call.
 
     Permissions are reverse-engineered from the observed evidence:
-    - shell_allowlist gets every observed shell head (first whitespace token)
+    - shell_allowlist gets every observed shell head (with decomposition:
+      every simple command's head, wrapped payloads' heads, and substitution
+      inner heads — the exact set the verifier checks)
+    - shell redirect targets land in file_read / file_write (ADR-0014)
     - file_read / file_write each get parent-dir globs for their paths
     - network is True iff any captured network call exists; hosts are
       reverse-engineered from observed URLs
     - stakes='low' — captures are post-hoc evidence, not forward
       enforcement; the resulting envelope is for distillation input,
       not for policy.
+
+    ``allow_shell_decomposition`` opts the synthesized envelope into ADR-0010
+    and widens head collection to match: without both halves a captured
+    ``cd /repo && pytest`` still fails, since the flag alone leaves ``pytest``
+    off the allowlist and the heads alone leave the metachar gate in force. The
+    field is set whenever it is asked for, even if nothing compound was
+    captured — the distiller ANDs permissions across a cluster and re-verifies
+    the plan template against the result, so a session-by-session flag would
+    intersect the opt-in away and kill any mixed cluster.
     """
+    from opendaisugi.verify import _SANCTIONED_READ_SOURCES, _SANCTIONED_WRITE_SINKS
+
     shell_heads: set[str] = set()
     file_read_globs: set[str] = set()
     file_write_globs: set[str] = set()
@@ -318,10 +374,19 @@ def infer_envelope(records: list[dict[str, Any]], *, task: str = "captured-sessi
         if r["step_type"] == "shell":
             cmd = (r.get("command") or "").strip()
             if cmd:
-                head = cmd.split()[0]
-                # Strip env-var prefixes like "FOO=1 cmd" before extracting head
-                if "=" not in head:
-                    shell_heads.add(head)
+                obs_heads, obs_reads, obs_writes = _observed_effects(
+                    cmd, decompose=allow_shell_decomposition
+                )
+                shell_heads.update(obs_heads)
+                # Redirect targets are file accesses the verifier will scope-check
+                # (ADR-0014); sanctioned pathless sinks (/dev/null, std streams)
+                # are never checked, so gloving them would only widen the scope.
+                file_read_globs.update(
+                    _glob_for_path(p) for p in obs_reads if p not in _SANCTIONED_READ_SOURCES
+                )
+                file_write_globs.update(
+                    _glob_for_path(p) for p in obs_writes if p not in _SANCTIONED_WRITE_SINKS
+                )
         elif r["step_type"] == "file_read":
             file_read_globs.add(_glob_for_path(r.get("path") or ""))
         elif r["step_type"] == "file_write":
@@ -343,6 +408,7 @@ def infer_envelope(records: list[dict[str, Any]], *, task: str = "captured-sessi
         permissions=Permission(
             shell=bool(shell_heads),
             shell_allowlist=sorted(shell_heads),
+            shell_allow_decomposition=allow_shell_decomposition,
             mcp_allowlist=sorted(mcp_tools),
             file_read=sorted(file_read_globs) or [],
             file_write=sorted(file_write_globs) or [],
@@ -366,19 +432,26 @@ def _records_to_steps(records: list[dict[str, Any]]) -> list:
         elif r["step_type"] == "file_read":
             steps.append(FileReadStep(id=sid, path=r.get("path") or "", depends_on=deps))
         elif r["step_type"] == "file_write":
-            steps.append(FileWriteStep(
-                id=sid, path=r.get("path") or "", content="", depends_on=deps,
-            ))
+            steps.append(
+                FileWriteStep(
+                    id=sid,
+                    path=r.get("path") or "",
+                    content="",
+                    depends_on=deps,
+                )
+            )
         elif r["step_type"] == "network":
             steps.append(NetworkStep(id=sid, url=r.get("url") or "", depends_on=deps))
         elif r["step_type"] == "mcp":
-            steps.append(MCPStep(
-                id=sid,
-                server=r.get("mcp_server") or "",
-                tool=r.get("mcp_tool") or "",
-                arguments=r.get("arguments") or {},
-                depends_on=deps,
-            ))
+            steps.append(
+                MCPStep(
+                    id=sid,
+                    server=r.get("mcp_server") or "",
+                    tool=r.get("mcp_tool") or "",
+                    arguments=r.get("arguments") or {},
+                    depends_on=deps,
+                )
+            )
         prev_id = sid
     return steps
 
@@ -388,6 +461,7 @@ def captures_to_trace(
     journal,
     *,
     task: str | None = None,
+    allow_shell_decomposition: bool = False,
 ) -> str:
     """Convert a captured session to a journal trace.
 
@@ -397,8 +471,14 @@ def captures_to_trace(
     envelope — minus the metachar gate, which catches genuinely complex
     captured commands; those steps drop out), and appends the trace via
     ``journal.log``. Returns the trace id.
+
+    ``allow_shell_decomposition`` narrows that drop-out to the commands the
+    bash grammar genuinely cannot vouch for: compound commands are decomposed
+    and every head checked, while redirection, substitution, wrappers and parse
+    errors stay rejected.
     """
     from opendaisugi.verify import verify
+
     records: list[dict[str, Any]] = []
     with session_jsonl.open(encoding="utf-8") as f:
         for line in f:
@@ -412,7 +492,9 @@ def captures_to_trace(
     if not records:
         raise ValueError(f"no records in {session_jsonl}")
     derived_task = task or f"captured session {session_jsonl.stem}"
-    env = infer_envelope(records, task=derived_task)
+    env = infer_envelope(
+        records, task=derived_task, allow_shell_decomposition=allow_shell_decomposition
+    )
     steps = _records_to_steps(records)
     plan = ActionPlan(source="hook-capture", task=derived_task, steps=steps)
     result = verify(plan, env)
@@ -422,3 +504,58 @@ def captures_to_trace(
         plan=plan,
         result=result,
     )
+
+
+def _spawn_detached_auto_tend(data_dir: Path) -> None:
+    """Fire-and-forget `daisugi hook auto-tend` in a fully detached process."""
+    import subprocess
+
+    subprocess.Popen(
+        ["daisugi", "hook", "auto-tend", "--data-dir", str(data_dir)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def maybe_trigger_background_tend(
+    data_dir: Path,
+    *,
+    now: float,
+    spawn: Callable[[Path], None] | None = None,
+    min_interval_s: int = 1800,
+) -> bool:
+    """The "no cron" trigger: kick off distillation from the capture hook itself.
+
+    The capture hook already runs on every tool call, so it can start a
+    background tend without the user scheduling anything. Fires at most once per
+    ``min_interval_s`` and only when the user consented (``config.auto_tend``);
+    the spawn is fully detached, so it never blocks or disrupts the host runtime.
+    Returns True iff it spawned. Swallows every error and returns False rather
+    than ever letting a background concern break the hook's allow contract.
+    """
+    try:
+        # Cheap interval check FIRST — this runs on every tool call, so avoid the
+        # config YAML parse in the common (not-due) case. Config is loaded only
+        # once the interval has actually elapsed.
+        stamp = data_dir / ".hook-record-tend-trigger"
+        last = 0.0
+        if stamp.exists():
+            try:
+                last = float(stamp.read_text().strip())
+            except ValueError:
+                last = 0.0
+        if (now - last) < min_interval_s:
+            return False
+
+        from opendaisugi.config import auto_tend_enabled, load_config
+
+        if not auto_tend_enabled(load_config(data_dir / "config.yaml")):
+            return False
+        data_dir.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(f"{now}")
+        (spawn or _spawn_detached_auto_tend)(data_dir)
+        return True
+    except Exception:
+        return False

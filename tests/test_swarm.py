@@ -18,12 +18,15 @@ BoxT = tuple[tuple[float, float, float], tuple[float, float, float]]
 
 def _env(bounds: BoxT | None, *, velocity=None) -> Envelope:
     return Envelope(
-        generated_by="swarm-test", task="fly", stakes="physical",
+        generated_by="swarm-test",
+        task="fly",
+        stakes="physical",
         permissions=Permission(workspace_bounds=bounds, velocity_limit=velocity),
     )
 
 
 # --------------------------- AABB geometry ---------------------------
+
 
 def test_disjoint_boxes_separated_on_x():
     a = ((0, 0, 0), (1, 1, 1))
@@ -46,6 +49,7 @@ def test_overlapping_boxes_report_intersection():
 
 
 # --------------------------- partitioning ---------------------------
+
 
 def test_partition_airspace_yields_n_disjoint_covering_slabs():
     total = ((0, 0, 0), (9, 3, 3))
@@ -72,6 +76,7 @@ def test_partition_with_margin_leaves_a_gap():
 
 def test_partition_margin_too_large_raises():
     import pytest
+
     with pytest.raises(ValueError):
         partition_airspace(((0, 0, 0), (10, 3, 3)), 5, axis=0, margin=3.0)  # span 2 < margin 3
 
@@ -89,6 +94,7 @@ def test_partition_and_assign_is_provably_deconflicted():
 
 # --------------------------- swarm verification ---------------------------
 
+
 def test_overlapping_assignments_are_a_conflict():
     total = _env(((0, 0, 0), (30, 10, 10)))
     assignments = {
@@ -98,8 +104,10 @@ def test_overlapping_assignments_are_a_conflict():
     verdict = verify_swarm_tasking(total, assignments)
     assert not verdict.ok
     assert not verdict.deconflicted
-    assert any(isinstance(c, SwarmConflict) and {c.drone_a, c.drone_b} == {"d1", "d2"}
-               for c in verdict.conflicts)
+    assert any(
+        isinstance(c, SwarmConflict) and {c.drone_a, c.drone_b} == {"d1", "d2"}
+        for c in verdict.conflicts
+    )
 
 
 def test_drone_exceeding_total_fails_subsumption():
@@ -139,7 +147,7 @@ def test_margin_turns_touching_sectors_into_a_conflict():
 def test_aabb_disjoint_respects_margin():
     a = ((0, 0, 0), (1, 1, 1))
     b = ((1.5, 0, 0), (2.5, 1, 1))  # 0.5 gap on x
-    assert aabb_disjoint(a, b, margin=0.4)      # gap 0.5 >= 0.4 → separated
+    assert aabb_disjoint(a, b, margin=0.4)  # gap 0.5 >= 0.4 → separated
     assert not aabb_disjoint(a, b, margin=0.6)  # gap 0.5 < 0.6 → too close
 
 
@@ -158,7 +166,8 @@ import pytest as _pytest
 def test_negative_margin_is_rejected_not_a_fail_open():
     # A negative margin would SUBTRACT from separation and certify overlapping
     # drones as deconflicted — the worst kind of fail-open for a safety layer.
-    a = ((0, 0, 0), (1, 1, 1)); b = ((4, 0, 0), (5, 1, 1))
+    a = ((0, 0, 0), (1, 1, 1))
+    b = ((4, 0, 0), (5, 1, 1))
     with _pytest.raises(ValueError):
         aabb_disjoint(a, b, margin=-5)
     total = _env(((0, 0, 0), (30, 10, 10)))

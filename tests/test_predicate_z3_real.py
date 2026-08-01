@@ -28,10 +28,12 @@ def _env():
 
 
 def _forall_not_rm():
-    return parse_expression({
-        "op": "forall_steps",
-        "pred": {"op": "not_matches", "path": "command", "regex": r"^rm "},
-    })
+    return parse_expression(
+        {
+            "op": "forall_steps",
+            "pred": {"op": "not_matches", "path": "command", "regex": r"^rm "},
+        }
+    )
 
 
 def _has_inre(node: z3.ExprRef) -> bool:
@@ -64,8 +66,7 @@ def test_compiled_tree_contains_regex_operator():
     plan = ActionPlan(source="t", task="t", steps=[ShellStep(id="s1", command="echo hi")])
     compiled = compile_to_z3(_forall_not_rm(), plan, _env())
     assert _has_inre(compiled.term), (
-        "compile_to_z3 no longer contains InRe — regex predicate was not "
-        "symbolically translated"
+        "compile_to_z3 no longer contains InRe — regex predicate was not symbolically translated"
     )
 
 
@@ -106,11 +107,15 @@ def test_llm_check_marked_as_soft_node():
 def test_unsupported_regex_becomes_soft_node_not_silent_pass():
     """Regex the translator can't handle (e.g. ``(?i)``) falls back to a
     soft Z3 Bool — not silent True."""
-    expr = parse_expression({
-        "op": "forall_steps",
-        "pred": {"op": "not_matches", "path": "metadata.body", "regex": r"(?i)hello"},
-    })
-    plan = ActionPlan(source="t", task="t", steps=[ShellStep(id="s1", command="echo", metadata={"body": "HELLO"})])
+    expr = parse_expression(
+        {
+            "op": "forall_steps",
+            "pred": {"op": "not_matches", "path": "metadata.body", "regex": r"(?i)hello"},
+        }
+    )
+    plan = ActionPlan(
+        source="t", task="t", steps=[ShellStep(id="s1", command="echo", metadata={"body": "HELLO"})]
+    )
     compiled = compile_to_z3(expr, plan, _env())
     assert compiled.soft_nodes, "unsupported regex should register a soft node"
 
@@ -120,13 +125,19 @@ def test_compile_numeric_range_emits_real_constraints():
     Z3 Real variable — not a collapsed Python bool."""
     from opendaisugi.models import JointMoveStep
 
-    expr = parse_expression({
-        "op": "forall_steps",
-        "pred": {"op": "numeric_range", "path": "velocity_scale", "min": 0.0, "max": 1.0},
-    })
-    plan = ActionPlan(source="t", task="t", steps=[
-        JointMoveStep(id="m1", joint_targets={"j1": 0.5}, duration_s=0.5, velocity_scale=0.5),
-    ])
+    expr = parse_expression(
+        {
+            "op": "forall_steps",
+            "pred": {"op": "numeric_range", "path": "velocity_scale", "min": 0.0, "max": 1.0},
+        }
+    )
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            JointMoveStep(id="m1", joint_targets={"j1": 0.5}, duration_s=0.5, velocity_scale=0.5),
+        ],
+    )
     compiled = compile_to_z3(expr, plan, _env())
     # Declares a Real variable for the step field.
     assert any("velocity_scale" in name for name in compiled.variables)

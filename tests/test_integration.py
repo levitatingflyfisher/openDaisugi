@@ -2,7 +2,6 @@
 on realistic plan+envelope pairs. These also serve as executable documentation
 for the v0.0.1 public API."""
 
-
 from opendaisugi import (
     ActionPlan,
     Daisugi,
@@ -105,7 +104,9 @@ def test_cycle_in_plan_caught_by_dag():
     assert any(v.stage == "dag" for v in result.violations)
 
 
-def test_verify_completes_under_100ms_for_typical_plan(sample_envelope: Envelope, sample_plan: ActionPlan):
+def test_verify_completes_under_100ms_for_typical_plan(
+    sample_envelope: Envelope, sample_plan: ActionPlan
+):
     # Ship criterion: verify() completes in <100ms for typical plans.
     result = verify(sample_plan, sample_envelope)
     assert result.duration_ms < 100, f"verify() took {result.duration_ms}ms"
@@ -136,19 +137,25 @@ async def test_full_daisugi_cycle_with_journal(tmp_path, mock_llm_client, sample
 
     # IMPORTANT: sample_envelope only allows shell_allowlist=["find"].
     # Override permissions so the "echo" shell step passes verification.
-    envelope = envelope.model_copy(update={
-        "permissions": Permission(shell=True, shell_allowlist=["echo"]),
-    })
+    envelope = envelope.model_copy(
+        update={
+            "permissions": Permission(shell=True, shell_allowlist=["echo"]),
+        }
+    )
 
     plan = ActionPlan(
-        source="test", task="Run echo",
+        source="test",
+        task="Run echo",
         steps=[ShellStep(id="s1", command="echo hi")],
     )
     result = dai.verify(plan, envelope)
     assert result.ok is True
 
     trace_id = dai.journal.log(
-        task="Run echo", envelope=envelope, plan=plan, result=result,
+        task="Run echo",
+        envelope=envelope,
+        plan=plan,
+        result=result,
     )
 
     # Replay must find no drift immediately after logging.

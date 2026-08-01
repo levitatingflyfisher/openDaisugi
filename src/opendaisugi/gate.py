@@ -4,7 +4,7 @@ Where :mod:`opendaisugi.hook` observes a host harness's tool calls and fails
 open (correct for capture, wrong for protection), this module takes each
 intercepted call, synthesizes it into a one-step plan, and proves it inside
 the session's registered envelope *before it runs* (ADR-0007). The two share
-a seam, not a failure policy:
+a code path, not a failure policy:
 
 - **enforce** mode is fail-closed: unknown tool, unparseable input, internal
   exception, or a slow verifier all DENY. The gate owns an inner timeout that
@@ -62,9 +62,15 @@ class GateDecision:
     elapsed_ms: float = 0.0
 
 
-def _deny(mode: str, reason: str, *, tool_name: str | None = None,
-          step_type: str | None = None, detail: str = "",
-          t0: float) -> GateDecision:
+def _deny(
+    mode: str,
+    reason: str,
+    *,
+    tool_name: str | None = None,
+    step_type: str | None = None,
+    detail: str = "",
+    t0: float,
+) -> GateDecision:
     return GateDecision(
         allow=(mode == "shadow"),
         would_deny=True,
@@ -77,8 +83,7 @@ def _deny(mode: str, reason: str, *, tool_name: str | None = None,
     )
 
 
-def _verify_with_timeout(plan: ActionPlan, envelope: Envelope,
-                         timeout_s: float):
+def _verify_with_timeout(plan: ActionPlan, envelope: Envelope, timeout_s: float):
     """Run verify() in a worker thread with an inner deny-on-timeout.
 
     Returns the VerificationResult, or raises TimeoutError when the verifier
@@ -98,18 +103,19 @@ def _verify_with_timeout(plan: ActionPlan, envelope: Envelope,
     worker.start()
     worker.join(timeout_s)
     if worker.is_alive():
-        raise TimeoutError(
-            f"verifier exceeded the gate's inner time budget ({timeout_s}s)"
-        )
+        raise TimeoutError(f"verifier exceeded the gate's inner time budget ({timeout_s}s)")
     if err:
         raise err[0]
     return box[0]
 
 
-def evaluate_record(record: dict[str, Any], envelope: Envelope, *,
-                    mode: str = "shadow",
-                    verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
-                    ) -> GateDecision:
+def evaluate_record(
+    record: dict[str, Any],
+    envelope: Envelope,
+    *,
+    mode: str = "shadow",
+    verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+) -> GateDecision:
     """Decide one already-normalized capture record against an envelope.
 
     Deny-by-default: every failure path inside this function resolves to a
@@ -118,36 +124,53 @@ def evaluate_record(record: dict[str, Any], envelope: Envelope, *,
     t0 = time.monotonic()
     tool_name = record.get("tool_name")
     step_type = record.get("step_type")
-    detail = str(
-        record.get("command") or record.get("path") or record.get("url") or ""
-    )
+    detail = str(record.get("command") or record.get("path") or record.get("url") or "")
     try:
         steps = _records_to_steps([record])
         if not steps:
-            return _deny(mode, f"could not synthesize a step for tool {tool_name!r}",
-                         tool_name=tool_name, step_type=step_type, detail=detail, t0=t0)
+            return _deny(
+                mode,
+                f"could not synthesize a step for tool {tool_name!r}",
+                tool_name=tool_name,
+                step_type=step_type,
+                detail=detail,
+                t0=t0,
+            )
         plan = ActionPlan(source="call-time-gate", task=envelope.task, steps=steps)
         result = _verify_with_timeout(plan, envelope, verify_timeout_s)
         if result.ok:
             return GateDecision(
-                allow=True, would_deny=False, reason="verified in envelope",
-                mode=mode, tool_name=tool_name, step_type=step_type,
-                detail=detail, elapsed_ms=(time.monotonic() - t0) * 1000,
+                allow=True,
+                would_deny=False,
+                reason="verified in envelope",
+                mode=mode,
+                tool_name=tool_name,
+                step_type=step_type,
+                detail=detail,
+                elapsed_ms=(time.monotonic() - t0) * 1000,
             )
-        summary = "; ".join(
-            f"{v.stage}: {v.message}" for v in result.violations
-        ) or "verification failed"
-        return _deny(mode, summary, tool_name=tool_name, step_type=step_type,
-                     detail=detail, t0=t0)
+        summary = (
+            "; ".join(f"{v.stage}: {v.message}" for v in result.violations) or "verification failed"
+        )
+        return _deny(mode, summary, tool_name=tool_name, step_type=step_type, detail=detail, t0=t0)
     except Exception as exc:  # noqa: BLE001 — fail-closed: any error denies
-        return _deny(mode, f"gate internal error (denied fail-closed): {exc}",
-                     tool_name=tool_name, step_type=step_type, detail=detail, t0=t0)
+        return _deny(
+            mode,
+            f"gate internal error (denied fail-closed): {exc}",
+            tool_name=tool_name,
+            step_type=step_type,
+            detail=detail,
+            t0=t0,
+        )
 
 
-def evaluate_call(payload: Any, envelope: Envelope, *,
-                  mode: str = "shadow",
-                  verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
-                  ) -> GateDecision:
+def evaluate_call(
+    payload: Any,
+    envelope: Envelope,
+    *,
+    mode: str = "shadow",
+    verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+) -> GateDecision:
     """Decide one raw hook payload against an envelope. Deny-by-default.
 
     Never raises: malformed payloads, unknown tools, verifier errors, and
@@ -158,9 +181,7 @@ def evaluate_call(payload: Any, envelope: Envelope, *,
     try:
         if not isinstance(payload, dict):
             return _deny(mode, "hook payload is not a JSON object", t0=t0)
-        tool_name = (
-            payload.get("tool_name") or payload.get("tool") or payload.get("name")
-        )
+        tool_name = payload.get("tool_name") or payload.get("tool") or payload.get("name")
         if not tool_name:
             return _deny(mode, "no tool name in hook payload", t0=t0)
         record = _payload_to_record(payload)
@@ -169,10 +190,14 @@ def evaluate_call(payload: Any, envelope: Envelope, *,
                 mode,
                 f"unrecognized tool {tool_name!r} — not in the gate's "
                 "classification map, denied by default",
-                tool_name=str(tool_name), t0=t0,
+                tool_name=str(tool_name),
+                t0=t0,
             )
         return evaluate_record(
-            record, envelope, mode=mode, verify_timeout_s=verify_timeout_s,
+            record,
+            envelope,
+            mode=mode,
+            verify_timeout_s=verify_timeout_s,
         )
     except Exception as exc:  # noqa: BLE001 — fail-closed: any error denies
         return _deny(mode, f"gate internal error (denied fail-closed): {exc}", t0=t0)
@@ -181,6 +206,7 @@ def evaluate_call(payload: Any, envelope: Envelope, *,
 # ---------------------------------------------------------------------------
 # Envelope registration channel + disarm switch + host contract (I/O layer)
 # ---------------------------------------------------------------------------
+
 
 def _envelopes_dir(root: Path) -> Path:
     return root / "envelopes"
@@ -206,13 +232,33 @@ def _mkdir_private(d: Path) -> None:
 # Shell allowlisting matches only the command head, and shadow mode is where
 # you discover what your real session actually needs.
 _STARTER_SHELL_ALLOWLIST: tuple[str, ...] = (
-    "cat", "cd", "echo", "find", "git", "grep", "head", "ls", "npm", "cargo",
-    "printf", "pwd", "pytest", "python", "python3", "rg", "sort", "tail",
-    "uniq", "wc", "which",
+    "cat",
+    "cd",
+    "echo",
+    "find",
+    "git",
+    "grep",
+    "head",
+    "ls",
+    "npm",
+    "cargo",
+    "printf",
+    "pwd",
+    "pytest",
+    "python",
+    "python3",
+    "rg",
+    "sort",
+    "tail",
+    "uniq",
+    "wc",
+    "which",
 )
 
 
-def starter_envelope(workspace: Path, *, stakes: str = "medium") -> Envelope:
+def starter_envelope(
+    workspace: Path, *, stakes: str = "medium", allow_shell_decomposition: bool = False
+) -> Envelope:
     """Generate a reviewable starter envelope for an existing session.
 
     This is the drafted-then-reviewed answer to "where does the envelope come
@@ -222,6 +268,13 @@ def starter_envelope(workspace: Path, *, stakes: str = "medium") -> Envelope:
     — a sane, tight default that the operator edits before enforcing. It is
     not a security guarantee on its own; it is a starting point that shadow
     mode and `daisugi gate report` help tune.
+
+    ``allow_shell_decomposition`` carries ADR-0010's opt-in through to the
+    registered envelope: with it on, a compound command (``a && b``, a pipe) is
+    parsed by a real bash grammar and EVERY head is checked against the
+    allowlist, instead of the blanket metacharacter rejection. Default off —
+    the verdict stays a pure function of (plan, envelope), and the opt-in needs
+    ``opendaisugi[shell]`` to be present or the step fails closed.
     """
     ws = str(Path(workspace).resolve())
     return Envelope(
@@ -232,6 +285,7 @@ def starter_envelope(workspace: Path, *, stakes: str = "medium") -> Envelope:
             file_write=[f"{ws}/**"],
             shell=True,
             shell_allowlist=sorted(_STARTER_SHELL_ALLOWLIST),
+            shell_allow_decomposition=allow_shell_decomposition,
             network=False,
             max_execution_time_s=60,
             max_output_size_mb=20,
@@ -240,8 +294,9 @@ def starter_envelope(workspace: Path, *, stakes: str = "medium") -> Envelope:
     )
 
 
-def register_envelope(envelope: Envelope, *, session_id: str | None = None,
-                      root: Path = DEFAULT_GATE_ROOT) -> Path:
+def register_envelope(
+    envelope: Envelope, *, session_id: str | None = None, root: Path = DEFAULT_GATE_ROOT
+) -> Path:
     """Register an envelope for the gate to check calls against.
 
     With a ``session_id`` the envelope binds to that session; without one it
@@ -261,8 +316,7 @@ def register_envelope(envelope: Envelope, *, session_id: str | None = None,
     return path
 
 
-def load_envelope(session_id: str | None, *,
-                  root: Path = DEFAULT_GATE_ROOT) -> Envelope | None:
+def load_envelope(session_id: str | None, *, root: Path = DEFAULT_GATE_ROOT) -> Envelope | None:
     """Load the envelope for a session: exact match first, then ``default``."""
     candidates = []
     if session_id:
@@ -319,17 +373,24 @@ def _outcome(decision: GateDecision, fmt: str) -> GateOutcome:
             )
         return GateOutcome(
             stdout=stdout_for_format("claude", block=False),
-            stderr="", exit_code=0, decision=decision,
+            stderr="",
+            exit_code=0,
+            decision=decision,
         )
     return GateOutcome(
         stdout=stdout_for_format(fmt, block=deny_now, reason=decision.reason),
-        stderr="", exit_code=0, decision=decision,
+        stderr="",
+        exit_code=0,
+        decision=decision,
     )
 
 
-def _log_shadow(root: Path, session_id: str | None,
-                decision: GateDecision,
-                payload_session_id: str | None = None) -> None:
+def _log_shadow(
+    root: Path,
+    session_id: str | None,
+    decision: GateDecision,
+    payload_session_id: str | None = None,
+) -> None:
     """Best-effort JSONL decision log — the raw material of the shadow
     report. Never raises; a logging failure must not change a verdict."""
     try:
@@ -363,12 +424,16 @@ def _log_shadow(root: Path, session_id: str | None,
         pass
 
 
-def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
-                      fmt: str = "claude", mode: str = "shadow",
-                      verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
-                      captures_root: Path | None = None,
-                      pin_session: str | None = None,
-                      ) -> GateOutcome:
+def gate_and_contract(
+    raw: bytes,
+    *,
+    root: Path = DEFAULT_GATE_ROOT,
+    fmt: str = "claude",
+    mode: str = "shadow",
+    verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+    captures_root: Path | None = None,
+    pin_session: str | None = None,
+) -> GateOutcome:
     """Full gate entry: raw hook stdin → decision → host contract.
 
     Failure policy is mode-selected (ADR-0007): enforce fails CLOSED (any
@@ -393,9 +458,11 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
     try:
         if is_disarmed(root):
             decision = GateDecision(
-                allow=True, would_deny=False,
+                allow=True,
+                would_deny=False,
                 reason="gate disarmed by operator (marker file present)",
-                mode=mode, elapsed_ms=(time.monotonic() - t0) * 1000,
+                mode=mode,
+                elapsed_ms=(time.monotonic() - t0) * 1000,
             )
             _log_shadow(root, None, decision)
             return _outcome(decision, fmt)
@@ -404,9 +471,7 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
             payload = json.loads(text) if text.strip() else None
         except Exception:  # noqa: BLE001 — malformed stdin is a deny, not a crash
             payload = None
-        payload_session = (
-            payload.get("session_id") if isinstance(payload, dict) else None
-        )
+        payload_session = payload.get("session_id") if isinstance(payload, dict) else None
         # Pinned wins: the payload's claim is recorded but never authorizes.
         session_id = pin_session or payload_session
         envelope = load_envelope(session_id, root=root)
@@ -422,12 +487,16 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
             decision = _deny(mode, "hook payload was not parseable JSON", t0=t0)
         else:
             decision = evaluate_call(
-                payload, envelope, mode=mode, verify_timeout_s=verify_timeout_s,
+                payload,
+                envelope,
+                mode=mode,
+                verify_timeout_s=verify_timeout_s,
             )
         _log_shadow(root, session_id, decision, payload_session_id=payload_session)
         if captures_root is not None and decision.allow and isinstance(payload, dict):
             try:
                 from opendaisugi.hook import record_call
+
                 record_call(payload, root=captures_root)
             except Exception:  # noqa: BLE001 — mirroring is best-effort
                 pass
@@ -436,9 +505,11 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
         decision = _deny(mode, f"gate I/O error (denied fail-closed): {exc}", t0=t0)
         if mode != "enforce":
             decision = GateDecision(
-                allow=True, would_deny=True,
+                allow=True,
+                would_deny=True,
                 reason=f"gate I/O error (shadow mode allows): {exc}",
-                mode=mode, elapsed_ms=(time.monotonic() - t0) * 1000,
+                mode=mode,
+                elapsed_ms=(time.monotonic() - t0) * 1000,
             )
         return _outcome(decision, fmt)
 
@@ -446,6 +517,7 @@ def gate_and_contract(raw: bytes, *, root: Path = DEFAULT_GATE_ROOT,
 # ---------------------------------------------------------------------------
 # Shadow report + capture replay
 # ---------------------------------------------------------------------------
+
 
 def _is_false_positive_candidate(reason: str) -> bool:
     """Classify a would-deny as a likely false positive worth operator review.
@@ -472,14 +544,14 @@ def _build_report(records: list[dict[str, Any]]) -> dict[str, Any]:
         "reasons": reasons,
         "denied": denied,
         "false_positive_candidates": [
-            r for r in denied
-            if _is_false_positive_candidate(r.get("reason") or "")
+            r for r in denied if _is_false_positive_candidate(r.get("reason") or "")
         ],
     }
 
 
-def shadow_report(*, root: Path = DEFAULT_GATE_ROOT,
-                  session_id: str | None = None) -> dict[str, Any]:
+def shadow_report(
+    *, root: Path = DEFAULT_GATE_ROOT, session_id: str | None = None
+) -> dict[str, Any]:
     """Summarize the shadow log: what an enforcing gate would have denied.
 
     Denied records are included verbatim so the operator can adjudicate each
@@ -489,8 +561,11 @@ def shadow_report(*, root: Path = DEFAULT_GATE_ROOT,
     """
     d = _shadow_dir(root)
     files = (
-        [d / f"{_safe_session_id(session_id)}.jsonl"] if session_id
-        else sorted(d.glob("*.jsonl")) if d.exists() else []
+        [d / f"{_safe_session_id(session_id)}.jsonl"]
+        if session_id
+        else sorted(d.glob("*.jsonl"))
+        if d.exists()
+        else []
     )
     records: list[dict[str, Any]] = []
     for f in files:
@@ -506,9 +581,12 @@ def shadow_report(*, root: Path = DEFAULT_GATE_ROOT,
     return _build_report(records)
 
 
-def replay_captures(captures_jsonl: Path, envelope: Envelope, *,
-                    verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
-                    ) -> dict[str, Any]:
+def replay_captures(
+    captures_jsonl: Path,
+    envelope: Envelope,
+    *,
+    verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+) -> dict[str, Any]:
     """Run a passively captured session back through the gate, offline.
 
     This is how an operator tunes an envelope against a real session before
@@ -526,20 +604,25 @@ def replay_captures(captures_jsonl: Path, envelope: Envelope, *,
         except json.JSONDecodeError:
             continue
         decision = evaluate_record(
-            cap, envelope, mode="shadow", verify_timeout_s=verify_timeout_s,
+            cap,
+            envelope,
+            mode="shadow",
+            verify_timeout_s=verify_timeout_s,
         )
-        records.append({
-            "at": cap.get("captured_at"),
-            "session_id": cap.get("session_id"),
-            "tool_name": decision.tool_name,
-            "step_type": decision.step_type,
-            "detail": decision.detail,
-            "mode": "shadow",
-            "allow": decision.allow,
-            "would_deny": decision.would_deny,
-            "reason": decision.reason,
-            "elapsed_ms": round(decision.elapsed_ms, 3),
-        })
+        records.append(
+            {
+                "at": cap.get("captured_at"),
+                "session_id": cap.get("session_id"),
+                "tool_name": decision.tool_name,
+                "step_type": decision.step_type,
+                "detail": decision.detail,
+                "mode": "shadow",
+                "allow": decision.allow,
+                "would_deny": decision.would_deny,
+                "reason": decision.reason,
+                "elapsed_ms": round(decision.elapsed_ms, 3),
+            }
+        )
     return _build_report(records)
 
 
@@ -547,15 +630,18 @@ def replay_captures(captures_jsonl: Path, envelope: Envelope, *,
 # Host wiring: settings emitter + lean hook entry
 # ---------------------------------------------------------------------------
 
-def gate_settings_json(*, mode: str = "shadow",
-                       root: Path = DEFAULT_GATE_ROOT,
-                       fmt: str = "claude",
-                       hook_timeout_s: int = 30,
-                       python: str | None = None,
-                       verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
-                       captures_root: Path | None = None,
-                       session: str | None = None,
-                       ) -> str:
+
+def gate_settings_json(
+    *,
+    mode: str = "shadow",
+    root: Path = DEFAULT_GATE_ROOT,
+    fmt: str = "claude",
+    hook_timeout_s: int = 30,
+    python: str | None = None,
+    verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+    captures_root: Path | None = None,
+    session: str | None = None,
+) -> str:
     """Return the Claude Code hooks-settings JSON that wires in the gate.
 
     Usable inline (``claude --settings "$(daisugi gate settings ...)"``) or
@@ -563,7 +649,7 @@ def gate_settings_json(*, mode: str = "shadow",
     tool classification happens *inside* the gate so an unmatched tool can
     never be silently allowed. The command uses ``python -m opendaisugi.gate``
     (argparse only), not the full typer CLI — the lean entry ADR-0007 names
-    as the latency seam. The one-flag flip to protection is ``mode="enforce"``.
+    as the latency-critical path. The one-flag flip to protection is ``mode="enforce"``.
 
     The host-side ``timeout`` is a backstop only: on every known host an
     outer hook timeout fails OPEN, which is why the gate owns an inner
@@ -605,18 +691,24 @@ def gate_settings_json(*, mode: str = "shadow",
     # the documented 'unverified' enforcement class).
     if fmt == "claude" and mode == "enforce":
         command = f"{command} || exit 2"
-    return json.dumps({
-        "hooks": {
-            "PreToolUse": [{
-                "matcher": "*",
-                "hooks": [{
-                    "type": "command",
-                    "command": command,
-                    "timeout": hook_timeout_s,
-                }],
-            }],
-        },
-    })
+    return json.dumps(
+        {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": command,
+                                "timeout": hook_timeout_s,
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -634,14 +726,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=("shadow", "enforce"), default="shadow")
     parser.add_argument("--root", type=Path, default=DEFAULT_GATE_ROOT)
     parser.add_argument("--format", dest="fmt", default="claude")
-    parser.add_argument("--verify-timeout", type=float,
-                        default=_DEFAULT_VERIFY_TIMEOUT_S)
+    parser.add_argument("--verify-timeout", type=float, default=_DEFAULT_VERIFY_TIMEOUT_S)
     parser.add_argument("--captures-root", type=Path, default=None)
     parser.add_argument(
-        "--session", default=None,
+        "--session",
+        default=None,
         help="Pin the envelope to this registered session, ignoring the "
-             "session id in the payload (authorization must not key on "
-             "caller-influenceable input).",
+        "session id in the payload (authorization must not key on "
+        "caller-influenceable input).",
     )
     args = parser.parse_args(argv)
 
@@ -657,7 +749,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:  # noqa: BLE001 — a broken stdin still gets a verdict
             raw = b""
         out = gate_and_contract(
-            raw, root=args.root, fmt=args.fmt, mode=args.mode,
+            raw,
+            root=args.root,
+            fmt=args.fmt,
+            mode=args.mode,
             verify_timeout_s=args.verify_timeout,
             captures_root=args.captures_root,
             pin_session=args.session,
@@ -670,8 +765,7 @@ def main(argv: list[str] | None = None) -> int:
     except BaseException as exc:  # noqa: BLE001 — deny-by-default on any escape
         if args.mode == "enforce":
             try:
-                print(f"openDaisugi gate: DENIED (fail-closed on error): {exc}",
-                      file=_sys.stderr)
+                print(f"openDaisugi gate: DENIED (fail-closed on error): {exc}", file=_sys.stderr)
             except Exception:  # noqa: BLE001 — even a broken stderr must not un-deny
                 pass
             return 2

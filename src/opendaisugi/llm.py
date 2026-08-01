@@ -1,7 +1,7 @@
 """litellm + instructor glue for opendaisugi.
 
 All LLM access flows through ``get_instructor_client``. Keeping this a
-single factory means tests have exactly one seam to monkeypatch, and the
+single factory means tests have exactly one place to monkeypatch, and the
 v0.12.0 backend switch lives in one place: set
 ``OPENDAISUGI_LLM_BACKEND=claude-code`` (or pass ``backend="claude-code"``)
 and every instructor call site routes through a local ``claude -p``
@@ -62,7 +62,9 @@ def resolve_backend(backend: str | None = None) -> str:
 
 
 def get_instructor_client(
-    model: str, *, backend: str | None = None,
+    model: str,
+    *,
+    backend: str | None = None,
 ) -> Union[instructor.AsyncInstructor, "object"]:
     """Return an instructor-compatible client.
 
@@ -83,10 +85,12 @@ def get_instructor_client(
     resolved = resolve_backend(backend)
     if resolved == "claude-code":
         from opendaisugi.claude_code_llm import ClaudeCodeInstructorClient
+
         return ClaudeCodeInstructorClient()
     del model  # accepted for API symmetry; instructor/litellm use it at call time
     # Imported lazily: this is the ~2.4s import chain, and it must not load when
     # the package is imported for the capture hook (which fires per tool call).
     import instructor
     from litellm import acompletion
+
     return instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)

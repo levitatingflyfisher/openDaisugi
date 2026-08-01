@@ -117,9 +117,13 @@ def build_ladder(
     """
     rungs: list[ModelRung] = []
     if local_model:
-        rungs.append(ModelRung(name="local", model=local_model, max_difficulty=0.35, est_tokens=1200))
+        rungs.append(
+            ModelRung(name="local", model=local_model, max_difficulty=0.35, est_tokens=1200)
+        )
     rungs.append(ModelRung(name="cheap", model=cheap_model, max_difficulty=0.65, est_tokens=2000))
-    rungs.append(ModelRung(name="frontier", model=frontier_model, max_difficulty=1.0, est_tokens=4500))
+    rungs.append(
+        ModelRung(name="frontier", model=frontier_model, max_difficulty=1.0, est_tokens=4500)
+    )
     return ModelLadder(rungs)
 
 
@@ -162,9 +166,8 @@ def size_step(
     """
     difficulty = estimate_step_difficulty(step)
     chosen = (
-        (ladder.rung_for_model(target_model) if target_model else None)
-        or ladder.rung_for_difficulty(difficulty)
-    )
+        ladder.rung_for_model(target_model) if target_model else None
+    ) or ladder.rung_for_difficulty(difficulty)
     downgraded = False
     affordable = True
     if budget is not None:

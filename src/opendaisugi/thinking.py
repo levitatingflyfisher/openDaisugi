@@ -4,6 +4,7 @@ The library exposes one knob — ``thinking_budget: Literal["light","standard","
 — and translates it into provider-specific completion kwargs. Unsupported providers
 pass through silently (with a one-time WARNING log per model).
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,7 +26,8 @@ def _log_unsupported_once(model: str, budget: ThinkingBudget) -> None:
     _LOGGED_UNSUPPORTED.add(model)
     _log.warning(
         "thinking_budget=%r has no effect for model %r; passing through",
-        budget, model,
+        budget,
+        model,
     )
 
 
