@@ -1,0 +1,56 @@
+{"command": "git status", "tokens": ["git", "status"]}
+{"command": "  git status  ", "tokens": ["git", "status"]}
+{"command": "", "tokens": []}
+{"command": "   ", "tokens": []}
+{"command": "a'b'c", "tokens": ["abc"]}
+{"command": "a\"b\"c", "tokens": ["abc"]}
+{"command": "a\\ b", "tokens": ["a b"]}
+{"command": "a\\\\b", "tokens": ["a\\b"]}
+{"command": "a\\\"b", "tokens": ["a\"b"]}
+{"command": "a\\'b", "tokens": ["a'b"]}
+{"command": "'it'\\''s'", "tokens": ["it's"]}
+{"command": "\"a\\\"b\"", "tokens": ["a\"b"]}
+{"command": "\"a\\\\b\"", "tokens": ["a\\b"]}
+{"command": "\"a\\nb\"", "tokens": ["a\\nb"]}
+{"command": "'a\\nb'", "tokens": ["a\\nb"]}
+{"command": "''", "tokens": [""]}
+{"command": "\"\"", "tokens": [""]}
+{"command": "a''b", "tokens": ["ab"]}
+{"command": "a\"\"b", "tokens": ["ab"]}
+{"command": "'unterminated", "error": "No closing quotation"}
+{"command": "\"unterminated", "error": "No closing quotation"}
+{"command": "trailing\\", "error": "No escaped character"}
+{"command": "a\\", "error": "No escaped character"}
+{"command": "sh -c 'git status'", "tokens": ["sh", "-c", "git status"]}
+{"command": "bash -c \"ls -la\"", "tokens": ["bash", "-c", "ls -la"]}
+{"command": "xargs -I {} mv {} /d", "tokens": ["xargs", "-I", "{}", "mv", "{}", "/d"]}
+{"command": "find . -exec rm {} ;", "tokens": ["find", ".", "-exec", "rm", "{}", ";"]}
+{"command": "python -c 'print(\"hi\")'", "tokens": ["python", "-c", "print(\"hi\")"]}
+{"command": "a\tb\nc\rd", "tokens": ["a", "b", "c", "d"]}
+{"command": "caf\u00e9", "tokens": ["caf\u00e9"]}
+{"command": "emoji \ud83c\udf89 arg", "tokens": ["emoji", "\ud83c\udf89", "arg"]}
+{"command": "a=b c=d cmd", "tokens": ["a=b", "c=d", "cmd"]}
+{"command": "--flag=value", "tokens": ["--flag=value"]}
+{"command": "-c", "tokens": ["-c"]}
+{"command": "-ec", "tokens": ["-ec"]}
+{"command": "-cSCRIPT", "tokens": ["-cSCRIPT"]}
+{"command": "a#b", "tokens": ["a#b"]}
+{"command": "# comment", "tokens": ["#", "comment"]}
+{"command": "cmd # not a comment", "tokens": ["cmd", "#", "not", "a", "comment"]}
+{"command": "a\\#b", "tokens": ["a#b"]}
+{"command": "cd /repo && pytest -q", "tokens": ["cd", "/repo", "&&", "pytest", "-q"]}
+{"command": "$CMD --do-things && ls", "tokens": ["$CMD", "--do-things", "&&", "ls"]}
+{"command": "find . -name '*.tmp' | xargs rm", "tokens": ["find", ".", "-name", "*.tmp", "|", "xargs", "rm"]}
+{"command": "sh -c 'rm -rf /' && ls", "tokens": ["sh", "-c", "rm -rf /", "&&", "ls"]}
+{"command": "grep -r TODO src | sort > /tmp/hits.txt", "tokens": ["grep", "-r", "TODO", "src", "|", "sort", ">", "/tmp/hits.txt"]}
+{"command": "echo x > /etc/cron.d/pwn", "tokens": ["echo", "x", ">", "/etc/cron.d/pwn"]}
+{"command": "git status && ls -la", "tokens": ["git", "status", "&&", "ls", "-la"]}
+{"command": "pytest -q > /etc/passwd", "tokens": ["pytest", "-q", ">", "/etc/passwd"]}
+{"command": "git status && rm -rf /tmp/x", "tokens": ["git", "status", "&&", "rm", "-rf", "/tmp/x"]}
+{"command": "timeout 30 git fetch && make install", "tokens": ["timeout", "30", "git", "fetch", "&&", "make", "install"]}
+{"command": "grep -E \"a|b\" f && ls", "tokens": ["grep", "-E", "a|b", "f", "&&", "ls"]}
+{"command": "prog --version > /dev/null 2>&1", "tokens": ["prog", "--version", ">", "/dev/null", "2>&1"]}
+{"command": "wc -l < /etc/shadow", "tokens": ["wc", "-l", "<", "/etc/shadow"]}
+{"command": "grep x f | sed -n 1,5p f", "tokens": ["grep", "x", "f", "|", "sed", "-n", "1,5p", "f"]}
+{"command": "echo $(rm -rf /) ok", "tokens": ["echo", "$(rm", "-rf", "/)", "ok"]}
+{"command": "grep -n foo src/*.py | head -5 > out/hits.txt", "tokens": ["grep", "-n", "foo", "src/*.py", "|", "head", "-5", ">", "out/hits.txt"]}

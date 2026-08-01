@@ -1,0 +1,34 @@
+// openDaisugi — allowed vs decided, and the two gaps.
+// Render: dot -Tpng -Gdpi=150 allowed-vs-decided.dot -o allowed-vs-decided.png
+digraph thesis {
+  rankdir=LR;
+  bgcolor="#fbfaf7";
+  labelloc="t"; fontname="Helvetica"; fontsize=17;
+  label=<<b>Separate what is <i>allowed</i> from what is <i>decided</i></b><br/><font point-size="11" color="#6b6b6b">guarantee what's provable &#183; judge-and-bound what's only perceivable &#183; never confuse the two</font><br/> >;
+
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12,
+        color="#d8d8d8", penwidth=1.1, margin="0.20,0.13"];
+  edge [fontname="Helvetica", fontsize=10, color="#8a8a8a"];
+
+  req [label="your request", fillcolor="#eef2f7"];
+
+  subgraph cluster_decided {
+    label="DECIDED  —  keep it a black box, let it be as capable as it is";
+    fontname="Helvetica"; fontsize=11; fontcolor="#5a4a72"; color="#d6c9e6"; style="rounded"; bgcolor="#f4eef8";
+    llm [label=<<b>LLM</b><br/>crosses the <b>intent gap</b><br/><font point-size="10" color="#6b6b6b">fuzzy intent &#8594; a concrete plan</font>>, fillcolor="#efe7f7"];
+  }
+
+  plan [label="a concrete plan", fillcolor="#eef2f7"];
+
+  subgraph cluster_allowed {
+    label="ALLOWED  —  a verifiable spec (the envelope)";
+    fontname="Helvetica"; fontsize=11; fontcolor="#3f6b47"; color="#cfe2d3"; style="rounded"; bgcolor="#eef5ef";
+    sym  [label=<<b>symbolic</b> predicate<br/>&#8594; Z3: <b>PROVEN</b> &#10003;<br/><font point-size="10" color="#2f6b39">a guarantee, ~free</font>>, fillcolor="#e4f3e6"];
+    perc [label=<<b>perceptual</b> predicate<br/>&#8594; LLM/VLM: <b>JUDGED</b><br/><font point-size="10" color="#8a5a17">the perception gap:<br/>bounded, not proven</font>>, fillcolor="#fde8cf"];
+  }
+
+  req -> llm;
+  llm -> plan;
+  plan -> sym [label="must stay inside"];
+  plan -> perc;
+}

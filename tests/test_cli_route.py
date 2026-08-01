@@ -16,9 +16,7 @@ def test_route_help():
 
 
 def test_route_easy_task_recommends_cheap(tmp_path):
-    res = runner.invoke(
-        app, ["route", "print the current date", "--data-dir", str(tmp_path)]
-    )
+    res = runner.invoke(app, ["route", "print the current date", "--data-dir", str(tmp_path)])
     assert res.exit_code == 0, res.output
     assert "tier1-cheap" in res.output
 
@@ -29,7 +27,8 @@ def test_route_hard_task_recommends_frontier_and_advisor(tmp_path):
         [
             "route",
             "architect a distributed consensus algorithm and prove safety under partition",
-            "--data-dir", str(tmp_path),
+            "--data-dir",
+            str(tmp_path),
         ],
     )
     assert res.exit_code == 0, res.output
@@ -45,8 +44,10 @@ def test_route_hard_task_codex_harness_omits_advisor(tmp_path):
         [
             "route",
             "architect a distributed consensus algorithm and prove safety under partition",
-            "--data-dir", str(tmp_path),
-            "--harness", "codex",
+            "--data-dir",
+            str(tmp_path),
+            "--harness",
+            "codex",
         ],
     )
     assert res.exit_code == 0, res.output
@@ -55,9 +56,7 @@ def test_route_hard_task_codex_harness_omits_advisor(tmp_path):
 
 
 def test_route_json(tmp_path):
-    res = runner.invoke(
-        app, ["route", "print the date", "--data-dir", str(tmp_path), "--json"]
-    )
+    res = runner.invoke(app, ["route", "print the date", "--data-dir", str(tmp_path), "--json"])
     assert res.exit_code == 0, res.output
     data = json.loads(res.output)
     assert data["tier"] == "tier1-cheap"

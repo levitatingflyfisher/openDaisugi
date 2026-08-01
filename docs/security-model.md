@@ -243,16 +243,22 @@ trust surface — meant to be auditable in an afternoon:
   call-time *gate* never call out.
 - **What is and is not signed — stated honestly.** Distilled pathway bundles
   are cryptographically signed and verified against a trusted-signer registry
-  (`opendaisugi.signing`, ed25519). **Release artifacts (the PyPI/sdist
-  package) are not yet signed** — that is the open item on this stage; until it
-  lands, install from a pinned git ref you have read, not from an unpinned
-  index.
+  (`opendaisugi.signing`, ed25519). **Release artifacts can now be signed and
+  verified the same way** — `daisugi release sign` builds a SHA-256 manifest
+  over the artifacts and signs it; `daisugi release verify` checks two
+  independent things and fails closed if either does: the signature is by a
+  *trusted* signer, and every artifact on disk still hashes to the manifest.
+  This reuses the one ed25519 trust root, not a second — a downloader adds the
+  release pubkey (`daisugi release keygen` prints it) to the same
+  `trusted_signers.json`. The remaining *operator* step is to publish a signed
+  manifest with each release; until a given release ships one, install from a
+  pinned git ref you have read, not from an unpinned index.
 
 The one-line honest summary: everything that decides *allow/deny* is
 deterministic, offline, content-addressed, and re-runnable by you; the trust
 you must still extend is to the checker's own correctness (it is tested, not
-machine-proven — [yellow paper §7](spec/yellow-paper.md)) and to the release
-channel until artifact signing lands.
+machine-proven — [yellow paper §7](spec/yellow-paper.md)) and to a release
+channel that ships a signed manifest.
 
 ## License
 

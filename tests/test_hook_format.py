@@ -45,8 +45,10 @@ def test_unknown_format_defaults_to_claude_contract():
 
 # --- SGCM fix: capture must always emit an allow contract, never crash --------
 
+
 def test_record_and_contract_survives_non_utf8(tmp_path):
     from opendaisugi.hook import record_and_contract
+
     out = record_and_contract(b"\xff\xfe not json \x00", root=tmp_path, fmt="claude")
     assert json.loads(out) == {"continue": True}
 
@@ -55,18 +57,21 @@ def test_record_and_contract_survives_deeply_nested(tmp_path):
     # Genuinely deep, balanced JSON — exercises the RecursionError path, not just
     # an unterminated string. Must still fail open with {}.
     from opendaisugi.hook import record_and_contract
+
     out = record_and_contract(("[" * 6000 + "]" * 6000).encode(), root=tmp_path, fmt="hermes")
     assert json.loads(out) == {}
 
 
 def test_record_and_contract_survives_unterminated_json(tmp_path):
     from opendaisugi.hook import record_and_contract
+
     out = record_and_contract(("[" * 6000).encode(), root=tmp_path, fmt="hermes")
     assert json.loads(out) == {}
 
 
 def test_record_and_contract_records_valid_payload(tmp_path):
     from opendaisugi.hook import record_and_contract
+
     payload = b'{"tool_name":"Bash","tool_input":{"command":"ls"},"session_id":"s1"}'
     out = record_and_contract(payload, root=tmp_path, fmt="claude")
     assert json.loads(out) == {"continue": True}
@@ -75,8 +80,10 @@ def test_record_and_contract_records_valid_payload(tmp_path):
 
 # --- SGCM polish: capture security (path traversal + perms) -------------------
 
+
 def test_record_call_neutralizes_session_id_path_traversal(tmp_path):
     from opendaisugi.hook import record_call
+
     root = tmp_path / "caps"
     record_call(
         {"session_id": "../../../evil", "tool_name": "Bash", "tool_input": {"command": "ls"}},
@@ -92,6 +99,7 @@ def test_capture_dir_and_file_not_world_or_group_accessible(tmp_path):
     import os
 
     from opendaisugi.hook import record_call
+
     root = tmp_path / "caps"
     root.mkdir(mode=0o777)  # pre-existing loose dir
     p = record_call(

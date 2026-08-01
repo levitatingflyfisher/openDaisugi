@@ -29,10 +29,14 @@ def test_completed_step_passing_postcondition():
         command="echo hi",
         metadata={"output": "hi"},
     )
-    envelope = _envelope_with_postcondition(parse_expression({
-        "op": "forall_steps",
-        "pred": {"op": "not_matches", "path": "metadata.output", "regex": "ERROR"},
-    }))
+    envelope = _envelope_with_postcondition(
+        parse_expression(
+            {
+                "op": "forall_steps",
+                "pred": {"op": "not_matches", "path": "metadata.output", "regex": "ERROR"},
+            }
+        )
+    )
     violations = verify_completed_step(completed, envelope)
     assert violations == []
 
@@ -43,10 +47,14 @@ def test_completed_step_failing_postcondition():
         command="echo ERROR",
         metadata={"output": "Something ERROR happened"},
     )
-    envelope = _envelope_with_postcondition(parse_expression({
-        "op": "forall_steps",
-        "pred": {"op": "not_matches", "path": "metadata.output", "regex": "ERROR"},
-    }))
+    envelope = _envelope_with_postcondition(
+        parse_expression(
+            {
+                "op": "forall_steps",
+                "pred": {"op": "not_matches", "path": "metadata.output", "regex": "ERROR"},
+            }
+        )
+    )
     violations = verify_completed_step(completed, envelope)
     assert len(violations) == 1
     assert "body_safety" in violations[0].message
@@ -62,16 +70,24 @@ def test_impersonation_detection():
             "body": "Hi editor, -Ada",
         },
     )
-    envelope = _envelope_with_postcondition(parse_expression({
-        "op": "forall_steps",
-        "pred": {
-            "op": "and",
-            "children": [
-                {"op": "not_equals", "path": "metadata.signature", "value": "Ada Lin"},
-                {"op": "not_matches", "path": "metadata.body", "regex": "(?i)(\u2014|-)\\s*ada"},
-            ],
-        },
-    }))
+    envelope = _envelope_with_postcondition(
+        parse_expression(
+            {
+                "op": "forall_steps",
+                "pred": {
+                    "op": "and",
+                    "children": [
+                        {"op": "not_equals", "path": "metadata.signature", "value": "Ada Lin"},
+                        {
+                            "op": "not_matches",
+                            "path": "metadata.body",
+                            "regex": "(?i)(\u2014|-)\\s*ada",
+                        },
+                    ],
+                },
+            }
+        )
+    )
     violations = verify_completed_step(completed, envelope)
     assert len(violations) == 1
 
@@ -100,10 +116,12 @@ def test_non_enforced_postcondition_skipped():
             Postcondition(
                 type="body_safety",
                 description="docs only",
-                expr=parse_expression({
-                    "op": "forall_steps",
-                    "pred": {"op": "not_matches", "path": "metadata.output", "regex": "ERROR"},
-                }),
+                expr=parse_expression(
+                    {
+                        "op": "forall_steps",
+                        "pred": {"op": "not_matches", "path": "metadata.output", "regex": "ERROR"},
+                    }
+                ),
                 enforce=False,
             ),
         ],

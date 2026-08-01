@@ -70,6 +70,7 @@ def _postconditions_equivalent(a: Envelope, b: Envelope) -> bool:
 
     def key(post) -> str:
         return json.dumps(post.model_dump(mode="json"), sort_keys=True)
+
     return {key(p) for p in a.postconditions} == {key(p) for p in b.postconditions}
 
 
@@ -107,7 +108,7 @@ async def ab_test(
         permissions_match=_permissions_equivalent(tier0_env, tier2_env),
         tier0_latency_ms=tier0_ms,
         tier2_latency_ms=tier2_ms,
-        tier0_tokens=0,          # Tier-0 is deterministic
+        tier0_tokens=0,  # Tier-0 is deterministic
         # v0.28.4: tier2_tokens is a placeholder, not a measured value.
         # Downstream cost analysis MUST NOT treat this as real telemetry —
         # wire ``litellm.token_counter`` against the generator's prompt

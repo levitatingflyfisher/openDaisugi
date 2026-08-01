@@ -24,7 +24,9 @@ def _envelope(stakes="medium", **perm_kwargs) -> Envelope:
 
 def _step(**kwargs) -> AgenticStep:
     defaults = dict(
-        id="a1", prompt="summarize the repo", workspace="/work/repo",
+        id="a1",
+        prompt="summarize the repo",
+        workspace="/work/repo",
         tools=["Read"],
     )
     defaults.update(kwargs)
@@ -37,6 +39,7 @@ def _plan(step) -> ActionPlan:
 
 # ------------------------------------------------------------------- model
 
+
 def test_agentic_step_constructs_and_roundtrips_in_plan():
     plan = _plan(_step())
     assert plan.steps[0].type == "agentic"
@@ -46,6 +49,7 @@ def test_agentic_step_constructs_and_roundtrips_in_plan():
 
 
 # ---------------------------------------------- capability mapping (allow)
+
 
 def test_read_tools_verify_against_file_read_globs():
     result = verify(_plan(_step(tools=["Read", "Glob", "Grep"])), _envelope())
@@ -65,6 +69,7 @@ def test_write_and_network_tools_verify_with_capabilities():
 
 
 # ----------------------------------------------- capability mapping (deny)
+
 
 def test_bash_tool_denied_when_envelope_forbids_shell():
     vs = check_permissions(_plan(_step(tools=["Bash"])), _envelope())
@@ -97,6 +102,7 @@ def test_workspace_outside_file_read_globs_denied():
 
 
 # --------------------------------------------------- stakes + strict mode
+
 
 def test_physical_stakes_refuses_agentic_delegation_outright():
     env = _envelope(stakes="physical")

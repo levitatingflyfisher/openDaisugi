@@ -71,6 +71,7 @@ def _warn_search_extra_missing_once() -> None:
     warnings.warn(msg, UserWarning, stacklevel=4)
     _log.warning(msg)
 
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS pathways (
     id TEXT PRIMARY KEY,
@@ -85,7 +86,9 @@ CREATE TABLE IF NOT EXISTS pathways (
     embedding_model TEXT NOT NULL DEFAULT '',
     embedding_model_version TEXT NOT NULL DEFAULT '',
     last_activation_at REAL NOT NULL DEFAULT 0.0,
-    failure_count INTEGER NOT NULL DEFAULT 0
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    structure_signature TEXT,
+    parameters_json TEXT NOT NULL DEFAULT '[]'
 );
 """
 
@@ -94,9 +97,20 @@ CREATE TABLE IF NOT EXISTS pathways (
 # single-writer and low-row, so one-liner additive migrations are enough.
 _ADDITIVE_COLUMNS = (
     ("embedding_model", "ALTER TABLE pathways ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''"),
-    ("embedding_model_version", "ALTER TABLE pathways ADD COLUMN embedding_model_version TEXT NOT NULL DEFAULT ''"),
-    ("last_activation_at", "ALTER TABLE pathways ADD COLUMN last_activation_at REAL NOT NULL DEFAULT 0.0"),
+    (
+        "embedding_model_version",
+        "ALTER TABLE pathways ADD COLUMN embedding_model_version TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "last_activation_at",
+        "ALTER TABLE pathways ADD COLUMN last_activation_at REAL NOT NULL DEFAULT 0.0",
+    ),
     ("failure_count", "ALTER TABLE pathways ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0"),
+    ("structure_signature", "ALTER TABLE pathways ADD COLUMN structure_signature TEXT"),
+    (
+        "parameters_json",
+        "ALTER TABLE pathways ADD COLUMN parameters_json TEXT NOT NULL DEFAULT '[]'",
+    ),
 )
 
 # Columns removed in v0.5.1 — dropped best-effort on open so legacy DBs
@@ -120,7 +134,8 @@ class PathwayStore:
             # is never shared across instances — each PathwayStore gets its
             # own — so cross-thread use is safe.
             self._shared_con: sqlite3.Connection | None = sqlite3.connect(
-                ":memory:", check_same_thread=False,
+                ":memory:",
+                check_same_thread=False,
             )
         else:
             self._db_path = Path(db_path)
@@ -160,8 +175,9 @@ class PathwayStore:
                 "plan_template_json, source_trace_ids_json, "
                 "version, hit_count, distilled_at, "
                 "embedding_model, embedding_model_version, "
-                "last_activation_at, failure_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "last_activation_at, failure_count, "
+                "structure_signature, parameters_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     pathway.id,
                     pathway.task_description,
@@ -176,6 +192,8 @@ class PathwayStore:
                     pathway.embedding_model_version,
                     pathway.last_activation_at,
                     pathway.failure_count,
+                    pathway.structure_signature,
+                    json.dumps([p.model_dump() for p in pathway.parameters]),
                 ),
             )
 
@@ -213,6 +231,7 @@ class PathwayStore:
 
         current_model = _MODEL_NAME
         current_version = _EMBEDDING_MODEL_VERSION
+
         # Rows with empty embedding_model are pre-provenance-tracking
         # legacy rows. Admit them as wildcards rather than orphaning every
         # pre-v0.5 store. Rows with a SET but non-matching model/version
@@ -255,6 +274,7 @@ class PathwayStore:
         degradation rather than a crash.
         """
         from opendaisugi._search import _get_model
+
         return _get_model().encode([task], convert_to_numpy=True)[0]
 
     def _load_all_rows(self) -> list[dict]:
@@ -275,8 +295,18 @@ class PathwayStore:
             version=row["version"],
             hit_count=row["hit_count"],
             distilled_at=row["distilled_at"],
-            last_activation_at=row["last_activation_at"] if "last_activation_at" in row.keys() else 0.0,
+            last_activation_at=row["last_activation_at"]
+            if "last_activation_at" in row.keys()
+            else 0.0,
             failure_count=row["failure_count"] if "failure_count" in row.keys() else 0,
+            structure_signature=(
+                row["structure_signature"] if "structure_signature" in row.keys() else None
+            ),
+            parameters=(
+                json.loads(row["parameters_json"])
+                if "parameters_json" in row.keys() and row["parameters_json"]
+                else []
+            ),
         )
 
     def increment_hit(self, pathway_id: str) -> None:
@@ -309,6 +339,13 @@ class PathwayStore:
         """Return all pathways. Used by CLI reporting."""
         return [self._row_to_pathway(r) for r in self._load_all_rows()]
 
+    def get(self, pathway_id: str) -> CompiledPathway | None:
+        """Fetch one pathway by id — a cheap indexed lookup, not a full load."""
+        with self._connect() as con:
+            con.row_factory = sqlite3.Row
+            row = con.execute("SELECT * FROM pathways WHERE id = ?", (pathway_id,)).fetchone()
+        return self._row_to_pathway(dict(row)) if row is not None else None
+
     def delete(self, pathway_id: str) -> bool:
         """Remove a pathway. Returns True if it existed."""
         with self._connect() as con:
@@ -318,9 +355,7 @@ class PathwayStore:
     def stats(self) -> dict:
         """Return counts and total hits."""
         with self._connect() as con:
-            row = con.execute(
-                "SELECT COUNT(*), SUM(hit_count) FROM pathways"
-            ).fetchone()
+            row = con.execute("SELECT COUNT(*), SUM(hit_count) FROM pathways").fetchone()
         return {
             "count": row[0] or 0,
             "total_hits": row[1] or 0,

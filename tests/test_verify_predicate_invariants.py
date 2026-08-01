@@ -27,10 +27,12 @@ def test_predicate_invariant_satisfied_passes():
             Invariant(
                 type="must_be_shell",
                 description="all steps are shell",
-                expr=parse_expression({
-                    "op": "forall_steps",
-                    "pred": {"op": "equals", "path": "type", "value": "shell"},
-                }),
+                expr=parse_expression(
+                    {
+                        "op": "forall_steps",
+                        "pred": {"op": "equals", "path": "type", "value": "shell"},
+                    }
+                ),
             )
         ],
     )
@@ -48,10 +50,12 @@ def test_predicate_invariant_violated_rejects():
             Invariant(
                 type="no_destructive",
                 description="command must not be destructive",
-                expr=parse_expression({
-                    "op": "forall_steps",
-                    "pred": {"op": "not_matches", "path": "command", "regex": "rm -rf"},
-                }),
+                expr=parse_expression(
+                    {
+                        "op": "forall_steps",
+                        "pred": {"op": "not_matches", "path": "command", "regex": "rm -rf"},
+                    }
+                ),
             )
         ],
     )

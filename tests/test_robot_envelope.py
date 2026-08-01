@@ -21,10 +21,12 @@ def test_permission_accepts_workspace_bounds():
 
 
 def test_permission_accepts_obstacle_list():
-    p = Permission(obstacles=[
-        ((0.0, -0.5, 0.0), (0.2, 0.5, 0.7)),
-        ((0.5, 0.2, 0.0), (0.6, 0.3, 0.1)),
-    ])
+    p = Permission(
+        obstacles=[
+            ((0.0, -0.5, 0.0), (0.2, 0.5, 0.7)),
+            ((0.5, 0.2, 0.0), (0.6, 0.3, 0.1)),
+        ]
+    )
     assert len(p.obstacles) == 2
 
 
@@ -46,7 +48,8 @@ def test_permission_joint_limits_map():
 
 def test_envelope_roundtrip_with_robot_permissions():
     env = Envelope(
-        generated_by="test", task="pick",
+        generated_by="test",
+        task="pick",
         permissions=Permission(
             workspace_bounds=((0.2, -0.4, 0.0), (0.8, 0.4, 0.6)),
             obstacles=[((0.0, -0.5, 0.0), (0.2, 0.5, 0.7))],

@@ -20,6 +20,7 @@ def test_sync_uses_neutral_cwd_by_default():
     assert captured["cwd"] == _neutral_cwd()
     # The neutral dir is not the project cwd and holds no CLAUDE.md.
     import os
+
     assert not os.path.exists(os.path.join(captured["cwd"], "CLAUDE.md"))
 
 

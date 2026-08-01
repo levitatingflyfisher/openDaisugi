@@ -16,7 +16,8 @@ from opendaisugi.models import (
 
 def _env():
     return Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
 
@@ -46,8 +47,12 @@ def test_fallback_outcome_halted():
 def test_fallback_outcome_recomputed():
     replacement = ShellStep(id="s1_v2", command="echo safe")
     vr = VerificationResult(
-        ok=True, violations=[], warnings=[],
-        envelope_id="e", plan_id="p", duration_ms=0.5,
+        ok=True,
+        violations=[],
+        warnings=[],
+        envelope_id="e",
+        plan_id="p",
+        duration_ms=0.5,
     )
     outcome = FallbackOutcome(
         action="recomputed",
@@ -72,8 +77,12 @@ async def test_halt_handler_always_halts():
 
 def _passing_result(envelope):
     return VerificationResult(
-        ok=True, violations=[], warnings=[],
-        envelope_id=envelope.id, plan_id="plan_x", duration_ms=0.5,
+        ok=True,
+        violations=[],
+        warnings=[],
+        envelope_id=envelope.id,
+        plan_id="plan_x",
+        duration_ms=0.5,
     )
 
 
@@ -86,7 +95,11 @@ async def test_recompute_handler_success():
     replacement = ShellStep(id="s1_v2", command="echo safe")
 
     fake_completions = AsyncMock(return_value=replacement)
-    fake_client = type("C", (), {"chat": type("Ch", (), {"completions": type("Co", (), {"create": fake_completions})()})()})()
+    fake_client = type(
+        "C",
+        (),
+        {"chat": type("Ch", (), {"completions": type("Co", (), {"create": fake_completions})()})()},
+    )()
 
     with patch("opendaisugi.fallback._get_recompute_client", return_value=fake_client):
         with patch("opendaisugi.fallback.verify") as mock_verify:
@@ -108,7 +121,11 @@ async def test_recompute_handler_replacement_fails_verification():
     replacement = ShellStep(id="s1_v2", command="rm -rf /home")
 
     fake_completions = AsyncMock(return_value=replacement)
-    fake_client = type("C", (), {"chat": type("Ch", (), {"completions": type("Co", (), {"create": fake_completions})()})()})()
+    fake_client = type(
+        "C",
+        (),
+        {"chat": type("Ch", (), {"completions": type("Co", (), {"create": fake_completions})()})()},
+    )()
 
     with patch("opendaisugi.fallback._get_recompute_client", return_value=fake_client):
         with patch("opendaisugi.fallback.verify") as mock_verify:
@@ -129,7 +146,11 @@ async def test_recompute_handler_llm_error_returns_halted():
     result = _failed_result(env)
 
     fake_completions = AsyncMock(side_effect=Exception("LLM down"))
-    fake_client = type("C", (), {"chat": type("Ch", (), {"completions": type("Co", (), {"create": fake_completions})()})()})()
+    fake_client = type(
+        "C",
+        (),
+        {"chat": type("Ch", (), {"completions": type("Co", (), {"create": fake_completions})()})()},
+    )()
 
     with patch("opendaisugi.fallback._get_recompute_client", return_value=fake_client):
         handler = RecomputeHandler(model="anthropic/claude-sonnet-4-20250514")
@@ -153,7 +174,11 @@ async def test_recompute_handler_include_refinement_false():
         captured_messages.extend(kwargs.get("messages", []))
         return replacement
 
-    fake_client = type("C", (), {"chat": type("Ch", (), {"completions": type("Co", (), {"create": capturing_create})()})()})()
+    fake_client = type(
+        "C",
+        (),
+        {"chat": type("Ch", (), {"completions": type("Co", (), {"create": capturing_create})()})()},
+    )()
 
     with patch("opendaisugi.fallback._get_recompute_client", return_value=fake_client):
         with patch("opendaisugi.fallback.verify") as mock_verify:

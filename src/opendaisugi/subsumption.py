@@ -34,6 +34,7 @@ from typing import Any
 
 import z3
 
+from opendaisugi import z3_checks
 from opendaisugi._invariant_types import RECOGNIZED_OPAQUE_TYPES
 from opendaisugi.exceptions import VerificationTimeout
 from opendaisugi.models import (
@@ -119,9 +120,7 @@ def _shell_head_in_allowlist(cmd_var: z3.ExprRef, allowlist: list[str]) -> z3.Bo
     return z3.Or(*pieces)
 
 
-def _encode_shell_admission(
-    perms: Permission, cmd_var: z3.ExprRef
-) -> z3.BoolRef:
+def _encode_shell_admission(perms: Permission, cmd_var: z3.ExprRef) -> z3.BoolRef:
     """Step is an admissible ShellStep under ``perms``."""
     if not perms.shell:
         return z3.BoolVal(False)
@@ -160,23 +159,33 @@ def _patterns_subsume(
     # fail-open. Refuse to rely on it: if any outer pattern isn't soundly
     # encodable, we can't prove containment → fail closed.
     if any(_glob_unsupported(g) for g in outer_patterns):
-        return (f"{label}: outer declares a glob shape that cannot be soundly "
-                f"encoded ({[g for g in outer_patterns if _glob_unsupported(g)]}); "
-                f"cannot prove subsumption → denied")
-    solver = z3.Solver()
-    solver.set("timeout", timeout_ms)
-    v = z3.String("v")
-    inner_ok = z3.Or(*[_glob_to_z3(v, g) for g in inner_patterns])
-    outer_ok = (z3.Or(*[_glob_to_z3(v, g) for g in outer_patterns])
-                if outer_patterns else z3.BoolVal(False))
-    solver.add(inner_ok, z3.Not(outer_ok))
-    result = solver.check()
-    if result == z3.sat:
-        witness = solver.model()[v]
-        return f"{label}: inner admits {witness} which outer forbids"
-    if result != z3.unsat:  # unknown / timeout → can't prove → deny
-        return f"{label}: could not prove subsumption (solver {result}) → denied"
-    return None
+        return (
+            f"{label}: outer declares a glob shape that cannot be soundly "
+            f"encoded ({[g for g in outer_patterns if _glob_unsupported(g)]}); "
+            f"cannot prove subsumption → denied"
+        )
+    # Shared with z3_checks.Z3_SOLVE_LOCK — see its docstring in z3_checks.py.
+    # This function's Z3 solve is reachable from verify()'s Stage 1b
+    # skill-delegation check, on the same global context the resident gate
+    # server's other threads may be solving on concurrently.
+    with z3_checks.Z3_SOLVE_LOCK:
+        solver = z3.Solver()
+        solver.set("timeout", timeout_ms)
+        v = z3.String("v")
+        inner_ok = z3.Or(*[_glob_to_z3(v, g) for g in inner_patterns])
+        outer_ok = (
+            z3.Or(*[_glob_to_z3(v, g) for g in outer_patterns])
+            if outer_patterns
+            else z3.BoolVal(False)
+        )
+        solver.add(inner_ok, z3.Not(outer_ok))
+        result = solver.check()
+        if result == z3.sat:
+            witness = solver.model()[v]
+            return f"{label}: inner admits {witness} which outer forbids"
+        if result != z3.unsat:  # unknown / timeout → can't prove → deny
+            return f"{label}: could not prove subsumption (solver {result}) → denied"
+        return None
 
 
 def _glob_unsupported(glob: str) -> bool:
@@ -202,8 +211,7 @@ def _network_scope_violation(outer: Permission, inner: Permission) -> str | None
         return None  # outer admits any host → any inner scope is within it
     # outer is restricted to a host set
     if not inner.network_hosts:
-        return ("network: inner admits any host but outer restricts to "
-                f"{outer.network_hosts}")
+        return f"network: inner admits any host but outer restricts to {outer.network_hosts}"
     outer_set = {h.lower() for h in outer.network_hosts}
     extra = [h for h in inner.network_hosts if h.lower() not in outer_set]
     if extra:
@@ -221,6 +229,11 @@ def _permission_scope_violation(
     the outer was silently 'subsumed' — the core delegation-safety hole. This
     proves each of those axes is contained too.
     """
+    # ADR-0010's opt-in widens what a given allowlist admits (`a && b` rather
+    # than `a` alone), so it is a capability the inner cannot grant itself. The
+    # Z3 admission formula reasons over one simple command and cannot see it.
+    if inner.shell_allow_decomposition and not outer.shell_allow_decomposition:
+        return "shell_allow_decomposition: inner admits compound shell but outer does not"
     for label, inner_p, outer_p in (
         ("file_read", inner.file_read, outer.file_read),
         ("file_write", inner.file_write, outer.file_write),
@@ -336,13 +349,17 @@ def _robot_capability_violation(outer: Permission, inner: Permission) -> str | N
     # workspace_bounds: ((min_x,min_y,min_z),(max_x,max_y,max_z)).
     if outer.workspace_bounds is not None:
         if inner.workspace_bounds is None:
-            return ("inner declares no workspace_bounds but outer constrains the "
-                    "workspace (undeclared = unbounded → denied)")
+            return (
+                "inner declares no workspace_bounds but outer constrains the "
+                "workspace (undeclared = unbounded → denied)"
+            )
         (o_min, o_max) = outer.workspace_bounds
         (i_min, i_max) = inner.workspace_bounds
         if any(i_min[k] < o_min[k] or i_max[k] > o_max[k] for k in range(3)):
-            return (f"inner workspace_bounds {inner.workspace_bounds} exceed outer "
-                    f"{outer.workspace_bounds}")
+            return (
+                f"inner workspace_bounds {inner.workspace_bounds} exceed outer "
+                f"{outer.workspace_bounds}"
+            )
 
     for axis in ("velocity_limit", "torque_limit"):
         o_lim = getattr(outer, axis)
@@ -365,8 +382,10 @@ def _robot_capability_violation(outer: Permission, inner: Permission) -> str | N
 
     missing = _freeze(outer.obstacles) - _freeze(inner.obstacles)
     if missing:
-        return (f"inner omits {len(missing)} obstacle region(s) the outer forbids "
-                f"(undeclared forbidden region → denied)")
+        return (
+            f"inner omits {len(missing)} obstacle region(s) the outer forbids "
+            f"(undeclared forbidden region → denied)"
+        )
 
     return None
 
@@ -447,176 +466,186 @@ def envelope_subsumes(
             duration_ms=(time.monotonic() - t0) * 1000,
         )
 
-    solver = z3.Solver()
-    solver.set("timeout", timeout_ms)
+    # Shared with z3_checks.Z3_SOLVE_LOCK — see its docstring in
+    # z3_checks.py. This is the real subsumption proof, reachable from
+    # verify()'s Stage 1b skill-delegation check on the resident gate
+    # server's concurrent-connection path.
+    with z3_checks.Z3_SOLVE_LOCK:
+        solver = z3.Solver()
+        solver.set("timeout", timeout_ms)
 
-    cmd = z3.String("ctx_command")
-    soft_inner: list[str] = []
-    soft_outer: list[str] = []
+        cmd = z3.String("ctx_command")
+        soft_inner: list[str] = []
+        soft_outer: list[str] = []
 
-    # Symbolic step scope — no concrete binding, string fields stay free.
-    # We seed scope.vars with the command variable so invariants referencing
-    # ``command`` share it with the permission check.
-    scope_inner = _Scope(prefix="ctx", concrete=None)
-    scope_inner.vars["ctx__command"] = cmd
-    scope_outer = _Scope(prefix="ctx", concrete=None)
-    scope_outer.vars["ctx__command"] = cmd
+        # Symbolic step scope — no concrete binding, string fields stay free.
+        # We seed scope.vars with the command variable so invariants referencing
+        # ``command`` share it with the permission check.
+        scope_inner = _Scope(prefix="ctx", concrete=None)
+        scope_inner.vars["ctx__command"] = cmd
+        scope_outer = _Scope(prefix="ctx", concrete=None)
+        scope_outer.vars["ctx__command"] = cmd
 
-    inner_shell = _encode_shell_admission(inner.permissions, cmd)
-    outer_shell = _encode_shell_admission(outer.permissions, cmd)
+        inner_shell = _encode_shell_admission(inner.permissions, cmd)
+        outer_shell = _encode_shell_admission(outer.permissions, cmd)
 
-    inner_inv, inner_opaque, inner_strict_blocking = _compile_invariants(
-        inner.invariants, scope_inner, soft_inner, strict=strict
-    )
-    outer_inv, outer_opaque, outer_strict_blocking = _compile_invariants(
-        outer.invariants, scope_outer, soft_outer, strict=strict
-    )
+        inner_inv, inner_opaque, inner_strict_blocking = _compile_invariants(
+            inner.invariants, scope_inner, soft_inner, strict=strict
+        )
+        outer_inv, outer_opaque, outer_strict_blocking = _compile_invariants(
+            outer.invariants, scope_outer, soft_outer, strict=strict
+        )
 
-    # Strict mode: opaque non-recognized inner invariants can't be verified
-    # symbolically — delegation cannot be proven safe. Short-circuit before Z3
-    # (mirrors the shell_interpreter_policy == "strict" precedent at `:227-232`).
-    if strict and inner_strict_blocking:
-        reasons = [
-            f"inner invariant '{t}' is opaque and unrecognized; "
-            f"delegation cannot be proven safe under strict mode — "
-            f"suggested_remediation: add an `expr` to make it verifiable, "
-            f"or set enforce=False to keep it as documentation"
-            for t in sorted(inner_strict_blocking)
-        ]
+        # Strict mode: opaque non-recognized inner invariants can't be verified
+        # symbolically — delegation cannot be proven safe. Short-circuit before Z3
+        # (mirrors the shell_interpreter_policy == "strict" precedent at `:227-232`).
+        if strict and inner_strict_blocking:
+            reasons = [
+                f"inner invariant '{t}' is opaque and unrecognized; "
+                f"delegation cannot be proven safe under strict mode — "
+                f"suggested_remediation: add an `expr` to make it verifiable, "
+                f"or set enforce=False to keep it as documentation"
+                for t in sorted(inner_strict_blocking)
+            ]
+            return SubsumptionResult(
+                holds=False,
+                counterexample=None,
+                # Even on this early refusal, surface the outer envelope's opaque
+                # constraints so the caller's visibility matches the normal path.
+                unverified_invariants=sorted(set(outer_opaque) | set(outer_strict_blocking)),
+                reasons=reasons,
+                duration_ms=(time.monotonic() - t0) * 1000,
+            )
+
+        inner_admits = z3.And(inner_shell, inner_inv)
+        outer_admits = z3.And(outer_shell, outer_inv)
+
+        # Share any metadata vars that exist on both scopes (same Z3 name → same var).
+        shared_vars: dict[str, z3.ExprRef] = {}
+        for name, var in scope_inner.vars.items():
+            shared_vars[name] = var
+        for name, var in scope_outer.vars.items():
+            shared_vars.setdefault(name, var)
+
+        # Soft-node polarity. Soft nodes come from LLMCheck and regex-fallback
+        # predicates that can't be compiled symbolically. For the "try to
+        # disprove subsumption" stance we want:
+        #   - inner soft = True   (optimistic — inner is maximally permissive,
+        #                          admits anything its soft predicate might allow)
+        #   - outer soft = False  (pessimistic — outer rejects what we can't
+        #                          prove it admits)
+        # Soft-node names are position-keyed within a scope (see
+        # predicate_z3._compile_scalar), so when inner and outer declare the
+        # SAME soft predicate at the same position they share a Z3 Bool — in
+        # that case the inner binding (True) wins and the shared check behaves
+        # as "both sides agree," which is what identical envelopes need.
+        #
+        # Fixed in v0.13.0 (Attack C from the v0.11 audit). The v0.11/v0.12
+        # code optimistically bound outer to True, which silently approved
+        # subsumption when outer had a stricter LLMCheck than inner.
+        inner_soft_set = set(soft_inner)
+        outer_soft_unique_names = [n for n in soft_outer if n not in inner_soft_set]
+        # Fail-closed on outer-only soft constraints. The old approach pinned them to
+        # False ("pessimistic"), but that was fail-OPEN under negation: an outer
+        # deny-rule using an unsupported regex (NotMatches r'\bsudo\b') compiles to
+        # Not(soft); pinning soft=False makes the term True and SILENTLY DROPS the
+        # deny-rule → holds=True. An outer constraint the inner doesn't share means
+        # inner may be broader in either polarity, so subsumption can't be proven.
+        if outer_soft_unique_names:
+            return SubsumptionResult(
+                holds=False,
+                counterexample=None,
+                unverified_invariants=sorted(
+                    set(inner_opaque)
+                    | set(outer_opaque)
+                    | set(outer_strict_blocking)
+                    | {f"soft:{n}" for n in outer_soft_unique_names}
+                ),
+                reasons=[
+                    f"outer has unverifiable soft constraints not shared by inner "
+                    f"({sorted(outer_soft_unique_names)}); cannot prove subsumption (fail-closed)"
+                ],
+                duration_ms=(time.monotonic() - t0) * 1000,
+            )
+        for name in soft_inner:
+            solver.add(z3.Bool(name) == z3.BoolVal(True))
+
+        solver.add(inner_admits)
+        solver.add(z3.Not(outer_admits))
+
+        result = solver.check()
+        duration_ms = (time.monotonic() - t0) * 1000
+
+        # Surface outer soft nodes (LLMCheck, regex fallback) as unverified so
+        # the caller sees what couldn't be proven statically. The "soft:" prefix
+        # distinguishes them from opaque invariants (those without an expr at all).
+        outer_soft_unique = [n for n in soft_outer if n not in inner_soft_set]
+        interpreter_surface: set[str] = set()
+        if policy != "allow":
+            interpreter_surface = {
+                f"shell_interpreter:{name}" for name in inner_interpreters + outer_interpreters
+            }
+        # outer_strict_blocking holds outer opaque non-recognized invariants under
+        # strict mode. Unlike inner_strict_blocking (which hard-fails delegation),
+        # an OUTER opaque constraint doesn't make delegation unsafe — it's the
+        # caller's own under-specified guard. Surface it so strict visibility is
+        # never worse than non-strict (where it appears in outer_opaque).
+        unverified = sorted(
+            set(inner_opaque)
+            | set(outer_opaque)
+            | set(outer_strict_blocking)
+            | {f"soft:{n}" for n in outer_soft_unique}
+            | interpreter_surface
+        )
+
+        if result == z3.unknown:
+            raise VerificationTimeout(f"Z3 subsumption check exceeded {timeout_ms}ms")
+        if result == z3.unsat:
+            return SubsumptionResult(
+                holds=True,
+                counterexample=None,
+                unverified_invariants=unverified,
+                duration_ms=duration_ms,
+            )
+        model = solver.model()
+        step, raw = _build_shell_step_from_model(model, cmd, shared_vars)
+        # Diagnose which outer rule failed. Narrow to Z3Exception so genuine
+        # programming errors (malformed substitutions, etc.) surface to the
+        # auditor as tracebacks rather than being swallowed as "unknown".
+        try:
+            outer_shell_val = z3.simplify(
+                z3.substitute(
+                    outer_shell,
+                    *[(v, model[v]) for v in shared_vars.values() if model[v] is not None],
+                )
+            )
+            outer_inv_val = z3.simplify(
+                z3.substitute(
+                    outer_inv,
+                    *[(v, model[v]) for v in shared_vars.values() if model[v] is not None],
+                )
+            )
+        except z3.Z3Exception:
+            outer_shell_val = z3.BoolVal(False)
+            outer_inv_val = z3.BoolVal(False)
+        if z3.is_false(outer_shell_val):
+            outer_violation = "shell_allowlist"
+        elif z3.is_false(outer_inv_val):
+            outer_violation = "invariant"
+        else:
+            outer_violation = "unknown"
+        counter = Counterexample(
+            step=step,
+            outer_violation=outer_violation,
+            inner_justification="shell_allowlist",
+            raw_model=raw,
+        )
         return SubsumptionResult(
             holds=False,
-            counterexample=None,
-            # Even on this early refusal, surface the outer envelope's opaque
-            # constraints so the caller's visibility matches the normal path.
-            unverified_invariants=sorted(set(outer_opaque) | set(outer_strict_blocking)),
-            reasons=reasons,
-            duration_ms=(time.monotonic() - t0) * 1000,
-        )
-
-    inner_admits = z3.And(inner_shell, inner_inv)
-    outer_admits = z3.And(outer_shell, outer_inv)
-
-    # Share any metadata vars that exist on both scopes (same Z3 name → same var).
-    shared_vars: dict[str, z3.ExprRef] = {}
-    for name, var in scope_inner.vars.items():
-        shared_vars[name] = var
-    for name, var in scope_outer.vars.items():
-        shared_vars.setdefault(name, var)
-
-    # Soft-node polarity. Soft nodes come from LLMCheck and regex-fallback
-    # predicates that can't be compiled symbolically. For the "try to
-    # disprove subsumption" stance we want:
-    #   - inner soft = True   (optimistic — inner is maximally permissive,
-    #                          admits anything its soft predicate might allow)
-    #   - outer soft = False  (pessimistic — outer rejects what we can't
-    #                          prove it admits)
-    # Soft-node names are position-keyed within a scope (see
-    # predicate_z3._compile_scalar), so when inner and outer declare the
-    # SAME soft predicate at the same position they share a Z3 Bool — in
-    # that case the inner binding (True) wins and the shared check behaves
-    # as "both sides agree," which is what identical envelopes need.
-    #
-    # Fixed in v0.13.0 (Attack C from the v0.11 audit). The v0.11/v0.12
-    # code optimistically bound outer to True, which silently approved
-    # subsumption when outer had a stricter LLMCheck than inner.
-    inner_soft_set = set(soft_inner)
-    outer_soft_unique_names = [n for n in soft_outer if n not in inner_soft_set]
-    # Fail-closed on outer-only soft constraints. The old approach pinned them to
-    # False ("pessimistic"), but that was fail-OPEN under negation: an outer
-    # deny-rule using an unsupported regex (NotMatches r'\bsudo\b') compiles to
-    # Not(soft); pinning soft=False makes the term True and SILENTLY DROPS the
-    # deny-rule → holds=True. An outer constraint the inner doesn't share means
-    # inner may be broader in either polarity, so subsumption can't be proven.
-    if outer_soft_unique_names:
-        return SubsumptionResult(
-            holds=False,
-            counterexample=None,
-            unverified_invariants=sorted(
-                set(inner_opaque) | set(outer_opaque) | set(outer_strict_blocking)
-                | {f"soft:{n}" for n in outer_soft_unique_names}
-            ),
-            reasons=[
-                f"outer has unverifiable soft constraints not shared by inner "
-                f"({sorted(outer_soft_unique_names)}); cannot prove subsumption (fail-closed)"
-            ],
-            duration_ms=(time.monotonic() - t0) * 1000,
-        )
-    for name in soft_inner:
-        solver.add(z3.Bool(name) == z3.BoolVal(True))
-
-    solver.add(inner_admits)
-    solver.add(z3.Not(outer_admits))
-
-    result = solver.check()
-    duration_ms = (time.monotonic() - t0) * 1000
-
-    # Surface outer soft nodes (LLMCheck, regex fallback) as unverified so
-    # the caller sees what couldn't be proven statically. The "soft:" prefix
-    # distinguishes them from opaque invariants (those without an expr at all).
-    outer_soft_unique = [n for n in soft_outer if n not in inner_soft_set]
-    interpreter_surface: set[str] = set()
-    if policy != "allow":
-        interpreter_surface = {
-            f"shell_interpreter:{name}"
-            for name in inner_interpreters + outer_interpreters
-        }
-    # outer_strict_blocking holds outer opaque non-recognized invariants under
-    # strict mode. Unlike inner_strict_blocking (which hard-fails delegation),
-    # an OUTER opaque constraint doesn't make delegation unsafe — it's the
-    # caller's own under-specified guard. Surface it so strict visibility is
-    # never worse than non-strict (where it appears in outer_opaque).
-    unverified = sorted(
-        set(inner_opaque)
-        | set(outer_opaque)
-        | set(outer_strict_blocking)
-        | {f"soft:{n}" for n in outer_soft_unique}
-        | interpreter_surface
-    )
-
-    if result == z3.unknown:
-        raise VerificationTimeout(
-            f"Z3 subsumption check exceeded {timeout_ms}ms"
-        )
-    if result == z3.unsat:
-        return SubsumptionResult(
-            holds=True,
-            counterexample=None,
+            counterexample=counter,
             unverified_invariants=unverified,
             duration_ms=duration_ms,
         )
-    model = solver.model()
-    step, raw = _build_shell_step_from_model(model, cmd, shared_vars)
-    # Diagnose which outer rule failed. Narrow to Z3Exception so genuine
-    # programming errors (malformed substitutions, etc.) surface to the
-    # auditor as tracebacks rather than being swallowed as "unknown".
-    try:
-        outer_shell_val = z3.simplify(z3.substitute(outer_shell, *[
-            (v, model[v]) for v in shared_vars.values() if model[v] is not None
-        ]))
-        outer_inv_val = z3.simplify(z3.substitute(outer_inv, *[
-            (v, model[v]) for v in shared_vars.values() if model[v] is not None
-        ]))
-    except z3.Z3Exception:
-        outer_shell_val = z3.BoolVal(False)
-        outer_inv_val = z3.BoolVal(False)
-    if z3.is_false(outer_shell_val):
-        outer_violation = "shell_allowlist"
-    elif z3.is_false(outer_inv_val):
-        outer_violation = "invariant"
-    else:
-        outer_violation = "unknown"
-    counter = Counterexample(
-        step=step,
-        outer_violation=outer_violation,
-        inner_justification="shell_allowlist",
-        raw_model=raw,
-    )
-    return SubsumptionResult(
-        holds=False,
-        counterexample=counter,
-        unverified_invariants=unverified,
-        duration_ms=duration_ms,
-    )
 
 
 __all__ = ["Counterexample", "SubsumptionResult", "envelope_subsumes"]

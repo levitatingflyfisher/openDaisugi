@@ -12,7 +12,10 @@ def test_custom_provider_satisfies_protocol() -> None:
         name = "mine"
 
         async def generate_envelope(
-            self, task: str, *, context: str | None = None,
+            self,
+            task: str,
+            *,
+            context: str | None = None,
         ):
             return None
 

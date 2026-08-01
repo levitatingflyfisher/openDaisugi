@@ -7,7 +7,7 @@ pluggable executors:
 - :class:`SkillExecutor` resolves a ``SkillStep`` against a handler registry. A
   handler is any callable ``(SkillStep) -> str`` — in a real deployment it runs a
   distilled pathway or a contract-backed skill; in tests it's a lambda. This is
-  the "repeated prompts via skills" execution seam.
+  the "repeated prompts via skills" execution path.
 - :class:`MCPExecutor` calls a pluggable transport ``(server, tool, arguments) -> Any``.
   No live MCP client is a hard dependency (D3): ship the step type + executor +
   protocol; wire a real transport at deployment.
@@ -71,8 +71,10 @@ class SkillExecutor:
             )
         text = out if isinstance(out, str) else json.dumps(out, default=str)
         return ExecutorResult(
-            rc=0, stdout=truncate_output(text, max_output_bytes),
-            duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+            rc=0,
+            stdout=truncate_output(text, max_output_bytes),
+            duration_ms=(time.monotonic() - start) * 1000.0,
+            timed_out=False,
         )
 
 
@@ -109,8 +111,10 @@ class MCPExecutor:
             )
         text = json.dumps(result, default=str)
         return ExecutorResult(
-            rc=0, stdout=truncate_output(text, max_output_bytes),
-            duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+            rc=0,
+            stdout=truncate_output(text, max_output_bytes),
+            duration_ms=(time.monotonic() - start) * 1000.0,
+            timed_out=False,
         )
 
 

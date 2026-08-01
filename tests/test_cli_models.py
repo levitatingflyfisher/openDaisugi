@@ -1,6 +1,5 @@
 """CLI: `daisugi models` — discover/resolve a trustworthy, commit-pinned local model."""
 
-
 from typer.testing import CliRunner
 
 import opendaisugi.model_registry as mr
@@ -18,13 +17,14 @@ def test_models_help():
 
 def test_models_resolve_prints_pinned_ref(monkeypatch):
     monkeypatch.setattr(
-        mr, "resolve_pinned",
+        mr,
+        "resolve_pinned",
         lambda repo, **kw: ModelRef(repo_id=repo, filename="m.Q4_K_M.llamafile", revision="abc123"),
     )
     res = runner.invoke(app, ["models", "mozilla-ai/x"])
     assert res.exit_code == 0, res.output
     assert "m.Q4_K_M.llamafile" in res.output
-    assert "abc123" in res.output           # the pinned revision is shown
+    assert "abc123" in res.output  # the pinned revision is shown
 
 
 def test_models_untrusted_exits_nonzero(monkeypatch):

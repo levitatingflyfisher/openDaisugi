@@ -43,10 +43,16 @@ def authority(name, bounds, *, velocity=3.0):
     """An agent's authority = a physical-stakes envelope over a volume. The
     end_effector_in_workspace invariant is the switch that makes the bound enforced."""
     return Envelope(
-        generated_by=name, task=f"{name} operating authority", stakes="physical",
+        generated_by=name,
+        task=f"{name} operating authority",
+        stakes="physical",
         permissions=Permission(workspace_bounds=bounds, velocity_limit=velocity),
-        invariants=[Invariant(type="end_effector_in_workspace",
-                              description="agent stays within its granted volume")],
+        invariants=[
+            Invariant(
+                type="end_effector_in_workspace",
+                description="agent stays within its granted volume",
+            )
+        ],
     )
 
 
@@ -55,6 +61,7 @@ def _ok(holds):
 
 
 # ───────────────────────── Scenario 1: delegation hierarchy ──────────────────────
+
 
 def scenario_hierarchy():
     print(RULE)
@@ -70,9 +77,11 @@ def scenario_hierarchy():
     alpha = squads["squad_alpha"]
     drones = partition_and_assign(alpha, ["a1", "a2"], axis=1, margin=MARGIN)
     for did, env in drones.items():
-        holds_sq = envelope_subsumes(alpha, env).holds        # within the squad's grant
-        holds_mi = envelope_subsumes(mission, env).holds      # transitively within the mission
-        print(f"   sub-delegate {did:8} ⊆ squad_alpha? {_ok(holds_sq)}   ⊆ mission (transitive)? {_ok(holds_mi)}")
+        holds_sq = envelope_subsumes(alpha, env).holds  # within the squad's grant
+        holds_mi = envelope_subsumes(mission, env).holds  # transitively within the mission
+        print(
+            f"   sub-delegate {did:8} ⊆ squad_alpha? {_ok(holds_sq)}   ⊆ mission (transitive)? {_ok(holds_mi)}"
+        )
 
     # THE REJECTION: squad Alpha tries to task a drone BEYOND its own delegated slice.
     (lx, ly, lz), (hx, hy, hz) = alpha.permissions.workspace_bounds
@@ -86,6 +95,7 @@ def scenario_hierarchy():
 
 # ───────────────────────── Scenario 2: lateral hand-off ──────────────────────────
 
+
 def scenario_handoff():
     print("\n" + RULE)
     print(" 2. LATERAL HAND-OFF — drone A hands a tracking task to drone B")
@@ -94,7 +104,7 @@ def scenario_handoff():
     b = authority("drone_B", ((10, 0, 0), (20, 20, 10)))
     # A target crosses from A's sector into B's. A HANDS OFF a task = a tasking
     # envelope. The hand-off is safe iff the task is within B's own authority.
-    task_in_b = authority("track_target", ((12, 5, 0), (18, 15, 8)))   # lives in B's sector
+    task_in_b = authority("track_target", ((12, 5, 0), (18, 15, 8)))  # lives in B's sector
     task_spills = authority("track_target", ((12, 5, 0), (24, 15, 8)))  # spills past B's sector
     r_ok = envelope_subsumes(b, task_in_b)
     r_bad = envelope_subsumes(b, task_spills)
@@ -105,6 +115,7 @@ def scenario_handoff():
 
 
 # ───────────────────── Scenario 3: comms-loss reassignment ───────────────────────
+
 
 def scenario_comms_loss():
     print("\n" + RULE)
@@ -120,8 +131,10 @@ def scenario_comms_loss():
     west_expanded = authority("west", (wlo, mhi))  # union box west→mid
     survivors = {"west": west_expanded, "east": fleet["east"]}
     v_ok = verify_swarm_tasking(mission, survivors, margin=MARGIN)
-    print(f"   reassign mid's sector → WEST (expand), re-verify swarm: {_ok(v_ok.ok)} "
-          f"(subsumed={v_ok.all_subsumed}, disjoint={v_ok.deconflicted})")
+    print(
+        f"   reassign mid's sector → WEST (expand), re-verify swarm: {_ok(v_ok.ok)} "
+        f"(subsumed={v_ok.all_subsumed}, disjoint={v_ok.deconflicted})"
+    )
 
     # UNSAFE reassignment: hand mid's sector to BOTH neighbors → overlap.
     east_grab = authority("east", (mlo, fleet["east"].permissions.workspace_bounds[1]))
@@ -130,20 +143,22 @@ def scenario_comms_loss():
     print(f"   reassign mid's sector → BOTH neighbors, re-verify swarm: {_ok(v_bad.ok)}")
     if v_bad.conflicts:
         c = v_bad.conflicts[0]
-        overlap = aabb_intersection(west_expanded.permissions.workspace_bounds,
-                                    east_grab.permissions.workspace_bounds)
+        overlap = aabb_intersection(
+            west_expanded.permissions.workspace_bounds, east_grab.permissions.workspace_bounds
+        )
         print(f"       conflict: {c.drone_a} vs {c.drone_b}; shared region ≈ {overlap}")
     print("   → the reassignment MESSAGE is refused BEFORE any drone moves (fail-closed).")
 
 
 # ───────────────────── Scenario 4: cross-swarm coordination ──────────────────────
 
+
 def scenario_cross_swarm():
     print("\n" + RULE)
     print(" 4. CROSS-SWARM COORDINATION — two swarms verify disjoint airspace before entry")
     print(RULE)
     alpha_volume = ((0, 0, 0), (15, 20, 10))
-    bravo_clear = ((16, 0, 0), (30, 20, 10))   # published: clear of Alpha
+    bravo_clear = ((16, 0, 0), (30, 20, 10))  # published: clear of Alpha
     bravo_entering = ((12, 0, 0), (30, 20, 10))  # published: overlaps Alpha
     ok = aabb_disjoint(alpha_volume, bravo_clear, margin=MARGIN)
     bad = aabb_disjoint(alpha_volume, bravo_entering, margin=MARGIN)

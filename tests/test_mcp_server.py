@@ -94,7 +94,8 @@ async def test_pathway_stats(tmp_path):
 async def test_verify_plan_roundtrip(tmp_path):
     d = _daisugi(tmp_path)
     env = Envelope(
-        generated_by="test", task="T",
+        generated_by="test",
+        task="T",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
     plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="echo hi")])
@@ -122,14 +123,16 @@ async def test_verify_completed_step_rejects_impersonation(tmp_path):
             Postcondition(
                 type="body_no_impersonation",
                 description="body must not sign as Ada",
-                expr=parse_expression({
-                    "op": "forall_steps",
-                    "pred": {
-                        "op": "not_matches",
-                        "path": "metadata.body",
-                        "regex": r"(?i)\bada\b",
-                    },
-                }),
+                expr=parse_expression(
+                    {
+                        "op": "forall_steps",
+                        "pred": {
+                            "op": "not_matches",
+                            "path": "metadata.body",
+                            "regex": r"(?i)\bada\b",
+                        },
+                    }
+                ),
             )
         ],
     )
@@ -162,14 +165,16 @@ async def test_verify_completed_step_accepts_clean(tmp_path):
             Postcondition(
                 type="body_no_impersonation",
                 description="body must not sign as Ada",
-                expr=parse_expression({
-                    "op": "forall_steps",
-                    "pred": {
-                        "op": "not_matches",
-                        "path": "metadata.body",
-                        "regex": r"(?i)\bada\b",
-                    },
-                }),
+                expr=parse_expression(
+                    {
+                        "op": "forall_steps",
+                        "pred": {
+                            "op": "not_matches",
+                            "path": "metadata.body",
+                            "regex": r"(?i)\bada\b",
+                        },
+                    }
+                ),
             )
         ],
     )
@@ -218,9 +223,7 @@ async def test_find_pathway_no_store(tmp_path):
 async def test_envelope_for_rejects_invalid_stakes(tmp_path):
     server = build_server(_daisugi(tmp_path))
     with pytest.raises(Exception) as exc:
-        await server.call_tool(
-            "envelope_for", {"task": "ignored", "stakes": "extreme"}
-        )
+        await server.call_tool("envelope_for", {"task": "ignored", "stakes": "extreme"})
     assert "stakes" in str(exc.value).lower()
 
 
@@ -242,17 +245,25 @@ async def test_run_plan_executes_and_returns_receipts(tmp_path):
     """run_plan with dry_run=False: validate, run supervisor live, return receipts."""
     d = _daisugi(tmp_path)
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo hi"),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo hi"),
+        ],
+    )
     server = build_server(d)
     _, structured = await server.call_tool(
         "run_plan",
-        {"plan": plan.model_dump(mode="json"), "envelope": env.model_dump(mode="json"),
-         "dry_run": False},
+        {
+            "plan": plan.model_dump(mode="json"),
+            "envelope": env.model_dump(mode="json"),
+            "dry_run": False,
+        },
     )
     assert structured["status"] == "succeeded"
     assert structured["integrity_passed"] is True
@@ -271,12 +282,17 @@ async def test_run_plan_dry_run_default_does_not_touch_disk(tmp_path):
     d = _daisugi(tmp_path)
     target = tmp_path / "would_have_been_written"
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(file_write=[str(tmp_path / "**")]),
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        FileWriteStep(id="s1", path=str(target), content="HACKED"),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            FileWriteStep(id="s1", path=str(target), content="HACKED"),
+        ],
+    )
     server = build_server(d)
     _, structured = await server.call_tool(
         "run_plan",
@@ -302,17 +318,25 @@ async def test_run_plan_dry_run_false_does_touch_disk(tmp_path, monkeypatch):
     d = _daisugi(tmp_path)
     target = tmp_path / "lived"
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(file_write=[str(tmp_path / "**")]),
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        FileWriteStep(id="s1", path=str(target), content="real-write"),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            FileWriteStep(id="s1", path=str(target), content="real-write"),
+        ],
+    )
     server = build_server(d)
     _, structured = await server.call_tool(
         "run_plan",
-        {"plan": plan.model_dump(mode="json"), "envelope": env.model_dump(mode="json"),
-         "dry_run": False},
+        {
+            "plan": plan.model_dump(mode="json"),
+            "envelope": env.model_dump(mode="json"),
+            "dry_run": False,
+        },
     )
     assert structured["status"] == "succeeded"
     assert target.exists(), "dry_run=False must invoke the live FileWriteExecutor"
@@ -329,15 +353,20 @@ async def test_run_plan_live_denied_without_approval_optin(tmp_path, monkeypatch
     monkeypatch.delenv("DAISUGI_APPROVE", raising=False)
     d = _daisugi(tmp_path)
     target = tmp_path / "should_not_exist"
-    env = Envelope(generated_by="attacker", task="t",
-                   permissions=Permission(file_write=[str(tmp_path / "**")]))  # self-authored, permissive
-    plan = ActionPlan(source="t", task="t",
-                      steps=[FileWriteStep(id="s1", path=str(target), content="pwned")])
+    env = Envelope(
+        generated_by="attacker", task="t", permissions=Permission(file_write=[str(tmp_path / "**")])
+    )  # self-authored, permissive
+    plan = ActionPlan(
+        source="t", task="t", steps=[FileWriteStep(id="s1", path=str(target), content="pwned")]
+    )
     server = build_server(d)
     _, structured = await server.call_tool(
         "run_plan",
-        {"plan": plan.model_dump(mode="json"), "envelope": env.model_dump(mode="json"),
-         "dry_run": False},
+        {
+            "plan": plan.model_dump(mode="json"),
+            "envelope": env.model_dump(mode="json"),
+            "dry_run": False,
+        },
     )
     assert structured["status"] != "succeeded"
     assert not target.exists()  # no arbitrary write via MCP
@@ -348,12 +377,17 @@ async def test_run_plan_propagates_verify_rejection(tmp_path):
     """A plan that fails verify is rejected; receipts list is empty."""
     d = _daisugi(tmp_path)
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["cat"]),  # echo not allowed
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo hi"),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo hi"),
+        ],
+    )
     server = build_server(d)
     _, structured = await server.call_tool(
         "run_plan",
@@ -367,7 +401,8 @@ async def test_run_plan_propagates_verify_rejection(tmp_path):
 async def test_receipts_for_run_returns_empty_for_unknown_run(tmp_path):
     server = build_server(_daisugi(tmp_path))
     _, structured = await server.call_tool(
-        "receipts_for_run", {"run_id": "nonexistent"},
+        "receipts_for_run",
+        {"run_id": "nonexistent"},
     )
     # FastMCP wraps list returns as {"result": [...]} in the structured payload.
     rows = structured.get("result", structured)
@@ -381,21 +416,30 @@ async def test_receipts_for_run_returns_real_receipts_after_run_plan(tmp_path):
     """Round-trip: run_plan writes receipts, receipts_for_run reads them back."""
     d = _daisugi(tmp_path)
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo hi"),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo hi"),
+        ],
+    )
     server = build_server(d)
     _, run_result = await server.call_tool(
         "run_plan",
-        {"plan": plan.model_dump(mode="json"), "envelope": env.model_dump(mode="json"),
-         "dry_run": False},
+        {
+            "plan": plan.model_dump(mode="json"),
+            "envelope": env.model_dump(mode="json"),
+            "dry_run": False,
+        },
     )
     run_id = run_result["run_id"]
     _, structured = await server.call_tool(
-        "receipts_for_run", {"run_id": run_id},
+        "receipts_for_run",
+        {"run_id": run_id},
     )
     rows = structured.get("result", structured)
     if isinstance(rows, dict):
@@ -408,17 +452,25 @@ async def test_receipts_for_run_returns_real_receipts_after_run_plan(tmp_path):
 async def test_recent_runs_returns_journaled_runs(tmp_path):
     d = _daisugi(tmp_path)
     env = Envelope(
-        generated_by="t", task="audit-test",
+        generated_by="t",
+        task="audit-test",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
-    plan = ActionPlan(source="t", task="audit-test", steps=[
-        ShellStep(id="s1", command="echo hi"),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="audit-test",
+        steps=[
+            ShellStep(id="s1", command="echo hi"),
+        ],
+    )
     server = build_server(d)
     await server.call_tool(
         "run_plan",
-        {"plan": plan.model_dump(mode="json"), "envelope": env.model_dump(mode="json"),
-         "dry_run": False},
+        {
+            "plan": plan.model_dump(mode="json"),
+            "envelope": env.model_dump(mode="json"),
+            "dry_run": False,
+        },
     )
     _, structured = await server.call_tool("recent_runs", {"limit": 5})
     rows = structured.get("result", structured)

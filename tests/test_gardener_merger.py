@@ -20,7 +20,8 @@ def _pathway(
     permissions: Permission | None = None,
 ) -> CompiledPathway:
     env = Envelope(
-        generated_by="test", task="T",
+        generated_by="test",
+        task="T",
         permissions=permissions or Permission(shell=True),
     )
     plan = ActionPlan(source="tmpl", task="T", steps=[ShellStep(id="s1", command="echo")])
@@ -70,9 +71,13 @@ def test_incompatible_permissions_prevents_merge(tmp_path):
     store.put(a)
     store.put(b)
 
-    report = merge(store, MergeConfig(
-        similarity_threshold=0.9, require_compatible_permissions=True,
-    ))
+    report = merge(
+        store,
+        MergeConfig(
+            similarity_threshold=0.9,
+            require_compatible_permissions=True,
+        ),
+    )
     assert report.merged_pairs == []
     assert len(store.list_all()) == 2
 
@@ -133,18 +138,32 @@ def test_cross_embedding_version_not_merged(tmp_path):
     # merge — a cross-space similarity is meaningless and could delete an
     # unrelated pathway.
     store = PathwayStore(tmp_path / "p.db")
-    a = _pathway("a", [1.0, 0.0, 0.0]).model_copy(update={"embedding_model": "m", "embedding_model_version": "3"})
-    b = _pathway("b", [1.0, 0.0, 0.0]).model_copy(update={"embedding_model": "m", "embedding_model_version": "4"})
-    store.put(a); store.put(b)
-    report = merge(store, MergeConfig(similarity_threshold=0.5, require_compatible_permissions=False))
+    a = _pathway("a", [1.0, 0.0, 0.0]).model_copy(
+        update={"embedding_model": "m", "embedding_model_version": "3"}
+    )
+    b = _pathway("b", [1.0, 0.0, 0.0]).model_copy(
+        update={"embedding_model": "m", "embedding_model_version": "4"}
+    )
+    store.put(a)
+    store.put(b)
+    report = merge(
+        store, MergeConfig(similarity_threshold=0.5, require_compatible_permissions=False)
+    )
     assert report.merged_pairs == []
     assert len(store.list_all()) == 2
 
 
 def test_mismatched_embedding_dimension_does_not_crash_merge(tmp_path):
     store = PathwayStore(tmp_path / "p.db")
-    a = _pathway("a", [1.0, 0.0, 0.0]).model_copy(update={"embedding_model": "m", "embedding_model_version": "3"})
-    b = _pathway("b", [1.0, 0.0]).model_copy(update={"embedding_model": "m", "embedding_model_version": "3"})
-    store.put(a); store.put(b)
-    report = merge(store, MergeConfig(similarity_threshold=0.5, require_compatible_permissions=False))
+    a = _pathway("a", [1.0, 0.0, 0.0]).model_copy(
+        update={"embedding_model": "m", "embedding_model_version": "3"}
+    )
+    b = _pathway("b", [1.0, 0.0]).model_copy(
+        update={"embedding_model": "m", "embedding_model_version": "3"}
+    )
+    store.put(a)
+    store.put(b)
+    report = merge(
+        store, MergeConfig(similarity_threshold=0.5, require_compatible_permissions=False)
+    )
     assert report.merged_pairs == []  # skipped, no ValueError

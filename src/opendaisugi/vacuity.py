@@ -12,6 +12,7 @@ compiled once over the symbolic step — sufficient to detect per-step vacuity.
 For plan-level quantifiers without quantified variables (``DependsOn``,
 ``Before``), the raw expression is compiled directly.
 """
+
 from __future__ import annotations
 
 from collections import OrderedDict
@@ -19,6 +20,7 @@ from typing import Literal
 
 import z3
 
+from opendaisugi import z3_checks
 from opendaisugi.predicate import ExistsStep, Expression, ForallOutputs, ForallSteps
 from opendaisugi.predicate_z3 import _compile_scalar, _Scope
 
@@ -90,42 +92,51 @@ def check_vacuity(expr: Expression, *, timeout_ms: int = 500) -> Verdict:
 
 
 def _compute_vacuity(expr: Expression, timeout_ms: int) -> Verdict:
-    # Strip outer quantifiers — vacuity operates on the per-step/per-output predicate.
-    inner: Expression
-    if isinstance(expr, (ForallSteps, ExistsStep, ForallOutputs)):
-        inner = expr.pred
-    else:
-        inner = expr
+    # Shared with z3_checks.py/predicate_z3.py/subsumption.py — see
+    # Z3_SOLVE_LOCK's docstring in z3_checks.py. check_vacuity() is reached
+    # from verify.py's per-invariant/postcondition predicate check (inside
+    # the gate's timeout worker thread) and from aliases.py's registration
+    # path, both on the same shared Z3 global context the resident gate
+    # server's other connection threads may be solving on concurrently. The
+    # LRU memo lookup/store around this call stays outside the lock — only
+    # the AST-build + both solver.check() calls need it.
+    with z3_checks.Z3_SOLVE_LOCK:
+        # Strip outer quantifiers — vacuity operates on the per-step/per-output predicate.
+        inner: Expression
+        if isinstance(expr, (ForallSteps, ExistsStep, ForallOutputs)):
+            inner = expr.pred
+        else:
+            inner = expr
 
-    soft: list[str] = []
-    scope = _Scope(prefix="vac", concrete=None)  # fully symbolic — no concrete plan
-    term = _compile_scalar(inner, scope, soft, "vac")
+        soft: list[str] = []
+        scope = _Scope(prefix="vac", concrete=None)  # fully symbolic — no concrete plan
+        term = _compile_scalar(inner, scope, soft, "vac")
 
-    # Domain assumptions (e.g. string variable equality constraints). Soft nodes
-    # stay free (not added to any solver).
-    assumptions: list[z3.BoolRef] = list(scope.assumptions)
+        # Domain assumptions (e.g. string variable equality constraints). Soft nodes
+        # stay free (not added to any solver).
+        assumptions: list[z3.BoolRef] = list(scope.assumptions)
 
-    # --- Contradiction check: is the predicate UNSAT within the domain? ---
-    # Assumptions belong here: we ask whether a satisfying assignment exists at all.
-    s_sat = z3.Solver()
-    s_sat.set("timeout", timeout_ms)
-    if assumptions:
-        s_sat.add(*assumptions)
-    s_sat.add(term)
-    sat_result = s_sat.check()
-    if sat_result == z3.unsat:
-        return "contradiction"
+        # --- Contradiction check: is the predicate UNSAT within the domain? ---
+        # Assumptions belong here: we ask whether a satisfying assignment exists at all.
+        s_sat = z3.Solver()
+        s_sat.set("timeout", timeout_ms)
+        if assumptions:
+            s_sat.add(*assumptions)
+        s_sat.add(term)
+        sat_result = s_sat.check()
+        if sat_result == z3.unsat:
+            return "contradiction"
 
-    # --- Tautology check: is the negation UNSAT? ---
-    # Assumptions are deliberately NOT added here. Adding them would report a
-    # predicate as a tautology when it is only "always true" within the assumed
-    # domain — a genuine constraint, not safety-theater. We want unconditional
-    # tautologies only.
-    s_taut = z3.Solver()
-    s_taut.set("timeout", timeout_ms)
-    s_taut.add(z3.Not(term))
-    taut_result = s_taut.check()
-    if taut_result == z3.unsat:
-        return "tautology"
+        # --- Tautology check: is the negation UNSAT? ---
+        # Assumptions are deliberately NOT added here. Adding them would report a
+        # predicate as a tautology when it is only "always true" within the assumed
+        # domain — a genuine constraint, not safety-theater. We want unconditional
+        # tautologies only.
+        s_taut = z3.Solver()
+        s_taut.set("timeout", timeout_ms)
+        s_taut.add(z3.Not(term))
+        taut_result = s_taut.check()
+        if taut_result == z3.unsat:
+            return "tautology"
 
-    return "non_trivial"
+        return "non_trivial"

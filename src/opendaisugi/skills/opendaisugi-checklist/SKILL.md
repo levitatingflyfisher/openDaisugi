@@ -23,6 +23,7 @@ description: Use when a task's failure mode is silent omission (agent forgets a 
    from typing import Literal
    from opendaisugi.models import StepBase, step_type, Postcondition
 
+
    @step_type
    class DraftEmail(StepBase):
        type: Literal["draft_email"] = "draft_email"
@@ -30,7 +31,8 @@ description: Use when a task's failure mode is silent omission (agent forgets a 
        body: str
        signature: str
        postcondition: Postcondition | None = Postcondition(
-           type="evidence_present", path="draft_hash",
+           type="evidence_present",
+           path="draft_hash",
        )
    ```
 

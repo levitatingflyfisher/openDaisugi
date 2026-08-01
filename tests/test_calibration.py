@@ -67,6 +67,4 @@ async def test_calibration_meets_ship_criteria():
     )
 
     # Ship criterion 2: 100% Z3 self-consistency among generated envelopes.
-    assert z3_failures == [], (
-        f"Z3 self-consistency failures: {z3_failures}"
-    )
+    assert z3_failures == [], f"Z3 self-consistency failures: {z3_failures}"

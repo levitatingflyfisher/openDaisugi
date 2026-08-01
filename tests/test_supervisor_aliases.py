@@ -2,6 +2,7 @@
 alias-bearing envelopes are usable through the supervised path (not just the
 Daisugi facade). Without it, AliasRefs fail closed with no way to resolve them.
 """
+
 from __future__ import annotations
 
 from opendaisugi.aliases import AliasRegistry
@@ -25,14 +26,17 @@ async def test_supervisor_forwards_aliases_to_verify(monkeypatch):
         return VerificationResult(
             ok=False,
             violations=[Violation(stage="permissions", message="halt for test")],
-            envelope_id=envelope.id, plan_id=plan.id, duration_ms=0.0,
+            envelope_id=envelope.id,
+            plan_id=plan.id,
+            duration_ms=0.0,
         )
 
     monkeypatch.setattr("opendaisugi.supervisor.verify", fake_verify)
     reg = AliasRegistry()
     sup = Supervisor(aliases=reg)
     plan = ActionPlan(source="t", task="t", steps=[ShellStep(id="s1", command="ls")])
-    env = Envelope(generated_by="t", task="t",
-                   permissions=Permission(shell=True, shell_allowlist=["ls"]))
+    env = Envelope(
+        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["ls"])
+    )
     await sup.run(plan, env)
     assert captured["aliases"] is reg

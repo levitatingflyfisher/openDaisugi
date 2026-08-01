@@ -2,6 +2,7 @@
 is supplied, so alias-backed postconditions are usable through the supervised path
 (they previously always produced a spurious fail-closed violation).
 """
+
 from __future__ import annotations
 
 from opendaisugi.aliases import Alias, AliasRef, AliasRegistry
@@ -12,17 +13,32 @@ from opendaisugi.stage2 import verify_completed_step
 
 def _reg():
     reg = AliasRegistry()
-    reg.register(Alias(name="cmd_is_ls", tier="household",
-        expr=parse_expression({"op": "forall_steps",
-            "pred": {"op": "equals", "path": "command", "value": "ls"}})))
+    reg.register(
+        Alias(
+            name="cmd_is_ls",
+            tier="household",
+            expr=parse_expression(
+                {"op": "forall_steps", "pred": {"op": "equals", "path": "command", "value": "ls"}}
+            ),
+        )
+    )
     return reg
 
 
 def _env():
-    return Envelope(generated_by="t", task="t",
-                    permissions=Permission(shell=True, shell_allowlist=["ls"]),
-                    postconditions=[Postcondition(type="cmd_is_ls", description="via alias",
-                                                  expr=AliasRef(name="cmd_is_ls"), enforce=True)])
+    return Envelope(
+        generated_by="t",
+        task="t",
+        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        postconditions=[
+            Postcondition(
+                type="cmd_is_ls",
+                description="via alias",
+                expr=AliasRef(name="cmd_is_ls"),
+                enforce=True,
+            )
+        ],
+    )
 
 
 def test_stage2_resolves_postcondition_alias_with_registry():

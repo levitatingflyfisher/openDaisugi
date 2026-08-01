@@ -18,6 +18,7 @@ The transport layer (git in v0.25, optional HTTP in some future v0.26+)
 moves bundle YAML files between instances. The bundle format itself is
 the contract.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -37,36 +38,34 @@ class PathwayBundle(BaseModel):
     pathway: CompiledPathway
     structure_signature: str = Field(
         description="From v0.24's plan_structure_signature(pathway.plan_template); "
-                    "denormalized onto the bundle so consumers can index without "
-                    "deserializing the full pathway."
+        "denormalized onto the bundle so consumers can index without "
+        "deserializing the full pathway."
     )
     publisher: str = Field(
         description="Human-readable publisher id (e.g. 'alice@laptop', "
-                    "'build-server-2'). Cosmetic — trust gates "
-                    "on the ed25519 signing key, not this string."
+        "'build-server-2'). Cosmetic — trust gates "
+        "on the ed25519 signing key, not this string."
     )
     published_at: float
     bundle_hash: str = Field(
         description="sha256(canonical-JSON(pathway, publisher, published_at)). "
-                    "Content-addresses the bundle for git filename + de-dup."
+        "Content-addresses the bundle for git filename + de-dup."
     )
     signature_b64: str | None = Field(
         default=None,
         description="ed25519 signature (base64) over the canonical-JSON of "
-                    "(pathway, publisher, published_at). None for unsigned "
-                    "bundles, which trusted-signer consumers refuse."
+        "(pathway, publisher, published_at). None for unsigned "
+        "bundles, which trusted-signer consumers refuse.",
     )
     signer_pubkey_b64: str | None = Field(
         default=None,
         description="Base64-encoded ed25519 public key matching "
-                    "``signature_b64``. Consumer looks this up in their "
-                    "TrustedSignerRegistry."
+        "``signature_b64``. Consumer looks this up in their "
+        "TrustedSignerRegistry.",
     )
 
 
-def _canonical_payload(
-    pathway: CompiledPathway, publisher: str, published_at: float
-) -> bytes:
+def _canonical_payload(pathway: CompiledPathway, publisher: str, published_at: float) -> bytes:
     """Canonical-JSON encoding for hashing and signing.
 
     Sorted keys, stable separators, str-fallback for non-JSON-native types
@@ -78,17 +77,12 @@ def _canonical_payload(
         "publisher": publisher,
         "published_at": published_at,
     }
-    return json.dumps(body, sort_keys=True, separators=(",", ":"),
-                      default=str).encode("utf-8")
+    return json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
 
 
-def compute_bundle_hash(
-    pathway: CompiledPathway, publisher: str, published_at: float
-) -> str:
+def compute_bundle_hash(pathway: CompiledPathway, publisher: str, published_at: float) -> str:
     """Content-address a bundle. Stable: same inputs → same hash."""
-    return hashlib.sha256(
-        _canonical_payload(pathway, publisher, published_at)
-    ).hexdigest()
+    return hashlib.sha256(_canonical_payload(pathway, publisher, published_at)).hexdigest()
 
 
 def pathway_to_bundle(
@@ -108,10 +102,12 @@ def pathway_to_bundle(
     Omit both for an unsigned bundle (refused by trust-gating consumers).
     """
     import time as _time
+
     if published_at is None:
         published_at = _time.time()
     if not pathway.structure_signature:
         from opendaisugi.distiller import plan_structure_signature
+
         try:
             structure_sig = plan_structure_signature(pathway.plan_template)
         except Exception:
@@ -128,6 +124,7 @@ def pathway_to_bundle(
                 "consumer verification)"
             )
         from opendaisugi.signing import sign_bytes
+
         payload = _canonical_payload(pathway, publisher, published_at)
         signature_b64 = sign_bytes(payload, private_key_b64)
     return PathwayBundle(
@@ -177,9 +174,7 @@ def bundle_to_pathway(
     """
     if bundle.signature_b64 is None:
         if require_signed:
-            raise UnsignedBundleError(
-                f"bundle {bundle.bundle_hash[:12]} is unsigned; refusing"
-            )
+            raise UnsignedBundleError(f"bundle {bundle.bundle_hash[:12]} is unsigned; refusing")
         return bundle.pathway
     if bundle.signer_pubkey_b64 is None:
         raise InvalidSignatureError(
@@ -200,11 +195,12 @@ def bundle_to_pathway(
             f"{bundle.signer_pubkey_b64[:16]}…; not in trusted-signers list"
         )
     from opendaisugi.signing import verify_bytes
+
     payload = _canonical_payload(
-        bundle.pathway, bundle.publisher, bundle.published_at,
+        bundle.pathway,
+        bundle.publisher,
+        bundle.published_at,
     )
     if not verify_bytes(payload, bundle.signature_b64, bundle.signer_pubkey_b64):
-        raise InvalidSignatureError(
-            f"bundle {bundle.bundle_hash[:12]} signature does not verify"
-        )
+        raise InvalidSignatureError(f"bundle {bundle.bundle_hash[:12]} signature does not verify")
     return bundle.pathway

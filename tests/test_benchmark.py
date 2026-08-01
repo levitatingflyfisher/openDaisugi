@@ -24,10 +24,14 @@ def _fake_runner_warm_is_cheaper(task, *, warm, seed):
     base_tokens = 1000 + (seed * 10)
     base_ms = 500.0 + seed
     if warm:
-        return RunMetric(tokens=int(base_tokens * 0.6), latency_ms=base_ms * 0.7,
-                         success=True, denials=0, violations=0)
-    return RunMetric(tokens=base_tokens, latency_ms=base_ms, success=True,
-                     denials=0, violations=0)
+        return RunMetric(
+            tokens=int(base_tokens * 0.6),
+            latency_ms=base_ms * 0.7,
+            success=True,
+            denials=0,
+            violations=0,
+        )
+    return RunMetric(tokens=base_tokens, latency_ms=base_ms, success=True, denials=0, violations=0)
 
 
 def _tasks(n):
@@ -76,8 +80,7 @@ def test_summary_reports_outcome_rates():
 def test_safety_direction_flags_warm_increasing_denials():
     def _unsafe_warm(task, *, warm, seed):
         # Warm runs attempt MORE denied actions — the regression Stage 4 must catch.
-        return RunMetric(tokens=100, latency_ms=10.0, success=True,
-                         denials=(2 if warm else 0))
+        return RunMetric(tokens=100, latency_ms=10.0, success=True, denials=(2 if warm else 0))
 
     results = run_paired_benchmark(_tasks(3), _unsafe_warm, repeats=5)
     s = summarize(results)
@@ -123,6 +126,7 @@ def test_cost_deltas_are_computed_over_successful_runs_only():
     drag the cold cost mean down — that would understate distillation's saving.
     Cost deltas are stratified to successful runs; the outcome delta is where
     failure shows up."""
+
     def _runner(task, *, warm, seed):
         if warm:
             return RunMetric(tokens=600, latency_ms=300.0, success=True)
@@ -130,7 +134,7 @@ def test_cost_deltas_are_computed_over_successful_runs_only():
         # half succeed at full cost.
         if seed % 2 == 0:
             return RunMetric(tokens=50, latency_ms=20.0, success=False)  # cheap failure
-        return RunMetric(tokens=1000, latency_ms=500.0, success=True)     # full success
+        return RunMetric(tokens=1000, latency_ms=500.0, success=True)  # full success
 
     results = run_paired_benchmark(_tasks(4), _runner, repeats=6)
     s = summarize(results)
@@ -146,6 +150,7 @@ def test_cost_deltas_are_computed_over_successful_runs_only():
 def test_cost_delta_undefined_when_an_arm_never_succeeds():
     def _cold_always_fails(task, *, warm, seed):
         return RunMetric(tokens=100, latency_ms=10.0, success=warm)  # only warm succeeds
+
     results = run_paired_benchmark(_tasks(3), _cold_always_fails, repeats=5)
     s = summarize(results)
     # No paired successes → no cost delta, and that's surfaced, not faked as 0.

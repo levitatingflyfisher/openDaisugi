@@ -1,4 +1,5 @@
 """Step types for the AI agent council kit (v0.18 worked example)."""
+
 from __future__ import annotations
 
 from typing import Literal
@@ -12,7 +13,8 @@ class SubmitContribution(StepBase):
     submitter: str
     content: str
     postcondition: Postcondition | None = Postcondition(
-        type="evidence_present", path="content_hash",
+        type="evidence_present",
+        path="content_hash",
     )
 
 
@@ -22,7 +24,8 @@ class AgentReview(StepBase):
     contribution_id: str
     reviewer_id: str
     postcondition: Postcondition | None = Postcondition(
-        type="evidence_present", path="signed_hash",
+        type="evidence_present",
+        path="signed_hash",
     )
 
 
@@ -33,7 +36,8 @@ class AggregateVotes(StepBase):
     quorum_m: int
     council_size_n: int
     postcondition: Postcondition | None = Postcondition(
-        type="evidence_present", path="quorum_met",
+        type="evidence_present",
+        path="quorum_met",
     )
 
 
@@ -42,5 +46,6 @@ class CommitOrReject(StepBase):
     type: Literal["commit_or_reject"] = "commit_or_reject"
     contribution_id: str
     postcondition: Postcondition | None = Postcondition(
-        type="evidence_present", path="decision",
+        type="evidence_present",
+        path="decision",
     )

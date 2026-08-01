@@ -4,6 +4,7 @@
 - Failed/rejected runs do not count toward the threshold
 - tend() resets the counter so every N successes fires once
 """
+
 from __future__ import annotations
 
 from unittest import mock
@@ -26,7 +27,8 @@ def _plan():
 
 def _env():
     return Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["ls"]),
     )
 
@@ -52,7 +54,7 @@ async def test_daisugi_run_returns_session(tmp_path):
     d = Daisugi(data_dir=tmp_path, cache=False, pathway_store=False)
     succeeded = _session(RunStatus.SUCCEEDED)
 
-    with mock.patch("opendaisugi.Supervisor") as MockSup:
+    with mock.patch("opendaisugi.supervisor.Supervisor") as MockSup:
         MockSup.return_value.run = mock.AsyncMock(return_value=succeeded)
         session = await d.run(_plan(), _env())
 
@@ -70,7 +72,7 @@ async def test_tend_after_triggers_on_nth_success(tmp_path):
         tend_calls.append(1)
         return mock.MagicMock()
 
-    with mock.patch("opendaisugi.Supervisor") as MockSup:
+    with mock.patch("opendaisugi.supervisor.Supervisor") as MockSup:
         MockSup.return_value.run = mock.AsyncMock(return_value=succeeded)
         with mock.patch.object(d, "tend", side_effect=fake_tend):
             await d.run(_plan(), _env())
@@ -92,7 +94,7 @@ async def test_failed_run_does_not_count(tmp_path):
         tend_calls.append(1)
         return mock.MagicMock()
 
-    with mock.patch("opendaisugi.Supervisor") as MockSup:
+    with mock.patch("opendaisugi.supervisor.Supervisor") as MockSup:
         MockSup.return_value.run = mock.AsyncMock(side_effect=[succeeded, failed, succeeded])
         with mock.patch.object(d, "tend", side_effect=fake_tend):
             await d.run(_plan(), _env())  # success #1
@@ -113,7 +115,7 @@ async def test_tend_resets_counter(tmp_path):
         tend_calls.append(1)
         return mock.MagicMock()
 
-    with mock.patch("opendaisugi.Supervisor") as MockSup:
+    with mock.patch("opendaisugi.supervisor.Supervisor") as MockSup:
         MockSup.return_value.run = mock.AsyncMock(return_value=succeeded)
         with mock.patch.object(d, "tend", side_effect=fake_tend):
             for _ in range(4):
@@ -126,7 +128,7 @@ async def test_no_tend_after_means_never_auto_tend(tmp_path):
     d = Daisugi(data_dir=tmp_path, cache=False, pathway_store=False)  # tend_after=None
     succeeded = _session(RunStatus.SUCCEEDED)
 
-    with mock.patch("opendaisugi.Supervisor") as MockSup:
+    with mock.patch("opendaisugi.supervisor.Supervisor") as MockSup:
         MockSup.return_value.run = mock.AsyncMock(return_value=succeeded)
         with mock.patch.object(d, "tend") as mock_tend:
             for _ in range(10):
@@ -144,7 +146,7 @@ async def test_v028_4_tend_failure_does_not_fail_run(tmp_path):
     d = Daisugi(data_dir=tmp_path, cache=False, pathway_store=False, tend_after=1)
     succeeded = _session(RunStatus.SUCCEEDED)
 
-    with mock.patch("opendaisugi.Supervisor") as MockSup:
+    with mock.patch("opendaisugi.supervisor.Supervisor") as MockSup:
         MockSup.return_value.run = mock.AsyncMock(return_value=succeeded)
         with mock.patch.object(d, "tend", side_effect=RuntimeError("embedder boom")):
             session = await d.run(_plan(), _env())

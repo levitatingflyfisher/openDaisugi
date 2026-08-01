@@ -63,10 +63,7 @@ def _permissions_compatible(a: Permission, b: Permission) -> bool:
     original pathways relied on.
     """
     merged = intersect_permissions([a, b])
-    return (
-        merged.model_dump() == a.model_dump()
-        and merged.model_dump() == b.model_dump()
-    )
+    return merged.model_dump() == a.model_dump() and merged.model_dump() == b.model_dump()
 
 
 def _pick_winner(a: CompiledPathway, b: CompiledPathway) -> tuple[CompiledPathway, CompiledPathway]:
@@ -111,7 +108,8 @@ def merge(
             # unrelated winner) or crashes on a dimension mismatch. This is the
             # same hazard PathwayStore.find() guards against.
             if (a.embedding_model, a.embedding_model_version) != (
-                b.embedding_model, b.embedding_model_version
+                b.embedding_model,
+                b.embedding_model_version,
             ):
                 continue
             if len(a.task_embedding) != len(b.task_embedding):
@@ -131,9 +129,7 @@ def merge(
 
             if not dry_run:
                 # Union source_trace_ids onto the winner.
-                merged_sources = sorted(
-                    set(winner.source_trace_ids) | set(loser.source_trace_ids)
-                )
+                merged_sources = sorted(set(winner.source_trace_ids) | set(loser.source_trace_ids))
                 winner.source_trace_ids = merged_sources
                 winner.hit_count = winner.hit_count + loser.hit_count
                 winner.failure_count = winner.failure_count + loser.failure_count
@@ -148,6 +144,8 @@ def merge(
     report.kept_ids = sorted(p.id for p in pathways if p.id not in removed)
     _log.info(
         "merge complete: merged=%d kept=%d dry_run=%s",
-        report.merge_count, len(report.kept_ids), dry_run,
+        report.merge_count,
+        len(report.kept_ids),
+        dry_run,
     )
     return report

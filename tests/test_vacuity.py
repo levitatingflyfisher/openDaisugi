@@ -1,4 +1,5 @@
 """v0.27.0 — Z3-backed tautology/contradiction detection on predicates."""
+
 from __future__ import annotations
 
 from opendaisugi.predicate import parse_expression
@@ -11,26 +12,39 @@ def _expr(d):
 
 def test_tautology_detected():
     # forall_steps( equals(type,'shell') OR not_equals(type,'shell') ) — always true
-    e = _expr({"op": "forall_steps", "pred": {
-        "op": "or", "children": [
-            {"op": "equals", "path": "type", "value": "shell"},
-            {"op": "not_equals", "path": "type", "value": "shell"},
-        ]}})
+    e = _expr(
+        {
+            "op": "forall_steps",
+            "pred": {
+                "op": "or",
+                "children": [
+                    {"op": "equals", "path": "type", "value": "shell"},
+                    {"op": "not_equals", "path": "type", "value": "shell"},
+                ],
+            },
+        }
+    )
     assert check_vacuity(e) == "tautology"
 
 
 def test_contradiction_detected():
-    e = _expr({"op": "forall_steps", "pred": {
-        "op": "and", "children": [
-            {"op": "equals", "path": "type", "value": "shell"},
-            {"op": "not_equals", "path": "type", "value": "shell"},
-        ]}})
+    e = _expr(
+        {
+            "op": "forall_steps",
+            "pred": {
+                "op": "and",
+                "children": [
+                    {"op": "equals", "path": "type", "value": "shell"},
+                    {"op": "not_equals", "path": "type", "value": "shell"},
+                ],
+            },
+        }
+    )
     assert check_vacuity(e) == "contradiction"
 
 
 def test_nontrivial_predicate():
-    e = _expr({"op": "forall_steps",
-               "pred": {"op": "equals", "path": "type", "value": "shell"}})
+    e = _expr({"op": "forall_steps", "pred": {"op": "equals", "path": "type", "value": "shell"}})
     assert check_vacuity(e) == "non_trivial"
 
 
@@ -47,8 +61,7 @@ def test_vacuity_result_is_cached_on_repeat_call():
     from opendaisugi import vacuity as vac_mod
 
     clear_vacuity_cache()
-    e = _expr({"op": "forall_steps",
-               "pred": {"op": "equals", "path": "type", "value": "shell"}})
+    e = _expr({"op": "forall_steps", "pred": {"op": "equals", "path": "type", "value": "shell"}})
     first = check_vacuity(e)
     assert first == "non_trivial"
 
@@ -73,16 +86,15 @@ def test_vacuity_cache_keys_on_expr_shape_not_identity():
     from opendaisugi import vacuity as vac_mod
 
     clear_vacuity_cache()
-    e1 = _expr({"op": "forall_steps",
-                "pred": {"op": "equals", "path": "type", "value": "shell"}})
-    e2 = _expr({"op": "forall_steps",
-                "pred": {"op": "equals", "path": "type", "value": "shell"}})
+    e1 = _expr({"op": "forall_steps", "pred": {"op": "equals", "path": "type", "value": "shell"}})
+    e2 = _expr({"op": "forall_steps", "pred": {"op": "equals", "path": "type", "value": "shell"}})
     assert e1 is not e2  # different parser invocations
     check_vacuity(e1)
 
     original = vac_mod._compute_vacuity
     vac_mod._compute_vacuity = lambda *a, **kw: (_ for _ in ()).throw(
-        AssertionError("equal exprs must hit cache"))
+        AssertionError("equal exprs must hit cache")
+    )
     try:
         check_vacuity(e2)
     finally:
@@ -96,8 +108,7 @@ def test_vacuity_cache_keys_on_timeout_separately():
     from opendaisugi import vacuity as vac_mod
 
     clear_vacuity_cache()
-    e = _expr({"op": "forall_steps",
-               "pred": {"op": "equals", "path": "type", "value": "shell"}})
+    e = _expr({"op": "forall_steps", "pred": {"op": "equals", "path": "type", "value": "shell"}})
     check_vacuity(e, timeout_ms=500)
 
     # Different timeout → must miss the cache → recomputes.
@@ -127,10 +138,14 @@ def test_vacuity_cache_is_bounded():
     vac_mod._VACUITY_CACHE_MAX = 4
     try:
         for i in range(10):
-            check_vacuity(_expr({
-                "op": "forall_steps",
-                "pred": {"op": "equals", "path": "type", "value": f"shell_{i}"},
-            }))
+            check_vacuity(
+                _expr(
+                    {
+                        "op": "forall_steps",
+                        "pred": {"op": "equals", "path": "type", "value": f"shell_{i}"},
+                    }
+                )
+            )
         assert len(vac_mod._VACUITY_CACHE) == 4
     finally:
         vac_mod._VACUITY_CACHE_MAX = original_max

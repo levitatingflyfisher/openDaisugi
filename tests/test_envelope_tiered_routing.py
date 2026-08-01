@@ -1,4 +1,5 @@
 """Tiered model routing — escalation ladder (v0.1.3)."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,13 +13,22 @@ from opendaisugi.models import Envelope, FallbackStrategy, Permission, Violation
 
 def _make_envelope(id_: str = "env_t") -> Envelope:
     return Envelope(
-        id=id_, generated_by="test", task="t",
+        id=id_,
+        generated_by="test",
+        task="t",
         permissions=Permission(
-            file_read=[], file_write=[], network=False, network_hosts=[],
-            shell=False, shell_allowlist=[],
-            max_execution_time_s=30, max_output_size_mb=10,
+            file_read=[],
+            file_write=[],
+            network=False,
+            network_hosts=[],
+            shell=False,
+            shell_allowlist=[],
+            max_execution_time_s=30,
+            max_output_size_mb=10,
         ),
-        invariants=[], postconditions=[], fallback=FallbackStrategy(),
+        invariants=[],
+        postconditions=[],
+        fallback=FallbackStrategy(),
     )
 
 
@@ -56,15 +66,22 @@ async def test_ladder_escalates_on_instructor_exhaustion():
     env_opus = _make_envelope("env_opus")
 
     sonnet_client = MagicMock()
-    sonnet_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("instructor parse exhausted"))
+    sonnet_client.chat.completions.create = AsyncMock(
+        side_effect=RuntimeError("instructor parse exhausted")
+    )
     opus_client = MagicMock()
     opus_client.chat.completions.create = AsyncMock(return_value=env_opus)
 
     def client_factory(model):
         return sonnet_client if "sonnet" in model else opus_client
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", side_effect=client_factory), \
-         patch("opendaisugi.envelope._llm.translate_llm_error", side_effect=lambda e: EnvelopeGenerationError(str(e))):
+    with (
+        patch("opendaisugi.envelope._llm.get_instructor_client", side_effect=client_factory),
+        patch(
+            "opendaisugi.envelope._llm.translate_llm_error",
+            side_effect=lambda e: EnvelopeGenerationError(str(e)),
+        ),
+    ):
         out = await generate_envelope(
             task="t",
             model=["anthropic/claude-sonnet-4-20250514", "anthropic/claude-opus-4-20250514"],
@@ -91,8 +108,10 @@ async def test_ladder_escalates_on_z3_self_consistency_violation():
             return [Violation(stage="z3", message="inconsistent", detail={})]
         return []
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", side_effect=client_factory), \
-         patch("opendaisugi.envelope.check_envelope_self_consistency", side_effect=fake_selfcheck):
+    with (
+        patch("opendaisugi.envelope._llm.get_instructor_client", side_effect=client_factory),
+        patch("opendaisugi.envelope.check_envelope_self_consistency", side_effect=fake_selfcheck),
+    ):
         out = await generate_envelope(
             task="t",
             model=["anthropic/claude-sonnet-4-20250514", "anthropic/claude-opus-4-20250514"],
@@ -106,8 +125,13 @@ async def test_ladder_exhaustion_raises_ModelLadderExhausted():
     fake = MagicMock()
     fake.chat.completions.create = AsyncMock(side_effect=RuntimeError("parse fail"))
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake), \
-         patch("opendaisugi.envelope._llm.translate_llm_error", side_effect=lambda e: EnvelopeGenerationError(str(e))):
+    with (
+        patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake),
+        patch(
+            "opendaisugi.envelope._llm.translate_llm_error",
+            side_effect=lambda e: EnvelopeGenerationError(str(e)),
+        ),
+    ):
         with pytest.raises(ModelLadderExhausted) as ei:
             await generate_envelope(task="t", model=["m1", "m2"])
 
@@ -130,21 +154,41 @@ async def test_ladder_cache_key_uses_successful_model(tmp_path):
     def factory(model):
         return sonnet if "sonnet" in model else opus
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", side_effect=factory), \
-         patch("opendaisugi.envelope._llm.translate_llm_error", side_effect=lambda e: EnvelopeGenerationError(str(e))):
+    with (
+        patch("opendaisugi.envelope._llm.get_instructor_client", side_effect=factory),
+        patch(
+            "opendaisugi.envelope._llm.translate_llm_error",
+            side_effect=lambda e: EnvelopeGenerationError(str(e)),
+        ),
+    ):
         await generate_envelope(
-            task="t", cache=cache,
+            task="t",
+            cache=cache,
             model=["anthropic/claude-sonnet-4-20250514", "anthropic/claude-opus-4-20250514"],
         )
 
-    assert cache.get(
-        task="t", context=None, model="anthropic/claude-opus-4-20250514",
-        parent_envelope_id=None, summarize=False, thinking_budget="standard",
-    ) is not None
-    assert cache.get(
-        task="t", context=None, model="anthropic/claude-sonnet-4-20250514",
-        parent_envelope_id=None, summarize=False, thinking_budget="standard",
-    ) is None
+    assert (
+        cache.get(
+            task="t",
+            context=None,
+            model="anthropic/claude-opus-4-20250514",
+            parent_envelope_id=None,
+            summarize=False,
+            thinking_budget="standard",
+        )
+        is not None
+    )
+    assert (
+        cache.get(
+            task="t",
+            context=None,
+            model="anthropic/claude-sonnet-4-20250514",
+            parent_envelope_id=None,
+            summarize=False,
+            thinking_budget="standard",
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -155,15 +199,20 @@ async def test_ladder_cache_hit_at_first_rung_short_circuits_llm(tmp_path):
     cached = _make_envelope("env_cached")
     cache.put(
         cached,
-        task="t", context=None, model="anthropic/claude-sonnet-4-20250514",
-        parent_envelope_id=None, summarize=False, thinking_budget="standard",
+        task="t",
+        context=None,
+        model="anthropic/claude-sonnet-4-20250514",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="standard",
     )
 
     fake = MagicMock()
     fake.chat.completions.create = AsyncMock(side_effect=AssertionError("should not be called"))
     with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake):
         out = await generate_envelope(
-            task="t", cache=cache,
+            task="t",
+            cache=cache,
             model=["anthropic/claude-sonnet-4-20250514", "anthropic/claude-opus-4-20250514"],
         )
 

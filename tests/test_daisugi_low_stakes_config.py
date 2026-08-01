@@ -1,4 +1,5 @@
 """Facade-level low-stakes configuration (v0.1.3)."""
+
 from __future__ import annotations
 
 import pytest
@@ -46,7 +47,8 @@ async def test_daisugi_with_default_low_stakes_returns_default(tmp_path):
 @pytest.mark.asyncio
 async def test_daisugi_explicit_low_stakes_envelope_used(tmp_path, sample_envelope):
     d = Daisugi(
-        data_dir=tmp_path / "dd", cache=False,
+        data_dir=tmp_path / "dd",
+        cache=False,
         low_stakes_envelope=sample_envelope,
     )
     env = await d.generate_envelope(task="x", stakes="low")

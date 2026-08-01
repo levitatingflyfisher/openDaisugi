@@ -34,6 +34,9 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check .
 
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
       - name: Test (pytest)
         # Smoke/calibration tests need a live LLM / `claude` binary and are gated by
         # env vars (DAISUGI_SMOKE / ANTHROPIC_API_KEY); they stay skipped in CI.

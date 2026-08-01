@@ -13,7 +13,10 @@ from opendaisugi.models import Permission
 def intersect_permissions(perms: list[Permission]) -> Permission:
     """Return the tightest Permission covering all inputs.
 
-    - Boolean flags: logical AND (only True if all are True).
+    - Boolean flags (shell, network, shell_allow_decomposition): logical AND
+      (only True if all are True). Omitting one here is not merely untidy: the
+      merged Permission falls back to the field default, so an opt-in every
+      input shared would be silently reverted.
     - List fields (shell_allowlist, file_read, file_write, network_hosts):
       set intersection, sorted for determinism.
     - Int ceilings (max_execution_time_s, max_output_size_mb): minimum,
@@ -29,7 +32,7 @@ def intersect_permissions(perms: list[Permission]) -> Permission:
 
     # Fields we know about on Permission. Mirror the model definition —
     # if Permission gains new fields this helper must be updated.
-    bool_fields = ("shell", "network")
+    bool_fields = ("shell", "network", "shell_allow_decomposition")
     list_fields = ("shell_allowlist", "file_read", "file_write", "network_hosts")
     int_min_fields = ("max_execution_time_s", "max_output_size_mb")
 

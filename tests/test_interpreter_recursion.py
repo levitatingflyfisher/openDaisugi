@@ -35,7 +35,8 @@ def _env(allowlist, *, policy="surface"):
 
 def _plan(command):
     return ActionPlan(
-        source="t", task="t",
+        source="t",
+        task="t",
         steps=[ShellStep(id="s1", command=command)],
     )
 
@@ -84,9 +85,7 @@ def test_parse_find_exec_single():
 
 
 def test_parse_find_exec_multiple():
-    p = parse_interpreter(
-        "find /tmp -exec rm {} ; -name '*.bak' -exec cat {} +"
-    )
+    p = parse_interpreter("find /tmp -exec rm {} ; -name '*.bak' -exec cat {} +")
     assert p is not None and p.inner_commands == ["rm '{}'", "cat '{}'"]
 
 
@@ -107,7 +106,7 @@ def test_parse_python_is_opaque():
 
 
 def test_parse_perl_is_opaque():
-    p = parse_interpreter('perl -e "system(\'rm\')"')
+    p = parse_interpreter("perl -e \"system('rm')\"")
     assert p is not None and p.opaque
 
 
@@ -139,9 +138,7 @@ def test_verify_blocks_sh_dash_c_rm():
     assert any("rm" in v.message for v in violations)
     # The violation is attributed to a depth>0 check.
     depths = [v.detail.get("depth", 0) for v in violations]
-    assert any(d > 0 for d in depths), (
-        f"expected a depth>0 violation, got depths={depths}"
-    )
+    assert any(d > 0 for d in depths), f"expected a depth>0 violation, got depths={depths}"
 
 
 def test_verify_allows_sh_c_with_permitted_inner():
@@ -159,9 +156,7 @@ def test_verify_blocks_nested_sh_c_rm():
     violations = check_permissions(plan, env)
     assert violations
     depths = [v.detail.get("depth", 0) for v in violations]
-    assert any(d >= 2 for d in depths), (
-        f"expected a depth>=2 violation, got depths={depths}"
-    )
+    assert any(d >= 2 for d in depths), f"expected a depth>=2 violation, got depths={depths}"
 
 
 def test_verify_blocks_xargs_rm():

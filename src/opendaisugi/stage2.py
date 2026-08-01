@@ -33,9 +33,8 @@ def _normalize_expr(raw):
 # postcondition; ``ok=False`` produces a Violation with ``detail``
 # attached.
 
-def _check_exit_code(
-    pc: Postcondition, step: Any
-) -> tuple[bool, dict[str, Any]]:
+
+def _check_exit_code(pc: Postcondition, step: Any) -> tuple[bool, dict[str, Any]]:
     metadata = getattr(step, "metadata", {}) or {}
     rc = metadata.get("rc")
     if rc is None:
@@ -45,18 +44,14 @@ def _check_exit_code(
     return rc == pc.expected, {"observed_rc": rc, "expected": pc.expected}
 
 
-def _check_file_exists(
-    pc: Postcondition, step: Any
-) -> tuple[bool, dict[str, Any]]:
+def _check_file_exists(pc: Postcondition, step: Any) -> tuple[bool, dict[str, Any]]:
     if not pc.path:
         return False, {"reason": "file_exists postcondition missing `path`"}
     exists = Path(pc.path).exists()
     return exists, {"path": pc.path, "exists": exists}
 
 
-def _check_file_size_range(
-    pc: Postcondition, step: Any
-) -> tuple[bool, dict[str, Any]]:
+def _check_file_size_range(pc: Postcondition, step: Any) -> tuple[bool, dict[str, Any]]:
     if not pc.path:
         return False, {"reason": "file_size_range postcondition missing `path`"}
     # v0.28.3-followup: require at least one bound. Pre-fix defaulted both
@@ -66,7 +61,7 @@ def _check_file_size_range(
     if pc.min is None and pc.max is None:
         return False, {
             "reason": "file_size_range postcondition needs at least one of "
-                      "`min` / `max`; otherwise it constrains nothing",
+            "`min` / `max`; otherwise it constrains nothing",
         }
     p = Path(pc.path)
     if not p.exists():
@@ -95,7 +90,10 @@ assert set(_OPAQUE_POSTCONDITION_HANDLERS) == RECOGNIZED_STAGE2_POSTCONDITION_TY
 
 
 def verify_completed_step(
-    step, envelope: Envelope, *, strict: bool | None = None,
+    step,
+    envelope: Envelope,
+    *,
+    strict: bool | None = None,
     aliases: AliasRegistry | None = None,
 ) -> list[Violation]:
     """Run envelope postconditions over a completed step; return any violations.
@@ -125,33 +123,42 @@ def verify_completed_step(
                 try:
                     ok, handler_detail = handler(pc, step)
                 except Exception as e:
-                    violations.append(Violation(
-                        stage="stage2",
-                        message=f"postcondition '{pc.type}' handler error: {e}",
-                        detail={"postcondition": pc.type, "step_id": step.id},
-                    ))
+                    violations.append(
+                        Violation(
+                            stage="stage2",
+                            message=f"postcondition '{pc.type}' handler error: {e}",
+                            detail={"postcondition": pc.type, "step_id": step.id},
+                        )
+                    )
                     continue
                 if not ok:
-                    violations.append(Violation(
-                        stage="stage2",
-                        message=f"postcondition '{pc.type}' violated on completed step {step.id}",
-                        detail={
-                            "postcondition": pc.type,
-                            "step_id": step.id,
-                            **handler_detail,
-                        },
-                    ))
+                    violations.append(
+                        Violation(
+                            stage="stage2",
+                            message=f"postcondition '{pc.type}' violated on completed step {step.id}",
+                            detail={
+                                "postcondition": pc.type,
+                                "step_id": step.id,
+                                **handler_detail,
+                            },
+                        )
+                    )
                 continue
             if effective_strict:
-                violations.append(Violation(
-                    stage="stage2",
-                    message=f"postcondition '{pc.type}' declares a safety property with no "
-                            f"verifiable expr; cannot be discharged under strict mode",
-                    detail={"postcondition": pc.type, "reason": "opaque_unrecognized",
+                violations.append(
+                    Violation(
+                        stage="stage2",
+                        message=f"postcondition '{pc.type}' declares a safety property with no "
+                        f"verifiable expr; cannot be discharged under strict mode",
+                        detail={
+                            "postcondition": pc.type,
+                            "reason": "opaque_unrecognized",
                             "step_id": step.id,
                             "suggested_remediation": "add an `expr` to make it verifiable, "
-                                                     "or set enforce=False to keep it as documentation"},
-                ))
+                            "or set enforce=False to keep it as documentation",
+                        },
+                    )
+                )
             continue
         # Resolve alias references through the registry (if provided) before
         # evaluation. Without a registry an AliasRef falls through and fails
@@ -161,32 +168,42 @@ def verify_completed_step(
                 expr = aliases.resolve(expr)
             except UnknownAliasError as e:
                 missing = e.args[0] if e.args else expr.name
-                violations.append(Violation(
-                    stage="stage2",
-                    message=f"postcondition '{pc.type}' references unresolved alias '{missing}'",
-                    detail={"postcondition": pc.type, "reason": "unresolved_alias",
-                            "alias": missing, "step_id": step.id},
-                ))
+                violations.append(
+                    Violation(
+                        stage="stage2",
+                        message=f"postcondition '{pc.type}' references unresolved alias '{missing}'",
+                        detail={
+                            "postcondition": pc.type,
+                            "reason": "unresolved_alias",
+                            "alias": missing,
+                            "step_id": step.id,
+                        },
+                    )
+                )
                 continue
         try:
             ok = evaluate_predicate(expr, pseudo_plan, envelope)
         except Exception as e:
-            violations.append(Violation(
-                stage="stage2",
-                message=f"postcondition '{pc.type}' evaluation error: {e}",
-                detail={"postcondition": pc.type, "step_id": step.id},
-            ))
+            violations.append(
+                Violation(
+                    stage="stage2",
+                    message=f"postcondition '{pc.type}' evaluation error: {e}",
+                    detail={"postcondition": pc.type, "step_id": step.id},
+                )
+            )
             continue
         if not ok:
-            violations.append(Violation(
-                stage="stage2",
-                message=f"postcondition '{pc.type}' violated on completed step {step.id}",
-                detail={
-                    "postcondition": pc.type,
-                    "description": pc.description,
-                    "step_id": step.id,
-                },
-            ))
+            violations.append(
+                Violation(
+                    stage="stage2",
+                    message=f"postcondition '{pc.type}' violated on completed step {step.id}",
+                    detail={
+                        "postcondition": pc.type,
+                        "description": pc.description,
+                        "step_id": step.id,
+                    },
+                )
+            )
     return violations
 
 

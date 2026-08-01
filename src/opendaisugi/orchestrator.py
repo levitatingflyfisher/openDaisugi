@@ -66,10 +66,7 @@ def _task_step_prompt(step) -> str:
     """
     prompt = getattr(step, "prompt", None)
     if prompt:
-        return (
-            f"{prompt}\n\n"
-            "Complete this subtask and respond with a direct, complete answer."
-        )
+        return f"{prompt}\n\nComplete this subtask and respond with a direct, complete answer."
     return step.model_dump_json()
 
 
@@ -111,25 +108,28 @@ class BudgetAwareDelegatingExecutor(DelegatingExecutor):
         )
         self.tracker = tracker
         self.ladder = ladder
-        self._pending_sizing: StepSizing | None = None
         self.live_sizings: list[StepSizing] = []
 
-    def _resolve_model(self, step):
-        # Use the sizing computed once in run(); recompute only if called stand-alone.
-        if self._pending_sizing is not None:
-            return self._pending_sizing.model
-        return size_step(
-            step, ladder=self.ladder, budget=self.tracker,
-            target_model=getattr(step, "preferred_model", None),
-        ).model
+    @property
+    def parallel_safe(self) -> bool:
+        """Whether this executor's task steps may run concurrently (v0.40).
+
+        True only under an *unlimited* budget. Budget gating is inherently
+        sequential — each step's model is downgraded on what prior steps spent —
+        but with no budget ``remaining()`` is +inf, so ``size_step`` never
+        downgrades and the model choice is order-independent: concurrent execution
+        is then provably identical to sequential. A set budget stays sequential.
+        """
+        return self.tracker.total_tokens is None
 
     def run(self, step, *, timeout_s: int, max_output_bytes: int):
         sizing = size_step(
-            step, ladder=self.ladder, budget=self.tracker,
+            step,
+            ladder=self.ladder,
+            budget=self.tracker,
             target_model=getattr(step, "preferred_model", None),
         )
-        self._pending_sizing = sizing
-        self.live_sizings.append(sizing)
+        self.live_sizings.append(sizing)  # list.append is atomic; keyed by step_id later
 
         if self.tracker.strict and not sizing.affordable:
             return ExecutorResult(
@@ -139,12 +139,18 @@ class BudgetAwareDelegatingExecutor(DelegatingExecutor):
                 timed_out=False,
             )
 
-        result = super().run(step, timeout_s=timeout_s, max_output_bytes=max_output_bytes)
-        tokens = self.last.tokens if self.last.tokens is not None else sizing.est_tokens
+        # Carry the sized model on a per-call step COPY (not a shared instance slot):
+        # the parent's _resolve_model returns copy.preferred_model, so concurrent runs
+        # never clobber each other's model. Attribution then comes off the RESULT.
+        sized_step = step.model_copy(update={"preferred_model": sizing.model})
+        result = super().run(sized_step, timeout_s=timeout_s, max_output_bytes=max_output_bytes)
+        tokens = result.tokens if result.tokens is not None else sizing.est_tokens
         try:
             self.tracker.record(
-                step_id=step.id, model=self.last.model or sizing.model,
-                tokens=tokens, cost_usd=self.last.cost_usd,
+                step_id=step.id,
+                model=result.model or sizing.model,
+                tokens=tokens,
+                cost_usd=result.cost_usd,
             )
         except BudgetExceeded:
             # strict_budget: the spend is already counted (tracker exhausted → the
@@ -160,7 +166,7 @@ class OrchestrationResult:
 
     prompt: str
     plan: ActionPlan
-    session: Any               # RunSession
+    session: Any  # RunSession
     final_answer: str
     sizings: list[StepSizing]
     budget: BudgetReport
@@ -191,8 +197,12 @@ class Orchestrator:
         pathway_threshold: float = DEFAULT_PATHWAY_THRESHOLD,
         endpoint_overrides: "dict[str, dict[str, Any]] | None" = None,
         step_timeout_s: int = 180,
+        max_parallel: int = 1,
     ) -> None:
         self.ladder = ladder
+        # >1 lets the Supervisor run independent deterministic steps concurrently
+        # (opt-in; default 1 = sequential).
+        self.max_parallel = max_parallel
         # LLM-backed task steps need far longer than the shell-oriented 30s
         # Supervisor default — a frontier model can take a minute-plus per step.
         self.step_timeout_s = step_timeout_s
@@ -200,7 +210,9 @@ class Orchestrator:
         self.mcp_transport = mcp_transport
         # The transport is opaque (no introspectable tool list), so the caller
         # declares which server/tool values the decomposer may emit.
-        self.available_mcp_tools = list(available_mcp_tools) if available_mcp_tools is not None else None
+        self.available_mcp_tools = (
+            list(available_mcp_tools) if available_mcp_tools is not None else None
+        )
         self.pathway_store = pathway_store
         self.journal = journal
         self.decompose_model = decompose_model
@@ -212,12 +224,15 @@ class Orchestrator:
         # executor so a local rung's model reaches its endpoint.
         self.endpoint_overrides = dict(endpoint_overrides or {})
 
-    async def _maybe_reuse(self, prompt: str) -> ActionPlan | None:
-        """Tier-0: find a distilled pathway whose plan template covers ``prompt`` (D6).
+    async def _maybe_reuse(
+        self, prompt: str, *, envelope: Envelope, client: Any | None = None
+    ) -> ActionPlan | None:
+        """Tier-0: find a distilled pathway whose plan covers ``prompt`` (D6).
 
-        Returns the pathway's plan template (deep-copied) or None. The template is
-        NOT authorized here — the caller verifies it against the caller's own
-        envelope (the authorization ceiling), never the pathway's own envelope.
+        Frozen pathways return their template (deep-copied); typed pathways (ADR-0008)
+        bind their holes for ``prompt`` and re-verify — always against the *caller's*
+        ``envelope`` (the authorization ceiling), never the pathway's own. The caller
+        re-verifies the returned plan too, so binding never widens authorization.
         """
         if self.pathway_store is None:
             return None
@@ -231,9 +246,23 @@ class Orchestrator:
         if match is None:
             return None
         _log.info("orchestrate.reuse_pathway", extra={"pathway_id": match.pathway.id})
-        # Deep-copy the template: sizing mutates preferred_model on steps, and the
-        # store's template is shared/cached — mutating it would corrupt it.
-        return match.pathway.plan_template.model_copy(deep=True)
+        if not match.pathway.parameters:
+            # Frozen. Deep-copy: sizing mutates preferred_model, and the store's
+            # template is shared/cached — mutating it would corrupt it.
+            return match.pathway.plan_template.model_copy(deep=True)
+        # Typed skill: bind the holes for this task, re-verified against the caller's
+        # envelope; falls back to the frozen template on any bind/verify failure.
+        from opendaisugi.pathway_bind import bind_parameters
+
+        return await bind_parameters(
+            match.pathway,
+            prompt,
+            envelope=envelope,
+            model=self.decompose_model,
+            z3_timeout_ms=self.z3_timeout_ms,
+            client=client,
+            backend=self.backend,
+        )
 
     async def orchestrate(
         self,
@@ -243,6 +272,7 @@ class Orchestrator:
         budget_tokens: int | None = None,
         strict: bool | None = None,
         strict_budget: bool = False,
+        synth_llm: bool = True,
         decompose_client: Any | None = None,
         synth_client: Any | None = None,
         approval: ApprovalStrategy | None = None,
@@ -261,13 +291,18 @@ class Orchestrator:
         cheapest tier is still unaffordable fail cleanly instead of overspending
         (default is graceful downgrade). ``strict`` controls *verification*
         strictness, a separate axis.
+
+        ``synth_llm=False`` assembles the final answer deterministically from the
+        step outputs instead of calling a model. Combined with a reused
+        deterministic pathway (decompose skipped, shell/file/network steps run
+        without inference) it yields a run that touches no model at all.
         """
         tracker = BudgetTracker(total_tokens=budget_tokens, strict=strict_budget)
 
         # The caller's ``envelope`` is the authorization ceiling for BOTH paths.
         run_envelope = envelope
         reused = False
-        plan = await self._maybe_reuse(prompt)
+        plan = await self._maybe_reuse(prompt, envelope=envelope, client=decompose_client)
         if plan is not None:
             # A reused pathway is only trusted if it verifies against the CALLER's
             # envelope — never its own (possibly broader) distillation envelope.
@@ -300,11 +335,20 @@ class Orchestrator:
         _apply_preferred_models(plan, planned)
 
         task_executor = BudgetAwareDelegatingExecutor(
-            tracker=tracker, ladder=self.ladder, backend=self.backend,
+            tracker=tracker,
+            ladder=self.ladder,
+            backend=self.backend,
             endpoint_overrides=self.endpoint_overrides,
         )
         executors = default_executors()
         executors["task"] = task_executor
+        # B5 composition (pathway-as-skill) is available as a MECHANISM in
+        # `compose.py` but is NOT auto-wired here yet: a safety review showed that
+        # auto-exposing pathways as skills without stamping each SkillStep's
+        # contract_envelope (for the subsumption proof) and routing composed
+        # sub-steps through the Supervisor's per-step verify would create a latent
+        # gap. It is also currently unreachable (the decomposer isn't told pathway
+        # ids). Wiring it safely is a scoped follow-up (ADR-0008).
         executors["skill"] = SkillExecutor(handlers=self.skill_handlers)
         executors["mcp"] = MCPExecutor(transport=self.mcp_transport)
 
@@ -315,6 +359,7 @@ class Orchestrator:
             z3_timeout_ms=self.z3_timeout_ms,
             step_timeout_s=self.step_timeout_s,
             strict=strict,
+            max_parallel=self.max_parallel,
         )
         session = await supervisor.run(plan, run_envelope)
 
@@ -323,13 +368,19 @@ class Orchestrator:
         realized = {s.step_id: s for s in task_executor.live_sizings}
         sizings = [realized.get(s.step_id, s) for s in planned]
 
-        # If the budget is spent, synthesize deterministically rather than
-        # spending tokens we don't have on assembly.
-        use_llm = not tracker.exhausted()
+        # Assemble deterministically when the caller asked for an inference-free
+        # run (synth_llm=False) or the budget is spent — either way, don't spend
+        # tokens on final assembly. On a reused deterministic pathway this makes
+        # the whole run touch no model at all.
+        use_llm = synth_llm and not tracker.exhausted()
         synth: SynthesisResult = await synthesize(
-            prompt, session, plan,
-            model=self.synth_model, client=synth_client,
-            backend=self.backend, use_llm=use_llm,
+            prompt,
+            session,
+            plan,
+            model=self.synth_model,
+            client=synth_client,
+            backend=self.backend,
+            use_llm=use_llm,
         )
 
         return OrchestrationResult(

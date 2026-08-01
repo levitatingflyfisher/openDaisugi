@@ -19,7 +19,8 @@ from opendaisugi.portability import parse_bundle
 
 def _robot_pathway() -> CompiledPathway:
     env = Envelope(
-        generated_by="test", task="pick and place",
+        generated_by="test",
+        task="pick and place",
         permissions=Permission(
             workspace_bounds=((0.0, -0.5, 0.0), (1.0, 0.5, 1.0)),
             obstacles=[((0.4, 0.4, 0.4), (0.6, 0.6, 0.6))],
@@ -33,17 +34,23 @@ def _robot_pathway() -> CompiledPathway:
             Invariant(type="joint_limits_respected", description="within limits"),
         ],
     )
-    plan = ActionPlan(source="test", task="pick and place", steps=[
-        SimulationResetStep(id="reset"),
-        JointMoveStep(id="home", joint_targets={"j1": 0.0, "j2": 0.0},
-                      duration_s=1.0, depends_on=["reset"]),
-        CartesianMoveStep(id="approach", target_position=(0.3, 0.2, 0.0),
-                          depends_on=["home"]),
-        GripperStep(id="grasp", action="close", hold_s=0.3, depends_on=["approach"]),
-        CartesianMoveStep(id="lift", target_position=(0.3, 0.3, 0.0),
-                          depends_on=["grasp"]),
-        GripperStep(id="release", action="open", hold_s=0.3, depends_on=["lift"]),
-    ])
+    plan = ActionPlan(
+        source="test",
+        task="pick and place",
+        steps=[
+            SimulationResetStep(id="reset"),
+            JointMoveStep(
+                id="home",
+                joint_targets={"j1": 0.0, "j2": 0.0},
+                duration_s=1.0,
+                depends_on=["reset"],
+            ),
+            CartesianMoveStep(id="approach", target_position=(0.3, 0.2, 0.0), depends_on=["home"]),
+            GripperStep(id="grasp", action="close", hold_s=0.3, depends_on=["approach"]),
+            CartesianMoveStep(id="lift", target_position=(0.3, 0.3, 0.0), depends_on=["grasp"]),
+            GripperStep(id="release", action="open", hold_s=0.3, depends_on=["lift"]),
+        ],
+    )
     return CompiledPathway(
         id="path_robot_test",
         task_description="planar pick-and-place",
@@ -65,8 +72,14 @@ def test_robot_pathway_json_roundtrip_preserves_step_types():
 
     restored = parse_bundle(text)
     step_types = [s.type for s in restored.plan_template.steps]
-    assert step_types == ["sim_reset", "joint_move", "cartesian_move",
-                          "gripper", "cartesian_move", "gripper"]
+    assert step_types == [
+        "sim_reset",
+        "joint_move",
+        "cartesian_move",
+        "gripper",
+        "cartesian_move",
+        "gripper",
+    ]
 
 
 def test_robot_pathway_preserves_permission_robot_fields():

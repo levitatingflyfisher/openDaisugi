@@ -26,6 +26,7 @@ from opendaisugi.decomposer import DecomposedPlan, DecomposedStep
 
 # --- fake LLM clients so the demo runs offline ------------------------------
 
+
 class _FakeCompletions:
     def __init__(self, result):
         self._result = result
@@ -49,16 +50,18 @@ async def main() -> None:
     )
 
     # 2. What the decomposer "returns" (offline). In real use the LLM authors this.
-    decomposed = DecomposedPlan(steps=[
-        DecomposedStep(id="s1", type="shell", command="echo hello"),
-        DecomposedStep(id="s2", type="shell", command="echo world", depends_on=["s1"]),
-    ])
+    decomposed = DecomposedPlan(
+        steps=[
+            DecomposedStep(id="s1", type="shell", command="echo hello"),
+            DecomposedStep(id="s2", type="shell", command="echo world", depends_on=["s1"]),
+        ]
+    )
 
     orch = Orchestrator()
     result = await orch.orchestrate(
         "print two greetings and combine them",
         envelope=envelope,
-        budget_tokens=20_000,                       # gates routing DURING the run
+        budget_tokens=20_000,  # gates routing DURING the run
         decompose_client=_FakeClient(decomposed),
         synth_client=_FakeClient(type("A", (), {"answer": "hello world"})()),
     )
@@ -66,8 +69,13 @@ async def main() -> None:
     print("final answer :", result.final_answer)
     print("status       :", result.status)
     print("reused path  :", result.reused_pathway)
-    print("budget       :", result.budget.spent, "tokens across",
-          result.budget.step_count, "model call(s)")
+    print(
+        "budget       :",
+        result.budget.spent,
+        "tokens across",
+        result.budget.step_count,
+        "model call(s)",
+    )
     print("per-step sizing:")
     for s in result.sizings:
         print(f"  {s.step_id}: difficulty={s.difficulty:.2f} → {s.tier} ({s.model})")

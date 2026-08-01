@@ -12,7 +12,8 @@ def _contract(skill_id: str, allowlist, invariants=None, signature=None) -> Cont
         skill_id=skill_id,
         version="0.1.0",
         envelope=Envelope(
-            generated_by=skill_id, task="skill task",
+            generated_by=skill_id,
+            task="skill task",
             permissions=Permission(shell=True, shell_allowlist=list(allowlist)),
             invariants=invariants or [],
         ),
@@ -23,7 +24,8 @@ def _contract(skill_id: str, allowlist, invariants=None, signature=None) -> Cont
 
 def test_delegation_allowed_when_skill_envelope_is_narrow():
     caller = Envelope(
-        generated_by="orchestrator", task="orchestrate",
+        generated_by="orchestrator",
+        task="orchestrate",
         permissions=Permission(shell=True, shell_allowlist=["echo", "ls", "pytest"]),
     )
     skill = _contract("echo-skill", ["echo"])
@@ -35,7 +37,8 @@ def test_delegation_allowed_when_skill_envelope_is_narrow():
 
 def test_delegation_rejected_when_skill_wider_with_counterexample():
     caller = Envelope(
-        generated_by="orchestrator", task="orchestrate",
+        generated_by="orchestrator",
+        task="orchestrate",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
     skill = _contract("dangerous", ["echo", "rm"])
@@ -48,7 +51,8 @@ def test_delegation_rejected_when_skill_wider_with_counterexample():
 def test_delegation_surfaces_unverified_invariants():
     opaque = Invariant(type="vague", description="no predicate expr")
     caller = Envelope(
-        generated_by="o", task="t",
+        generated_by="o",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
         invariants=[opaque],
     )
@@ -62,7 +66,8 @@ def test_delegation_surfaces_unverified_invariants():
 def test_delegation_rejects_signed_contract_without_trusted_signers():
     """Signature present but caller supplied no trusted signers ⇒ reject."""
     caller = Envelope(
-        generated_by="o", task="t",
+        generated_by="o",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
     skill = _contract("echo", ["echo"], signature="deadbeef")
@@ -74,7 +79,8 @@ def test_delegation_rejects_signed_contract_without_trusted_signers():
 
 def test_unsigned_contract_signature_valid_is_none():
     caller = Envelope(
-        generated_by="o", task="t",
+        generated_by="o",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
     skill = _contract("echo", ["echo"])
@@ -87,9 +93,14 @@ def test_unsigned_contract_denied_when_trusted_signers_supplied():
     # An unsigned contract (even if subsumed) must be denied — provenance required.
     from opendaisugi.contracts import Contract, verify_delegation
     from opendaisugi.models import Envelope, Permission
-    env = Envelope(generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"]))
+
+    env = Envelope(
+        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"])
+    )
     contract = Contract(contract_id="c", skill_id="s", envelope=env)  # unsigned
-    caller = Envelope(generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"]))
+    caller = Envelope(
+        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"])
+    )
     # No trusted_signers → unsigned is allowed (caller opted not to require signing)
     assert verify_delegation(caller, contract).allowed
     # trusted_signers supplied → unsigned is DENIED

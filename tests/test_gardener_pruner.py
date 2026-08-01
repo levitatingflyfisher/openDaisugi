@@ -84,10 +84,13 @@ def test_min_activations_grace_period(tmp_path):
     )
     store.put(new)
 
-    report = prune(store, PruneConfig(
-        max_idle_days=30,
-        min_activations_before_prune=5,
-    ))
+    report = prune(
+        store,
+        PruneConfig(
+            max_idle_days=30,
+            min_activations_before_prune=5,
+        ),
+    )
     assert report.removed_ids == []
     assert report.kept_count == 1
 

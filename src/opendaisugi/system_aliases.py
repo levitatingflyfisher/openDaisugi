@@ -27,7 +27,12 @@ def _velocity_scale_bounded() -> Alias:
             "pred": {
                 "op": "implies",
                 "a": {"op": "in_set", "path": "type", "values": ["joint_move", "cartesian_move"]},
-                "b": {"op": "numeric_range", "path": "velocity_scale", "min": 0.0, "max": "$max_scale"},
+                "b": {
+                    "op": "numeric_range",
+                    "path": "velocity_scale",
+                    "min": 0.0,
+                    "max": "$max_scale",
+                },
             },
         },
     )
@@ -43,12 +48,20 @@ def _never_impersonates() -> Alias:
             "op": "forall_steps",
             "pred": {
                 "op": "implies",
-                "a": {"op": "in_set", "path": "type", "values": ["email_send", "imessage_send", "shell"]},
+                "a": {
+                    "op": "in_set",
+                    "path": "type",
+                    "values": ["email_send", "imessage_send", "shell"],
+                },
                 "b": {
                     "op": "and",
                     "children": [
                         {"op": "not_equals", "path": "metadata.signature", "value": "$principal"},
-                        {"op": "not_matches", "path": "metadata.body", "regex": r"(?i)(\u2014|-)\s*$principal"},
+                        {
+                            "op": "not_matches",
+                            "path": "metadata.body",
+                            "regex": r"(?i)(\u2014|-)\s*$principal",
+                        },
                     ],
                 },
             },
@@ -69,8 +82,16 @@ def _no_pii_regex() -> Alias:
                 "children": [
                     {"op": "not_matches", "path": "content", "regex": r"\b\d{3}-\d{2}-\d{4}\b"},
                     {"op": "not_matches", "path": "content", "regex": r"\b(?:\d[ -]*?){13,16}\b"},
-                    {"op": "not_matches", "path": "metadata.body", "regex": r"\b\d{3}-\d{2}-\d{4}\b"},
-                    {"op": "not_matches", "path": "metadata.body", "regex": r"\b(?:\d[ -]*?){13,16}\b"},
+                    {
+                        "op": "not_matches",
+                        "path": "metadata.body",
+                        "regex": r"\b\d{3}-\d{2}-\d{4}\b",
+                    },
+                    {
+                        "op": "not_matches",
+                        "path": "metadata.body",
+                        "regex": r"\b(?:\d[ -]*?){13,16}\b",
+                    },
                 ],
             },
         },
@@ -89,10 +110,22 @@ def _no_secrets() -> Alias:
                 "op": "and",
                 "children": [
                     {"op": "not_matches", "path": "content", "regex": r"AKIA[0-9A-Z]{16}"},
-                    {"op": "not_matches", "path": "content", "regex": r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"},
-                    {"op": "not_matches", "path": "content", "regex": r"-----BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY-----"},
+                    {
+                        "op": "not_matches",
+                        "path": "content",
+                        "regex": r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+                    },
+                    {
+                        "op": "not_matches",
+                        "path": "content",
+                        "regex": r"-----BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY-----",
+                    },
                     {"op": "not_matches", "path": "metadata.body", "regex": r"AKIA[0-9A-Z]{16}"},
-                    {"op": "not_matches", "path": "metadata.body", "regex": r"-----BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY-----"},
+                    {
+                        "op": "not_matches",
+                        "path": "metadata.body",
+                        "regex": r"-----BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY-----",
+                    },
                 ],
             },
         },
@@ -115,8 +148,8 @@ def _pytest_passes() -> Alias:
         params=[],
         tier="system",
         description="POSTCONDITION-ONLY: at least one completed step's output "
-                    "matches /passed/. Do NOT use as an Invariant — "
-                    "metadata.output is unset at Stage 1 verify.",
+        "matches /passed/. Do NOT use as an Invariant — "
+        "metadata.output is unset at Stage 1 verify.",
         expr={
             "op": "exists_step",
             "pred": {"op": "matches", "path": "metadata.output", "regex": r"passed"},

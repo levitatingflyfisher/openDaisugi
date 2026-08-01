@@ -80,9 +80,7 @@ def prune(
 
         if failure_ratio > cfg.max_failure_ratio:
             report.removed_ids.append(pathway.id)
-            report.reasons[pathway.id] = (
-                f"failure_dominated (ratio={failure_ratio:.2f})"
-            )
+            report.reasons[pathway.id] = f"failure_dominated (ratio={failure_ratio:.2f})"
             if not dry_run:
                 store.delete(pathway.id)
             continue
@@ -106,6 +104,8 @@ def prune(
 
     _log.info(
         "prune complete: removed=%d kept=%d dry_run=%s",
-        report.removed_count, report.kept_count, dry_run,
+        report.removed_count,
+        report.kept_count,
+        dry_run,
     )
     return report

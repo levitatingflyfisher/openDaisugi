@@ -60,15 +60,22 @@ async def test_supervisor_custom_registry_overrides(monkeypatch):
     """A per-kind registry entry overrides the default for that kind."""
     monkeypatch.setenv("DAISUGI_APPROVE", "always")
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo hi"),
-    ])
-    fake = FakeExecutor({
-        "echo hi": ExecutorResult(rc=0, stdout="mocked", duration_ms=0.0, timed_out=False),
-    })
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo hi"),
+        ],
+    )
+    fake = FakeExecutor(
+        {
+            "echo hi": ExecutorResult(rc=0, stdout="mocked", duration_ms=0.0, timed_out=False),
+        }
+    )
     sup = Supervisor(executors={"shell": fake})
     session = await sup.run(plan, env)
     assert session.status == RunStatus.SUCCEEDED
@@ -83,14 +90,21 @@ async def test_supervisor_unknown_step_kind_returns_error_result(monkeypatch):
     """
     monkeypatch.setenv("DAISUGI_APPROVE", "always")
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(file_read=["/tmp/*"]),
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        FileReadStep(id="s1", path="/tmp/whatever"),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            FileReadStep(id="s1", path="/tmp/whatever"),
+        ],
+    )
     # Registry deliberately omits "file_read".
-    shell_fake = FakeExecutor(default=ExecutorResult(rc=0, stdout="", duration_ms=0.0, timed_out=False))
+    shell_fake = FakeExecutor(
+        default=ExecutorResult(rc=0, stdout="", duration_ms=0.0, timed_out=False)
+    )
     sup = Supervisor(executors={"shell": shell_fake})
     session = await sup.run(plan, env)
     assert session.status == RunStatus.FAILED

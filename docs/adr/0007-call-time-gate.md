@@ -24,14 +24,14 @@ project's existing answer to exactly that bottleneck.
 Build call-time enforcement as a **second checkpoint beside plan verification,
 never a replacement for it**:
 
-1. **The gate.** The hook seam gains an enforce mode: each intercepted tool
+1. **The gate.** The hook gains an enforce mode: each intercepted tool
    call is synthesized into a one-step plan and verified against the session's
    registered envelope before it runs. Deny by default: unknown tool,
    unparseable input, internal exception, or slow verifier all deny. The gate
    owns an inner timeout that itself denies, because every known host's outer
    hook timeout fails open. The matcher is total (`*`); classification happens
    inside the gate. Capture mode keeps its fail-open contract — the two modes
-   share a seam, not a failure policy.
+   share a code path, not a failure policy.
 2. **Shadow by default.** First run observes and reports what it *would* have
    denied; one flag flips to enforce. Shadow mode is documented as observation,
    not protection. (Minority position, recorded: enforce-by-default with a
@@ -51,7 +51,7 @@ never a replacement for it**:
 
 - **What this buys:** enforcement for agents we didn't author and plans that
   don't exist; the delegation ban becomes a delegation *boundary*; the hook
-  seam stops being observation-only.
+  hook stops being observation-only.
 - **What this costs — stated, not buried:** a call-time gate enforces *safety
   properties only*. It cannot establish liveness or plan-structure properties
   ("eventually returns to base", ordering, completeness) — those remain
@@ -66,7 +66,7 @@ never a replacement for it**:
   (`tests/test_hook_gate_contract.py`): settings-injected PreToolUse hooks
   fire in headless runs and an exit-2 deny blocks the call. Measured full
   Python-side round trip ~0.55 s steady state, dominated by package import —
-  a lean gate entry module is the optimization seam; a resident process is
+  a lean gate entry module is where the optimization goes; a resident process is
   not required for v1.
 - An over-denying gate must be disarmable by one command that does not itself
   require an allowed tool call.
@@ -93,4 +93,4 @@ never a replacement for it**:
   stakes/strictness. Kept as defense in depth.
 - **Plan-verification only (status quo).** Rejected: leaves the flagship
   use case — bounding an agent you're already running — permanently out of
-  scope, while the seam and the verifier both already exist.
+  scope, while the hook and the verifier both already exist.

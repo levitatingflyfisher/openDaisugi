@@ -21,6 +21,7 @@ from typing import Any
 
 import z3
 
+from opendaisugi import z3_checks
 from opendaisugi.exceptions import VerificationTimeout
 from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.predicate import (
@@ -128,9 +129,7 @@ def _eval_scalar(expr: Any, scope: dict[str, Any]) -> bool:
     if isinstance(expr, Implies):
         return (not _eval_scalar(expr.a, scope)) or _eval_scalar(expr.b, scope)
     if isinstance(expr, LLMCheck):
-        raise ValueError(
-            "LLMCheck must be evaluated via evaluate_llm_check, not _eval_scalar"
-        )
+        raise ValueError("LLMCheck must be evaluated via evaluate_llm_check, not _eval_scalar")
     if isinstance(expr, AliasRef):
         raise ValueError(
             f"unresolved alias reference '{expr.name}'; resolve aliases before evaluation"
@@ -166,6 +165,7 @@ def evaluate_predicate(expr: Any, plan: ActionPlan, envelope: Envelope) -> bool:
                     "llm_check blocked for physical stakes — use sound primitives only"
                 )
             from opendaisugi.llm_check import run_llm_check
+
             payload = {"task": plan.task, "steps": step_dicts}
             res = run_llm_check(e.rule, payload)
             # Fail CLOSED: a failed probabilistic check (network/timeout/
@@ -295,12 +295,21 @@ def _compile_scalar(
             return z3.BoolVal(False)
         return var == _z3_lit(expr.value)
     if isinstance(expr, NotEquals):
+        if isinstance(expr.value, (int, float)) and not isinstance(expr.value, bool):
+            var, present = scope.resolve_numeric(expr.path)
+            if not present:
+                return z3.BoolVal(False)
+            return var != _z3_lit(expr.value)
         var, present = scope.resolve_string(expr.path)
         if not present:
             return z3.BoolVal(False)
         return var != _z3_lit(expr.value)
     if isinstance(expr, InSet):
-        if expr.values and isinstance(expr.values[0], (int, float)) and not isinstance(expr.values[0], bool):
+        if (
+            expr.values
+            and isinstance(expr.values[0], (int, float))
+            and not isinstance(expr.values[0], bool)
+        ):
             var, present = scope.resolve_numeric(expr.path)
         else:
             var, present = scope.resolve_string(expr.path)
@@ -310,7 +319,11 @@ def _compile_scalar(
             return z3.BoolVal(False)
         return z3.Or(*[var == _z3_lit(v) for v in expr.values])
     if isinstance(expr, NotInSet):
-        if expr.values and isinstance(expr.values[0], (int, float)) and not isinstance(expr.values[0], bool):
+        if (
+            expr.values
+            and isinstance(expr.values[0], (int, float))
+            and not isinstance(expr.values[0], bool)
+        ):
             var, present = scope.resolve_numeric(expr.path)
         else:
             var, present = scope.resolve_string(expr.path)
@@ -548,23 +561,31 @@ def verify_predicate_z3(
     by a regex violation or an out-of-set value. Raises
     ``VerificationTimeout`` on Z3 ``unknown``.
     """
-    compiled = compile_to_z3(expr, plan, envelope)
-    solver = z3.Solver()
-    solver.set("timeout", timeout_ms)
-    for a in compiled.assumptions:
-        solver.add(a)
-    solver.add(z3.Not(compiled.term))
-    result = solver.check()
-    if result == z3.unknown:
-        raise VerificationTimeout(
-            f"Z3 predicate check exceeded {timeout_ms}ms"
-        )
-    if result == z3.unsat:
-        return True, None
-    model = solver.model()
-    values: dict[str, Any] = {}
-    for decl in model.decls():
-        values[decl.name()] = _decode_model_value(model[decl])
+    # Shared with z3_checks.check_envelope_self_consistency and
+    # check_plan_against_envelope — see Z3_SOLVE_LOCK's docstring in
+    # z3_checks.py for why concurrent solves on Z3's global context need
+    # serializing under the threaded resident gate server. compile_to_z3
+    # itself builds Z3 terms (Bool/String/Real vars, regex InRe nodes) on
+    # that same global context, so it has to be inside the lock too: built
+    # standalone it's provably safe, but interleaved with another thread's
+    # concurrent AST-build/solve it raises real z3.Z3Exception('context
+    # mismatch') errors, not just a risk of a wrong verdict.
+    with z3_checks.Z3_SOLVE_LOCK:
+        compiled = compile_to_z3(expr, plan, envelope)
+        solver = z3.Solver()
+        solver.set("timeout", timeout_ms)
+        for a in compiled.assumptions:
+            solver.add(a)
+        solver.add(z3.Not(compiled.term))
+        result = solver.check()
+        if result == z3.unknown:
+            raise VerificationTimeout(f"Z3 predicate check exceeded {timeout_ms}ms")
+        if result == z3.unsat:
+            return True, None
+        model = solver.model()
+        values: dict[str, Any] = {}
+        for decl in model.decls():
+            values[decl.name()] = _decode_model_value(model[decl])
     return False, Counterexample(model_values=values, soft_nodes=compiled.soft_nodes)
 
 

@@ -30,18 +30,20 @@ def _envelope(**perm_kwargs) -> Envelope:
 
 
 def _step(workspace, **kwargs) -> AgenticStep:
-    defaults = dict(id="a1", prompt="do the thing", workspace=str(workspace),
-                    tools=["Read"])
+    defaults = dict(id="a1", prompt="do the thing", workspace=str(workspace), tools=["Read"])
     defaults.update(kwargs)
     return AgenticStep(**defaults)
 
 
 def _ok_envelope_json(result="done", tokens=7, cost=0.001):
-    return json.dumps({
-        "result": result, "is_error": False,
-        "usage": {"input_tokens": tokens, "output_tokens": 0},
-        "total_cost_usd": cost,
-    })
+    return json.dumps(
+        {
+            "result": result,
+            "is_error": False,
+            "usage": {"input_tokens": tokens, "output_tokens": 0},
+            "total_cost_usd": cost,
+        }
+    )
 
 
 @pytest.fixture
@@ -50,12 +52,19 @@ def spy_call(monkeypatch):
     seen = {}
 
     def _fake(prompt, *, timeout_s, model, binary, cwd, extra_args):
-        seen.update(prompt=prompt, timeout_s=timeout_s, model=model,
-                    binary=binary, cwd=cwd, extra_args=list(extra_args))
+        seen.update(
+            prompt=prompt,
+            timeout_s=timeout_s,
+            model=model,
+            binary=binary,
+            cwd=cwd,
+            extra_args=list(extra_args),
+        )
         return _ok_envelope_json()
 
     monkeypatch.setattr(
-        "opendaisugi.agentic_executor.call_claude_p_sync", _fake,
+        "opendaisugi.agentic_executor.call_claude_p_sync",
+        _fake,
     )
     return seen
 
@@ -161,6 +170,7 @@ def test_missing_workspace_fails_without_spawning(monkeypatch):
 
 def test_wrong_step_kind_raises_type_error(tmp_path):
     from opendaisugi.models import TaskStep
+
     exe = AgenticExecutor(envelope=_envelope())
     with pytest.raises(TypeError):
         _run(exe, TaskStep(id="t", prompt="hi"))

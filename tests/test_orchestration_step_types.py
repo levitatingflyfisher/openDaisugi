@@ -27,7 +27,9 @@ def test_task_step_is_a_pure_reasoning_leaf():
 
 
 def test_skill_step_carries_optional_contract_envelope():
-    env = Envelope(generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["ls"]))
+    env = Envelope(
+        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["ls"])
+    )
     s = SkillStep(id="k1", skill_id="tidy-inbox", skill_input={"limit": 10}, contract_envelope=env)
     assert s.type == "skill"
     assert s.skill_id == "tidy-inbox"

@@ -17,6 +17,7 @@ executor demonstrates "those step types translate to real motion."
 For a real dish-wash deployment, replace this file with an executor
 that dispatches against your actual robot's URDF/MJCF and joint set.
 """
+
 from __future__ import annotations
 
 import math
@@ -85,8 +86,8 @@ class DishWashMuJoCoExecutor:
     def __init__(self, mjcf_path: str) -> None:
         self._inner = MuJoCoExecutor(
             mjcf_path,
-            settle_steps=200,        # enough for the 2-DOF arm to settle
-            position_tol=0.05,        # rad; loose because the arm is fast
+            settle_steps=200,  # enough for the 2-DOF arm to settle
+            position_tol=0.05,  # rad; loose because the arm is fast
         )
 
     def configure_from_envelope(self, envelope) -> None:
@@ -111,7 +112,8 @@ class DishWashMuJoCoExecutor:
         )
         result = self._inner.run(
             synthetic,
-            timeout_s=timeout_s, max_output_bytes=max_output_bytes,
+            timeout_s=timeout_s,
+            max_output_bytes=max_output_bytes,
         )
         # Repack the inner result so the kit's postcondition checks find
         # the evidence keys they expect (end_effector_xyz / rim_pose_error_mm /
@@ -129,10 +131,10 @@ class DishWashMuJoCoExecutor:
             evidence["max_force_n"] = getattr(step, "contact_force_n", 0.0)
         elif step.type == "rinse_with_hose":
             evidence["rinse_volume_ml"] = int(
-                getattr(step, "flow_rate_lps", 0.0) *
-                getattr(step, "duration_s", 0.0) * 1000.0
+                getattr(step, "flow_rate_lps", 0.0) * getattr(step, "duration_s", 0.0) * 1000.0
             )
         import json as _json
+
         return ExecutorResult(
             rc=result.rc,
             stdout=_json.dumps(evidence),
@@ -150,7 +152,9 @@ class DishWashMuJoCoExecutor:
     def _end_effector_pos(self) -> tuple[float, float, float]:
         m = self._inner._mujoco
         body_id = m.mj_name2id(
-            self._inner.model, m.mjtObj.mjOBJ_BODY, "end_effector",
+            self._inner.model,
+            m.mjtObj.mjOBJ_BODY,
+            "end_effector",
         )
         xyz = self._inner.data.xpos[body_id]
         return float(xyz[0]), float(xyz[1]), float(xyz[2])

@@ -60,11 +60,15 @@ def test_resolve_refuses_untrusted_org():
 
 
 def test_resolve_returns_real_filename_pinned_to_commit():
-    api = _FakeApi(files=["README.md", "Qwen2.5-0.5B-Instruct.Q4_K_M.llamafile"], sha="abc123def456")
+    api = _FakeApi(
+        files=["README.md", "Qwen2.5-0.5B-Instruct.Q4_K_M.llamafile"], sha="abc123def456"
+    )
     ref = resolve_pinned("mozilla-ai/Qwen2.5-0.5B-Instruct-llamafile", api=api)
     assert isinstance(ref, ModelRef)
-    assert ref.filename == "Qwen2.5-0.5B-Instruct.Q4_K_M.llamafile"  # from list_repo_files, not guessed
-    assert ref.revision == "abc123def456"                            # pinned to the immutable commit
+    assert (
+        ref.filename == "Qwen2.5-0.5B-Instruct.Q4_K_M.llamafile"
+    )  # from list_repo_files, not guessed
+    assert ref.revision == "abc123def456"  # pinned to the immutable commit
     assert ref.repo_id == "mozilla-ai/Qwen2.5-0.5B-Instruct-llamafile"
 
 
@@ -91,8 +95,8 @@ def test_download_is_opt_in():
     calls = []
     fake_dl = lambda **kw: calls.append(kw) or "/tmp/m.llamafile"
     with pytest.raises(DownloadNotAllowed):
-        download_pinned(ref, _downloader=fake_dl)         # default allow_download=False
-    assert calls == []                                     # nothing fetched
+        download_pinned(ref, _downloader=fake_dl)  # default allow_download=False
+    assert calls == []  # nothing fetched
 
 
 def test_download_pins_revision_when_allowed():
@@ -107,11 +111,11 @@ def test_download_pins_revision_when_allowed():
     assert path == "/tmp/m.llamafile"
     assert captured["repo_id"] == "mozilla-ai/x"
     assert captured["filename"] == "m.llamafile"
-    assert captured["revision"] == "abc123"                # pinned, not "main"
+    assert captured["revision"] == "abc123"  # pinned, not "main"
 
 
 def test_discover_filters_to_trusted_orgs():
     api = _FakeApi(model_ids=["mozilla-ai/a-llamafile", "evil/b-llamafile", "Qwen/c"])
     found = discover_llamafiles(api=api)
     assert "mozilla-ai/a-llamafile" in found
-    assert "evil/b-llamafile" not in found                 # untrusted org dropped
+    assert "evil/b-llamafile" not in found  # untrusted org dropped

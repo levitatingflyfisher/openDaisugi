@@ -23,14 +23,27 @@ def test_dry_run_handles_task_skill_mcp():
 
 
 def test_fake_executor_keys_new_step_types():
-    fake = FakeExecutor({
-        "summarize": ExecutorResult(rc=0, stdout="TASK", duration_ms=0.0, timed_out=False),
-        "tidy": ExecutorResult(rc=0, stdout="SKILL", duration_ms=0.0, timed_out=False),
-        "gh/list": ExecutorResult(rc=0, stdout="MCP", duration_ms=0.0, timed_out=False),
-    })
-    assert fake.run(TaskStep(id="t1", prompt="summarize"), timeout_s=1, max_output_bytes=64).stdout == "TASK"
-    assert fake.run(SkillStep(id="k1", skill_id="tidy"), timeout_s=1, max_output_bytes=64).stdout == "SKILL"
-    assert fake.run(MCPStep(id="m1", server="gh", tool="list"), timeout_s=1, max_output_bytes=64).stdout == "MCP"
+    fake = FakeExecutor(
+        {
+            "summarize": ExecutorResult(rc=0, stdout="TASK", duration_ms=0.0, timed_out=False),
+            "tidy": ExecutorResult(rc=0, stdout="SKILL", duration_ms=0.0, timed_out=False),
+            "gh/list": ExecutorResult(rc=0, stdout="MCP", duration_ms=0.0, timed_out=False),
+        }
+    )
+    assert (
+        fake.run(TaskStep(id="t1", prompt="summarize"), timeout_s=1, max_output_bytes=64).stdout
+        == "TASK"
+    )
+    assert (
+        fake.run(SkillStep(id="k1", skill_id="tidy"), timeout_s=1, max_output_bytes=64).stdout
+        == "SKILL"
+    )
+    assert (
+        fake.run(
+            MCPStep(id="m1", server="gh", tool="list"), timeout_s=1, max_output_bytes=64
+        ).stdout
+        == "MCP"
+    )
 
 
 def test_delegating_executor_captures_usage_tokens():

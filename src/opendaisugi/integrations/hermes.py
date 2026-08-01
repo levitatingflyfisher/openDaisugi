@@ -79,11 +79,7 @@ def envelope_from_yaml(
 
     invariants: list[Invariant] = []
     for inv in data.get("invariants", []):
-        expr = (
-            registry.resolve(parse_expression(inv["expr"]))
-            if "expr" in inv
-            else None
-        )
+        expr = registry.resolve(parse_expression(inv["expr"])) if "expr" in inv else None
         invariants.append(
             Invariant(
                 type=inv["type"],
@@ -97,11 +93,7 @@ def envelope_from_yaml(
 
     postconditions: list[Postcondition] = []
     for pc in data.get("postconditions", []):
-        expr = (
-            registry.resolve(parse_expression(pc["expr"]))
-            if "expr" in pc
-            else None
-        )
+        expr = registry.resolve(parse_expression(pc["expr"])) if "expr" in pc else None
         postconditions.append(
             Postcondition(
                 type=pc["type"],

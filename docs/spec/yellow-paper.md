@@ -197,6 +197,23 @@ incomplete method*. "Not disproven" is not "proven".
 - Delegation is transitive containment (§5), so skills-as-contracts, safe
   sub-agents, inheritance, and pathway reuse all reduce to one checked relation.
 
+**A law for the cost levers (Stages 8–10), stated now:**
+- **Admissibility-preservation.** The planned cost levers — within-instance batch
+  compilation, model routing, pathway reuse, and the deed / rationale ledgers
+  ([ADR-0011](../adr/0011-verifiable-execution-substrate.md)) — change *which* model or
+  script produces an action, never *what is admitted*. Each reused, batched, or routed
+  action is re-verified against the **caller's** envelope (§5; VISION invariant 3), so
+  no lever can widen `⟦E⟧`. The two ledgers are observational: they record deeds and
+  rationale but never gate an action. The one lever that touches authority is
+  *constraint promotion* — a mid-task invariant captured into the envelope — and it is
+  admitted only through the monotone-narrowing subsumption of §5, so it may only
+  tighten. A lever that cannot exhibit this reduction is a design regression, not an
+  optimization. (The **deed ledger** is built and observes this law by construction: a
+  reversal only ever writes to a path the run itself wrote — restoring a prior state or
+  deleting a file the run created — so it cannot widen `⟦E⟧`, and it is valid only
+  against the run's own ledger. The remaining levers are not yet built; the law they
+  must satisfy is fixed here so the implementation cannot quietly relax it.)
+
 **Not guaranteed / out of scope:**
 - **The checker is not machine-verified.** These properties are the design intent,
   enforced by ~1600 tests, not a Coq/Lean proof. The translation layer

@@ -1,4 +1,4 @@
-"""CLI: `daisugi setup` (hardware → recommendation → qualify/wire) + status local-model line."""
+"""CLI: `daisugi tiers setup` (hardware → recommendation → qualify/wire) + status local-model line."""
 
 import json
 
@@ -10,22 +10,22 @@ runner = CliRunner()
 
 
 def test_setup_help():
-    res = runner.invoke(app, ["setup", "--help"])
+    res = runner.invoke(app, ["tiers", "setup", "--help"])
     assert res.exit_code == 0
     assert "setup" in res.output.lower()
 
 
 def test_setup_detects_and_recommends(tmp_path):
-    res = runner.invoke(app, ["setup", "--data-dir", str(tmp_path)])
+    res = runner.invoke(app, ["tiers", "setup", "--data-dir", str(tmp_path)])
     assert res.exit_code == 0, res.output
     low = res.output.lower()
-    assert "llamafile" in low                       # recommends the onefile runtime
-    assert "qualif" in low                           # provisional-until-qualified guidance
-    assert ("ram" in low or "vram" in low or "budget" in low)  # reported the hardware budget
+    assert "llamafile" in low  # recommends the onefile runtime
+    assert "qualif" in low  # provisional-until-qualified guidance
+    assert "ram" in low or "vram" in low or "budget" in low  # reported the hardware budget
 
 
 def test_setup_json(tmp_path):
-    res = runner.invoke(app, ["setup", "--data-dir", str(tmp_path), "--json"])
+    res = runner.invoke(app, ["tiers", "setup", "--data-dir", str(tmp_path), "--json"])
     assert res.exit_code == 0, res.output
     data = json.loads(res.output)
     assert "hardware" in data and "recommendation" in data
@@ -34,10 +34,17 @@ def test_setup_json(tmp_path):
 
 def test_setup_endpoint_requires_model(tmp_path):
     res = runner.invoke(
-        app, ["setup", "--data-dir", str(tmp_path), "--endpoint", "http://localhost:8080/v1"]
+        app,
+        ["tiers", "setup", "--data-dir", str(tmp_path), "--endpoint", "http://localhost:8080/v1"],
     )
     assert res.exit_code != 0
     assert "model" in res.output.lower()
+
+
+def test_setup_is_gone_from_top_level_and_suggests_tiers_setup():
+    res = runner.invoke(app, ["setup"])
+    assert res.exit_code != 0
+    assert "tiers" in res.output
 
 
 def test_status_shows_local_model_section(tmp_path):

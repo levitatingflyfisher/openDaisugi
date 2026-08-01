@@ -108,16 +108,20 @@ def test_plan_shell_step_without_shell_permission_fails():
 
 def test_plan_file_write_with_write_permission_passes():
     env = _envelope(Permission(file_write=["out/*.png"]))
-    plan = _plan([
-        FileWriteStep(id="s1", path="out/chart.png", content="x"),
-    ])
+    plan = _plan(
+        [
+            FileWriteStep(id="s1", path="out/chart.png", content="x"),
+        ]
+    )
     assert check_plan_against_envelope(plan, env) == []
 
 
 def test_plan_file_write_without_write_permission_fails():
     env = _envelope(Permission(file_write=[]))
-    plan = _plan([
-        FileWriteStep(id="s1", path="out/chart.png", content="x"),
-    ])
+    plan = _plan(
+        [
+            FileWriteStep(id="s1", path="out/chart.png", content="x"),
+        ]
+    )
     violations = check_plan_against_envelope(plan, env)
     assert len(violations) == 1

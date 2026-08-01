@@ -42,7 +42,8 @@ def test_subprocess_executor_merges_stderr_into_stdout():
     ex = SubprocessExecutor()
     result = ex.run(
         _step("echo out; echo err >&2"),
-        timeout_s=5, max_output_bytes=1024,
+        timeout_s=5,
+        max_output_bytes=1024,
     )
     assert "out" in result.stdout
     assert "err" in result.stdout
@@ -71,7 +72,9 @@ def test_subprocess_executor_reaps_grandchildren_on_timeout():
     # Give the OS a moment to reap
     time.sleep(0.5)
     ps_out = subprocess.run(
-        ["ps", "-eo", "pid,command"], capture_output=True, text=True,
+        ["ps", "-eo", "pid,command"],
+        capture_output=True,
+        text=True,
     ).stdout
     for line in ps_out.splitlines():
         if marker in line and "sleep" in line:
@@ -83,7 +86,8 @@ def test_subprocess_executor_truncates_large_output():
     # Generate 2 KB of output, truncate to 512 bytes
     result = ex.run(
         _step("python3 -c 'print(\"x\" * 2048)'"),
-        timeout_s=5, max_output_bytes=512,
+        timeout_s=5,
+        max_output_bytes=512,
     )
     assert len(result.stdout.encode()) <= 512 + len("\n... [truncated]")
     assert "[truncated]" in result.stdout
@@ -91,6 +95,7 @@ def test_subprocess_executor_truncates_large_output():
 
 def test_subprocess_executor_satisfies_protocol():
     from opendaisugi.executor import StepExecutor
+
     assert isinstance(SubprocessExecutor(), StepExecutor)
 
 
@@ -102,6 +107,7 @@ def test_subprocess_output_is_bounded_against_flood():
 
     from opendaisugi.executor import SubprocessExecutor
     from opendaisugi.models import ShellStep
+
     exe = SubprocessExecutor()
     start = _t.monotonic()
     # `yes` emits "y\n" forever; cap at 4KB.

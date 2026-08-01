@@ -7,6 +7,7 @@ This test drives the real evaluate_predicate path and asserts the failure flows
 through run_llm_check's contract (message "llm_check call failed"), which only
 holds once the call site is migrated.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -21,9 +22,12 @@ def _raise_conn(*_a, **_k):
 
 
 def _env(stakes="medium"):
-    return Envelope(generated_by="t", task="t",
-                    permissions=Permission(shell=True, shell_allowlist=["ls"]),
-                    stakes=stakes)
+    return Envelope(
+        generated_by="t",
+        task="t",
+        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        stakes=stakes,
+    )
 
 
 def _plan():
@@ -32,6 +36,7 @@ def _plan():
 
 def test_evaluate_predicate_llm_check_failure_is_failclosed(monkeypatch):
     import opendaisugi.llm_check as lc
+
     monkeypatch.setattr(lc, "_invoke_model", _raise_conn)
     expr = parse_expression({"op": "llm_check", "rule": "the plan is safe"})
     # Must NOT return True (silent approve) and must go through run_llm_check.
@@ -42,8 +47,10 @@ def test_evaluate_predicate_llm_check_failure_is_failclosed(monkeypatch):
 
 def test_rate_limit_handled_identically(monkeypatch):
     import opendaisugi.llm_check as lc
+
     def _ratelimit(*_a, **_k):
         raise RuntimeError("429 rate limited")
+
     monkeypatch.setattr(lc, "_invoke_model", _ratelimit)
     expr = parse_expression({"op": "llm_check", "rule": "ok?"})
     with pytest.raises(Exception) as exc:

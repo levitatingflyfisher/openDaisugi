@@ -9,6 +9,7 @@ The envelope also declares an end_effector_in_workspace invariant
 that gates VLAStep.target_pose against the allowed bounds — same
 v0.8-shipped Z3 check that runs on CartesianMoveStep.
 """
+
 from __future__ import annotations
 
 from opendaisugi.models import Envelope, Invariant, Permission
@@ -20,7 +21,8 @@ def build_envelope() -> Envelope:
         task="VLA-driven multi-skill manipulation under physical stakes",
         permissions=Permission(
             shell=False,
-            file_read=[], file_write=[],
+            file_read=[],
+            file_write=[],
             network=False,
             max_execution_time_s=120,
             max_output_size_mb=4,

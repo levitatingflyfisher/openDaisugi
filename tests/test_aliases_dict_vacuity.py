@@ -5,6 +5,7 @@ register() called check_vacuity(alias.expr) directly; when expr is a raw dict
 except swallowed it, so a tautological/contradictory dict-form alias registered
 silently — defeating the documented "reject tautological aliases" invariant.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -13,15 +14,23 @@ from opendaisugi.aliases import Alias, AliasRegistry, VacuousAliasError
 
 
 def _taut_dict():
-    return {"op": "or", "children": [
-        {"op": "equals", "path": "type", "value": "shell"},
-        {"op": "not_equals", "path": "type", "value": "shell"}]}
+    return {
+        "op": "or",
+        "children": [
+            {"op": "equals", "path": "type", "value": "shell"},
+            {"op": "not_equals", "path": "type", "value": "shell"},
+        ],
+    }
 
 
 def _contradiction_dict():
-    return {"op": "and", "children": [
-        {"op": "equals", "path": "type", "value": "shell"},
-        {"op": "not_equals", "path": "type", "value": "shell"}]}
+    return {
+        "op": "and",
+        "children": [
+            {"op": "equals", "path": "type", "value": "shell"},
+            {"op": "not_equals", "path": "type", "value": "shell"},
+        ],
+    }
 
 
 def test_dict_form_tautology_rejected_at_registration():
@@ -38,6 +47,9 @@ def test_dict_form_contradiction_rejected_at_registration():
 
 def test_dict_form_nontrivial_still_registers():
     reg = AliasRegistry()
-    reg.register(Alias(name="real", tier="household",
-                       expr={"op": "equals", "path": "command", "value": "ls"}))
+    reg.register(
+        Alias(
+            name="real", tier="household", expr={"op": "equals", "path": "command", "value": "ls"}
+        )
+    )
     assert "real" in reg

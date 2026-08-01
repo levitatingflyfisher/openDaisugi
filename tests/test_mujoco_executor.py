@@ -42,7 +42,8 @@ def test_joint_move_reaches_target_within_tolerance():
     target = 0.7
     result = ex.run(
         JointMoveStep(id="m", joint_targets={"j1": target}, duration_s=0.5),
-        timeout_s=1, max_output_bytes=1024,
+        timeout_s=1,
+        max_output_bytes=1024,
     )
     assert result.rc == 0
     jid = mujoco.mj_name2id(ex.model, mujoco.mjtObj.mjOBJ_JOINT, "j1")
@@ -58,7 +59,8 @@ def test_cartesian_step_reaches_target_via_ik():
     target = (0.4, 0.3, 0.0)
     result = ex.run(
         CartesianMoveStep(id="c", target_position=target),
-        timeout_s=1, max_output_bytes=1024,
+        timeout_s=1,
+        max_output_bytes=1024,
     )
     assert result.rc == 0, result.stdout
     ee_id = mujoco.mj_name2id(ex.model, mujoco.mjtObj.mjOBJ_BODY, "end_effector")
@@ -80,7 +82,8 @@ def test_cartesian_step_tight_tolerance_is_actually_tight():
     target = (0.4, 0.3, 0.0)
     result = ex.run(
         CartesianMoveStep(id="c", target_position=target),
-        timeout_s=1, max_output_bytes=1024,
+        timeout_s=1,
+        max_output_bytes=1024,
     )
     assert result.rc == 0, result.stdout
     # IK solver convergence is on the scratch data; the reached position is
@@ -103,7 +106,8 @@ def test_cartesian_step_unreachable_returns_ik_failed():
     # Arm reach is 0.6; (2, 0, 0) is far outside it.
     result = ex.run(
         CartesianMoveStep(id="c", target_position=(2.0, 0.0, 0.0)),
-        timeout_s=1, max_output_bytes=1024,
+        timeout_s=1,
+        max_output_bytes=1024,
     )
     assert result.rc == RC_IK_FAILED
     assert "IK failed" in result.stdout
@@ -114,7 +118,8 @@ def test_unknown_joint_raises_key_error():
     with pytest.raises(KeyError):
         ex.run(
             JointMoveStep(id="m", joint_targets={"j_missing": 0.0}, duration_s=0.1),
-            timeout_s=1, max_output_bytes=1024,
+            timeout_s=1,
+            max_output_bytes=1024,
         )
 
 
@@ -124,8 +129,9 @@ def test_unknown_joint_raises_key_error():
 def test_gripper_open_drives_joint_to_upper_bound():
     ex = _executor()
     ex.run(SimulationResetStep(id="r"), timeout_s=1, max_output_bytes=1024)
-    result = ex.run(GripperStep(id="g", action="open", hold_s=1.0),
-                    timeout_s=1, max_output_bytes=1024)
+    result = ex.run(
+        GripperStep(id="g", action="open", hold_s=1.0), timeout_s=1, max_output_bytes=1024
+    )
     assert result.rc == 0
     jid = mujoco.mj_name2id(ex.model, mujoco.mjtObj.mjOBJ_JOINT, "j_grip")
     qpos_adr = ex.model.jnt_qposadr[jid]
@@ -139,27 +145,27 @@ def test_gripper_raises_when_target_range_undeclared(tmp_path):
     # (-0.05, 0.05); the honest behavior is to surface the misconfig.
     mjcf = tmp_path / "bad_gripper.xml"
     mjcf.write_text(
-        '<mujoco>'
+        "<mujoco>"
         '<compiler angle="radian"/>'
-        '<worldbody>'
+        "<worldbody>"
         '<body><joint name="j_grip" type="slide" axis="0 1 0"/>'
         '<geom type="box" size="0.01 0.01 0.01" contype="0" conaffinity="0"/>'
-        '</body>'
-        '</worldbody>'
+        "</body>"
+        "</worldbody>"
         '<actuator><position name="a_grip" joint="j_grip" kp="10"/></actuator>'
-        '</mujoco>'
+        "</mujoco>"
     )
     ex = MuJoCoExecutor(str(mjcf))
     with pytest.raises(ValueError, match="neither joint range nor ctrlrange"):
-        ex.run(GripperStep(id="g", action="open", hold_s=0.01),
-               timeout_s=1, max_output_bytes=1024)
+        ex.run(GripperStep(id="g", action="open", hold_s=0.01), timeout_s=1, max_output_bytes=1024)
 
 
 def test_gripper_close_drives_joint_to_lower_bound():
     ex = _executor()
     ex.run(SimulationResetStep(id="r"), timeout_s=1, max_output_bytes=1024)
-    result = ex.run(GripperStep(id="g", action="close", hold_s=1.0),
-                    timeout_s=1, max_output_bytes=1024)
+    result = ex.run(
+        GripperStep(id="g", action="close", hold_s=1.0), timeout_s=1, max_output_bytes=1024
+    )
     assert result.rc == 0
     jid = mujoco.mj_name2id(ex.model, mujoco.mjtObj.mjOBJ_JOINT, "j_grip")
     qpos_adr = ex.model.jnt_qposadr[jid]
@@ -177,7 +183,8 @@ def test_torque_limit_triggers_violation_on_aggressive_move():
     ex.run(SimulationResetStep(id="r"), timeout_s=1, max_output_bytes=1024)
     result = ex.run(
         JointMoveStep(id="m", joint_targets={"j1": 0.5}, duration_s=0.5),
-        timeout_s=1, max_output_bytes=1024,
+        timeout_s=1,
+        max_output_bytes=1024,
     )
     assert result.rc == RC_TORQUE_VIOLATION
     assert "torque_limit violated" in result.stdout
@@ -189,7 +196,8 @@ def test_torque_limit_not_triggered_by_gentle_move():
     ex.run(SimulationResetStep(id="r"), timeout_s=1, max_output_bytes=1024)
     result = ex.run(
         JointMoveStep(id="m", joint_targets={"j1": 0.1}, duration_s=0.5),
-        timeout_s=1, max_output_bytes=1024,
+        timeout_s=1,
+        max_output_bytes=1024,
     )
     assert result.rc == 0
 
@@ -211,7 +219,8 @@ def test_forbid_contacts_fires_deterministically_at_rest():
     ex.run(SimulationResetStep(id="r"), timeout_s=1, max_output_bytes=1024)
     result = ex.run(
         JointMoveStep(id="m", joint_targets={"j1": 0.1}, duration_s=0.1),
-        timeout_s=1, max_output_bytes=1024,
+        timeout_s=1,
+        max_output_bytes=1024,
     )
     assert result.rc == RC_CONTACT_VIOLATION
     assert "contact detected" in result.stdout
@@ -224,7 +233,8 @@ def test_forbid_contacts_disabled_tolerates_overlapping_geoms():
     ex.run(SimulationResetStep(id="r"), timeout_s=1, max_output_bytes=1024)
     result = ex.run(
         JointMoveStep(id="m", joint_targets={"j1": 0.1}, duration_s=0.1),
-        timeout_s=1, max_output_bytes=1024,
+        timeout_s=1,
+        max_output_bytes=1024,
     )
     # ncon > 0 but guard disabled — step should succeed.
     assert result.rc == 0

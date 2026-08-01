@@ -129,10 +129,12 @@ def _train(args: argparse.Namespace) -> int:
     dataset = load_dataset("json", data_files=args.jsonl, split="train")
 
     if args.format == "alpaca":
+
         def fmt(row):
             instruction = row["instruction"]
             output = row["output"]
             return {"text": f"### Instruction:\n{instruction}\n\n### Response:\n{output}"}
+
         dataset = dataset.map(fmt, remove_columns=dataset.column_names)
     # chat format is already in {"messages": [...]} — SFTTrainer handles it.
 

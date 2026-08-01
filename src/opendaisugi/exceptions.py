@@ -1,4 +1,5 @@
 """Custom exception hierarchy for opendaisugi."""
+
 from __future__ import annotations
 
 
@@ -16,6 +17,30 @@ class VerificationTimeout(OpenDaisugiError):
 
 class EnvelopeGenerationError(OpenDaisugiError):
     """Raised when envelope generation fails after retries."""
+
+
+class LLMNotConfigured(OpenDaisugiError):
+    """The selected LLM backend cannot run on this machine (no key, no binary).
+
+    Raised before any network call. Deterministic: retrying cannot help.
+    """
+
+
+class DecompositionError(OpenDaisugiError):
+    """The decomposer could not produce a valid plan.
+
+    ``plan`` carries the assembled plan when one was built (DAG or policy
+    failure) so a caller can inspect or retry; ``None`` when the LLM call itself
+    failed or returned nothing.
+    """
+
+    def __init__(self, message: str, *, plan=None) -> None:
+        super().__init__(message)
+        self.plan = plan
+
+
+class NoStepsError(DecompositionError):
+    """The prompt decomposed to zero steps: there is nothing to run."""
 
 
 class StepExecutionError(OpenDaisugiError):
@@ -39,12 +64,16 @@ class IntegrityViolation(OpenDaisugiError):
     supposed to run — signal of silent step-skipping. v0.18.0+."""
 
 
-class LowStakesNotConfigured(ValueError):
+class LowStakesNotConfigured(OpenDaisugiError, ValueError):
     """Raised when stakes='low' is passed but no low_stakes_envelope is configured.
 
     The library deliberately refuses to silently use a permissive default; the
     caller must opt in by passing ``low_stakes_envelope=...`` or constructing the
     facade via ``Daisugi.with_default_low_stakes()``.
+
+    Subclasses both ``OpenDaisugiError`` (so ``cli.main()``'s one error renderer
+    catches it and shows a config message, not a bug traceback) and ``ValueError``
+    (the original v0.1 type — kept for backward compatibility).
     """
 
 

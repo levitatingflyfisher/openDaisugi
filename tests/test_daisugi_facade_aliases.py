@@ -1,4 +1,5 @@
 """v0.27.0 — the programmatic Daisugi facade supports register->verify->enforce."""
+
 from __future__ import annotations
 
 from opendaisugi import Daisugi
@@ -9,14 +10,24 @@ from opendaisugi.predicate import parse_expression
 
 def test_facade_round_trip_register_verify_enforce():
     reg = AliasRegistry()
-    reg.register(Alias(name="only_ls", tier="household",
-        expr=parse_expression({"op": "forall_steps",
-            "pred": {"op": "equals", "path": "command", "value": "ls"}})))
-    env = Envelope(generated_by="t", task="t",
+    reg.register(
+        Alias(
+            name="only_ls",
+            tier="household",
+            expr=parse_expression(
+                {"op": "forall_steps", "pred": {"op": "equals", "path": "command", "value": "ls"}}
+            ),
+        )
+    )
+    env = Envelope(
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["ls", "rm"]),
         stakes="high",
-        invariants=[Invariant(type="only_ls", description="via alias",
-                              expr=AliasRef(name="only_ls"))])
+        invariants=[
+            Invariant(type="only_ls", description="via alias", expr=AliasRef(name="only_ls"))
+        ],
+    )
     dai = Daisugi()  # must not touch disk/network on construction
     bad = ActionPlan(source="t", task="t", steps=[ShellStep(id="s1", command="rm")])
     result = dai.verify(bad, env, aliases=reg)
@@ -40,7 +51,8 @@ def test_daisugi_run_strict_kwarg_overrides_low_stakes_default():
     from opendaisugi.run_session import RunStatus
 
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["ls"]),
         stakes="low",
         postconditions=[Postcondition(type="custom_unknown", description="opaque", enforce=True)],
@@ -66,7 +78,8 @@ def test_daisugi_constructor_strict_kwarg_persists():
     from opendaisugi.models import Postcondition
 
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["ls"]),
         stakes="low",
         postconditions=[Postcondition(type="custom_unknown", description="opaque", enforce=True)],
@@ -87,7 +100,8 @@ def test_daisugi_run_strict_kwarg_overrides_constructor_strict():
     from opendaisugi.models import Postcondition
 
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["ls"]),
         stakes="low",
         postconditions=[Postcondition(type="custom_unknown", description="opaque", enforce=True)],
@@ -96,9 +110,7 @@ def test_daisugi_run_strict_kwarg_overrides_constructor_strict():
     dai = Daisugi(pathway_store=False, cache=False, strict=True)
     # Construct: strict-on. Run: strict-off (False, not None) — must win.
     session = asyncio.run(dai.run(plan, env, strict=False))
-    assert session.verification.ok, (
-        "Daisugi.run(strict=False) must override Daisugi(strict=True)"
-    )
+    assert session.verification.ok, "Daisugi.run(strict=False) must override Daisugi(strict=True)"
 
 
 def test_daisugi_verify_honors_constructor_strict():
@@ -107,7 +119,8 @@ def test_daisugi_verify_honors_constructor_strict():
     from opendaisugi.models import Postcondition
 
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["ls"]),
         stakes="low",
         postconditions=[Postcondition(type="custom_unknown", description="opaque", enforce=True)],

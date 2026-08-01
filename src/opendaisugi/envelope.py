@@ -242,8 +242,7 @@ def _validate_task_length(
 
 
 _SUMMARIZE_INSTRUCTION = (
-    "\n\nAlso produce a one-line `summary` field (<=80 chars) describing the task "
-    "in plain English."
+    "\n\nAlso produce a one-line `summary` field (<=80 chars) describing the task in plain English."
 )
 
 
@@ -301,8 +300,10 @@ def _lookup_refinements(
         return journal.get_refinements_by_key(cache_key)
     except Exception as exc:  # journal failure is non-fatal
         import logging
+
         logging.getLogger("opendaisugi.envelope").warning(
-            "refinement lookup failed: %s", exc,
+            "refinement lookup failed: %s",
+            exc,
         )
         return []
 
@@ -367,6 +368,7 @@ async def generate_envelope(
             )
         if parent is not None:
             import warnings
+
             warnings.warn(
                 "stakes='low' ignores parent= (no fresh envelope is generated).",
                 StakesInheritanceWarning,
@@ -392,8 +394,11 @@ async def generate_envelope(
     # Per-rung key helper — used for both cache lookup and hint lookup.
     def _key_for(rung: str) -> str:
         return make_cache_key(
-            task=task, context=context, model=rung,
-            parent_envelope_id=parent_id, summarize=summarize,
+            task=task,
+            context=context,
+            model=rung,
+            parent_envelope_id=parent_id,
+            summarize=summarize,
             thinking_budget=thinking_budget,
         )
 
@@ -406,9 +411,11 @@ async def generate_envelope(
             match = None
         if match is not None:
             pathway_store.increment_hit(match.pathway.id)
-            return match.pathway.envelope.model_copy(update={
-                "generated_by": f"compiled-pathway:{match.pathway.id}",
-            })
+            return match.pathway.envelope.model_copy(
+                update={
+                    "generated_by": f"compiled-pathway:{match.pathway.id}",
+                }
+            )
 
     # v0.4.0: Tier-1 local-model slot. Runs between the pathway check and the
     # Tier-2 ladder. Returning None or raising means "decline, fall through."
@@ -417,8 +424,11 @@ async def generate_envelope(
     if tier1 is not None and stakes != "high":
         first_rung = model if isinstance(model, str) else (model[0] if model else "")
         tier1_key = make_cache_key(
-            task=task, context=context, model=first_rung,
-            parent_envelope_id=parent_id, summarize=summarize,
+            task=task,
+            context=context,
+            model=first_rung,
+            parent_envelope_id=parent_id,
+            summarize=summarize,
             thinking_budget=thinking_budget,
             tier1_provider_name=tier1.name,
         )
@@ -427,8 +437,11 @@ async def generate_envelope(
         # instead of asking the adapter again.
         if cache is not None:
             cached_t1 = cache.get(
-                task=task, context=context, model=first_rung,
-                parent_envelope_id=parent_id, summarize=summarize,
+                task=task,
+                context=context,
+                model=first_rung,
+                parent_envelope_id=parent_id,
+                summarize=summarize,
                 thinking_budget=thinking_budget,
                 tier1_provider_name=tier1.name,
             )
@@ -450,7 +463,8 @@ async def generate_envelope(
             if t1_violations:
                 _log.info(
                     "tier1 provider %r returned self-inconsistent envelope (%s) — falling through",
-                    tier1.name, t1_violations[0].message,
+                    tier1.name,
+                    t1_violations[0].message,
                 )
             else:
                 tier1_env.generated_by = f"tier1:{tier1.name}"
@@ -463,8 +477,11 @@ async def generate_envelope(
                 if cache is not None:
                     cache.put(
                         tier1_env,
-                        task=task, context=context, model=first_rung,
-                        parent_envelope_id=parent_id, summarize=summarize,
+                        task=task,
+                        context=context,
+                        model=first_rung,
+                        parent_envelope_id=parent_id,
+                        summarize=summarize,
                         thinking_budget=thinking_budget,
                         tier1_provider_name=tier1.name,
                     )
@@ -478,8 +495,11 @@ async def generate_envelope(
     if cache is not None and stakes != "high":
         for rung in ladder:
             cached = cache.get(
-                task=task, context=context, model=rung,
-                parent_envelope_id=parent_id, summarize=summarize,
+                task=task,
+                context=context,
+                model=rung,
+                parent_envelope_id=parent_id,
+                summarize=summarize,
                 thinking_budget=thinking_budget,
             )
             if cached is None:
@@ -538,8 +558,7 @@ async def generate_envelope(
 
         if violations:
             last_error = EnvelopeGenerationError(
-                f"Model {rung!r} produced self-inconsistent envelope: "
-                f"{violations[0].message}"
+                f"Model {rung!r} produced self-inconsistent envelope: {violations[0].message}"
             )
             continue
 
@@ -641,8 +660,8 @@ def _check_assert(envelope: Envelope, assertion: dict[str, Any]) -> bool:
 class CalibrationReport:
     total: int
     passed: int
-    failures: list[str]            # corpus entry ids that failed at least one assert
-    errors: dict[str, str]         # corpus entry id -> exception string (producer failures)
+    failures: list[str]  # corpus entry ids that failed at least one assert
+    errors: dict[str, str]  # corpus entry id -> exception string (producer failures)
 
     @property
     def pass_rate(self) -> float:

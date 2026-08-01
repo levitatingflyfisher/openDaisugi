@@ -124,16 +124,28 @@ def test_cache_key_differs_across_thinking_budgets(tmp_path):
     from opendaisugi.envelope_cache import make_cache_key as _make_cache_key
 
     k_light = _make_cache_key(
-        task="t", context=None, model="m", parent_envelope_id=None,
-        summarize=False, thinking_budget="light",
+        task="t",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="light",
     )
     k_standard = _make_cache_key(
-        task="t", context=None, model="m", parent_envelope_id=None,
-        summarize=False, thinking_budget="standard",
+        task="t",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="standard",
     )
     k_deep = _make_cache_key(
-        task="t", context=None, model="m", parent_envelope_id=None,
-        summarize=False, thinking_budget="deep",
+        task="t",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="deep",
     )
     assert k_light != k_standard != k_deep
     assert len({k_light, k_standard, k_deep}) == 3
@@ -145,16 +157,31 @@ def test_cache_get_put_round_trip_with_thinking_budget(tmp_path, sample_envelope
     cache = EnvelopeCache(tmp_path / "c.db", prompt_version="v1")
     cache.put(
         sample_envelope,
-        task="t", context=None, model="m", parent_envelope_id=None,
-        summarize=False, thinking_budget="deep",
+        task="t",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="deep",
     )
-    assert cache.get(
-        task="t", context=None, model="m", parent_envelope_id=None,
-        summarize=False, thinking_budget="light",
-    ) is None
+    assert (
+        cache.get(
+            task="t",
+            context=None,
+            model="m",
+            parent_envelope_id=None,
+            summarize=False,
+            thinking_budget="light",
+        )
+        is None
+    )
     got = cache.get(
-        task="t", context=None, model="m", parent_envelope_id=None,
-        summarize=False, thinking_budget="deep",
+        task="t",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="deep",
     )
     assert got is not None
     assert got.id == sample_envelope.id
@@ -164,17 +191,23 @@ def test_cache_init_handles_parent_in_cwd(tmp_path, monkeypatch):
     """Regression: bare filename (parent == '.') must not error on mkdir."""
     monkeypatch.chdir(tmp_path)
     from opendaisugi.envelope_cache import EnvelopeCache
+
     cache = EnvelopeCache("bare.db", prompt_version="v1")
     assert cache.stats()["entries"] == 0
 
 
 def test_clear_returns_int_rowcount(tmp_path, sample_envelope):
     from opendaisugi.envelope_cache import EnvelopeCache
+
     cache = EnvelopeCache(tmp_path / "c.db", prompt_version="v1")
     cache.put(
         sample_envelope,
-        task="t", context=None, model="m", parent_envelope_id=None,
-        summarize=False, thinking_budget="standard",
+        task="t",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="standard",
     )
     assert cache.clear() == 1
     assert isinstance(cache.clear(), int)
@@ -183,14 +216,21 @@ def test_clear_returns_int_rowcount(tmp_path, sample_envelope):
 
 def test_make_cache_key_is_public_and_deterministic():
     from opendaisugi.envelope_cache import make_cache_key
+
     k1 = make_cache_key(
-        task="demo", context=None, model="m",
-        parent_envelope_id=None, summarize=False,
+        task="demo",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
         thinking_budget="standard",
     )
     k2 = make_cache_key(
-        task="demo", context=None, model="m",
-        parent_envelope_id=None, summarize=False,
+        task="demo",
+        context=None,
+        model="m",
+        parent_envelope_id=None,
+        summarize=False,
         thinking_budget="standard",
     )
     assert k1 == k2
@@ -199,10 +239,9 @@ def test_make_cache_key_is_public_and_deterministic():
 
 def test_make_cache_key_distinct_for_distinct_inputs():
     from opendaisugi.envelope_cache import make_cache_key
-    k1 = make_cache_key(task="a", context=None, model="m",
-                        parent_envelope_id=None, summarize=False)
-    k2 = make_cache_key(task="b", context=None, model="m",
-                        parent_envelope_id=None, summarize=False)
+
+    k1 = make_cache_key(task="a", context=None, model="m", parent_envelope_id=None, summarize=False)
+    k2 = make_cache_key(task="b", context=None, model="m", parent_envelope_id=None, summarize=False)
     assert k1 != k2
 
 
@@ -210,6 +249,7 @@ def test_get_inserted_at_returns_timestamp_for_cached_entry(tmp_path):
     cache = EnvelopeCache(tmp_path / "cache.db", prompt_version="v1")
     env = _envelope()
     from opendaisugi.envelope_cache import make_cache_key
+
     cache.put(env, **_key_args())
     key = make_cache_key(**_key_args())
     ts = cache.get_inserted_at(key)
@@ -227,6 +267,7 @@ def test_invalidate_removes_entry_and_returns_true(tmp_path):
     cache = EnvelopeCache(tmp_path / "cache.db", prompt_version="v1")
     env = _envelope()
     from opendaisugi.envelope_cache import make_cache_key
+
     cache.put(env, **_key_args())
     key = make_cache_key(**_key_args())
     assert cache.invalidate(key) is True

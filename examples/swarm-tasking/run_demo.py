@@ -39,17 +39,26 @@ def _coordinator(bounds, *, velocity=3.0):
     # Drones inherit it (partition_and_assign copies the coordinator), so each
     # drone's plan is gated against its own tightened sector.
     return Envelope(
-        generated_by="swarm-coordinator", task="survey the field", stakes="physical",
+        generated_by="swarm-coordinator",
+        task="survey the field",
+        stakes="physical",
         permissions=Permission(workspace_bounds=bounds, velocity_limit=velocity),
-        invariants=[Invariant(type="end_effector_in_workspace",
-                              description="drone stays within its assigned sector")],
+        invariants=[
+            Invariant(
+                type="end_effector_in_workspace",
+                description="drone stays within its assigned sector",
+            )
+        ],
     )
 
 
 def _flight_plan(drone_id, waypoints):
     steps = [
-        CartesianMoveStep(id=f"{drone_id}_wp{i}", target_position=wp,
-                          depends_on=([f"{drone_id}_wp{i-1}"] if i else []))
+        CartesianMoveStep(
+            id=f"{drone_id}_wp{i}",
+            target_position=wp,
+            depends_on=([f"{drone_id}_wp{i - 1}"] if i else []),
+        )
         for i, wp in enumerate(waypoints)
     ]
     return ActionPlan(source=drone_id, task="fly waypoints", steps=steps)
@@ -66,8 +75,10 @@ def main():
         print(f"  {did}: workspace_bounds = {env.permissions.workspace_bounds}")
 
     verdict = verify_swarm_tasking(total, assignments, margin=0.5)
-    print(f"\n  DECONFLICTION CERTIFICATE: ok={verdict.ok} "
-          f"(subsumed={verdict.all_subsumed}, deconflicted={verdict.deconflicted})")
+    print(
+        f"\n  DECONFLICTION CERTIFICATE: ok={verdict.ok} "
+        f"(subsumed={verdict.all_subsumed}, deconflicted={verdict.deconflicted})"
+    )
     print("  → every drone provably in-scope AND no two sectors overlap (0.5m margin)")
 
     print("\n" + RULE)
@@ -105,8 +116,9 @@ def main():
     # (c) undeclared bounds (fail-closed)
     undeclared = {
         "bounded": _coordinator(((0, 0, 0), (10, 10, 10))),
-        "ghost": Envelope(generated_by="x", task="y", stakes="physical",
-                          permissions=Permission()),  # no workspace_bounds
+        "ghost": Envelope(
+            generated_by="x", task="y", stakes="physical", permissions=Permission()
+        ),  # no workspace_bounds
     }
     v = verify_swarm_tasking(total, undeclared)
     print(f"  (c) drone with undeclared bounds: ok={v.ok}  ✗ REJECTED (fail-closed)")
@@ -115,16 +127,22 @@ def main():
     print("4. SWARM-OF-SWARMS — nested delegation + top-level deconfliction")
     print(RULE)
     # Coordinator delegates to two sub-coordinators (west half / east half)...
-    west_half, east_half = partition_and_assign(total, ["west_swarm", "east_swarm"], axis=0).values()
+    west_half, east_half = partition_and_assign(
+        total, ["west_swarm", "east_swarm"], axis=0
+    ).values()
     # ...each sub-coordinator partitions its half among its own drones.
-    west_drones = partition_and_assign(west_half, ["w1", "w2"], axis=1)   # split along y
+    west_drones = partition_and_assign(west_half, ["w1", "w2"], axis=1)  # split along y
     east_drones = partition_and_assign(east_half, ["e1", "e2"], axis=1)
-    print(f"  west_swarm ⊆ coordinator: {verify_swarm_tasking(total, {'west_swarm': west_half}).ok}")
+    print(
+        f"  west_swarm ⊆ coordinator: {verify_swarm_tasking(total, {'west_swarm': west_half}).ok}"
+    )
     print(f"  w1,w2 ⊆ west_swarm + disjoint: {verify_swarm_tasking(west_half, west_drones).ok}")
     print(f"  e1,e2 ⊆ east_swarm + disjoint: {verify_swarm_tasking(east_half, east_drones).ok}")
     # top-level: the two swarms don't share airspace
-    print(f"  west_swarm ∥ east_swarm (disjoint): "
-          f"{aabb_disjoint(west_half.permissions.workspace_bounds, east_half.permissions.workspace_bounds)}")
+    print(
+        f"  west_swarm ∥ east_swarm (disjoint): "
+        f"{aabb_disjoint(west_half.permissions.workspace_bounds, east_half.permissions.workspace_bounds)}"
+    )
 
     print("\n" + RULE)
     print("5. COMMS-LOSS REASSIGNMENT — gated on a fresh proof")
@@ -134,18 +152,25 @@ def main():
     mid_box = assignments["drone_mid"].permissions.workspace_bounds
     west_box = assignments["drone_west"].permissions.workspace_bounds
     # Enlarge west to absorb mid's x-range (they're adjacent along x).
-    enlarged = ((west_box[0][0], west_box[0][1], west_box[0][2]),
-                (mid_box[1][0], west_box[1][1], west_box[1][2]))
+    enlarged = (
+        (west_box[0][0], west_box[0][1], west_box[0][2]),
+        (mid_box[1][0], west_box[1][1], west_box[1][2]),
+    )
     proposed = dict(survivors)
-    proposed["drone_west"] = total.model_copy(update={
-        "permissions": total.permissions.model_copy(update={"workspace_bounds": enlarged})})
+    proposed["drone_west"] = total.model_copy(
+        update={"permissions": total.permissions.model_copy(update={"workspace_bounds": enlarged})}
+    )
     v = verify_swarm_tasking(total, proposed)
     print(f"  reassign drone_mid's sector to drone_west → re-verify: ok={v.ok}")
     if v.ok:
-        print("  ✓ reassignment ALLOWED — enlarged sector still ⊆ coordinator and "
-              "still disjoint from drone_east")
-    print("\n(If the enlargement had overlapped drone_east, the reassignment would be "
-          "REJECTED before any drone moved.)")
+        print(
+            "  ✓ reassignment ALLOWED — enlarged sector still ⊆ coordinator and "
+            "still disjoint from drone_east"
+        )
+    print(
+        "\n(If the enlargement had overlapped drone_east, the reassignment would be "
+        "REJECTED before any drone moved.)"
+    )
 
 
 if __name__ == "__main__":

@@ -93,7 +93,7 @@ def test_non_strict_allows_overshoot():
 
 def test_approx_cost_usd_blends_model_prices():
     b = BudgetTracker(total_tokens=None)
-    b.record(step_id="s1", model="claude-opus-4-8", tokens=1_000_000)   # $22/Mtok
+    b.record(step_id="s1", model="claude-opus-4-8", tokens=1_000_000)  # $22/Mtok
     b.record(step_id="s2", model="claude-haiku-4-5", tokens=1_000_000)  # $1.5/Mtok
     b.record(step_id="s3", model="openai/local-model", tokens=5_000_000)  # local → $0
     assert b.approx_cost_usd() == 23.5
@@ -119,3 +119,44 @@ def test_measured_cost_is_none_without_backend_costs():
     b.record(step_id="s1", model="haiku", tokens=100)  # no cost_usd
     assert b.measured_cost_usd() is None
     assert b.report().measured_cost_usd is None
+
+
+def test_concurrent_records_are_atomic_no_lost_updates():
+    """Parallel task steps record spend from worker threads (v0.40): the
+    read-modify-write of ``_spent`` must not lose updates.
+
+    Honest note: on a free-threaded (no-GIL) build this reliably fails without
+    the tracker's lock. On a stock GIL build the lost-update window is a single
+    bytecode and effectively unobservable even at a 1e-9 switch interval, so here
+    this stands as a robustness guard — it proves the locked ``record`` stays
+    correct and deadlock-free under heavy concurrent load, and would catch a
+    future non-atomic refactor of the critical section on any build."""
+    import sys
+    import threading
+
+    b = BudgetTracker(total_tokens=None)
+    n_threads = 8
+    per_thread = 2000
+    tokens_each = 1
+    barrier = threading.Barrier(n_threads)
+
+    def worker(tid: int) -> None:
+        barrier.wait()  # maximize contention: everyone starts together
+        for i in range(per_thread):
+            b.record(step_id=f"t{tid}-s{i}", model="haiku", tokens=tokens_each)
+
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-9)  # provoke frequent mid-RMW preemption
+    try:
+        threads = [threading.Thread(target=worker, args=(t,)) for t in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    expected = n_threads * per_thread * tokens_each
+    assert b.spent() == expected
+    assert len(b.costs()) == n_threads * per_thread
+    assert b.by_model() == {"haiku": expected}

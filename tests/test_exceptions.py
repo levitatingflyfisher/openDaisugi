@@ -39,11 +39,13 @@ def test_can_catch_child_via_base():
 
 def test_low_stakes_not_configured_is_value_error():
     from opendaisugi.exceptions import LowStakesNotConfigured
+
     assert issubclass(LowStakesNotConfigured, ValueError)
 
 
 def test_model_ladder_exhausted_subclasses_envelope_error():
     from opendaisugi.exceptions import EnvelopeGenerationError, ModelLadderExhausted
+
     err = ModelLadderExhausted(
         attempted=["sonnet", "opus"],
         last_error=RuntimeError("boom"),
@@ -58,4 +60,5 @@ def test_model_ladder_exhausted_subclasses_envelope_error():
 
 def test_stakes_inheritance_warning_is_user_warning():
     from opendaisugi.exceptions import StakesInheritanceWarning
+
     assert issubclass(StakesInheritanceWarning, UserWarning)

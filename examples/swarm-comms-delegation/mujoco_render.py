@@ -9,8 +9,10 @@ contained AND deconflicted. The unsafe alternative (hand the sector to BOTH
 neighbors) is refused: the overlap flashes red, before any drone moves. The verify
 calls are real (verify_swarm_tasking); the scene is a kinematic illustration.
 """
+
 # ruff: noqa: I001  — MUJOCO_GL must be set before `import mujoco`.
 import os
+
 os.environ.setdefault("MUJOCO_GL", "egl")
 
 import mujoco
@@ -18,7 +20,11 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from opendaisugi import (
-    Envelope, Invariant, Permission, partition_and_assign, verify_swarm_tasking,
+    Envelope,
+    Invariant,
+    Permission,
+    partition_and_assign,
+    verify_swarm_tasking,
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -44,17 +50,23 @@ XML = """
 
 
 def _auth(name, bounds):
-    return Envelope(generated_by=name, task="op", stakes="physical",
-                    permissions=Permission(workspace_bounds=bounds, velocity_limit=3.0),
-                    invariants=[Invariant(type="end_effector_in_workspace", description="in volume")])
+    return Envelope(
+        generated_by=name,
+        task="op",
+        stakes="physical",
+        permissions=Permission(workspace_bounds=bounds, velocity_limit=3.0),
+        invariants=[Invariant(type="end_effector_in_workspace", description="in volume")],
+    )
 
 
 def _verify_reassignments():
     """The REAL proofs behind the animation (printed for the record)."""
     mission = _auth("mission", ((0, 0, 0), (30, 12, 8)))
     fleet = partition_and_assign(mission, ["west", "mid", "east"], axis=0, margin=0.5)
-    (wlo, _), (mlo, mhi) = (fleet["west"].permissions.workspace_bounds,
-                              fleet["mid"].permissions.workspace_bounds)
+    (wlo, _), (mlo, mhi) = (
+        fleet["west"].permissions.workspace_bounds,
+        fleet["mid"].permissions.workspace_bounds,
+    )
     west_exp = _auth("west", (wlo, mhi))
     ok = verify_swarm_tasking(mission, {"west": west_exp, "east": fleet["east"]}, margin=0.5).ok
     east_grab = _auth("east", (mlo, fleet["east"].permissions.workspace_bounds[1]))
@@ -77,11 +89,14 @@ def caption(rgb, text):
 
 def main():
     import imageio.v2 as imageio
+
     ok, bad = _verify_reassignments()
     m = mujoco.MjModel.from_xml_string(XML)
     d = mujoco.MjData(m)
-    gid = {n: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, n)
-           for n in ("sec_w", "sec_m", "sec_e", "warn", "g0", "g1", "g2")}
+    gid = {
+        n: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, n)
+        for n in ("sec_w", "sec_m", "sec_e", "warn", "g0", "g1", "g2")
+    }
     cam = mujoco.MjvCamera()
     cam.lookat[:], cam.distance, cam.azimuth, cam.elevation = [15, 6, 0.5], 41, 90, -52
     r = mujoco.Renderer(m, height=380, width=640)
@@ -105,24 +120,32 @@ def main():
     snap("drone_mid: COMMS LOST — its sector is now uncovered")
     # 3. reassign to west: expand west's tile over mid's area; west drone slides in
     for a in np.linspace(0, 1, 9):
-        m.geom_size[gid["sec_w"]][0] = 4.7 + a * 5.1          # grow half-width in x
-        m.geom_pos[gid["sec_w"]][0] = 4.9 + a * 5.0           # recenter
+        m.geom_size[gid["sec_w"]][0] = 4.7 + a * 5.1  # grow half-width in x
+        m.geom_pos[gid["sec_w"]][0] = 4.9 + a * 5.0  # recenter
         m.geom_rgba[gid["sec_m"]][3] = 0.30 * (1 - a) + 0.06 * a
         d.mocap_pos[0] = [4.9 + a * 5.0, 6, 2.4]
         mujoco.mj_forward(m, d)
         r.update_scene(d, camera=cam)
-        out.append(caption(r.render(),
-                           f"reassign mid's sector -> WEST; verify_swarm_tasking: "
-                           f"{'ACCEPTED (subsumed + disjoint)' if ok else '...'}"))
+        out.append(
+            caption(
+                r.render(),
+                f"reassign mid's sector -> WEST; verify_swarm_tasking: "
+                f"{'ACCEPTED (subsumed + disjoint)' if ok else '...'}",
+            )
+        )
     snap("west now covers the gap — re-proved contained AND deconflicted", n=8)
     # 4. the rejected alternative: hand mid's sector to BOTH → overlap flashes red
     for a in list(np.linspace(0, 0.7, 5)) + list(np.linspace(0.7, 0, 5)):
         m.geom_rgba[gid["warn"]][3] = a
         mujoco.mj_forward(m, d)
         r.update_scene(d, camera=cam)
-        out.append(caption(r.render(),
-                           f"...but hand it to BOTH neighbors? overlap "
-                           f"{'REJECTED before any drone moves' if not bad else '...'}"))
+        out.append(
+            caption(
+                r.render(),
+                f"...but hand it to BOTH neighbors? overlap "
+                f"{'REJECTED before any drone moves' if not bad else '...'}",
+            )
+        )
     m.geom_rgba[gid["warn"]][3] = 0
     snap("delegation transfer is a machine-checked containment proof, fail-closed", n=10)
 

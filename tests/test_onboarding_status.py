@@ -34,7 +34,9 @@ def _put_pathways(data_dir, n):
                 embedding_model=_MODEL_NAME,
                 embedding_model_version=_EMBEDDING_MODEL_VERSION,
                 envelope=Envelope(generated_by="t", task="T", permissions=Permission(shell=True)),
-                plan_template=ActionPlan(source="t", task="T", steps=[ShellStep(id="s", command="echo")]),
+                plan_template=ActionPlan(
+                    source="t", task="T", steps=[ShellStep(id="s", command="echo")]
+                ),
                 source_trace_ids=[],
                 distilled_at=time.time(),
             )

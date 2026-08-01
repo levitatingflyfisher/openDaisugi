@@ -31,16 +31,25 @@ def _seed(journal: Journal, *, task: str = "Summarize a PDF", trace_id: str = "t
         permissions=Permission(shell=True),
     )
     plan = ActionPlan(
-        id=f"plan_{trace_id}", task=task, source="test",
+        id=f"plan_{trace_id}",
+        task=task,
+        source="test",
         steps=[ShellStep(id="s1", command="echo hi")],
     )
     result = VerificationResult(
-        plan_id=plan.id, envelope_id=env.id,
-        ok=True, violations=[], warnings=[], duration_ms=1.0,
+        plan_id=plan.id,
+        envelope_id=env.id,
+        ok=True,
+        violations=[],
+        warnings=[],
+        duration_ms=1.0,
     )
     journal.log(
-        trace_id=trace_id, task=task,
-        envelope=env, plan=plan, result=result,
+        trace_id=trace_id,
+        task=task,
+        envelope=env,
+        plan=plan,
+        result=result,
     )
     # list_successful_traces filters by run_status — set it explicitly.
     with sqlite3.connect(journal._db_path) as con:
@@ -86,7 +95,7 @@ def test_iter_training_examples_from_journal(tmp_path) -> None:
 
 def test_iter_skips_short_tasks(tmp_path) -> None:
     journal = Journal(data_dir=tmp_path)
-    _seed(journal, task="ok", trace_id="t1")          # 2 chars — skipped
+    _seed(journal, task="ok", trace_id="t1")  # 2 chars — skipped
     _seed(journal, task="Build a widget", trace_id="t2")
 
     examples = list(iter_training_examples(journal, min_task_chars=10))
@@ -120,8 +129,7 @@ def test_emit_jsonl_chat(tmp_path) -> None:
     _seed(journal, task="Build a widget", trace_id="t1")
 
     out = tmp_path / "chat.jsonl"
-    stats = emit_jsonl(journal, out, format="chat",
-                       system_prompt="Produce safety envelopes.")
+    stats = emit_jsonl(journal, out, format="chat", system_prompt="Produce safety envelopes.")
     assert stats.written == 1
 
     payload = json.loads(out.read_text().strip())

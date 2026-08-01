@@ -12,6 +12,26 @@ from pydantic import BaseModel, Field
 from opendaisugi.models import ActionPlan, Envelope
 
 
+class PathwayParameter(BaseModel):
+    """A typed data-hole in a distilled pathway's plan (ADR-0008, Phase B3).
+
+    Names a field that varied across the cluster's successful plans while its
+    *capability head* (a shell program, a path directory, a URL host) stayed
+    fixed — so binding a new value can only change data, never the capability.
+    ``observed`` records the values seen, as evidence for binding and display.
+    """
+
+    name: str
+    # Topological position of the step in the plan — the authoritative locator,
+    # stable across the id-renaming the distiller's generalization does. step_id
+    # is a human-readable hint remapped to the stored template.
+    step_index: int
+    step_id: str
+    field: str
+    head: str
+    observed: list[str] = Field(default_factory=list)
+
+
 class CompiledPathway(BaseModel):
     """A distilled (envelope + plan template) pair."""
 
@@ -40,6 +60,11 @@ class CompiledPathway(BaseModel):
     # prefilter before falling back to embedding similarity. None on
     # v0.23 rows (no migration; the Distiller backfills on next tend).
     structure_signature: str | None = None
+    # ADR-0008 (Phase B3): typed data-holes found by diffing the cluster's
+    # plans. Empty = a frozen pathway (served verbatim, 0-token reuse). A
+    # non-empty list makes this a *typed skill* whose holes are bound then
+    # re-verified at reuse (Phase B4). Defaults empty so pre-B3 rows load frozen.
+    parameters: list[PathwayParameter] = Field(default_factory=list)
 
 
 class PathwayMatch(BaseModel):

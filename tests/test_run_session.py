@@ -37,9 +37,14 @@ def test_run_status_values():
 
 def test_step_outcome_is_frozen():
     outcome = StepOutcome(
-        step_id="s1", status="succeeded", approved_by="allowlist",
-        rc=0, stdout="hi\n", duration_ms=12.5,
-        started_at="2026-04-13T10:00:00Z", error=None,
+        step_id="s1",
+        status="succeeded",
+        approved_by="allowlist",
+        rc=0,
+        stdout="hi\n",
+        duration_ms=12.5,
+        started_at="2026-04-13T10:00:00Z",
+        error=None,
     )
     with pytest.raises(FrozenInstanceError):
         outcome.rc = 1
@@ -49,8 +54,12 @@ def test_step_outcome_is_frozen():
 
 def test_run_session_mutable_status_and_steps():
     verification = VerificationResult(
-        ok=True, violations=[], warnings=[],
-        envelope_id="env_x", plan_id="plan_x", duration_ms=1.0,
+        ok=True,
+        violations=[],
+        warnings=[],
+        envelope_id="env_x",
+        plan_id="plan_x",
+        duration_ms=1.0,
     )
     session = RunSession(
         id="run_abcd1234",
@@ -64,10 +73,17 @@ def test_run_session_mutable_status_and_steps():
         trace_id=None,
     )
     session.status = RunStatus.RUNNING
-    session.steps.append(StepOutcome(
-        step_id="s1", status="succeeded", approved_by="allowlist",
-        rc=0, stdout="", duration_ms=1.0,
-        started_at="2026-04-13T10:00:00Z", error=None,
-    ))
+    session.steps.append(
+        StepOutcome(
+            step_id="s1",
+            status="succeeded",
+            approved_by="allowlist",
+            rc=0,
+            stdout="",
+            duration_ms=1.0,
+            started_at="2026-04-13T10:00:00Z",
+            error=None,
+        )
+    )
     assert session.status == RunStatus.RUNNING
     assert len(session.steps) == 1

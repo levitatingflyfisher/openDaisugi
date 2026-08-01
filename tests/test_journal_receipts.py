@@ -1,4 +1,5 @@
 """Journal receipt append/read (v0.18 L2)."""
+
 from pathlib import Path
 
 from opendaisugi.journal import Journal
@@ -8,9 +9,13 @@ from opendaisugi.models import Receipt, compute_evidence_hash
 def _make_receipt(step_id: str, run_id: str = "r1", ok: bool = True) -> Receipt:
     ev = {"step": step_id}
     return Receipt(
-        step_id=step_id, run_id=run_id, timestamp=1000.0,
-        evidence=ev, evidence_hash=compute_evidence_hash(ev),
-        verify_result=ok, verify_details="",
+        step_id=step_id,
+        run_id=run_id,
+        timestamp=1000.0,
+        evidence=ev,
+        evidence_hash=compute_evidence_hash(ev),
+        verify_result=ok,
+        verify_details="",
     )
 
 

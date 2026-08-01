@@ -1,4 +1,5 @@
 """Tests for v0.3.1 polish items (SGCM red-team outputs)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -31,16 +32,22 @@ from opendaisugi.pathway_store import PathwayStore
 
 def _write_success_trace(journal: Journal, task: str) -> str:
     env = Envelope(
-        generated_by="test", task=task,
+        generated_by="test",
+        task=task,
         permissions=Permission(shell=True, shell_allowlist=["find"]),
     )
     plan = ActionPlan(
-        source="t", task=task,
+        source="t",
+        task=task,
         steps=[ShellStep(id="s1", command="find /tmp -name '*.tmp'")],
     )
     result = VerificationResult(
-        ok=True, violations=[], warnings=[],
-        envelope_id=env.id, plan_id=plan.id, duration_ms=0.1,
+        ok=True,
+        violations=[],
+        warnings=[],
+        envelope_id=env.id,
+        plan_id=plan.id,
+        duration_ms=0.1,
     )
     trace_id = journal.log(task=task, envelope=env, plan=plan, result=result)
     run_id = f"run_{trace_id}"
@@ -54,8 +61,10 @@ def _write_success_trace(journal: Journal, task: str) -> str:
 
 def _fake_generalize_template():
     from opendaisugi.distiller import GeneralizedTemplate
+
     plan_tmpl = ActionPlan(
-        source="template", task="T",
+        source="template",
+        task="T",
         steps=[ShellStep(id="s1", command="find /tmp -name '*.tmp'")],
     )
 
@@ -64,6 +73,7 @@ def _fake_generalize_template():
             task_description="find stale temp files",
             plan_template=plan_tmpl,
         )
+
     return _fake_gen
 
 
@@ -93,14 +103,18 @@ def test_pathway_store_migrates_older_rows(tmp_path):
         )
     store = PathwayStore(db)
     assert store.list_all() == []
-    env = Envelope(generated_by="distilled", task="T",
-                   permissions=Permission(shell=True))
-    plan = ActionPlan(source="t", task="T",
-                      steps=[ShellStep(id="s1", command="echo hi")])
+    env = Envelope(generated_by="distilled", task="T", permissions=Permission(shell=True))
+    plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="echo hi")])
     p = CompiledPathway(
-        id="p_migrate", task_description="t", task_embedding=[1.0],
-        envelope=env, plan_template=plan, source_trace_ids=[], distilled_at=time.time(),
-        embedding_model="all-MiniLM-L6-v2", embedding_model_version="1",
+        id="p_migrate",
+        task_description="t",
+        task_embedding=[1.0],
+        envelope=env,
+        plan_template=plan,
+        source_trace_ids=[],
+        distilled_at=time.time(),
+        embedding_model="all-MiniLM-L6-v2",
+        embedding_model_version="1",
     )
     store.put(p)
     [loaded] = store.list_all()
@@ -122,16 +136,17 @@ async def test_tend_skips_corrupt_yaml_trace(tmp_path, monkeypatch):
     yaml_path.write_text(":\n  not yaml: [")
 
     distiller = Distiller(
-        journal=journal, pathway_store=store,
-        model="test-model", min_traces=3,
+        journal=journal,
+        pathway_store=store,
+        model="test-model",
+        min_traces=3,
     )
-    monkeypatch.setattr(distiller, "_embed_tasks",
-                        lambda tasks: np.ones((len(tasks), 4)))
+    monkeypatch.setattr(distiller, "_embed_tasks", lambda tasks: np.ones((len(tasks), 4)))
     # v0.28.5: signature embedding has its own path that pulls
     # sentence-transformers; mock it too so the test doesn't hit network.
-    monkeypatch.setattr(distiller, "_embed_plan_structures",
-                        lambda sigs: np.ones((len(sigs), 4)))
+    monkeypatch.setattr(distiller, "_embed_plan_structures", lambda sigs: np.ones((len(sigs), 4)))
     from opendaisugi import distiller as dist_mod
+
     monkeypatch.setattr(dist_mod, "_generalize_template", _fake_generalize_template())
 
     report = await distiller.tend()
@@ -149,14 +164,11 @@ async def test_tend_warns_when_below_min_traces(tmp_path, monkeypatch):
     store = PathwayStore(tmp_path / "pathways.db")
     _write_success_trace(journal, "only one")
 
-    distiller = Distiller(journal=journal, pathway_store=store,
-                          model="test-model", min_traces=3)
-    monkeypatch.setattr(distiller, "_embed_tasks",
-                        lambda tasks: np.ones((len(tasks), 4)))
+    distiller = Distiller(journal=journal, pathway_store=store, model="test-model", min_traces=3)
+    monkeypatch.setattr(distiller, "_embed_tasks", lambda tasks: np.ones((len(tasks), 4)))
     # v0.28.5: signature embedding has its own path that pulls
     # sentence-transformers; mock it too so the test doesn't hit network.
-    monkeypatch.setattr(distiller, "_embed_plan_structures",
-                        lambda sigs: np.ones((len(sigs), 4)))
+    monkeypatch.setattr(distiller, "_embed_plan_structures", lambda sigs: np.ones((len(sigs), 4)))
 
     report = await distiller.tend()
     assert report.created == 0
@@ -185,13 +197,15 @@ def test_cluster_by_similarity_backcompat_wrapper():
 
 
 def test_clustering_is_deterministic():
-    vecs = np.array([
-        [1.0, 0.0, 0.0],
-        [0.99, 0.01, 0.0],
-        [0.0, 1.0, 0.0],
-        [0.01, 0.99, 0.0],
-        [0.0, 0.0, 1.0],
-    ])
+    vecs = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.99, 0.01, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.01, 0.99, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
     first = _cluster_by_similarity(list(range(5)), vecs, threshold=0.95)
     second = _cluster_by_similarity(list(range(5)), vecs, threshold=0.95)
     assert first == second
@@ -206,19 +220,23 @@ async def test_tend_stores_cluster_centroid_not_re_embedding(tmp_path, monkeypat
         _write_success_trace(journal, f"find stale tmp files {i}")
 
     distiller = Distiller(
-        journal=journal, pathway_store=store,
-        model="test-model", min_traces=3,
+        journal=journal,
+        pathway_store=store,
+        model="test-model",
+        min_traces=3,
     )
 
     call_count = {"n": 0}
+
     def _embed(tasks):
         call_count["n"] += 1
         return np.ones((len(tasks), 4))
+
     monkeypatch.setattr(distiller, "_embed_tasks", _embed)
-    monkeypatch.setattr(distiller, "_embed_plan_structures",
-                        lambda sigs: np.ones((len(sigs), 4)))
+    monkeypatch.setattr(distiller, "_embed_plan_structures", lambda sigs: np.ones((len(sigs), 4)))
 
     from opendaisugi import distiller as dist_mod
+
     monkeypatch.setattr(dist_mod, "_generalize_template", _fake_generalize_template())
 
     await distiller.tend()
@@ -231,15 +249,13 @@ async def test_distilled_pathway_has_embedding_provenance(tmp_path, monkeypatch)
     store = PathwayStore(tmp_path / "pathways.db")
     for i in range(3):
         _write_success_trace(journal, f"task {i}")
-    distiller = Distiller(journal=journal, pathway_store=store,
-                          model="test-model", min_traces=3)
-    monkeypatch.setattr(distiller, "_embed_tasks",
-                        lambda tasks: np.ones((len(tasks), 4)))
+    distiller = Distiller(journal=journal, pathway_store=store, model="test-model", min_traces=3)
+    monkeypatch.setattr(distiller, "_embed_tasks", lambda tasks: np.ones((len(tasks), 4)))
     # v0.28.5: signature embedding has its own path that pulls
     # sentence-transformers; mock it too so the test doesn't hit network.
-    monkeypatch.setattr(distiller, "_embed_plan_structures",
-                        lambda sigs: np.ones((len(sigs), 4)))
+    monkeypatch.setattr(distiller, "_embed_plan_structures", lambda sigs: np.ones((len(sigs), 4)))
     from opendaisugi import distiller as dist_mod
+
     monkeypatch.setattr(dist_mod, "_generalize_template", _fake_generalize_template())
 
     await distiller.tend()
@@ -271,9 +287,7 @@ async def test_pitfalls_capped_with_truncation_marker(tmp_path, monkeypatch):
         records = [
             RefinementRecord(
                 step=step,
-                violations=[
-                    Violation(stage="plan", message=f"violation-{run_id}-{j}")
-                ],
+                violations=[Violation(stage="plan", message=f"violation-{run_id}-{j}")],
                 z3_counterexample=None,
                 envelope_id="env",
                 fallback_action="halted",
@@ -286,14 +300,11 @@ async def test_pitfalls_capped_with_truncation_marker(tmp_path, monkeypatch):
 
     monkeypatch.setattr(journal, "get_refinements", _fake_refs)
 
-    distiller = Distiller(journal=journal, pathway_store=store,
-                          model="test-model", min_traces=3)
-    monkeypatch.setattr(distiller, "_embed_tasks",
-                        lambda tasks: np.ones((len(tasks), 4)))
+    distiller = Distiller(journal=journal, pathway_store=store, model="test-model", min_traces=3)
+    monkeypatch.setattr(distiller, "_embed_tasks", lambda tasks: np.ones((len(tasks), 4)))
     # v0.28.5: signature embedding has its own path that pulls
     # sentence-transformers; mock it too so the test doesn't hit network.
-    monkeypatch.setattr(distiller, "_embed_plan_structures",
-                        lambda sigs: np.ones((len(sigs), 4)))
+    monkeypatch.setattr(distiller, "_embed_plan_structures", lambda sigs: np.ones((len(sigs), 4)))
 
     captured: dict = {}
     from opendaisugi.distiller import GeneralizedTemplate
@@ -303,12 +314,14 @@ async def test_pitfalls_capped_with_truncation_marker(tmp_path, monkeypatch):
         return GeneralizedTemplate(
             task_description="find stale temp files",
             plan_template=ActionPlan(
-                source="template", task="T",
+                source="template",
+                task="T",
                 steps=[ShellStep(id="s1", command="find /tmp -name '*.tmp'")],
             ),
         )
 
     from opendaisugi import distiller as dist_mod
+
     monkeypatch.setattr(dist_mod, "_generalize_template", _capturing_gen)
 
     await distiller.tend()
@@ -323,26 +336,32 @@ async def test_pitfalls_capped_with_truncation_marker(tmp_path, monkeypatch):
 
 def test_pathway_store_find_returns_none_on_missing_search_extra(tmp_path):
     store = PathwayStore(tmp_path / "pathways.db")
-    env = Envelope(generated_by="distilled", task="T",
-                   permissions=Permission(shell=True))
-    plan = ActionPlan(source="t", task="T",
-                      steps=[ShellStep(id="s1", command="echo hi")])
+    env = Envelope(generated_by="distilled", task="T", permissions=Permission(shell=True))
+    plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="echo hi")])
     p = CompiledPathway(
-        id="p1", task_description="t", task_embedding=[1.0, 0.0],
-        envelope=env, plan_template=plan, source_trace_ids=[], distilled_at=time.time(),
+        id="p1",
+        task_description="t",
+        task_embedding=[1.0, 0.0],
+        envelope=env,
+        plan_template=plan,
+        source_trace_ids=[],
+        distilled_at=time.time(),
     )
     store.put(p)
 
     def _boom(task):
         raise ImportError("sentence_transformers missing")
+
     with mock.patch.object(store, "_embed_query", side_effect=_boom):
         assert store.find("anything") is None
 
 
 def test_pathway_store_find_short_circuits_on_empty_table(tmp_path):
     store = PathwayStore(tmp_path / "pathways.db")
+
     def _poison(_task):
         raise AssertionError("_embed_query should not be invoked on empty table")
+
     with mock.patch.object(store, "_embed_query", side_effect=_poison):
         assert store.find("anything") is None
 
@@ -355,14 +374,17 @@ def test_pathway_store_find_short_circuits_on_empty_table(tmp_path):
 def test_tend_dry_run_writes_no_sidecar_db(tmp_path, monkeypatch):
     async def _fake_tend(self):
         return TendReport(
-            created=0, updated=0, skipped=0,
-            pathways=[], duration_s=0.0, warnings=[],
+            created=0,
+            updated=0,
+            skipped=0,
+            pathways=[],
+            duration_s=0.0,
+            warnings=[],
         )
+
     monkeypatch.setattr(Distiller, "tend", _fake_tend)
     runner = CliRunner()
-    result = runner.invoke(
-        app, ["tend", "--data-dir", str(tmp_path), "--dry-run"]
-    )
+    result = runner.invoke(app, ["tend", "--data-dir", str(tmp_path), "--dry-run"])
     assert result.exit_code == 0, result.output
     assert not (tmp_path / ".tend-dryrun.db").exists()
 
@@ -397,21 +419,21 @@ async def test_find_pathway_uses_to_thread(tmp_path, monkeypatch):
 
 def test_pathways_stats_cli(tmp_path):
     store = PathwayStore(tmp_path / "pathways.db")
-    env = Envelope(generated_by="distilled", task="T",
-                   permissions=Permission(shell=True))
-    plan = ActionPlan(source="t", task="T",
-                      steps=[ShellStep(id="s1", command="echo")])
+    env = Envelope(generated_by="distilled", task="T", permissions=Permission(shell=True))
+    plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="echo")])
     p = CompiledPathway(
-        id="p_stats_0000", task_description="t",
-        task_embedding=[1.0], envelope=env, plan_template=plan,
-        source_trace_ids=[],        distilled_at=time.time(),
+        id="p_stats_0000",
+        task_description="t",
+        task_embedding=[1.0],
+        envelope=env,
+        plan_template=plan,
+        source_trace_ids=[],
+        distilled_at=time.time(),
     )
     store.put(p)
 
     runner = CliRunner()
-    result = runner.invoke(
-        app, ["pathways", "stats", "--data-dir", str(tmp_path)]
-    )
+    result = runner.invoke(app, ["pathways", "stats", "--data-dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "count: 1" in result.output
     assert "total_hits" in result.output
@@ -434,19 +456,22 @@ def test_pathways_show_unknown_exits_1(tmp_path):
 def test_envelope_generate_skips_pathways_on_high_stakes(tmp_path):
     """generate_envelope must never consult the pathway store when stakes='high'."""
     store = PathwayStore(tmp_path / "pathways.db")
-    env = Envelope(generated_by="distilled", task="T",
-                   permissions=Permission(shell=True))
-    plan = ActionPlan(source="t", task="T",
-                      steps=[ShellStep(id="s1", command="echo")])
+    env = Envelope(generated_by="distilled", task="T", permissions=Permission(shell=True))
+    plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="echo")])
     p = CompiledPathway(
-        id="p_hs_000000", task_description="high stakes bypass",
-        task_embedding=[1.0, 0.0], envelope=env, plan_template=plan,
-        source_trace_ids=[],        distilled_at=time.time(),
+        id="p_hs_000000",
+        task_description="high stakes bypass",
+        task_embedding=[1.0, 0.0],
+        envelope=env,
+        plan_template=plan,
+        source_trace_ids=[],
+        distilled_at=time.time(),
     )
     store.put(p)
 
     called = {"n": 0}
     orig_find = store.find
+
     def _tracked(task, *a, **k):
         called["n"] += 1
         return orig_find(task, *a, **k)

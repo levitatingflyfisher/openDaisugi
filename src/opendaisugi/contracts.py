@@ -165,8 +165,7 @@ def verify_delegation(
         )
     if sub.unverified_invariants:
         reasons.append(
-            f"unverified invariants (no predicate expr): "
-            f"{sorted(sub.unverified_invariants)}"
+            f"unverified invariants (no predicate expr): {sorted(sub.unverified_invariants)}"
         )
     if not reasons:
         reasons.append("subsumption holds; delegation safe")

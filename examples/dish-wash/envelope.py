@@ -7,6 +7,7 @@ stakes='physical' triggers two guarantees from the v0.19 substrate:
 - LLMCheck postconditions are blocked at the predicate evaluator —
   perceptual judgement has no place in a physical-stakes plan.
 """
+
 from __future__ import annotations
 
 from opendaisugi.models import Envelope, Invariant, Permission
@@ -27,8 +28,11 @@ def build_envelope() -> Envelope:
             # permitted under strict mode (stakes='physical' turns strict on; an
             # undeclared custom step type is otherwise rejected fail-closed).
             custom_step_allowlist=[
-                "approach_dish", "locate_rim", "begin_scrub",
-                "rinse_with_hose", "return_to_dock",
+                "approach_dish",
+                "locate_rim",
+                "begin_scrub",
+                "rinse_with_hose",
+                "return_to_dock",
             ],
         ),
         stakes="physical",

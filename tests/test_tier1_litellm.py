@@ -49,6 +49,7 @@ async def test_exception_returns_none() -> None:
 @pytest.mark.asyncio
 async def test_timeout_returns_none() -> None:
     """A hung endpoint must not block envelope generation."""
+
     async def never(*args, **kwargs):
         await asyncio.sleep(10)
 

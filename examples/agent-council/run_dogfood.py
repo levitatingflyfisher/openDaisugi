@@ -7,6 +7,7 @@ Three scenarios:
 3. Quorum missed — 1 of 3 approve, no PII → invariant 'no_pii_in_reviews'
    passes, run completes, aggregator's evidence shows quorum_met=false.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -82,9 +83,7 @@ async def run_scenario(label, reviews, quorum_m, journal_dir):
         return {
             "label": label,
             "verify_ok": False,
-            "violations": [
-                {"stage": v.stage, "message": v.message[:200]} for v in vr.violations
-            ],
+            "violations": [{"stage": v.stage, "message": v.message[:200]} for v in vr.violations],
         }
     j = Journal(data_dir=journal_dir)
     executors = {
@@ -94,13 +93,14 @@ async def run_scenario(label, reviews, quorum_m, journal_dir):
         "commit_or_reject": CouncilExecutor(reviews, quorum_m),
     }
     sup = Supervisor(
-        executors=executors, journal=j,
+        executors=executors,
+        journal=j,
         approval=CallbackStrategy(lambda s, e: True),
     )
     session = await sup.run(plan, env)
     receipts = j.receipts_for_run(session.id)
     commit_receipt = next(
-        (r for r in receipts if r.step_id == f"s{len(reviews)+2}"),
+        (r for r in receipts if r.step_id == f"s{len(reviews) + 2}"),
         None,
     )
     commit_evidence = {}
@@ -152,11 +152,16 @@ async def main():
         quorum_m=2,
         journal_dir=jdir,
     )
-    print(json.dumps({
-        "scenario_1_clean": clean,
-        "scenario_2_pii_flagged": pii,
-        "scenario_3_quorum_missed": quorum_missed,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "scenario_1_clean": clean,
+                "scenario_2_pii_flagged": pii,
+                "scenario_3_quorum_missed": quorum_missed,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -37,8 +37,9 @@ from opendaisugi.verify import _AGENTIC_TOOL_CAPABILITIES
 
 
 class _LastAgentic:
-    def __init__(self, model: str | None = None, tokens: int | None = None,
-                 cost_usd: float | None = None) -> None:
+    def __init__(
+        self, model: str | None = None, tokens: int | None = None, cost_usd: float | None = None
+    ) -> None:
         self.model = model
         self.attempts = 1
         self.tokens = tokens
@@ -58,9 +59,15 @@ class AgenticExecutor:
     sub-agent a capability the envelope lacks.
     """
 
-    def __init__(self, *, envelope: Envelope, model: str = "haiku",
-                 binary: str = "claude", capture: bool = True,
-                 keep_gate_root: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        envelope: Envelope,
+        model: str = "haiku",
+        binary: str = "claude",
+        capture: bool = True,
+        keep_gate_root: bool = True,
+    ) -> None:
         self.envelope = envelope
         self.model = model
         self.binary = binary
@@ -91,15 +98,16 @@ class AgenticExecutor:
 
         def _fail(msg: str) -> ExecutorResult:
             return ExecutorResult(
-                rc=1, stdout=truncate_output(msg, max_output_bytes),
-                duration_ms=(time.time() - started) * 1000.0, timed_out=False,
+                rc=1,
+                stdout=truncate_output(msg, max_output_bytes),
+                duration_ms=(time.time() - started) * 1000.0,
+                timed_out=False,
             )
 
         workspace = Path(step.workspace)
         if not workspace.is_dir():
             return _fail(
-                f"agentic workspace '{step.workspace}' does not exist or is "
-                f"not a directory"
+                f"agentic workspace '{step.workspace}' does not exist or is not a directory"
             )
 
         allowed = self._derive_allowed_tools(step)
@@ -116,7 +124,8 @@ class AgenticExecutor:
         self.last_gate_root = gate_root
         register_envelope(self.envelope, root=gate_root)
         settings = gate_settings_json(
-            mode="enforce", root=gate_root,
+            mode="enforce",
+            root=gate_root,
             captures_root=(gate_root / "captures") if self.capture else None,
             # Pin the envelope: the sub-agent's payload cannot name a
             # different (more permissive) registered session.
@@ -124,17 +133,23 @@ class AgenticExecutor:
         )
 
         extra_args: list[str] = [
-            "--output-format", "json",
-            "--settings", settings,
-            "--allowedTools", " ".join(allowed),
+            "--output-format",
+            "json",
+            "--settings",
+            settings,
+            "--allowedTools",
+            " ".join(allowed),
         ]
         if step.max_turns is not None:
             extra_args += ["--max-turns", str(step.max_turns)]
 
         try:
             raw = call_claude_p_sync(
-                step.prompt, timeout_s=float(timeout_s), model=self.model,
-                binary=self.binary, cwd=str(workspace),
+                step.prompt,
+                timeout_s=float(timeout_s),
+                model=self.model,
+                binary=self.binary,
+                cwd=str(workspace),
                 extra_args=tuple(extra_args),
             )
         except Exception as exc:  # noqa: BLE001 — a dead sub-agent is a failed step
@@ -145,13 +160,15 @@ class AgenticExecutor:
             obj = json.loads(raw)
         except json.JSONDecodeError:
             self._cleanup(gate_root)
-            return _fail(
-                f"agentic sub-agent returned unparseable output: {raw[:300]!r}"
-            )
+            return _fail(f"agentic sub-agent returned unparseable output: {raw[:300]!r}")
 
         usage = obj.get("usage") if isinstance(obj.get("usage"), dict) else {}
-        fields = ("input_tokens", "output_tokens",
-                  "cache_creation_input_tokens", "cache_read_input_tokens")
+        fields = (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        )
         present = [usage.get(f) for f in fields if usage.get(f) is not None]
         self.last = _LastAgentic(
             model=self.model,

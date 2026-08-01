@@ -3,587 +3,310 @@
 Public API surface for v0.0.1: data models, the sync verify() function,
 async envelope generation, and the Daisugi facade class. The journal
 arrives in Week 3.
+
+Every public name below is a PEP 562 lazy export (see ``__getattr__``): this
+module does zero submodule imports at import time. ``import opendaisugi``
+used to eagerly pull 54 submodules (~530 ms, including Z3 and networkx)
+before any command ran; now it is a directory of names, and a name's owning
+module loads only on first access (ADR-0017).
 """
 
 from __future__ import annotations
 
+import importlib
 import logging
-import os
+import sys as _sys
+import types as _types
 from pathlib import Path
-from typing import Literal
 
 # Silent-by-default library idiom: attach a NullHandler to the top-level
 # logger so importing opendaisugi never emits records unless the host
 # application explicitly configures logging. All submodules log to
 # "opendaisugi.<subsys>" — hosts can route by prefix.
 logging.getLogger("opendaisugi").addHandler(logging.NullHandler())
-_log = logging.getLogger("opendaisugi.facade")
 
-from opendaisugi import integrations
-from opendaisugi.accounting import TierStats, classify_tier, tier_stats
-from opendaisugi.agentic_executor import AgenticExecutor
-from opendaisugi.aliases import Alias, AliasRegistry
-from opendaisugi.approval import ApprovalDecision, ApprovalStrategy
-from opendaisugi.benchmark import (
-    PairedResult,
-    RunMetric,
-    meets_stage4_bar,
-    run_paired_benchmark,
-    summarize,
-    tasks_hash,
-)
-from opendaisugi.budget import BudgetExceeded, BudgetReport, BudgetTracker, StepCost
-from opendaisugi.config import Config, load_config, save_config
-from opendaisugi.contracts import (
-    Contract,
-    DelegationDecision,
-    verify_delegation,
-)
-from opendaisugi.decomposer import (
-    DecomposedPlan,
-    DecomposedStep,
-    DecompositionError,
-    decompose,
-)
-from opendaisugi.defaults import DEFAULT_LOW_STAKES_ENVELOPE
-from opendaisugi.distiller import Distiller, TendReport
-from opendaisugi.envelope import (
-    ENVELOPE_PROMPT_VERSION,
-    CalibrationReport,
-    generate_envelope,
-    run_calibration,
-)
-from opendaisugi.envelope import generate_envelope as _generate_envelope
-from opendaisugi.envelope_cache import EnvelopeCache, make_cache_key
-from opendaisugi.exceptions import (
-    EnvelopeGenerationError,
-    LowStakesNotConfigured,
-    ModelLadderExhausted,
-    OpenDaisugiError,
-    StakesInheritanceWarning,
-    TaskTooLongError,
-    VerificationTimeout,
-)
-from opendaisugi.executor import (
-    DryRunExecutor,
-    ExecutorResult,
-    FakeExecutor,
-    StepExecutor,
-    SubprocessExecutor,
-)
-from opendaisugi.fallback import (
-    FallbackHandler,
-    FallbackOutcome,
-    HaltHandler,
-    RecomputeHandler,
-)
-from opendaisugi.gardener import (
-    ABResult,
-    GardenerConfig,
-    GardenerReport,
-    MergeConfig,
-    MergeReport,
-    PruneConfig,
-    PruneReport,
-    RegressionAlert,
-    ab_test,
-    merge,
-    prune,
-    regression_check,
-    run_gardener,
-)
-from opendaisugi.inheritance import EnvelopeInheritanceError, verify_inheritance
-from opendaisugi.journal import (
-    Journal,
-    JournalStats,
-    ReplayResult,
-    TraceRecord,
-)
-from opendaisugi.lora import (
-    DatasetStats,
-    TrainingExample,
-    emit_jsonl,
-    iter_training_examples,
-)
-from opendaisugi.model_sizer import (
-    DEFAULT_LADDER,
-    ModelLadder,
-    ModelRung,
-    StepSizing,
-    estimate_step_difficulty,
-    size_plan,
-    size_step,
-)
+# The default on-disk home for envelope cache, journal, and pathway store when a
+# caller passes no ``data_dir``. Kept a module attribute (not an inline literal)
+# so the test suite can redirect it to a tmp dir via one autouse fixture — a bare
+# ``Daisugi()`` in a test must never touch the user's real ``~/.opendaisugi``.
+DEFAULT_DATA_DIR = Path.home() / ".opendaisugi"
 
-# v0.32.0: forward-looking orchestration layer
-from opendaisugi.models import (
-    ActionPlan,
-    ActionStep,
-    AgenticStep,
-    CartesianMoveStep,
-    Envelope,
-    FallbackStrategy,
-    FileReadStep,
-    FileWriteStep,
-    GripperStep,
-    Invariant,
-    JointMoveStep,
-    MCPStep,
-    NetworkStep,
-    Permission,
-    Postcondition,
-    ShellStep,
-    SimulationResetStep,
-    SkillStep,
-    TaskStep,
-    Trace,
-    VerificationResult,
-    Violation,
-    VLAStep,
-)
-from opendaisugi.orchestration_executors import (
-    MCPExecutor,
-    MCPTransport,
-    SkillExecutor,
-    SkillHandler,
-)
-from opendaisugi.orchestrator import (
-    BudgetAwareDelegatingExecutor,
-    OrchestrationResult,
-    Orchestrator,
-)
-from opendaisugi.parsers import Episode, ParseResult
-from opendaisugi.pathway import CompiledPathway, PathwayMatch
-from opendaisugi.pathway_bundle import (
-    InvalidSignatureError,
-    PathwayBundle,
-    UnsignedBundleError,
-    UntrustedSignerError,
-    bundle_to_pathway,
-    pathway_to_bundle,
-)
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD, PathwayStore
-from opendaisugi.portability import (
-    BUNDLE_SCHEMA_VERSION,
-    ImportResult,
-    PathwayImportError,
-    import_pathway,
-    parse_bundle,
-)
-from opendaisugi.portability import (
-    export as export_pathway,
-)
-
-# v0.9.0 meta-DSL exports
-from opendaisugi.predicate import Expression, LengthRange, parse_expression
-
-# v0.11.0: real Z3 compilation + skills-as-contracts
-from opendaisugi.predicate_z3 import (
-    CompiledPredicate,
-    compile_to_z3,
-    evaluate_predicate,
-    verify_predicate_z3,
-)
-from opendaisugi.refinement import RefinementLog, RefinementRecord
-from opendaisugi.regex_to_z3 import UnsupportedRegexError
-from opendaisugi.run_session import RunSession, RunStatus, StepOutcome
-from opendaisugi.stage2 import verify_completed_step
-from opendaisugi.subagent import DelegationDenied, SafeSubagent
-from opendaisugi.subsumption import (
-    Counterexample,
-    SubsumptionResult,
-    envelope_subsumes,
-)
-from opendaisugi.supervisor import Supervisor
-
-# v0.33.0: verified swarm tasking (airspace deconfliction via envelope algebra)
-from opendaisugi.swarm import (
-    SwarmConflict,
-    SwarmVerdict,
-    aabb_disjoint,
-    aabb_intersection,
-    partition_airspace,
-    partition_and_assign,
-    verify_swarm_tasking,
-)
-from opendaisugi.synthesizer import (
-    StepOutput,
-    SynthesisResult,
-    collect_outputs,
-    synthesize,
-)
-from opendaisugi.system_aliases import load_system_aliases
-from opendaisugi.thinking import ThinkingBudget
-from opendaisugi.tier1 import (
-    ClaudeCodeTier1Provider,
-    LiteLLMTier1Provider,
-    OllamaTier1Provider,
-    Tier1Provider,
-)
-from opendaisugi.verify import verify
-from opendaisugi.verify import verify as _verify
-
-# v0.15.0: real ed25519 signing (optional, requires [sign] extra)
-try:
-    from opendaisugi.signing import (
-        SigningUnavailable,
-        TrustedSignerRegistry,
-        canonicalize_contract,
-        default_registry_path,
-        generate_keypair,
-        sign_contract,
-        verify_signature_raw,
-    )
-except ImportError:
-    # cryptography not installed — only signing.py itself raises at use time.
-    pass
-
-
-class Daisugi:
-    """Composition root for opendaisugi.
-
-    Holds per-instance config (model, char budget, Z3 timeout, data dir)
-    and dispatches to ``generate_envelope`` and ``verify``. Contains no
-    logic of its own — it exists so callers can construct one object and
-    reuse config rather than passing five kwargs to every call.
-    """
-
-    def __init__(
-        self,
-        *,
-        model: str = "anthropic/claude-sonnet-4-20250514",
-        max_task_chars: int = 4000,
-        z3_timeout_ms: int = 500,
-        data_dir: str | os.PathLike[str] | None = None,
-        cache: bool | EnvelopeCache = True,
-        pathway_store: bool | PathwayStore = True,
-        pathway_threshold: float = DEFAULT_PATHWAY_THRESHOLD,
-        low_stakes_envelope: Envelope | None = None,
-        tier1: Tier1Provider | None = None,
-        tend_after: int | None = None,
-        strict: bool | None = None,
-    ) -> None:
-        self.model = model
-        self.max_task_chars = max_task_chars
-        self.z3_timeout_ms = z3_timeout_ms
-        self._pathway_threshold = pathway_threshold
-        # v0.28.3: facade-level strict override. None preserves verify()'s
-        # stake-based default. Setting True opts low/medium-stakes envelopes
-        # into strict mode through this facade — previously unreachable.
-        self._strict = strict
-        self.data_dir = Path(data_dir) if data_dir is not None else Path.home() / ".opendaisugi"
-        self._tier1 = tier1
-        if isinstance(cache, EnvelopeCache):
-            self._cache: EnvelopeCache | None = cache
-        elif cache is True:
-            self._cache = EnvelopeCache(
-                self.data_dir / "envelope_cache.db",
-                prompt_version=ENVELOPE_PROMPT_VERSION,
-            )
-        else:
-            self._cache = None
-        if isinstance(pathway_store, PathwayStore):
-            self._pathway_store: PathwayStore | None = pathway_store
-        elif pathway_store is True:
-            # Lazy — create on first access via the property.
-            self._pathway_store = None
-            self._pathway_store_auto = True
-        else:
-            self._pathway_store = None
-            self._pathway_store_auto = False
-        self._low_stakes_envelope = low_stakes_envelope
-        self._tend_after = tend_after
-        self._runs_since_tend: int = 0
-
-    @classmethod
-    def with_default_low_stakes(cls, **kwargs) -> "Daisugi":
-        """Construct a Daisugi instance wired with the shipped low-stakes default.
-
-        Equivalent to ``Daisugi(low_stakes_envelope=DEFAULT_LOW_STAKES_ENVELOPE, **kwargs)``.
-        Separate classmethod exists so ``Daisugi()`` stays opt-out-of-permissive
-        by default — callers must name this explicitly.
-        """
-        return cls(low_stakes_envelope=DEFAULT_LOW_STAKES_ENVELOPE, **kwargs)
-
-    @property
-    def cache(self) -> EnvelopeCache | None:
-        """The EnvelopeCache this facade threads into generate_envelope calls.
-
-        ``None`` when the facade was constructed with ``cache=False``. Exposed
-        as read-only so callers can introspect (``d.cache.stats()``) or manage
-        (``d.cache.clear()``) the shared cache without reaching into privates.
-        """
-        return self._cache
-
-    async def generate_envelope(
-        self,
-        task: str,
-        *,
-        context: str | None = None,
-        parent: Envelope | None = None,
-        summarize: bool = False,
-        stakes: Literal["low", "medium", "high"] = "medium",
-        model: str | list[str] | None = None,
-        thinking_budget: ThinkingBudget = "standard",
-    ) -> Envelope:
-        """Generate an envelope for ``task`` using this facade's config.
-
-        When ``stakes='low'``, the facade's configured ``low_stakes_envelope``
-        is used (set via ``Daisugi(low_stakes_envelope=...)`` or
-        ``Daisugi.with_default_low_stakes()``). Callers can override on a
-        per-call basis by passing ``stakes`` directly.
-
-        Since v0.2.1, the facade's journal is threaded into generation so
-        past refinement records for this task+model are injected as hints.
-        """
-        return await _generate_envelope(
-            task=task,
-            context=context,
-            parent=parent,
-            summarize=summarize,
-            cache=self._cache,
-            pathway_store=self.pathway_store,
-            pathway_threshold=self._pathway_threshold,
-            journal=self.journal,
-            stakes=stakes,
-            low_stakes_envelope=self._low_stakes_envelope,
-            model=model if model is not None else self.model,
-            thinking_budget=thinking_budget,
-            tier1=self._tier1,
-            max_task_chars=self.max_task_chars,
-        )
-
-    async def run(
-        self,
-        plan: ActionPlan,
-        envelope: Envelope,
-        *,
-        aliases: "AliasRegistry | None" = None,
-        strict: bool | None = None,
-    ) -> "RunSession":
-        """Execute ``plan`` against ``envelope`` via a managed Supervisor.
-
-        Convenience wrapper over ``Supervisor.run`` that keeps the facade as the
-        single object callers need to hold.  When ``tend_after=N`` was passed to
-        the constructor, every N successful runs automatically trigger
-        :meth:`tend` so the pathway store stays warm without manual scheduling.
-
-        ``strict`` (v0.28.3) forces strict verification — overrides both the
-        constructor-level ``strict`` and verify()'s stake-based default.
-        """
-        sup = Supervisor(
-            journal=self.journal,
-            z3_timeout_ms=self.z3_timeout_ms,
-            aliases=aliases,
-            strict=strict if strict is not None else self._strict,
-        )
-        session = await sup.run(plan, envelope)
-        if session.status == RunStatus.SUCCEEDED and self._tend_after is not None:
-            self._runs_since_tend += 1
-            if self._runs_since_tend >= self._tend_after:
-                self._runs_since_tend = 0
-                # v0.28.4: distillation failure is non-fatal to the run.
-                # Pre-v0.28.4 a tend() exception (LLM call, embedder
-                # unavailable, sqlite locked) would make a successful
-                # supervised run appear to fail at the user-facing call
-                # site, despite the run being fully journaled.
-                try:
-                    await self.tend()
-                except Exception as e:
-                    _log.warning(
-                        "auto-tend after run %s raised %s: %s — "
-                        "run already succeeded and journaled, swallowing",
-                        session.id, type(e).__name__, e,
-                    )
-        return session
-
-    async def tend(self, **kwargs) -> "TendReport":
-        """Run the Distiller against this facade's journal and pathway store.
-
-        Keyword arguments are forwarded to :class:`Distiller` — e.g. ``min_traces=5``.
-        Raises RuntimeError if the facade was constructed with ``pathway_store=False``.
-        """
-        if self.pathway_store is None:
-            raise RuntimeError("Daisugi was constructed with pathway_store=False; cannot tend.")
-        distiller = Distiller(
-            journal=self.journal,
-            pathway_store=self.pathway_store,
-            model=self.model,
-            **kwargs,
-        )
-        return await distiller.tend()
-
-    async def orchestrate(
-        self,
-        prompt: str,
-        *,
-        envelope: Envelope | None = None,
-        budget_tokens: int | None = None,
-        stakes: Literal["low", "medium", "high"] = "medium",
-        skill_handlers: "dict | None" = None,
-        mcp_transport=None,
-        ladder: "ModelLadder | None" = None,
-        strict: bool | None = None,
-        strict_budget: bool = False,
-    ) -> "OrchestrationResult":
-        """Run ``prompt`` end to end: decompose → size → execute → synthesize.
-
-        The forward-looking counterpart to :meth:`tend`. When ``envelope`` is
-        None one is generated for the prompt (the authorization boundary the
-        decomposed plan must verify against) at the given ``stakes``. The
-        orchestrator reuses this facade's pathway store (Tier-0 reuse for repeat
-        prompts) and journal, and routes each executed step to the cheapest
-        capable model under ``budget_tokens`` (None = unbudgeted; the decompose
-        and synthesize calls are overhead, not drawn from it).
-        """
-        from opendaisugi.model_sizer import build_ladder
-        from opendaisugi.orchestrator import Orchestrator
-
-        if envelope is None:
-            envelope = await self.generate_envelope(prompt, stakes=stakes)
-
-        # Thread a configured local Tier-1 model into the ladder's local rung so
-        # easy reasoning routes to it (token saving); its endpoint is passed to the
-        # task executor so the call actually reaches the local server. Absent a
-        # local model, the ladder has no local rung and easy tasks fall back to the
-        # cheapest cloud model — never a placeholder.
-        endpoint_overrides: dict = {}
-        if ladder is not None:
-            resolved_ladder = ladder
-        else:
-            local_model = getattr(self._tier1, "model", None)
-            resolved_ladder = build_ladder(local_model)
-            base_url = getattr(self._tier1, "base_url", None)
-            if local_model and base_url:
-                override = {"api_base": base_url}
-                api_key = getattr(self._tier1, "api_key", None)
-                if api_key:
-                    override["api_key"] = api_key
-                endpoint_overrides[local_model] = override
-
-        orch = Orchestrator(
-            ladder=resolved_ladder,
-            skill_handlers=skill_handlers,
-            mcp_transport=mcp_transport,
-            pathway_store=self.pathway_store,
-            journal=self.journal,
-            decompose_model=self.model,
-            z3_timeout_ms=self.z3_timeout_ms,
-            pathway_threshold=self._pathway_threshold,
-            endpoint_overrides=endpoint_overrides,
-        )
-        return await orch.orchestrate(
-            prompt,
-            envelope=envelope,
-            budget_tokens=budget_tokens,
-            strict=strict if strict is not None else self._strict,
-            strict_budget=strict_budget,
-        )
-
-    async def find_pathway(
-        self, task: str, *, threshold: float | None = None
-    ) -> "PathwayMatch | None":
-        """Check the pathway store for a matching compiled pathway.
-
-        Returns None if pathway_store is disabled or no match is above the
-        threshold. ``threshold`` defaults to this facade's ``pathway_threshold``
-        (``Daisugi(pathway_threshold=...)``); pass it explicitly to override per
-        call. The underlying ``PathwayStore.find`` is fully synchronous (SQLite +
-        numpy + sentence-transformers), so we offload to a worker thread to
-        avoid blocking the event loop when called from async code.
-        """
-        if self.pathway_store is None:
-            return None
-        import asyncio
-        eff = threshold if threshold is not None else self._pathway_threshold
-        return await asyncio.to_thread(
-            lambda: self.pathway_store.find(task, threshold=eff)
-        )
-
-    async def adapt_plan(
-        self,
-        match: "PathwayMatch",
-        task: str,
-        *,
-        model: str | None = None,
-    ) -> ActionPlan:
-        """Adapt a pathway's plan template to a specific task via LLM.
-
-        Falls back to the unmodified template if the LLM call fails or the
-        adapted plan doesn't verify against the pathway envelope.
-        """
-        from opendaisugi.distiller import adapt_plan as _adapt_plan
-
-        return await _adapt_plan(
-            match, task,
-            model=model if model is not None else self.model,
-            z3_timeout_ms=self.z3_timeout_ms,
-        )
-
-    def verify(
-        self,
-        plan: ActionPlan,
-        envelope: Envelope,
-        *,
-        strict: bool | None = None,
-        aliases: "AliasRegistry | None" = None,
-    ) -> VerificationResult:
-        """Verify ``plan`` against ``envelope`` using this facade's Z3 timeout.
-
-        ``strict`` overrides the default stake-based resolution (v0.27.0).
-        Precedence (v0.28.3): method kwarg > constructor ``strict=`` >
-        stake-based default. Pre-v0.28.3 patch this method ignored the
-        constructor strict, contradicting ``run``'s behavior.
-        ``aliases`` supplies an :class:`AliasRegistry` so alias-referenced
-        invariant expressions are resolved before evaluation (v0.27.0).
-        """
-        return _verify(
-            plan,
-            envelope,
-            z3_timeout_ms=self.z3_timeout_ms,
-            strict=strict if strict is not None else self._strict,
-            aliases=aliases,
-        )
-
-    @property
-    def pathway_store(self) -> PathwayStore | None:
-        """Lazy PathwayStore rooted at ``data_dir / pathways.db``.
-
-        Returns None if the facade was constructed with ``pathway_store=False``.
-        Auto-constructs the SQLite file on first access when ``pathway_store=True``.
-        """
-        if self._pathway_store is not None:
-            return self._pathway_store
-        if getattr(self, "_pathway_store_auto", False):
-            self._pathway_store = PathwayStore(self.data_dir / "pathways.db")
-            return self._pathway_store
-        return None
-
-    @property
-    def journal(self) -> Journal:
-        """Lazy Journal instance rooted at ``self.data_dir``.
-
-        Created on first access and cached. Avoids doing filesystem I/O
-        in ``__init__`` — constructing a Daisugi should never create
-        directories unless the caller actually uses the journal.
-        """
-        if not hasattr(self, "_journal"):
-            self._journal = Journal(
-                data_dir=self.data_dir,
-                z3_timeout_ms=self.z3_timeout_ms,
-            )
-        return self._journal
+_LAZY: dict[str, tuple[str, str | None]] = {
+    "ABResult": ("opendaisugi.gardener", "ABResult"),
+    "ActionPlan": ("opendaisugi.models", "ActionPlan"),
+    "ActionStep": ("opendaisugi.models", "ActionStep"),
+    "AgenticExecutor": ("opendaisugi.agentic_executor", "AgenticExecutor"),
+    "AgenticStep": ("opendaisugi.models", "AgenticStep"),
+    "Alias": ("opendaisugi.aliases", "Alias"),
+    "AliasRegistry": ("opendaisugi.aliases", "AliasRegistry"),
+    "AnswerStore": ("opendaisugi.gateway_answers", "AnswerStore"),
+    "ApprovalDecision": ("opendaisugi.approval", "ApprovalDecision"),
+    "ApprovalStrategy": ("opendaisugi.approval", "ApprovalStrategy"),
+    "BUNDLE_SCHEMA_VERSION": ("opendaisugi.portability", "BUNDLE_SCHEMA_VERSION"),
+    "BatchClassification": ("opendaisugi.batch", "BatchClassification"),
+    "BatchDeclaration": ("opendaisugi.batch", "BatchDeclaration"),
+    "BatchResult": ("opendaisugi.batch", "BatchResult"),
+    "BudgetAwareDelegatingExecutor": ("opendaisugi.orchestrator", "BudgetAwareDelegatingExecutor"),
+    "BudgetExceeded": ("opendaisugi.budget", "BudgetExceeded"),
+    "BudgetReport": ("opendaisugi.budget", "BudgetReport"),
+    "BudgetTracker": ("opendaisugi.budget", "BudgetTracker"),
+    "CalibrationReport": ("opendaisugi.envelope", "CalibrationReport"),
+    "CartesianMoveStep": ("opendaisugi.models", "CartesianMoveStep"),
+    "ClaudeCodeTier1Provider": ("opendaisugi.tier1", "ClaudeCodeTier1Provider"),
+    "CompiledPathway": ("opendaisugi.pathway", "CompiledPathway"),
+    "CompiledPredicate": ("opendaisugi.predicate_z3", "CompiledPredicate"),
+    "Config": ("opendaisugi.config", "Config"),
+    "Contract": ("opendaisugi.contracts", "Contract"),
+    "Counterexample": ("opendaisugi.subsumption", "Counterexample"),
+    "DEFAULT_LADDER": ("opendaisugi.model_sizer", "DEFAULT_LADDER"),
+    "DEFAULT_LOW_STAKES_ENVELOPE": ("opendaisugi.defaults", "DEFAULT_LOW_STAKES_ENVELOPE"),
+    "DEFAULT_PATHWAY_THRESHOLD": ("opendaisugi.pathway_store", "DEFAULT_PATHWAY_THRESHOLD"),
+    "Daisugi": ("opendaisugi.facade", "Daisugi"),
+    "DatasetStats": ("opendaisugi.lora", "DatasetStats"),
+    "DecomposedPlan": ("opendaisugi.decomposer", "DecomposedPlan"),
+    "DecomposedStep": ("opendaisugi.decomposer", "DecomposedStep"),
+    "DecompositionError": ("opendaisugi.decomposer", "DecompositionError"),
+    "DelegationDecision": ("opendaisugi.contracts", "DelegationDecision"),
+    "DelegationDenied": ("opendaisugi.subagent", "DelegationDenied"),
+    "Distiller": ("opendaisugi.distiller", "Distiller"),
+    "DryRunExecutor": ("opendaisugi.executor", "DryRunExecutor"),
+    "ENVELOPE_PROMPT_VERSION": ("opendaisugi.envelope", "ENVELOPE_PROMPT_VERSION"),
+    "Envelope": ("opendaisugi.models", "Envelope"),
+    "EnvelopeCache": ("opendaisugi.envelope_cache", "EnvelopeCache"),
+    "EnvelopeGenerationError": ("opendaisugi.exceptions", "EnvelopeGenerationError"),
+    "EnvelopeInheritanceError": ("opendaisugi.inheritance", "EnvelopeInheritanceError"),
+    "Episode": ("opendaisugi.parsers", "Episode"),
+    "ExecutorResult": ("opendaisugi.executor", "ExecutorResult"),
+    "Expression": ("opendaisugi.predicate", "Expression"),
+    "FakeExecutor": ("opendaisugi.executor", "FakeExecutor"),
+    "FallbackHandler": ("opendaisugi.fallback", "FallbackHandler"),
+    "FallbackOutcome": ("opendaisugi.fallback", "FallbackOutcome"),
+    "FallbackStrategy": ("opendaisugi.models", "FallbackStrategy"),
+    "FileReadStep": ("opendaisugi.models", "FileReadStep"),
+    "FileWriteStep": ("opendaisugi.models", "FileWriteStep"),
+    "FootprintProof": ("opendaisugi.batch", "FootprintProof"),
+    "GardenerConfig": ("opendaisugi.gardener", "GardenerConfig"),
+    "GardenerReport": ("opendaisugi.gardener", "GardenerReport"),
+    "Gateway": ("opendaisugi.gateway_pipeline", "Gateway"),
+    "GatewayJournal": ("opendaisugi.gateway_journal", "GatewayJournal"),
+    "GatewaySummary": ("opendaisugi.gateway_journal", "GatewaySummary"),
+    "GatewayTurnRecord": ("opendaisugi.gateway_journal", "GatewayTurnRecord"),
+    "GripperStep": ("opendaisugi.models", "GripperStep"),
+    "HaltHandler": ("opendaisugi.fallback", "HaltHandler"),
+    "ImportResult": ("opendaisugi.portability", "ImportResult"),
+    "InvalidSignatureError": ("opendaisugi.pathway_bundle", "InvalidSignatureError"),
+    "Invariant": ("opendaisugi.models", "Invariant"),
+    "JointMoveStep": ("opendaisugi.models", "JointMoveStep"),
+    "Journal": ("opendaisugi.journal", "Journal"),
+    "JournalStats": ("opendaisugi.journal", "JournalStats"),
+    "LengthRange": ("opendaisugi.predicate", "LengthRange"),
+    "LiteLLMTier1Provider": ("opendaisugi.tier1", "LiteLLMTier1Provider"),
+    "LowStakesNotConfigured": ("opendaisugi.exceptions", "LowStakesNotConfigured"),
+    "MCPExecutor": ("opendaisugi.orchestration_executors", "MCPExecutor"),
+    "MCPStep": ("opendaisugi.models", "MCPStep"),
+    "MCPTransport": ("opendaisugi.orchestration_executors", "MCPTransport"),
+    "MergeConfig": ("opendaisugi.gardener", "MergeConfig"),
+    "MergeReport": ("opendaisugi.gardener", "MergeReport"),
+    "ModelLadder": ("opendaisugi.model_sizer", "ModelLadder"),
+    "ModelLadderExhausted": ("opendaisugi.exceptions", "ModelLadderExhausted"),
+    "ModelRung": ("opendaisugi.model_sizer", "ModelRung"),
+    "MuJoCoExecutor": ("opendaisugi.executor_mujoco", "MuJoCoExecutor"),
+    "NetTokenLedger": ("opendaisugi.batch", "NetTokenLedger"),
+    "NetworkStep": ("opendaisugi.models", "NetworkStep"),
+    "OllamaTier1Provider": ("opendaisugi.tier1", "OllamaTier1Provider"),
+    "OpenDaisugiError": ("opendaisugi.exceptions", "OpenDaisugiError"),
+    "OrchestrationResult": ("opendaisugi.orchestrator", "OrchestrationResult"),
+    "Orchestrator": ("opendaisugi.orchestrator", "Orchestrator"),
+    "PairedResult": ("opendaisugi.benchmark", "PairedResult"),
+    "ParseResult": ("opendaisugi.parsers", "ParseResult"),
+    "PathState": ("opendaisugi.deeds", "PathState"),
+    "PathwayBundle": ("opendaisugi.pathway_bundle", "PathwayBundle"),
+    "PathwayImportError": ("opendaisugi.portability", "PathwayImportError"),
+    "PathwayMatch": ("opendaisugi.pathway", "PathwayMatch"),
+    "PathwayStore": ("opendaisugi.pathway_store", "PathwayStore"),
+    "Permission": ("opendaisugi.models", "Permission"),
+    "Postcondition": ("opendaisugi.models", "Postcondition"),
+    "PreparedTurn": ("opendaisugi.gateway_pipeline", "PreparedTurn"),
+    "PromotionResult": ("opendaisugi.strata", "PromotionResult"),
+    "PruneConfig": ("opendaisugi.gardener", "PruneConfig"),
+    "PruneReport": ("opendaisugi.gardener", "PruneReport"),
+    "RecomputeHandler": ("opendaisugi.fallback", "RecomputeHandler"),
+    "ReconstructedContext": ("opendaisugi.strata", "ReconstructedContext"),
+    "RederivationLedger": ("opendaisugi.strata", "RederivationLedger"),
+    "RefinementLog": ("opendaisugi.refinement", "RefinementLog"),
+    "RefinementRecord": ("opendaisugi.refinement", "RefinementRecord"),
+    "RegressionAlert": ("opendaisugi.gardener", "RegressionAlert"),
+    "RepeatGroup": ("opendaisugi.gateway_journal", "RepeatGroup"),
+    "ReplayResult": ("opendaisugi.journal", "ReplayResult"),
+    "ReversalHandle": ("opendaisugi.models", "ReversalHandle"),
+    "RollbackReport": ("opendaisugi.deeds", "RollbackReport"),
+    "RouteDecision": ("opendaisugi.gateway", "RouteDecision"),
+    "RunMetric": ("opendaisugi.benchmark", "RunMetric"),
+    "RunSession": ("opendaisugi.run_session", "RunSession"),
+    "RunStatus": ("opendaisugi.run_session", "RunStatus"),
+    "SafeSubagent": ("opendaisugi.subagent", "SafeSubagent"),
+    "ShellStep": ("opendaisugi.models", "ShellStep"),
+    "SigningUnavailable": ("opendaisugi.signing", "SigningUnavailable"),
+    "SimulationResetStep": ("opendaisugi.models", "SimulationResetStep"),
+    "SkillExecutor": ("opendaisugi.orchestration_executors", "SkillExecutor"),
+    "SkillHandler": ("opendaisugi.orchestration_executors", "SkillHandler"),
+    "SkillStep": ("opendaisugi.models", "SkillStep"),
+    "StakesInheritanceWarning": ("opendaisugi.exceptions", "StakesInheritanceWarning"),
+    "StepCost": ("opendaisugi.budget", "StepCost"),
+    "StepExecutor": ("opendaisugi.executor", "StepExecutor"),
+    "StepOutcome": ("opendaisugi.run_session", "StepOutcome"),
+    "StepOutput": ("opendaisugi.synthesizer", "StepOutput"),
+    "StepSizing": ("opendaisugi.model_sizer", "StepSizing"),
+    "StrataStore": ("opendaisugi.strata", "StrataStore"),
+    "Stratum": ("opendaisugi.strata", "Stratum"),
+    "SubprocessExecutor": ("opendaisugi.executor", "SubprocessExecutor"),
+    "SubsumptionResult": ("opendaisugi.subsumption", "SubsumptionResult"),
+    "Supervisor": ("opendaisugi.supervisor", "Supervisor"),
+    "SwarmConflict": ("opendaisugi.swarm", "SwarmConflict"),
+    "SwarmVerdict": ("opendaisugi.swarm", "SwarmVerdict"),
+    "SynthesisResult": ("opendaisugi.synthesizer", "SynthesisResult"),
+    "TaskStep": ("opendaisugi.models", "TaskStep"),
+    "TaskTooLongError": ("opendaisugi.exceptions", "TaskTooLongError"),
+    "TendReport": ("opendaisugi.distiller", "TendReport"),
+    "ThinkingBudget": ("opendaisugi.thinking", "ThinkingBudget"),
+    "Tier1Provider": ("opendaisugi.tier1", "Tier1Provider"),
+    "TierStats": ("opendaisugi.accounting", "TierStats"),
+    "Trace": ("opendaisugi.models", "Trace"),
+    "TraceRecord": ("opendaisugi.journal", "TraceRecord"),
+    "TrainingExample": ("opendaisugi.lora", "TrainingExample"),
+    "TrustedSignerRegistry": ("opendaisugi.signing", "TrustedSignerRegistry"),
+    "TurnCost": ("opendaisugi.gateway", "TurnCost"),
+    "TurnSaving": ("opendaisugi.gateway", "TurnSaving"),
+    "TwoLedgerReport": ("opendaisugi.batch", "TwoLedgerReport"),
+    "UnsignedBundleError": ("opendaisugi.pathway_bundle", "UnsignedBundleError"),
+    "UnsupportedRegexError": ("opendaisugi.regex_to_z3", "UnsupportedRegexError"),
+    "UntrustedSignerError": ("opendaisugi.pathway_bundle", "UntrustedSignerError"),
+    "VLAStep": ("opendaisugi.models", "VLAStep"),
+    "VerificationResult": ("opendaisugi.models", "VerificationResult"),
+    "VerificationTimeout": ("opendaisugi.exceptions", "VerificationTimeout"),
+    "Violation": ("opendaisugi.models", "Violation"),
+    "aabb_disjoint": ("opendaisugi.swarm", "aabb_disjoint"),
+    "aabb_intersection": ("opendaisugi.swarm", "aabb_intersection"),
+    "ab_test": ("opendaisugi.gardener", "ab_test"),
+    "apply_reversal": ("opendaisugi.deeds", "apply_reversal"),
+    "bundle_to_pathway": ("opendaisugi.pathway_bundle", "bundle_to_pathway"),
+    "canonicalize_contract": ("opendaisugi.signing", "canonicalize_contract"),
+    "classify_declaration": ("opendaisugi.batch", "classify_declaration"),
+    "classify_tier": ("opendaisugi.accounting", "classify_tier"),
+    "collect_outputs": ("opendaisugi.synthesizer", "collect_outputs"),
+    "compile_to_z3": ("opendaisugi.predicate_z3", "compile_to_z3"),
+    "decompose": ("opendaisugi.decomposer", "decompose"),
+    "default_registry_path": ("opendaisugi.signing", "default_registry_path"),
+    "emit_jsonl": ("opendaisugi.lora", "emit_jsonl"),
+    "envelope_subsumes": ("opendaisugi.subsumption", "envelope_subsumes"),
+    "estimate_step_difficulty": ("opendaisugi.model_sizer", "estimate_step_difficulty"),
+    "evaluate_predicate": ("opendaisugi.predicate_z3", "evaluate_predicate"),
+    "export_pathway": ("opendaisugi.portability", "export"),
+    "generate_envelope": ("opendaisugi.envelope", "generate_envelope"),
+    "generate_keypair": ("opendaisugi.signing", "generate_keypair"),
+    "import_pathway": ("opendaisugi.portability", "import_pathway"),
+    # NOT ("opendaisugi", "integrations") — that would make __getattr__ import
+    # "opendaisugi" (itself) and re-enter __getattr__("integrations") forever.
+    "integrations": ("opendaisugi.integrations", None),
+    "is_batchable_type": ("opendaisugi.batch", "is_batchable_type"),
+    "iter_training_examples": ("opendaisugi.lora", "iter_training_examples"),
+    "load_config": ("opendaisugi.config", "load_config"),
+    "load_system_aliases": ("opendaisugi.system_aliases", "load_system_aliases"),
+    "make_cache_key": ("opendaisugi.envelope_cache", "make_cache_key"),
+    "measure_turn": ("opendaisugi.gateway", "measure_turn"),
+    "meets_stage4_bar": ("opendaisugi.benchmark", "meets_stage4_bar"),
+    "merge": ("opendaisugi.gardener", "merge"),
+    "parse_bundle": ("opendaisugi.portability", "parse_bundle"),
+    "parse_expression": ("opendaisugi.predicate", "parse_expression"),
+    "partition_airspace": ("opendaisugi.swarm", "partition_airspace"),
+    "partition_and_assign": ("opendaisugi.swarm", "partition_and_assign"),
+    "pathway_to_bundle": ("opendaisugi.pathway_bundle", "pathway_to_bundle"),
+    "price_turn": ("opendaisugi.gateway", "price_turn"),
+    "promote_constraint": ("opendaisugi.strata", "promote_constraint"),
+    "prove_footprint": ("opendaisugi.batch", "prove_footprint"),
+    "prune": ("opendaisugi.gardener", "prune"),
+    "record_turn": ("opendaisugi.gateway_journal", "record_turn"),
+    "regression_check": ("opendaisugi.gardener", "regression_check"),
+    "rollback_result": ("opendaisugi.batch", "rollback_result"),
+    "rollback_run": ("opendaisugi.deeds", "rollback_run"),
+    "route_turn": ("opendaisugi.gateway", "route_turn"),
+    "run_batch": ("opendaisugi.batch", "run_batch"),
+    "run_calibration": ("opendaisugi.envelope", "run_calibration"),
+    "run_gardener": ("opendaisugi.gardener", "run_gardener"),
+    "run_paired_benchmark": ("opendaisugi.benchmark", "run_paired_benchmark"),
+    "save_config": ("opendaisugi.config", "save_config"),
+    "sign_contract": ("opendaisugi.signing", "sign_contract"),
+    "size_plan": ("opendaisugi.model_sizer", "size_plan"),
+    "size_step": ("opendaisugi.model_sizer", "size_step"),
+    "summarize": ("opendaisugi.benchmark", "summarize"),
+    "synthesize": ("opendaisugi.synthesizer", "synthesize"),
+    "tasks_hash": ("opendaisugi.benchmark", "tasks_hash"),
+    "tier_stats": ("opendaisugi.accounting", "tier_stats"),
+    "touched_files": ("opendaisugi.deeds", "touched_files"),
+    "two_ledger_report": ("opendaisugi.batch", "two_ledger_report"),
+    "verify": ("opendaisugi.verify", "verify"),
+    "verify_completed_step": ("opendaisugi.stage2", "verify_completed_step"),
+    "verify_delegation": ("opendaisugi.contracts", "verify_delegation"),
+    "verify_inheritance": ("opendaisugi.inheritance", "verify_inheritance"),
+    "verify_predicate_z3": ("opendaisugi.predicate_z3", "verify_predicate_z3"),
+    "verify_signature_raw": ("opendaisugi.signing", "verify_signature_raw"),
+    "verify_swarm_tasking": ("opendaisugi.swarm", "verify_swarm_tasking"),
+    "would_be_reversible": ("opendaisugi.batch", "would_be_reversible"),
+}
 
 
 def __getattr__(name: str):
-    # Lazy: keep mujoco/numpy off the default import path.
-    if name == "MuJoCoExecutor":
-        from opendaisugi.executor_mujoco import MuJoCoExecutor
-        return MuJoCoExecutor
-    raise AttributeError(f"module 'opendaisugi' has no attribute {name!r}")
+    """PEP 562: import a public name on first use and cache it.
+
+    ``import opendaisugi`` used to pull 54 submodules (~530 ms, incl. Z3 and
+    networkx) before any command ran. Now the package is a directory of names.
+    """
+    target = _LAZY.get(name)
+    if target is None:
+        raise AttributeError(f"module 'opendaisugi' has no attribute {name!r}")
+    module_name, attr = target
+    module = importlib.import_module(module_name)
+    value = module if attr is None else getattr(module, attr)
+    globals()[name] = value
+    return value
 
 
-__version__ = "0.34.2"
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY))
+
+
+# A name whose target module's basename equals the name itself, but whose
+# _LAZY attr isn't the module ("verify": the function opendaisugi.verify.verify,
+# not the submodule opendaisugi.verify). Python's import machinery
+# unconditionally binds ``opendaisugi.verify = <the submodule>`` the FIRST
+# time anything, anywhere in the process, does ``import opendaisugi.verify``
+# or ``from opendaisugi.verify import ...`` — including our own facade.py —
+# regardless of whether that goes through this file's __getattr__. That
+# auto-bind writes straight into this module's __dict__, so it silently wins
+# over (or preempts) the lazy function export and __getattr__ is never asked
+# again, because normal attribute lookup now "succeeds" with the module.
+# __getattribute__ on a swapped-in module subclass is the only hook that
+# runs on every access (not just lookup failures), so it's the only place
+# that can keep re-resolving these specific names to the right value.
+_COLLIDING_NAMES = frozenset(
+    name
+    for name, (module_name, attr) in _LAZY.items()
+    if attr is not None and module_name.rsplit(".", 1)[-1] == name
+)
+
+
+class _LazyModule(_types.ModuleType):
+    def __getattribute__(self, name: str):
+        if name in _COLLIDING_NAMES:
+            module_name, attr = _LAZY[name]
+            return getattr(importlib.import_module(module_name), attr)
+        return super().__getattribute__(name)
+
+
+_sys.modules[__name__].__class__ = _LazyModule
+
+
+__version__ = "0.43.0"
 
 __all__ = [
     "__version__",
@@ -598,6 +321,51 @@ __all__ = [
     "DryRunExecutor",
     "FakeExecutor",
     "ExecutorResult",
+    # Deed ledger — reversibility (v0.41.0, roadmap Stage 8)
+    "ReversalHandle",
+    "rollback_run",
+    "touched_files",
+    "apply_reversal",
+    "RollbackReport",
+    "PathState",
+    # Within-instance batch compilation (v0.42.0, roadmap Stage 9)
+    "BatchDeclaration",
+    "BatchClassification",
+    "FootprintProof",
+    "BatchResult",
+    "NetTokenLedger",
+    "TwoLedgerReport",
+    "is_batchable_type",
+    "classify_declaration",
+    "prove_footprint",
+    "would_be_reversible",
+    "two_ledger_report",
+    "run_batch",
+    "rollback_result",
+    # Rationale-durability ledger (v0.43.0, roadmap Stage 10)
+    "Stratum",
+    "StrataStore",
+    "ReconstructedContext",
+    "RederivationLedger",
+    "PromotionResult",
+    "promote_constraint",
+    # Token-saving gateway — turn-level routing + meter (MVP)
+    "route_turn",
+    "RouteDecision",
+    "measure_turn",
+    "TurnSaving",
+    "TurnCost",
+    "price_turn",
+    # Token-saving gateway — turn journal + pipeline (tokens the constraint, dollars alongside)
+    "Gateway",
+    "PreparedTurn",
+    "GatewayJournal",
+    "GatewaySummary",
+    "GatewayTurnRecord",
+    "RepeatGroup",
+    "record_turn",
+    # Token-saving gateway — the answer store (ADR-0012 §2D)
+    "AnswerStore",
     "ApprovalStrategy",
     "ApprovalDecision",
     "CalibrationReport",

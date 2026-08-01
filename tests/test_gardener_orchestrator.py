@@ -43,10 +43,14 @@ def test_end_to_end_prune_then_merge(tmp_path):
     now = time.time()
 
     # Stale — should be pruned.
-    store.put(_pathway(
-        "stale", [0.0, 0.0, 1.0],
-        hit_count=10, last_activation_at=now - 60 * 86_400,
-    ))
+    store.put(
+        _pathway(
+            "stale",
+            [0.0, 0.0, 1.0],
+            hit_count=10,
+            last_activation_at=now - 60 * 86_400,
+        )
+    )
     # Two near-duplicates — should be merged.
     store.put(_pathway("a", [1.0, 0.0, 0.0], hit_count=5, last_activation_at=now))
     store.put(_pathway("b", [0.99, 0.01, 0.0], hit_count=2, last_activation_at=now))
@@ -75,10 +79,14 @@ def test_run_prune_only(tmp_path):
 def test_dry_run_leaves_store_intact(tmp_path):
     store = PathwayStore(tmp_path / "p.db")
     now = time.time()
-    store.put(_pathway(
-        "stale", [0.0, 0.0, 1.0],
-        hit_count=10, last_activation_at=now - 60 * 86_400,
-    ))
+    store.put(
+        _pathway(
+            "stale",
+            [0.0, 0.0, 1.0],
+            hit_count=10,
+            last_activation_at=now - 60 * 86_400,
+        )
+    )
     store.put(_pathway("a", [1.0, 0.0, 0.0], hit_count=5, last_activation_at=now))
     store.put(_pathway("b", [0.99, 0.01, 0.0], hit_count=2, last_activation_at=now))
 

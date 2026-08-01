@@ -46,5 +46,6 @@ def test_ollama_overrides_base_url_and_timeout():
 async def test_ollama_provider_is_a_valid_tier1_protocol():
     """Quack-test: implements the Tier1Provider protocol."""
     from opendaisugi.tier1 import Tier1Provider
+
     p = OllamaTier1Provider()
     assert isinstance(p, Tier1Provider)

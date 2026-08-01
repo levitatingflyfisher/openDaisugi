@@ -1,4 +1,5 @@
 """Parser decomposes compound shell into atomic ShellSteps (v0.18 L6)."""
+
 from opendaisugi.parsers.claude_code import _extract_step_maybe_multiple, _split_compound_shell
 
 

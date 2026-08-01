@@ -1,0 +1,19 @@
+{
+  "name": "opendaisugi-conform-ts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript/Node conformance client for the openDaisugi verifier core (differential against the Python oracle).",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test dist/test/**/*.test.js",
+    "conform": "node dist/conform.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "web-tree-sitter": "0.25.10"
+  }
+}

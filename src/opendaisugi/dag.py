@@ -37,11 +37,13 @@ def check_dag(plan: ActionPlan) -> list[Violation]:
             dupes.append(step.id)
         seen.add(step.id)
     for dup in dupes:
-        violations.append(Violation(
-            stage="dag",
-            message=f"duplicate step id '{dup}' — step ids must be unique",
-            detail={"step": dup},
-        ))
+        violations.append(
+            Violation(
+                stage="dag",
+                message=f"duplicate step id '{dup}' — step ids must be unique",
+                detail={"step": dup},
+            )
+        )
     if violations:
         return violations  # graph checks below are meaningless with duplicate ids
 
@@ -82,6 +84,24 @@ def check_dag(plan: ActionPlan) -> list[Violation]:
     return violations
 
 
+def dependency_levels(plan: ActionPlan) -> list:
+    """Return plan steps grouped into dependency levels (topological generations).
+
+    Level 0 has no dependencies; every step in level *k* depends only on steps in
+    levels < *k*, so all steps within one level are mutually independent and may
+    run concurrently. Flattening the levels yields a valid topological order.
+
+    Precondition: the plan has been verified (no cycles). Raises ``ValueError`` on
+    a cycle, matching ``topological_order``.
+    """
+    step_by_id = {s.id: s for s in plan.steps}
+    g = _build_graph(plan)
+    try:
+        return [[step_by_id[i] for i in gen] for gen in nx.topological_generations(g)]
+    except nx.NetworkXUnfeasible as e:
+        raise ValueError("Plan has a cycle; run verify(plan, envelope) before supervising") from e
+
+
 def topological_order(plan: ActionPlan) -> list:
     """Return plan steps in dependency-respecting order.
 
@@ -93,7 +113,5 @@ def topological_order(plan: ActionPlan) -> list:
     try:
         ordered_ids = list(nx.topological_sort(g))
     except nx.NetworkXUnfeasible as e:
-        raise ValueError(
-            "Plan has a cycle; run verify(plan, envelope) before supervising"
-        ) from e
+        raise ValueError("Plan has a cycle; run verify(plan, envelope) before supervising") from e
     return [step_by_id[i] for i in ordered_ids]

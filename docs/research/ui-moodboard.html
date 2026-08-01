@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tools that earn their keep — a UI mood board</title>
+<style>
+  :root{
+    --bg:#0b0d11; --panel:#12151c; --panel2:#161a22; --ink:#e6e9ef; --dim:#98a0b0;
+    --line:#242a35; --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --legendary:#e5b567; --useful:#7fd08a; --funny:#d98cd0; --bad:#e06c75; --fine:#8a93a6; --simple:#66c6d8;
+    --scaffold:#c8a2ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:
+      radial-gradient(1200px 700px at 80% -10%, #141a26 0%, transparent 60%),
+      var(--bg); color:var(--ink); font-family:var(--sans); line-height:1.5;
+      -webkit-font-smoothing:antialiased; padding:0 0 80px}
+  a{color:var(--simple)}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 20px}
+  header{padding:46px 0 18px; border-bottom:1px solid var(--line)}
+  .kicker{font-family:var(--mono); font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:var(--dim)}
+  h1{font-size:clamp(28px,4.6vw,46px); line-height:1.04; margin:.28em 0 .18em; letter-spacing:-.01em}
+  h1 .amber{color:var(--legendary)}
+  .thesis{max-width:74ch; color:var(--dim); font-size:16px}
+  .thesis b{color:var(--ink); font-weight:600}
+  .poles{display:flex; flex-wrap:wrap; gap:10px; margin:22px 0 6px}
+  .pole{font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:999px; padding:6px 12px; color:var(--dim); background:var(--panel)}
+  .pole b{color:var(--ink)}
+  .toolbar{position:sticky; top:0; z-index:5; background:linear-gradient(var(--bg),rgba(11,13,17,.86)); backdrop-filter:blur(6px);
+    padding:14px 0; margin:0 0 8px; border-bottom:1px solid var(--line)}
+  .chips{display:flex; flex-wrap:wrap; gap:8px}
+  .chip{font-family:var(--mono); font-size:12px; letter-spacing:.02em; cursor:pointer; user-select:none;
+    border:1px solid var(--line); background:var(--panel); color:var(--dim); border-radius:999px; padding:5px 11px}
+  .chip[aria-pressed="true"]{color:var(--bg); font-weight:700}
+  .chip .dot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; vertical-align:1px}
+  .chip.all[aria-pressed="true"]{background:var(--ink); border-color:var(--ink)}
+  .board{columns:3 340px; column-gap:18px; padding:20px 0 0}
+  @media(max-width:760px){.board{columns:1}}
+  .card{break-inside:avoid; background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    margin:0 0 18px; overflow:hidden; transition:transform .12s ease, border-color .12s ease}
+  .card:hover{transform:translateY(-2px); border-color:#33404f}
+  .screen{background:#07090c; border-bottom:1px solid var(--line); padding:14px 14px; min-height:120px;
+    display:flex; align-items:stretch}
+  .screen pre{font-family:var(--mono); font-size:11.5px; line-height:1.35; color:#cdd6e4; margin:0; white-space:pre; overflow:hidden; width:100%}
+  .amberterm pre{color:#ffb545}
+  .greenterm pre{color:#83e8a2}
+  .meta{padding:13px 15px 16px}
+  .name{display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin:0 0 6px}
+  .name h3{font-size:16px; margin:0; letter-spacing:-.01em}
+  .name .dom{font-family:var(--mono); font-size:10.5px; color:var(--dim); text-transform:uppercase; letter-spacing:.1em; white-space:nowrap}
+  .tags{display:flex; flex-wrap:wrap; gap:6px; margin:0 0 9px}
+  .tag{font-family:var(--mono); font-size:10.5px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--ink)}
+  .why{font-size:13.5px; color:var(--dim); margin:0 0 9px}
+  .lesson{font-size:13.5px; margin:0; padding-left:11px; border-left:2px solid var(--line)}
+  .lesson b{color:var(--legendary); font-weight:600}
+  /* category accents */
+  .t-legendary{border-color:var(--legendary); color:var(--legendary)}
+  .t-useful{border-color:var(--useful); color:var(--useful)}
+  .t-funny{border-color:var(--funny); color:var(--funny)}
+  .t-bad{border-color:var(--bad); color:var(--bad)}
+  .t-fine{border-color:var(--fine); color:var(--fine)}
+  .t-simple{border-color:var(--simple); color:var(--simple)}
+  .t-pole{border-color:var(--scaffold); color:var(--scaffold)}
+  /* swatches (hardware / GUI, no ASCII) */
+  .sw{width:100%; display:flex; align-items:center; justify-content:center; gap:8px}
+  .grid-btns{display:grid; grid-template-columns:repeat(3,26px); gap:8px}
+  .grid-btns i{width:26px;height:26px;border-radius:50%;background:#1c2430;border:1px solid #2f3b4a;display:grid;place-items:center;
+    font-family:var(--mono);font-size:10px;color:#8aa}
+  .faders{display:flex; gap:7px; align-items:flex-end; height:70px}
+  .faders i{width:6px;background:#243040;border-radius:3px;position:relative}
+  .faders i::after{content:"";position:absolute;left:-3px;width:12px;height:6px;background:#4a5a70;border-radius:2px}
+  .mouse{width:56px;height:84px;border:2px solid #3a4658;border-radius:28px/34px;position:relative;background:#141a22}
+  .mouse::before{content:"";position:absolute;left:50%;top:8px;transform:translateX(-50%);width:2px;height:26px;background:#2f3b4a}
+  .knobs{display:grid;grid-template-columns:repeat(4,18px);gap:10px}
+  .knobs i{width:18px;height:18px;border-radius:50%;background:conic-gradient(#5a6b82 0 30%,#222a36 0);border:1px solid #3a4658}
+  .split{display:flex; gap:10px; width:100%}
+  .split>div{flex:1; border:1px solid #2a3340; border-radius:8px; padding:8px; text-align:center; font-family:var(--mono); font-size:10px; color:var(--dim)}
+  .good{border-color:#2f5a3a; color:var(--useful)}
+  .bad2{border-color:#5a2f34; color:var(--bad)}
+  .dropdown{width:100%;font-family:var(--mono);font-size:11px}
+  .dropdown div{padding:4px 8px;border:1px solid #2a3340;border-top:0}
+  .dropdown div:first-child{border-top:1px solid #2a3340;border-radius:6px 6px 0 0;color:var(--ink)}
+  .dropdown .hot{background:#2a1416;color:var(--bad)}
+  .remote{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;width:78px}
+  .remote i{aspect-ratio:1;background:#1a222c;border:1px solid #2a3340;border-radius:3px}
+  .footnote{color:var(--dim); font-size:13px; margin-top:34px; padding-top:18px; border-top:1px solid var(--line); max-width:82ch}
+  .footnote code{font-family:var(--mono); background:var(--panel2); padding:1px 6px; border-radius:5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="kicker">A mood board · recreations, not screenshots</div>
+    <h1>Tools that earn their keep — <span class="amber">and the ones that don't</span></h1>
+    <p class="thesis">The theory this board studies: a great tool is either <b>usable by an infant</b>
+      (one obvious affordance, near-zero learning) or an <b>expert instrument</b> (minimal energy,
+      maximum skill — a high-throughput channel between a trained hand and the tool). The mediocre
+      middle is where tools go to die. The one good middle is <b>scaffolding</b> — a ramp that carries
+      a novice into the expert instrument, the way Bloomberg and vim's ghosts do. Companion report:
+      <a href="tool-ui-design-bimodal.md">tool-ui-design-bimodal.md</a>.</p>
+    <div class="poles">
+      <span class="pole"><b>infant</b> · one affordance</span>
+      <span class="pole"><b>expert</b> · high-throughput channel</span>
+      <span class="pole"><b>scaffold</b> · novice → expert ramp</span>
+      <span class="pole"><b>middle-fail</b> · serves no one</span>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="chips" id="filters">
+      <span class="chip all" data-cat="all" aria-pressed="true">all</span>
+      <span class="chip" data-cat="legendary" aria-pressed="false"><span class="dot" style="background:var(--legendary)"></span>legendary</span>
+      <span class="chip" data-cat="useful" aria-pressed="false"><span class="dot" style="background:var(--useful)"></span>useful</span>
+      <span class="chip" data-cat="simple" aria-pressed="false"><span class="dot" style="background:var(--simple)"></span>simple</span>
+      <span class="chip" data-cat="funny" aria-pressed="false"><span class="dot" style="background:var(--funny)"></span>funny</span>
+      <span class="chip" data-cat="fine" aria-pressed="false"><span class="dot" style="background:var(--fine)"></span>fine</span>
+      <span class="chip" data-cat="bad" aria-pressed="false"><span class="dot" style="background:var(--bad)"></span>bad</span>
+    </div>
+  </div>
+
+  <main class="board" id="board">
+
+    <!-- vim -->
+    <article class="card" data-cats="legendary">
+      <div class="screen greenterm"><pre>~
+~        VIM  ·  Vi IMproved
+~
+~     type  :help&lt;Enter&gt;  for help
+~
+~
+-- INSERT --              3,1     All</pre></div>
+      <div class="meta">
+        <div class="name"><h3>vim</h3><span class="dom">terminal</span></div>
+        <div class="tags"><span class="tag t-legendary">legendary</span><span class="tag t-pole">expert</span></div>
+        <p class="why">A blank buffer and a blinking cursor. Modal editing turns the whole keyboard into verbs.</p>
+        <p class="lesson"><b>Lesson:</b> peak expert throughput, and a cliff for novices. Its scaffold (<code>vimtutor</code>) ships in a separate room — the ramp built wrong.</p>
+      </div>
+    </article>
+
+    <!-- htop -->
+    <article class="card" data-cats="useful">
+      <div class="screen"><pre>  1[|||||      28%]  Tasks: 128, 340
+  2[||         11%]  Load 0.42 0.55 0.61
+  Mem[|||||   3.1G/15G] Swp[|  0.4G]
+  PID USER    CPU% MEM% COMMAND
+ 1042 inspir   8.0  4.1 firefox
+ 6267 inspir   3.1  1.7 claude</pre></div>
+      <div class="meta">
+        <div class="name"><h3>htop</h3><span class="dom">terminal</span></div>
+        <div class="tags"><span class="tag t-useful">useful</span><span class="tag t-pole">expert</span></div>
+        <p class="why">Colored bars, sortable columns, kill a process with one key.</p>
+        <p class="lesson"><b>Lesson:</b> dense yet glanceable — color <i>is</i> the data. Expert density a first-timer can still read.</p>
+      </div>
+    </article>
+
+    <!-- lazygit -->
+    <article class="card" data-cats="useful">
+      <div class="screen"><pre>┌ Files ───────┐┌ Diff ──────────┐
+│ M swap.py    ││ + def is_live( │
+│ M tui.py     ││ - enforced:... │
+│ M modules.py ││ + [live][cfg]  │
+└──────────────┘└────────────────┘
+ space:stage  c:commit  P:push  ?:more</pre></div>
+      <div class="meta">
+        <div class="name"><h3>lazygit</h3><span class="dom">terminal</span></div>
+        <div class="tags"><span class="tag t-useful">useful</span><span class="tag t-pole">scaffold</span></div>
+        <p class="why">A terminal git UI that prints its keybinds along the bottom, always.</p>
+        <p class="lesson"><b>Lesson:</b> the ramp lives <i>inside</i> the tool. This is the Bloomberg model done in ASCII — the pattern to copy.</p>
+      </div>
+    </article>
+
+    <!-- midnight commander -->
+    <article class="card" data-cats="fine">
+      <div class="screen"><pre>┌ ~/src ───────┐┌ ~/docs ────────┐
+│ /..          ││ /..            │
+│  swap.py     ││  report.md     │
+│  tui.py      ││  board.html    │
+└──────────────┘└────────────────┘
+1Help 2Menu 3View 4Edit 5Copy 6Move</pre></div>
+      <div class="meta">
+        <div class="name"><h3>Midnight Commander</h3><span class="dom">terminal</span></div>
+        <div class="tags"><span class="tag t-fine">fine</span><span class="tag t-legendary">legendary</span></div>
+        <p class="why">Two panels, an F-key bar, blue everywhere. Norton Commander's grandchild.</p>
+        <p class="lesson"><b>Lesson:</b> the F-key bar is permanent scaffolding. Unchanged for 30 years because the affordance never lies.</p>
+      </div>
+    </article>
+
+    <!-- bloomberg -->
+    <article class="card" data-cats="legendary">
+      <div class="screen amberterm"><pre>VOD LN Equity GO
+────────────────────────────
+VODAFONE GROUP PLC   74.82 GBp
+  ▲ +0.31  (+0.42%)  Vol 41.2M
+&lt;HELP&gt;&lt;HELP&gt; for a live human</pre></div>
+      <div class="meta">
+        <div class="name"><h3>Bloomberg Terminal</h3><span class="dom">finance</span></div>
+        <div class="tags"><span class="tag t-legendary">legendary</span><span class="tag t-pole">scaffold</span></div>
+        <p class="why">A mnemonic, color-coded keyboard (yellow Index, green GO). Command line: <code>VOD LN Equity GO</code>.</p>
+        <p class="lesson"><b>Lesson:</b> <i>proven</i> — it onboards traders "with no prior computer experience" straight into a $25k/yr expert instrument. Both poles, one product.</p>
+      </div>
+    </article>
+
+    <!-- k9s -->
+    <article class="card" data-cats="useful">
+      <div class="screen"><pre> Context: prod          :pods
+┌─────────────────────────────┐
+│ NAME        READY  STATUS    │
+│ api-7f9c…   1/1    Running   │
+│ web-2a1d…   0/1    Crash…    │
+└─────────────────────────────┘
+ :cmd  d:describe  l:logs  ?:help</pre></div>
+      <div class="meta">
+        <div class="name"><h3>k9s</h3><span class="dom">devops</span></div>
+        <div class="tags"><span class="tag t-useful">useful</span><span class="tag t-pole">expert</span></div>
+        <p class="why">Kubernetes as a command line. Type <code>:pods</code>, not ten clicks.</p>
+        <p class="lesson"><b>Lesson:</b> Bloomberg's mnemonic command bar, reborn for infrastructure. Verbs beat menus at scale.</p>
+      </div>
+    </article>
+
+    <!-- sl -->
+    <article class="card" data-cats="funny">
+      <div class="screen greenterm"><pre>    ====        ________
+ _D _|  |_______/       \__I_I___
+  |(_)---  |   H\_______/ |     |
+  /     |  |   H  |   |   |     |
+ |      |  |   H  |___o———o__   |
+  choo choo — you typed  sl</pre></div>
+      <div class="meta">
+        <div class="name"><h3>sl (steam locomotive)</h3><span class="dom">terminal</span></div>
+        <div class="tags"><span class="tag t-funny">funny</span></div>
+        <p class="why">Fat-finger <code>ls</code> into <code>sl</code> and a train chuffs across your screen. You cannot skip it.</p>
+        <p class="lesson"><b>Lesson:</b> delight is a feature. A tool that jokes with you earns loyalty a spec sheet never will.</p>
+      </div>
+    </article>
+
+    <!-- SABRE green screen -->
+    <article class="card" data-cats="bad">
+      <div class="screen greenterm"><pre>WPBOSLAX/25AUG
+1 AA100 F9 J4 Y7  BOS LAX 800A 1105A
+2 UA555 F2 J1 Y9  BOS LAX 930A 1240P
+3 B6 21 F0 J2 Y4  BOS LAX 615P  920P
+&gt;_</pre></div>
+      <div class="meta">
+        <div class="name"><h3>Airline GDS (SABRE-style)</h3><span class="dom">travel</span></div>
+        <div class="tags"><span class="tag t-bad">bad</span><span class="tag t-pole">expert</span></div>
+        <p class="why">Cryptic codes, no labels, no menus. Blistering fast for a trained agent.</p>
+        <p class="lesson"><b>Lesson:</b> the expert pole with the ramp <i>never built</i>. 50 years on, they still train agents for weeks. Throughput without scaffolding is a moat, not a virtue.</p>
+      </div>
+    </article>
+
+    <!-- elevator -->
+    <article class="card" data-cats="simple">
+      <div class="screen"><div class="sw"><div class="grid-btns"><i>3</i><i>4</i><i>5</i><i>G</i><i>1</i><i>2</i><i>▲</i><i>▼</i><i>◔</i></div></div></div>
+      <div class="meta">
+        <div class="name"><h3>Elevator panel</h3><span class="dom">the physical world</span></div>
+        <div class="tags"><span class="tag t-simple">simple</span><span class="tag t-pole">infant</span></div>
+        <p class="why">One button per floor. Press where you want to go.</p>
+        <p class="lesson"><b>Lesson:</b> the purest affordance on earth. Nobody has ever read the manual.</p>
+      </div>
+    </article>
+
+    <!-- apple mouse -->
+    <article class="card" data-cats="simple">
+      <div class="screen"><div class="sw"><div class="mouse"></div></div></div>
+      <div class="meta">
+        <div class="name"><h3>Apple one-button mouse</h3><span class="dom">1984</span></div>
+        <div class="tags"><span class="tag t-simple">simple</span><span class="tag t-legendary">legendary</span><span class="tag t-pole">infant</span></div>
+        <p class="why">PARC's mouse had 3 buttons, cost ~$300, broke in 2 weeks. Apple made it 1 button, under $15, years of life.</p>
+        <p class="lesson"><b>Lesson:</b> <i>proven</i> — "learning to mouse is a feat in and of itself." They deleted buttons to add users.</p>
+      </div>
+    </article>
+
+    <!-- cockpit paradox -->
+    <article class="card" data-cats="bad">
+      <div class="screen"><div class="split"><div class="good">◔ ◔ ◔<br>steam gauges</div><div class="bad2">▭▭<br>glass cockpit</div></div></div>
+      <div class="meta">
+        <div class="name"><h3>Glass cockpit vs steam gauges</h3><span class="dom">aviation</span></div>
+        <div class="tags"><span class="tag t-bad">bad</span><span class="tag t-legendary">legendary</span></div>
+        <p class="why">Glass cockpits lowered the overall accident rate — but <i>raised</i> the chance a crash is fatal.</p>
+        <p class="lesson"><b>Lesson:</b> <i>proven</i> — added expert capability raises the floor and the ceiling together. Ship the training with the instrument, or it kills faster.</p>
+      </div>
+    </article>
+
+    <!-- car HMI -->
+    <article class="card" data-cats="bad">
+      <div class="screen"><div class="split"><div class="good">▮ ▮ ▮ ▮<br>2005 · 10 sec</div><div class="bad2">▢ touch<br>2021 · 45 sec</div></div></div>
+      <div class="meta">
+        <div class="name"><h3>Car HMI: buttons vs touchscreen</h3><span class="dom">automotive</span></div>
+        <div class="tags"><span class="tag t-bad">bad</span><span class="tag t-simple">simple</span></div>
+        <p class="why">On a track at 110 km/h: physical buttons did four tasks in ~10 s; a touch-everything car took 44.6 s.</p>
+        <p class="lesson"><b>Lesson:</b> <i>proven ~4×</i>. The "put it all on one screen" middle is slower and more dangerous than a knob you can feel.</p>
+      </div>
+    </article>
+
+    <!-- ableton -->
+    <article class="card" data-cats="legendary">
+      <div class="screen"><div class="sw"><div class="remote" style="grid-template-columns:repeat(5,1fr);width:120px">
+        <i style="background:#2b4a5a"></i><i style="background:#264a3a"></i><i></i><i style="background:#4a3a26"></i><i></i>
+        <i style="background:#2b4a5a"></i><i></i><i style="background:#264a3a"></i><i></i><i style="background:#4a2b4a"></i>
+        <i></i><i style="background:#4a3a26"></i><i style="background:#2b4a5a"></i><i></i><i></i>
+      </div></div></div>
+      <div class="meta">
+        <div class="name"><h3>Ableton Live · session view</h3><span class="dom">music</span></div>
+        <div class="tags"><span class="tag t-legendary">legendary</span><span class="tag t-pole">expert</span></div>
+        <p class="why">A grid of clips. A beginner taps cells; an expert plays the grid like an instrument.</p>
+        <p class="lesson"><b>Lesson:</b> hide infinite depth behind one flat, obvious surface. The two poles stacked, not blended.</p>
+      </div>
+    </article>
+
+    <!-- eurorack -->
+    <article class="card" data-cats="fine">
+      <div class="screen"><div class="sw"><div class="knobs"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+      <div class="meta">
+        <div class="name"><h3>Eurorack modular synth</h3><span class="dom">music</span></div>
+        <div class="tags"><span class="tag t-fine">fine</span><span class="tag t-pole">expert</span></div>
+        <p class="why">No menus, no presets, no undo. Just knobs and patch cables and physics.</p>
+        <p class="lesson"><b>Lesson:</b> the pure expert pole — openly hostile to novices, and honest about it. It never pretends to be easy.</p>
+      </div>
+    </article>
+
+    <!-- mixing console -->
+    <article class="card" data-cats="useful">
+      <div class="screen"><div class="sw"><div class="faders"><i style="height:40%"></i><i style="height:70%"></i><i style="height:55%"></i><i style="height:30%"></i><i style="height:80%"></i><i style="height:50%"></i><i style="height:65%"></i><i style="height:45%"></i></div></div></div>
+      <div class="meta">
+        <div class="name"><h3>Mixing console</h3><span class="dom">pro audio</span></div>
+        <div class="tags"><span class="tag t-useful">useful</span><span class="tag t-pole">expert</span></div>
+        <p class="why">Hundreds of identical faders and knobs, learned by where your hands know they are.</p>
+        <p class="lesson"><b>Lesson:</b> muscle memory <i>is</i> the interface. Spatial constancy beats labels once you're fluent.</p>
+      </div>
+    </article>
+
+    <!-- hawaii -->
+    <article class="card" data-cats="bad">
+      <div class="screen"><div class="dropdown">
+        <div>DRILL - PACOM (CDW) - STATE ONLY</div>
+        <div class="hot">PACOM (CDW) - STATE ONLY</div>
+        <div>DRILL - AMBER Alert (CAE)</div>
+        <div>1. TEST Message</div>
+      </div></div>
+      <div class="meta">
+        <div class="name"><h3>Hawaii false missile alert (2018)</h3><span class="dom">emergency</span></div>
+        <div class="tags"><span class="tag t-bad">bad</span></div>
+        <p class="why">A dropdown put the real "ballistic missile inbound" one line from the drill. One misclick, no confirmation, a whole state panicked.</p>
+        <p class="lesson"><b>Lesson:</b> a catastrophic control with vague labels and no guard rail. Power without a confirmation ramp is a loaded gun.</p>
+      </div>
+    </article>
+
+    <!-- TV remote -->
+    <article class="card" data-cats="bad">
+      <div class="screen"><div class="sw" style="gap:22px">
+        <div class="remote"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="remote" style="grid-template-columns:1fr;width:26px"><i></i><i></i><i></i></div>
+      </div></div>
+      <div class="meta">
+        <div class="name"><h3>100-button remote vs Apple TV remote</h3><span class="dom">living room</span></div>
+        <div class="tags"><span class="tag t-bad">bad</span><span class="tag t-simple">simple</span></div>
+        <p class="why">Left: a button for every function nobody uses. Right: six buttons that cover 95% of nights.</p>
+        <p class="lesson"><b>Lesson:</b> feature count is not capability. The cluttered middle serves no one; the tiny remote serves everyone.</p>
+      </div>
+    </article>
+
+    <!-- dead space HUD -->
+    <article class="card" data-cats="legendary">
+      <div class="screen"><div class="sw"><div style="width:70px;height:90px;position:relative">
+        <div style="position:absolute;left:50%;top:8px;transform:translateX(-50%);width:8px;height:64px;border-radius:4px;background:linear-gradient(#e06c75 0 40%,#7fd08a 40% 100%)"></div>
+        <div style="position:absolute;inset:0;border:2px solid #2a3340;border-radius:16px 16px 22px 22px"></div>
+      </div></div></div>
+      <div class="meta">
+        <div class="name"><h3>Dead Space · diegetic HUD</h3><span class="dom">games</span></div>
+        <div class="tags"><span class="tag t-legendary">legendary</span><span class="tag t-fine">fine</span></div>
+        <p class="why">Your health is a glowing bar on the character's spine. No menus, no overlay, no chrome.</p>
+        <p class="lesson"><b>Lesson:</b> the best expert readout can vanish into the world. Full information, zero interface.</p>
+      </div>
+    </article>
+
+    <!-- openDaisugi -->
+    <article class="card" data-cats="fine">
+      <div class="screen"><pre>┌ verifier ─────────── [planned] ┐
+│ ● python  · rust  · go  · lean │
+│ ↳ not wired yet — py enforces  │
+└────────────────────────────────┘
+┌ shell ───────────────── [live] ┐
+│ ● tree-sitter  ○ reject        │
+└────────────────────────────────┘</pre></div>
+      <div class="meta">
+        <div class="name"><h3>openDaisugi (us)</h3><span class="dom">this repo</span></div>
+        <div class="tags"><span class="tag t-fine">fine</span><span class="tag t-pole">scaffold</span></div>
+        <p class="why">A family tier that's one command, an expert map with dense honest tags, and per-option hints as the on-ramp.</p>
+        <p class="lesson"><b>Lesson:</b> our own attempt at the thesis — graded honestly (<code>[live]/[cfg]/[planned]</code>), not flattered. The board is the mirror.</p>
+      </div>
+    </article>
+
+  </main>
+
+  <p class="footnote">Recreations, not screenshots — the terminal UIs are redrawn in ASCII (they're
+    text anyway); the hardware and GUIs are stylized abstractions, so nothing here is a stolen pixel.
+    Claims marked <i>proven</i> survived the 2026-08-24 deep-research adversarial check; the rest are the
+    author's own reading. Grouped loosely, filterable by category above. The lesson under each card is an
+    argument, not a law.</p>
+</div>
+
+<script>
+  const board = document.getElementById('board');
+  const chips = [...document.querySelectorAll('#filters .chip')];
+  function apply(cat){
+    chips.forEach(c => c.setAttribute('aria-pressed', c.dataset.cat === cat));
+    for(const card of board.children){
+      const cats = (card.dataset.cats || '').split(/\s+/);
+      card.style.display = (cat === 'all' || cats.includes(cat)) ? '' : 'none';
+    }
+  }
+  chips.forEach(c => c.addEventListener('click', () => apply(c.dataset.cat)));
+  apply('all');
+</script>
+</body>
+</html>

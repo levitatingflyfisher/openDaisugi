@@ -131,12 +131,14 @@ class EnvVarStrategy:
             )
         if value == "always":
             return ApprovalDecision(
-                approved=True, approved_by="env",
+                approved=True,
+                approved_by="env",
                 reason="DAISUGI_APPROVE=always",
             )
         if value == "never":
             return ApprovalDecision(
-                approved=False, approved_by="env",
+                approved=False,
+                approved_by="env",
                 reason="DAISUGI_APPROVE=never",
             )
         return self._fallback.decide(step, envelope)
@@ -147,10 +149,13 @@ class TtyPromptStrategy:
 
     def decide(self, step: ActionStep, envelope: Envelope) -> ApprovalDecision:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
-            raise NotTerminalError(
-                "TtyPromptStrategy requires an interactive terminal"
-            )
-        cmd = getattr(step, "command", None) or getattr(step, "path", None) or getattr(step, "url", None) or step.id
+            raise NotTerminalError("TtyPromptStrategy requires an interactive terminal")
+        cmd = (
+            getattr(step, "command", None)
+            or getattr(step, "path", None)
+            or getattr(step, "url", None)
+            or step.id
+        )
         prompt = f"Approve step {step.id!r} ({cmd})? [y/N] "
         answer = input(prompt).strip().lower()
         ok = answer in ("y", "yes")

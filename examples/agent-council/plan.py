@@ -1,4 +1,5 @@
 """Build an ActionPlan for the agent-council kit."""
+
 from __future__ import annotations
 
 from step_types import AgentReview, AggregateVotes, CommitOrReject, SubmitContribution
@@ -20,7 +21,7 @@ def build_plan(
     review_steps = []
     for i, r in enumerate(reviews):
         rs = AgentReview(
-            id=f"s{i+1}",
+            id=f"s{i + 1}",
             contribution_id="c0",
             reviewer_id=r["reviewer_id"],
             depends_on=[submit.id],
@@ -31,14 +32,14 @@ def build_plan(
         )
         review_steps.append(rs)
     agg = AggregateVotes(
-        id=f"s{len(reviews)+1}",
+        id=f"s{len(reviews) + 1}",
         contribution_id="c0",
         quorum_m=quorum_m,
         council_size_n=len(reviewer_ids),
         depends_on=[r.id for r in review_steps],
     )
     commit = CommitOrReject(
-        id=f"s{len(reviews)+2}",
+        id=f"s{len(reviews) + 2}",
         contribution_id="c0",
         depends_on=[agg.id],
     )

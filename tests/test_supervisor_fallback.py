@@ -20,7 +20,8 @@ from opendaisugi.supervisor import Supervisor
 
 def _env_shell_only(allowlist):
     return Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=allowlist),
     )
 
@@ -36,21 +37,25 @@ def _make_verify_step_that_rejects(reject_step_id: str, real_verify_step):
     per-step gates rather than ``verify(singleton_plan, envelope)``. This
     helper mirrors the rejection shape on the new signature.
     """
+
     def _patched(step, envelope, *, z3_timeout_ms=500):
         if step.id == reject_step_id:
             return VerificationResult(
                 ok=False,
-                violations=[Violation(
-                    stage="permissions",
-                    message=f"Step '{reject_step_id}' blocked by per-step policy",
-                    detail={"step": reject_step_id},
-                )],
+                violations=[
+                    Violation(
+                        stage="permissions",
+                        message=f"Step '{reject_step_id}' blocked by per-step policy",
+                        detail={"step": reject_step_id},
+                    )
+                ],
                 warnings=[],
                 envelope_id=envelope.id,
                 plan_id="per-step-verify",
                 duration_ms=0.1,
             )
         return real_verify_step(step, envelope, z3_timeout_ms=z3_timeout_ms)
+
     return _patched
 
 
@@ -83,6 +88,7 @@ async def test_supervisor_halts_on_per_step_rejection(tmp_path):
     )
 
     from opendaisugi.verify import verify_step as _real_verify
+
     patched = _make_verify_step_that_rejects("s2", _real_verify)
 
     with patch("opendaisugi.supervisor.verify_step", side_effect=patched):
@@ -109,6 +115,7 @@ async def test_supervisor_halt_writes_refinement_to_journal(tmp_path):
     )
 
     from opendaisugi.verify import verify_step as _real_verify
+
     patched = _make_verify_step_that_rejects("s1", _real_verify)
 
     with patch("opendaisugi.supervisor.verify_step", side_effect=patched):
@@ -131,8 +138,12 @@ class FakeRecomputeHandler:
     async def handle(self, step, result, envelope):
         if self._ok and self._replacement is not None:
             vr = VerificationResult(
-                ok=True, violations=[], warnings=[],
-                envelope_id=envelope.id, plan_id="plan_x", duration_ms=0.5,
+                ok=True,
+                violations=[],
+                warnings=[],
+                envelope_id=envelope.id,
+                plan_id="plan_x",
+                duration_ms=0.5,
             )
             return FallbackOutcome(
                 action="recomputed",
@@ -162,6 +173,7 @@ async def test_supervisor_recompute_continues_run(tmp_path):
     )
 
     from opendaisugi.verify import verify_step as _real_verify
+
     patched = _make_verify_step_that_rejects("s1", _real_verify)
 
     with patch("opendaisugi.supervisor.verify_step", side_effect=patched):
@@ -191,6 +203,7 @@ async def test_supervisor_recompute_fails_then_halts(tmp_path):
     )
 
     from opendaisugi.verify import verify_step as _real_verify
+
     patched = _make_verify_step_that_rejects("s1", _real_verify)
 
     with patch("opendaisugi.supervisor.verify_step", side_effect=patched):
@@ -222,10 +235,13 @@ async def test_supervisor_auto_selects_recompute_from_envelope(tmp_path):
     )
 
     from opendaisugi.verify import verify_step as _real_verify
+
     patched = _make_verify_step_that_rejects("s1", _real_verify)
 
-    with patch("opendaisugi.supervisor.verify_step", side_effect=patched), \
-         patch("opendaisugi.fallback._get_recompute_client") as mock_client:
+    with (
+        patch("opendaisugi.supervisor.verify_step", side_effect=patched),
+        patch("opendaisugi.fallback._get_recompute_client") as mock_client,
+    ):
         mock_client.side_effect = RuntimeError("no LLM in tests")
         session = await sup.run(plan, env)
 
@@ -246,7 +262,8 @@ async def test_supervisor_tags_refinement_with_envelope_cache_key(tmp_path):
     from opendaisugi.verify import verify_step as _real_verify
 
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
         cache_key="test_cache_key_xyz",  # stamped by (simulated) generator
     )

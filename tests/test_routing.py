@@ -35,7 +35,9 @@ def _store_with_hit(tmp_path):
             embedding_model=_MODEL_NAME,
             embedding_model_version=_EMBEDDING_MODEL_VERSION,
             envelope=Envelope(generated_by="t", task="T", permissions=Permission(shell=True)),
-            plan_template=ActionPlan(source="t", task="T", steps=[ShellStep(id="s", command="echo")]),
+            plan_template=ActionPlan(
+                source="t", task="T", steps=[ShellStep(id="s", command="echo")]
+            ),
             source_trace_ids=[],
             distilled_at=time.time(),
         )
@@ -49,9 +51,12 @@ def test_difficulty_low_for_trivial_task():
 
 
 def test_difficulty_high_for_complex_task():
-    assert estimate_difficulty(
-        "design and refactor the concurrent scheduler to fix the deadlock and race condition"
-    ) >= 0.5
+    assert (
+        estimate_difficulty(
+            "design and refactor the concurrent scheduler to fix the deadlock and race condition"
+        )
+        >= 0.5
+    )
 
 
 def test_pathway_hit_routes_to_tier0_reuse(tmp_path):

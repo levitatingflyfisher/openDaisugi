@@ -12,6 +12,8 @@ to treat them as warnings (default) or failures.
 
 from __future__ import annotations
 
+import threading
+
 import z3
 
 from opendaisugi._invariant_types import RECOGNIZED_OPAQUE_TYPES
@@ -24,55 +26,69 @@ from opendaisugi.models import (
     Violation,
 )
 
+# Z3's default/global context is process-wide. A bare `z3.Solver()` (every
+# solver in this module, plus predicate_z3.verify_predicate_z3 and
+# subsumption.py's two solve sites) builds terms and solves against that
+# shared context — Z3 releases the GIL while it works, so two threads doing
+# that at once is a genuine data race, not merely a crash risk: it can
+# silently produce a wrong, non-crashing verdict. The resident gate server
+# (ADR-0017) runs thread-per-connection, so this lock closes that race.
+# Solves here are 0.6-4ms, so serializing them is free.
+#
+# Scope this tightly around AST-build + solver.check() only — never around
+# I/O. A later plan's operator-ask in the gate/approval layer can block up
+# to 90s; that must never sit inside this lock, or it would re-serialize
+# the whole server and reintroduce head-of-line blocking.
+Z3_SOLVE_LOCK = threading.Lock()
+
 
 def check_envelope_self_consistency(
     envelope: Envelope,
     timeout_ms: int = 500,
 ) -> list[Violation]:
     """Check that an envelope is not internally contradictory."""
-    solver = z3.Solver()
-    solver.set("timeout", timeout_ms)
+    with Z3_SOLVE_LOCK:
+        solver = z3.Solver()
+        solver.set("timeout", timeout_ms)
 
-    # Declare Z3 variables for the flags we care about.
-    shell = z3.Bool("shell")
-    can_write = z3.Bool("can_write")
+        # Declare Z3 variables for the flags we care about.
+        shell = z3.Bool("shell")
+        can_write = z3.Bool("can_write")
 
-    solver.add(shell == envelope.permissions.shell)
-    solver.add(can_write == (len(envelope.permissions.file_write) > 0))
+        solver.add(shell == envelope.permissions.shell)
+        solver.add(can_write == (len(envelope.permissions.file_write) > 0))
 
-    # Note: `== True` is intentional — these are Z3 BoolRef values, not
-    # Python bools. `if shell:` would short-circuit in Python and never
-    # reach the solver. `shell == True` builds a Z3 equality term.
+        # Note: `== True` is intentional — these are Z3 BoolRef values, not
+        # Python bools. `if shell:` would short-circuit in Python and never
+        # reach the solver. `shell == True` builds a Z3 equality term.
 
-    # Constraint 1: non-empty shell_allowlist requires shell=True.
-    if envelope.permissions.shell_allowlist:
-        solver.add(shell == True)  # noqa: E712
+        # Constraint 1: non-empty shell_allowlist requires shell=True.
+        if envelope.permissions.shell_allowlist:
+            solver.add(shell == True)  # noqa: E712
 
-    # Constraint 2: any file_exists postcondition requires file_write permission.
-    for pc in envelope.postconditions:
-        if pc.type == "file_exists":
-            solver.add(can_write == True)  # noqa: E712
+        # Constraint 2: any file_exists postcondition requires file_write permission.
+        for pc in envelope.postconditions:
+            if pc.type == "file_exists":
+                solver.add(can_write == True)  # noqa: E712
 
-    # Constraint 3: bounds sanity on execution time.
-    max_time = z3.Int("max_time")
-    solver.add(max_time == envelope.permissions.max_execution_time_s)
-    solver.add(max_time > 0)
-    solver.add(max_time <= 3600)  # 1 hour hard ceiling
+        # Constraint 3: bounds sanity on execution time.
+        max_time = z3.Int("max_time")
+        solver.add(max_time == envelope.permissions.max_execution_time_s)
+        solver.add(max_time > 0)
+        solver.add(max_time <= 3600)  # 1 hour hard ceiling
 
-    result = solver.check()
-    if result == z3.unknown:
-        raise VerificationTimeout(
-            f"Z3 self-consistency check exceeded {timeout_ms}ms"
-        )
-    if result == z3.unsat:
-        return [
-            Violation(
-                stage="z3",
-                message="Envelope is internally inconsistent",
-                detail={"unsat_core": str(solver.unsat_core())},
-            )
-        ]
-    return []
+        result = solver.check()
+        if result == z3.unknown:
+            raise VerificationTimeout(f"Z3 self-consistency check exceeded {timeout_ms}ms")
+        if result == z3.unsat:
+            return [
+                Violation(
+                    stage="z3",
+                    message="Envelope is internally inconsistent",
+                    detail={"unsat_core": str(solver.unsat_core())},
+                )
+            ]
+        return []
 
 
 def check_plan_against_envelope(
@@ -86,33 +102,32 @@ def check_plan_against_envelope(
     This Z3 check catches logical implications the set-based check doesn't,
     by encoding plan requirements as Z3 constraints and asking for SAT.
     """
-    solver = z3.Solver()
-    solver.set("timeout", timeout_ms)
+    with Z3_SOLVE_LOCK:
+        solver = z3.Solver()
+        solver.set("timeout", timeout_ms)
 
-    shell_available = z3.Bool("shell_available")
-    write_available = z3.Bool("write_available")
-    solver.add(shell_available == envelope.permissions.shell)
-    solver.add(write_available == (len(envelope.permissions.file_write) > 0))
+        shell_available = z3.Bool("shell_available")
+        write_available = z3.Bool("write_available")
+        solver.add(shell_available == envelope.permissions.shell)
+        solver.add(write_available == (len(envelope.permissions.file_write) > 0))
 
-    if any(step.type == "shell" for step in plan.steps):
-        solver.add(shell_available == True)  # noqa: E712
-    if any(step.type == "file_write" for step in plan.steps):
-        solver.add(write_available == True)  # noqa: E712
+        if any(step.type == "shell" for step in plan.steps):
+            solver.add(shell_available == True)  # noqa: E712
+        if any(step.type == "file_write" for step in plan.steps):
+            solver.add(write_available == True)  # noqa: E712
 
-    result = solver.check()
-    if result == z3.unknown:
-        raise VerificationTimeout(
-            f"Z3 plan-vs-envelope check exceeded {timeout_ms}ms"
-        )
-    if result == z3.unsat:
-        return [
-            Violation(
-                stage="z3",
-                message="Plan requirements contradict envelope permissions",
-                detail={"unsat_core": str(solver.unsat_core())},
-            )
-        ]
-    return []
+        result = solver.check()
+        if result == z3.unknown:
+            raise VerificationTimeout(f"Z3 plan-vs-envelope check exceeded {timeout_ms}ms")
+        if result == z3.unsat:
+            return [
+                Violation(
+                    stage="z3",
+                    message="Plan requirements contradict envelope permissions",
+                    detail={"unsat_core": str(solver.unsat_core())},
+                )
+            ]
+        return []
 
 
 def _check_workspace_containment(plan: ActionPlan, envelope: Envelope) -> list[Violation]:
@@ -138,25 +153,25 @@ def _check_workspace_containment(plan: ActionPlan, envelope: Envelope) -> list[V
             target = step.target_position
         else:
             from opendaisugi.models import VLAStep as _VLAStep
+
             if isinstance(step, _VLAStep) and step.target_pose is not None:
                 target = step.target_pose
         if target is None:
             continue
         x, y, z = target
         if not (xmin <= x <= xmax and ymin <= y <= ymax and zmin <= z <= zmax):
-            violations.append(Violation(
-                stage="z3",
-                message=(
-                    f"Step '{step.id}' target {target} "
-                    f"outside workspace bounds {bounds}"
-                ),
-                detail={
-                    "invariant": "end_effector_in_workspace",
-                    "step": step.id,
-                    "target": list(target),
-                    "bounds": [list(bounds[0]), list(bounds[1])],
-                },
-            ))
+            violations.append(
+                Violation(
+                    stage="z3",
+                    message=(f"Step '{step.id}' target {target} outside workspace bounds {bounds}"),
+                    detail={
+                        "invariant": "end_effector_in_workspace",
+                        "step": step.id,
+                        "target": list(target),
+                        "bounds": [list(bounds[0]), list(bounds[1])],
+                    },
+                )
+            )
     return violations
 
 
@@ -170,35 +185,38 @@ def _check_joint_limits(plan: ActionPlan, envelope: Envelope) -> list[Violation]
             continue
         for joint, target in step.joint_targets.items():
             if joint not in limits:
-                violations.append(Violation(
-                    stage="z3",
-                    message=(
-                        f"Step '{step.id}' joint {joint!r} not declared in "
-                        f"envelope joint_limits {list(limits)}"
-                    ),
-                    detail={
-                        "invariant": "joint_limits_respected",
-                        "step": step.id,
-                        "joint": joint,
-                    },
-                ))
+                violations.append(
+                    Violation(
+                        stage="z3",
+                        message=(
+                            f"Step '{step.id}' joint {joint!r} not declared in "
+                            f"envelope joint_limits {list(limits)}"
+                        ),
+                        detail={
+                            "invariant": "joint_limits_respected",
+                            "step": step.id,
+                            "joint": joint,
+                        },
+                    )
+                )
                 continue
             lo, hi = limits[joint]
             if not (lo <= target <= hi):
-                violations.append(Violation(
-                    stage="z3",
-                    message=(
-                        f"Step '{step.id}' joint {joint!r} target {target} "
-                        f"outside [{lo}, {hi}]"
-                    ),
-                    detail={
-                        "invariant": "joint_limits_respected",
-                        "step": step.id,
-                        "joint": joint,
-                        "target": target,
-                        "range": [lo, hi],
-                    },
-                ))
+                violations.append(
+                    Violation(
+                        stage="z3",
+                        message=(
+                            f"Step '{step.id}' joint {joint!r} target {target} outside [{lo}, {hi}]"
+                        ),
+                        detail={
+                            "invariant": "joint_limits_respected",
+                            "step": step.id,
+                            "joint": joint,
+                            "target": target,
+                            "range": [lo, hi],
+                        },
+                    )
+                )
     return violations
 
 
@@ -225,20 +243,22 @@ def _check_velocity_bounds(
             duration = max(step.duration_s, 1e-6)
             peak = abs(target - prev) / duration * step.velocity_scale
             if peak > limit:
-                violations.append(Violation(
-                    stage="z3",
-                    message=(
-                        f"Step '{step.id}' joint {joint!r} peak velocity "
-                        f"{peak:.3f} rad/s > limit {limit}"
-                    ),
-                    detail={
-                        "invariant": "velocity_bounded",
-                        "step": step.id,
-                        "joint": joint,
-                        "peak_rad_s": peak,
-                        "limit_rad_s": limit,
-                    },
-                ))
+                violations.append(
+                    Violation(
+                        stage="z3",
+                        message=(
+                            f"Step '{step.id}' joint {joint!r} peak velocity "
+                            f"{peak:.3f} rad/s > limit {limit}"
+                        ),
+                        detail={
+                            "invariant": "velocity_bounded",
+                            "step": step.id,
+                            "joint": joint,
+                            "peak_rad_s": peak,
+                            "limit_rad_s": limit,
+                        },
+                    )
+                )
             state[joint] = target
     return violations
 
@@ -294,19 +314,21 @@ def _check_obstacle_avoidance(plan: ActionPlan, envelope: Envelope) -> list[Viol
             if (step_id, idx) in flagged_steps:
                 continue
             if xmin <= x <= xmax and ymin <= y <= ymax and zmin <= z <= zmax:
-                violations.append(Violation(
-                    stage="z3",
-                    message=(
-                        f"Step '{step_id}' trajectory sample "
-                        f"({x:.3f}, {y:.3f}, {z:.3f}) inside obstacle #{idx}"
-                    ),
-                    detail={
-                        "invariant": "no_obstacle_penetration",
-                        "step": step_id,
-                        "obstacle_index": idx,
-                        "sample_point": [x, y, z],
-                    },
-                ))
+                violations.append(
+                    Violation(
+                        stage="z3",
+                        message=(
+                            f"Step '{step_id}' trajectory sample "
+                            f"({x:.3f}, {y:.3f}, {z:.3f}) inside obstacle #{idx}"
+                        ),
+                        detail={
+                            "invariant": "no_obstacle_penetration",
+                            "step": step_id,
+                            "obstacle_index": idx,
+                            "sample_point": [x, y, z],
+                        },
+                    )
+                )
                 flagged_steps.add((step_id, idx))
     return violations
 

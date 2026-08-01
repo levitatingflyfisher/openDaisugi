@@ -1,0 +1,890 @@
+{
+ "extract_head": [
+  {
+   "head": "git",
+   "line": "git status"
+  },
+  {
+   "head": "git",
+   "line": "  git status  "
+  },
+  {
+   "head": null,
+   "line": ""
+  },
+  {
+   "head": null,
+   "line": "   "
+  },
+  {
+   "head": null,
+   "line": "# comment"
+  },
+  {
+   "head": null,
+   "line": "  # c"
+  },
+  {
+   "head": null,
+   "line": "FOO=1"
+  },
+  {
+   "head": null,
+   "line": "FOO=1 BAR=2"
+  },
+  {
+   "head": "git",
+   "line": "FOO=1 git status"
+  },
+  {
+   "head": "git",
+   "line": "FOO=1 BAR=2 git commit"
+  },
+  {
+   "head": "1FOO=1",
+   "line": "1FOO=1 git"
+  },
+  {
+   "head": "git",
+   "line": "FOO=x=y git"
+  },
+  {
+   "head": "=x",
+   "line": "=x git"
+  },
+  {
+   "head": "env",
+   "line": "env FOO=1 git"
+  },
+  {
+   "head": "./run.sh",
+   "line": "./run.sh"
+  },
+  {
+   "head": "python3",
+   "line": "python3 x.py"
+  }
+ ],
+ "head_allowed": [
+  {
+   "allowed": true,
+   "allowlist": [
+    "git"
+   ],
+   "head": "git"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "gi?"
+   ],
+   "head": "git"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "g*"
+   ],
+   "head": "git"
+  },
+  {
+   "allowed": false,
+   "allowlist": [],
+   "head": "git"
+  },
+  {
+   "allowed": false,
+   "allowlist": [
+    "git"
+   ],
+   "head": "gitx"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "git",
+    "rm"
+   ],
+   "head": "rm"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "a*b"
+   ],
+   "head": "a*b"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    ".venv/bin/*"
+   ],
+   "head": ".venv/bin/python"
+  },
+  {
+   "allowed": false,
+   "allowlist": [
+    ".venv/bin/*"
+   ],
+   "head": ".venv/bin/sub/python"
+  },
+  {
+   "allowed": false,
+   "allowlist": [
+    ".venv/bin/*"
+   ],
+   "head": "/abs/.venv/bin/python"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "/usr/bin/*"
+   ],
+   "head": "/usr/bin/python"
+  },
+  {
+   "allowed": false,
+   "allowlist": [
+    "/usr/bin/*"
+   ],
+   "head": "usr/bin/python"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "/usr/*/python"
+   ],
+   "head": "/usr/bin/python"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "python[23]"
+   ],
+   "head": "python3"
+  },
+  {
+   "allowed": false,
+   "allowlist": [
+    "python[23]"
+   ],
+   "head": "python4"
+  },
+  {
+   "allowed": false,
+   "allowlist": [
+    "*"
+   ],
+   "head": "a/b"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "*"
+   ],
+   "head": "ab"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "*/*"
+   ],
+   "head": "a/b"
+  },
+  {
+   "allowed": false,
+   "allowlist": [
+    "*/*"
+   ],
+   "head": "a/b/c"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "**"
+   ],
+   "head": "x"
+  },
+  {
+   "allowed": false,
+   "allowlist": [
+    "**"
+   ],
+   "head": "x/y"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "npm",
+    "npx"
+   ],
+   "head": "npm"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "npm",
+    "npx"
+   ],
+   "head": "npx"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "uv*"
+   ],
+   "head": "uv"
+  },
+  {
+   "allowed": true,
+   "allowlist": [
+    "uv*"
+   ],
+   "head": "uvicorn"
+  },
+  {
+   "allowed": false,
+   "allowlist": [
+    "git"
+   ],
+   "head": ""
+  },
+  {
+   "allowed": false,
+   "allowlist": [
+    "GIT"
+   ],
+   "head": "git"
+  }
+ ],
+ "interpreter": [
+  {
+   "command": "git status",
+   "payload": null
+  },
+  {
+   "command": "sh -c 'git status'",
+   "payload": {
+    "head": "sh",
+    "inner_commands": [
+     "git status"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "bash -c \"ls\"",
+   "payload": {
+    "head": "bash",
+    "inner_commands": [
+     "ls"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "bash -lc 'ls'",
+   "payload": {
+    "head": "bash",
+    "inner_commands": [
+     "ls"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "sh -c",
+   "payload": {
+    "head": "sh",
+    "inner_commands": [],
+    "opaque": false
+   }
+  },
+  {
+   "command": "xargs rm",
+   "payload": {
+    "head": "xargs",
+    "inner_commands": [
+     "rm"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "xargs -0 rm",
+   "payload": {
+    "head": "xargs",
+    "inner_commands": [
+     "rm"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "xargs -I {} mv {} /d",
+   "payload": {
+    "head": "xargs",
+    "inner_commands": [
+     "mv '{}' /d"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "find . -exec rm {} ;",
+   "payload": {
+    "head": "find",
+    "inner_commands": [
+     "rm '{}'"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "find . -name x",
+   "payload": {
+    "head": "find",
+    "inner_commands": [],
+    "opaque": false
+   }
+  },
+  {
+   "command": "env FOO=1 git status",
+   "payload": {
+    "head": "env",
+    "inner_commands": [
+     "git status"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "env -i git s",
+   "payload": {
+    "head": "env",
+    "inner_commands": [
+     "git s"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "timeout 5 git s",
+   "payload": {
+    "head": "timeout",
+    "inner_commands": [
+     "git s"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "timeout -k 2 5 git s",
+   "payload": {
+    "head": "timeout",
+    "inner_commands": [
+     "git s"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "nice -n 10 make",
+   "payload": {
+    "head": "nice",
+    "inner_commands": [
+     "make"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "nohup make",
+   "payload": {
+    "head": "nohup",
+    "inner_commands": [
+     "make"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "stdbuf -oL make",
+   "payload": {
+    "head": "stdbuf",
+    "inner_commands": [
+     "make"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "python -c 'print(1)'",
+   "payload": {
+    "head": "python",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "python3 script.py",
+   "payload": {
+    "head": "python3",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "perl -e 'x'",
+   "payload": {
+    "head": "perl",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "ruby x.rb",
+   "payload": {
+    "head": "ruby",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "node x.js",
+   "payload": {
+    "head": "node",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "awk '{print}'",
+   "payload": {
+    "head": "awk",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "sed s/a/b/",
+   "payload": {
+    "head": "sed",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "make test",
+   "payload": {
+    "head": "make",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "eval 'ls'",
+   "payload": {
+    "head": "eval",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "command git s",
+   "payload": {
+    "head": "command",
+    "inner_commands": [
+     "git s"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "exec git s",
+   "payload": {
+    "head": "exec",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "time git s",
+   "payload": {
+    "head": "time",
+    "inner_commands": [
+     "git s"
+    ],
+    "opaque": false
+   }
+  },
+  {
+   "command": "sudo git s",
+   "payload": {
+    "head": "sudo",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "doas git s",
+   "payload": {
+    "head": "doas",
+    "inner_commands": [],
+    "opaque": true
+   }
+  },
+  {
+   "command": "xargs",
+   "payload": {
+    "head": "xargs",
+    "inner_commands": [],
+    "opaque": false
+   }
+  },
+  {
+   "command": "env",
+   "payload": {
+    "head": "env",
+    "inner_commands": [],
+    "opaque": false
+   }
+  }
+ ],
+ "metachar": [
+  {
+   "command": "git status",
+   "hit": false
+  },
+  {
+   "command": "a; b",
+   "hit": true
+  },
+  {
+   "command": "a | b",
+   "hit": true
+  },
+  {
+   "command": "a & b",
+   "hit": true
+  },
+  {
+   "command": "a && b",
+   "hit": true
+  },
+  {
+   "command": "a > f",
+   "hit": true
+  },
+  {
+   "command": "a < f",
+   "hit": true
+  },
+  {
+   "command": "a`b`",
+   "hit": true
+  },
+  {
+   "command": "a $(b)",
+   "hit": true
+  },
+  {
+   "command": "a $x",
+   "hit": false
+  },
+  {
+   "command": "a\nb",
+   "hit": true
+  },
+  {
+   "command": "a\rb",
+   "hit": true
+  },
+  {
+   "command": "a ${x}",
+   "hit": false
+  },
+  {
+   "command": "echo 'a;b'",
+   "hit": true
+  },
+  {
+   "command": "echo \"$(x)\"",
+   "hit": true
+  },
+  {
+   "command": "a >> f",
+   "hit": true
+  },
+  {
+   "command": "a 2>&1",
+   "hit": true
+  }
+ ],
+ "path_match": [
+  {
+   "globs": [
+    "out.txt"
+   ],
+   "matched": true,
+   "path": "out.txt"
+  },
+  {
+   "globs": [
+    "out.txt"
+   ],
+   "matched": true,
+   "path": "./out.txt"
+  },
+  {
+   "globs": [
+    "out.txt"
+   ],
+   "matched": true,
+   "path": "a/../out.txt"
+  },
+  {
+   "globs": [
+    "passwd"
+   ],
+   "matched": false,
+   "path": "/etc/passwd"
+  },
+  {
+   "globs": [
+    "job"
+   ],
+   "matched": false,
+   "path": "/etc/cron.d/job"
+  },
+  {
+   "globs": [
+    "*.py"
+   ],
+   "matched": false,
+   "path": "sub/dir/x.py"
+  },
+  {
+   "globs": [
+    "*.py"
+   ],
+   "matched": true,
+   "path": "x.py"
+  },
+  {
+   "globs": [
+    "*.py"
+   ],
+   "matched": false,
+   "path": "/abs/x.py"
+  },
+  {
+   "globs": [
+    "out/*"
+   ],
+   "matched": true,
+   "path": "out/x.txt"
+  },
+  {
+   "globs": [
+    "out/*"
+   ],
+   "matched": false,
+   "path": "out/sub/x.txt"
+  },
+  {
+   "globs": [
+    "out/**"
+   ],
+   "matched": true,
+   "path": "out/sub/x.txt"
+  },
+  {
+   "globs": [
+    "out/**"
+   ],
+   "matched": true,
+   "path": "out"
+  },
+  {
+   "globs": [
+    "out/**"
+   ],
+   "matched": false,
+   "path": "outer/x"
+  },
+  {
+   "globs": [
+    "a/**/x.py"
+   ],
+   "matched": true,
+   "path": "a/b/c/x.py"
+  },
+  {
+   "globs": [
+    "a/*/x.py"
+   ],
+   "matched": false,
+   "path": "a/x.py"
+  },
+  {
+   "globs": [
+    "a/*/x.py"
+   ],
+   "matched": true,
+   "path": "a/b/x.py"
+  },
+  {
+   "globs": [
+    "./**"
+   ],
+   "matched": true,
+   "path": "./**"
+  },
+  {
+   "globs": [
+    "./**"
+   ],
+   "matched": true,
+   "path": "x"
+  },
+  {
+   "globs": [
+    "./**"
+   ],
+   "matched": true,
+   "path": "./x"
+  },
+  {
+   "globs": [
+    "./**"
+   ],
+   "matched": false,
+   "path": "/x"
+  },
+  {
+   "globs": [
+    "./**"
+   ],
+   "matched": false,
+   "path": "../x"
+  },
+  {
+   "globs": [
+    "./**"
+   ],
+   "matched": true,
+   "path": "./a/b"
+  },
+  {
+   "globs": [
+    "~/x"
+   ],
+   "matched": true,
+   "path": "~/x"
+  },
+  {
+   "globs": [],
+   "matched": false,
+   "path": "x"
+  },
+  {
+   "globs": [
+    "/tmp/**"
+   ],
+   "matched": true,
+   "path": "/tmp/x"
+  },
+  {
+   "globs": [
+    "/tmp/**"
+   ],
+   "matched": true,
+   "path": "/tmp"
+  },
+  {
+   "globs": [
+    "/tmp/**"
+   ],
+   "matched": false,
+   "path": "/tmpx/y"
+  },
+  {
+   "globs": [
+    "/tmp/**"
+   ],
+   "matched": false,
+   "path": "/tmp/../etc/x"
+  },
+  {
+   "globs": [
+    "/dev/*"
+   ],
+   "matched": true,
+   "path": "/dev/null"
+  }
+ ],
+ "resolve_strict": [
+  {
+   "effective": false,
+   "stakes": "low",
+   "strict": null
+  },
+  {
+   "effective": false,
+   "stakes": "medium",
+   "strict": null
+  },
+  {
+   "effective": true,
+   "stakes": "high",
+   "strict": null
+  },
+  {
+   "effective": true,
+   "stakes": "physical",
+   "strict": null
+  },
+  {
+   "effective": true,
+   "stakes": "low",
+   "strict": true
+  },
+  {
+   "effective": true,
+   "stakes": "medium",
+   "strict": true
+  },
+  {
+   "effective": true,
+   "stakes": "high",
+   "strict": true
+  },
+  {
+   "effective": true,
+   "stakes": "physical",
+   "strict": true
+  },
+  {
+   "effective": false,
+   "stakes": "low",
+   "strict": false
+  },
+  {
+   "effective": false,
+   "stakes": "medium",
+   "strict": false
+  },
+  {
+   "effective": false,
+   "stakes": "high",
+   "strict": false
+  },
+  {
+   "effective": false,
+   "stakes": "physical",
+   "strict": false
+  }
+ ],
+ "v": 1
+}

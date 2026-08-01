@@ -119,7 +119,9 @@ def test_envelope_full_construction():
         generated_by="anthropic/claude-sonnet-4-20250514",
         task="Convert sales.csv to bar chart",
         permissions=Permission(shell=True, shell_allowlist=["python3"], file_read=["sales.csv"]),
-        invariants=[Invariant(type="file_unchanged", target="sales.csv", description="source immutable")],
+        invariants=[
+            Invariant(type="file_unchanged", target="sales.csv", description="source immutable")
+        ],
         postconditions=[Postcondition(type="file_exists", path="out.png")],
     )
     assert env.permissions.shell is True
@@ -274,14 +276,18 @@ def test_trace_full_body():
 
 def test_envelope_cache_key_defaults_to_none():
     from opendaisugi.models import Envelope, Permission
+
     env = Envelope(generated_by="t", task="t", permissions=Permission())
     assert env.cache_key is None
 
 
 def test_envelope_cache_key_round_trips():
     from opendaisugi.models import Envelope, Permission
+
     env = Envelope(
-        generated_by="t", task="t", permissions=Permission(),
+        generated_by="t",
+        task="t",
+        permissions=Permission(),
         cache_key="sha256_abc",
     )
     restored = Envelope.model_validate_json(env.model_dump_json())
@@ -291,6 +297,7 @@ def test_envelope_cache_key_round_trips():
 def test_envelope_legacy_json_without_cache_key_deserializes():
     """Envelopes serialized before v0.2.1 (no cache_key) still load."""
     from opendaisugi.models import Envelope
+
     legacy_json = (
         '{"id":"env_1","generated_by":"t","task":"t",'
         '"permissions":{"file_read":[],"file_write":[],"network":false,'

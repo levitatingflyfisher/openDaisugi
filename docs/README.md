@@ -23,8 +23,8 @@ This is the quadrant we're actively growing. Today the entry points are:
 - **[Protect an agent you're already running](tutorials/protect-your-existing-session.md)**
   — one command to a working shadow-mode gate over a live session, then one flag
   to enforce.
-- The **[README quickstart](../README.md)** — install, generate an envelope, verify
-  a plan.
+- The **[README quickstart](../README.md)** — install, then verify an LLM's plan and
+  watch an out-of-envelope action refused (no API key).
 - The runnable **[examples/](../examples/)** — end-to-end scripts you can read and
   run (orchestrator, safe sub-agent, swarm tasking, robotics sims, the
   [injection-denied](../examples/injection-denied/) live demo).
@@ -39,7 +39,8 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Deployment](deployment.md)** — run it in the modes it supports.
 - **[Integrations](integrations.md)** — wire it into a harness (per-harness adapters).
 - **[Hook integration](hook-integration.md)** — the passive-hook path.
-- **[Gate a live session](gate.md)** — the call-time gate: shadow → report → enforce → disarm.
+- **[Gate a live session](how-to/gate.md)** — the call-time gate: shadow → report → enforce → disarm.
+- **[Let `a && b` through](how-to/compound-shell.md)** — the compound-shell opt-in: what it admits, what stays rejected, what it recovers.
 - **[π0 / VLA integration](pi-vla-integration.md)** — the robotics integration path.
 - Agent-guidance for working *in* this repo: **[AGENTS.md](../AGENTS.md)**.
 
@@ -51,6 +52,9 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Feature status](feature-status.md)** — what's shipped, per version.
 - **[Formal specification (yellow paper)](spec/yellow-paper.md)** — the rigorous
   verification semantics (envelope algebra, subsumption soundness, fail-closed law).
+- **[Conformance protocol](spec/conformance.md)** — the language-neutral corpus,
+  wire protocol, and differential runner that independent verifier clients
+  (Rust, Go, Lean4, TypeScript) are checked against.
 - The public API is the `opendaisugi` package surface (`Daisugi`, `verify`,
   `generate_envelope`, `orchestrate`) — see the docstrings and the
   [architecture module map](architecture/OVERVIEW.md#module-map-where-to-look).
@@ -69,6 +73,18 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Robotics](robotics.md)** — the runtime-assurance-for-VLA thesis (experimental).
 - **[Limitations](limitations.md)** — read before adopting. What it does *not* do.
 - **[Case study: AI council](case-studies/ai-council.md)** — a worked example.
+- **[Verifier client diversity](client-diversity.md)** — the verifier built five
+  times over in five languages; the differential harness that found three oracle
+  bugs; and the gated campaign that took the machine-checked Lean client from
+  8,882 to 11,097 / 11,450 without ever letting an unsafe case through.
+- **[Exploration: the blind-design gauntlet](exploration/2026-08-blind-design-gauntlet/)**
+  — the convergence experiment (five independent, closed-book architects) that
+  reframed openDaisugi as a substrate + cost levers ([ADR-0011](adr/0011-verifiable-execution-substrate.md)).
+- **[Research: the token-saving landscape](research/token-saving-landscape-2026-08.md)**
+  — an external survey of routing/caching/serving economics, and
+  **[its mapping onto openDaisugi](research/token-saving-landscape-mapping.md)** —
+  the routing ladder, which levers we ship, which we deliberately reject, and why
+  verification is the column every router comparison table is missing.
 
 ---
 

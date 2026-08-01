@@ -1,4 +1,5 @@
 """Tests for stakes policy (v0.1.3)."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -50,8 +51,12 @@ async def test_high_stakes_bypasses_cache_read(tmp_path, sample_envelope):
     cache = EnvelopeCache(tmp_path / "c.db", prompt_version="2026-04-15")
     cache.put(
         sample_envelope,
-        task="x", context=None, model="anthropic/claude-sonnet-4-20250514",
-        parent_envelope_id=None, summarize=False, thinking_budget="standard",
+        task="x",
+        context=None,
+        model="anthropic/claude-sonnet-4-20250514",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="standard",
     )
 
     fake_client = MagicMock()
@@ -72,8 +77,12 @@ async def test_high_stakes_overwrites_cache_on_write(tmp_path, sample_envelope):
     old = sample_envelope.model_copy(update={"id": "env_old"})
     cache.put(
         old,
-        task="x", context=None, model="anthropic/claude-sonnet-4-20250514",
-        parent_envelope_id=None, summarize=False, thinking_budget="standard",
+        task="x",
+        context=None,
+        model="anthropic/claude-sonnet-4-20250514",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="standard",
     )
 
     fresh = sample_envelope.model_copy(update={"id": "env_fresh"})
@@ -84,8 +93,12 @@ async def test_high_stakes_overwrites_cache_on_write(tmp_path, sample_envelope):
         await generate_envelope(task="x", cache=cache, stakes="high")
 
     got = cache.get(
-        task="x", context=None, model="anthropic/claude-sonnet-4-20250514",
-        parent_envelope_id=None, summarize=False, thinking_budget="standard",
+        task="x",
+        context=None,
+        model="anthropic/claude-sonnet-4-20250514",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="standard",
     )
     assert got is not None
     assert got.id == "env_fresh"
@@ -139,7 +152,9 @@ async def test_low_stakes_returns_independent_copy(sample_envelope):
     from opendaisugi import generate_envelope
 
     env = await generate_envelope(
-        task="anything", stakes="low", low_stakes_envelope=sample_envelope,
+        task="anything",
+        stakes="low",
+        low_stakes_envelope=sample_envelope,
     )
     assert env is not sample_envelope  # model_copy produced an independent instance
 
@@ -151,7 +166,10 @@ async def test_low_stakes_skips_cache(tmp_path, sample_envelope):
 
     cache = EnvelopeCache(tmp_path / "c.db", prompt_version="2026-04-15")
     await generate_envelope(
-        task="x", stakes="low", low_stakes_envelope=sample_envelope, cache=cache,
+        task="x",
+        stakes="low",
+        low_stakes_envelope=sample_envelope,
+        cache=cache,
     )
     assert cache.stats()["entries"] == 0
 
@@ -167,8 +185,10 @@ async def test_low_stakes_with_parent_warns_and_ignores_parent(sample_envelope):
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
         env = await generate_envelope(
-            task="x", stakes="low",
-            low_stakes_envelope=sample_envelope, parent=parent,
+            task="x",
+            stakes="low",
+            low_stakes_envelope=sample_envelope,
+            parent=parent,
         )
 
     assert any(issubclass(w.category, StakesInheritanceWarning) for w in rec)

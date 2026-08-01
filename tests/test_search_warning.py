@@ -2,6 +2,7 @@
 visible without any logging configuration — a plain `import warnings; warnings.warn`
 user would see it, but a silent log.warning they wouldn't.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -26,10 +27,17 @@ def test_find_emits_user_warning_when_search_extra_missing(tmp_path):
 
     env = Envelope(generated_by="t", task="T", permissions=Permission(shell=True))
     plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="ls")])
-    store.put(CompiledPathway(
-        id="p1", task_description="T", task_embedding=[1.0],
-        envelope=env, plan_template=plan, source_trace_ids=[], distilled_at=time.time(),
-    ))
+    store.put(
+        CompiledPathway(
+            id="p1",
+            task_description="T",
+            task_embedding=[1.0],
+            envelope=env,
+            plan_template=plan,
+            source_trace_ids=[],
+            distilled_at=time.time(),
+        )
+    )
 
     with mock.patch.object(store, "_embed_query", side_effect=ImportError("no st")):
         with warnings.catch_warnings(record=True) as caught:
@@ -47,6 +55,7 @@ def test_find_emits_user_warning_when_search_extra_missing(tmp_path):
 def test_find_warning_fires_at_most_once(tmp_path):
     """_warn_search_extra_missing_once guard works even with warnings.warn."""
     import opendaisugi.pathway_store as ps_mod
+
     ps_mod._search_extra_warned = False  # reset module-level guard
 
     store = PathwayStore(tmp_path / "p.db")
@@ -62,10 +71,17 @@ def test_find_warning_fires_at_most_once(tmp_path):
 
     env = Envelope(generated_by="t", task="T", permissions=Permission(shell=True))
     plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="ls")])
-    store.put(CompiledPathway(
-        id="p1", task_description="T", task_embedding=[1.0],
-        envelope=env, plan_template=plan, source_trace_ids=[], distilled_at=time.time(),
-    ))
+    store.put(
+        CompiledPathway(
+            id="p1",
+            task_description="T",
+            task_embedding=[1.0],
+            envelope=env,
+            plan_template=plan,
+            source_trace_ids=[],
+            distilled_at=time.time(),
+        )
+    )
 
     with mock.patch.object(store, "_embed_query", side_effect=ImportError("no st")):
         with warnings.catch_warnings(record=True) as caught:

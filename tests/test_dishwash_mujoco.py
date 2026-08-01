@@ -4,6 +4,7 @@ Proves that the kit's domain step types translate to real joint moves
 and that the v0.18 substrate (envelope verify + per-step receipts +
 run-end integrity) holds against actual MuJoCo physics.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,8 +48,11 @@ async def test_dishwash_kit_runs_through_real_mujoco(tmp_path):
     exe = DishWashMuJoCoExecutor(str(_MJCF))
     sup = Supervisor(
         executors={
-            "approach_dish": exe, "locate_rim": exe, "begin_scrub": exe,
-            "rinse_with_hose": exe, "return_to_dock": exe,
+            "approach_dish": exe,
+            "locate_rim": exe,
+            "begin_scrub": exe,
+            "rinse_with_hose": exe,
+            "return_to_dock": exe,
         },
         journal=j,
         approval=CallbackStrategy(lambda step, env: True),
@@ -71,10 +75,7 @@ async def test_dishwash_kit_runs_through_real_mujoco(tmp_path):
 
     # The arm should reach distinct end-effector positions across the
     # five different step targets (i.e. motion is real, not all zeros).
-    ee_xyzs = [
-        tuple(json.loads(r.evidence["stdout"])["end_effector_xyz"])
-        for r in receipts
-    ]
+    ee_xyzs = [tuple(json.loads(r.evidence["stdout"])["end_effector_xyz"]) for r in receipts]
     assert len(set(ee_xyzs)) > 1, (
         f"every step landed at the same end-effector pose: {ee_xyzs} — "
         f"either physics didn't run or all step types resolve to the "
@@ -92,8 +93,11 @@ async def test_dishwash_kit_handles_three_plates(tmp_path):
     exe = DishWashMuJoCoExecutor(str(_MJCF))
     sup = Supervisor(
         executors={
-            "approach_dish": exe, "locate_rim": exe, "begin_scrub": exe,
-            "rinse_with_hose": exe, "return_to_dock": exe,
+            "approach_dish": exe,
+            "locate_rim": exe,
+            "begin_scrub": exe,
+            "rinse_with_hose": exe,
+            "return_to_dock": exe,
         },
         journal=j,
         approval=CallbackStrategy(lambda step, env: True),

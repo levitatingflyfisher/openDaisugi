@@ -54,35 +54,42 @@ async def main() -> None:
 
     # 3. Mint the subagent — proven subsumed by the parent (else DelegationDenied).
     sub = SafeSubagent.create(parent_envelope=parent, contract=inspector, tier1=LOCAL)
-    print(f"subagent created: scope={sub.envelope.permissions.shell_allowlist} "
-          f"(delegation allowed: {sub.decision.allowed})")
+    print(
+        f"subagent created: scope={sub.envelope.permissions.shell_allowlist} "
+        f"(delegation allowed: {sub.decision.allowed})"
+    )
 
     # 4a. An in-scope plan verifies and dry-runs cleanly.
     ok_plan = ActionPlan(
-        source="file-inspector", task="list the logs",
+        source="file-inspector",
+        task="list the logs",
         steps=[ShellStep(id="s1", command="ls /var/log")],
     )
     session = await sub.run(ok_plan)  # dry-run by default
-    print(f"in-scope plan: status={session.status.name}; "
-          f"step said: {session.steps[0].stdout!r}")
+    print(f"in-scope plan: status={session.status.name}; step said: {session.steps[0].stdout!r}")
 
     # 4b. An out-of-scope plan is rejected BEFORE execution.
     bad_plan = ActionPlan(
-        source="file-inspector", task="delete the logs",
+        source="file-inspector",
+        task="delete the logs",
         steps=[ShellStep(id="s1", command="rm -rf /var/log")],
     )
     result = sub.verify(bad_plan)
-    print(f"out-of-scope plan: verify ok={result.ok} "
-          f"(violations: {[v.message for v in result.violations][:1]})")
+    print(
+        f"out-of-scope plan: verify ok={result.ok} "
+        f"(violations: {[v.message for v in result.violations][:1]})"
+    )
 
     # 5. An over-reaching subagent can't even be created.
     try:
         SafeSubagent.create(
             parent_envelope=parent,
             contract=Contract(
-                contract_id="rm-bot", skill_id="deleter",
+                contract_id="rm-bot",
+                skill_id="deleter",
                 envelope=Envelope(
-                    generated_by="subagent", task="delete things",
+                    generated_by="subagent",
+                    task="delete things",
                     permissions=Permission(shell=True, shell_allowlist=["ls", "rm"]),
                 ),
             ),

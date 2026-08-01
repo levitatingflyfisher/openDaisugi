@@ -45,8 +45,14 @@ def test_journal_schema_has_spec_columns(tmp_path):
         columns = {row[1] for row in cur.fetchall()}
     # Per spec §"SQLite Schema"
     expected = {
-        "id", "created_at", "task", "plan_id", "envelope_id",
-        "ok", "duration_ms", "violations_json",
+        "id",
+        "created_at",
+        "task",
+        "plan_id",
+        "envelope_id",
+        "ok",
+        "duration_ms",
+        "violations_json",
     }
     assert expected.issubset(columns)
 
@@ -312,6 +318,7 @@ def test_replay_detects_drift_when_verify_disagrees(tmp_path, monkeypatch):
 
     # Simulate verification-code drift by making verify() return ok=False.
     from opendaisugi.models import VerificationResult
+
     def fake_verify(plan, envelope, *, z3_timeout_ms=500):
         return VerificationResult(
             ok=False,
@@ -348,13 +355,20 @@ def test_replay_passes_z3_timeout_through(tmp_path, monkeypatch):
         created_at="2026-04-09T10:00:00Z",
     )
     captured = {}
+
     def spy_verify(plan, envelope, *, z3_timeout_ms=500):
         captured["z3_timeout_ms"] = z3_timeout_ms
         from opendaisugi.models import VerificationResult
+
         return VerificationResult(
-            ok=True, violations=[], warnings=[],
-            envelope_id=envelope.id, plan_id=plan.id, duration_ms=0.1,
+            ok=True,
+            violations=[],
+            warnings=[],
+            envelope_id=envelope.id,
+            plan_id=plan.id,
+            duration_ms=0.1,
         )
+
     monkeypatch.setattr(journal_module, "verify", spy_verify)
 
     j.replay("2026-04-09-timeout0")
@@ -419,22 +433,31 @@ def test_log_rejects_trace_id_with_slashes(tmp_path):
 # topological_order tests
 # ---------------------------------------------------------------------------
 
+
 def test_topological_order_returns_ordered_steps():
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="a", command="echo a"),
-        ShellStep(id="b", command="echo b", depends_on=["a"]),
-        ShellStep(id="c", command="echo c", depends_on=["b"]),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="a", command="echo a"),
+            ShellStep(id="b", command="echo b", depends_on=["a"]),
+            ShellStep(id="c", command="echo c", depends_on=["b"]),
+        ],
+    )
     ordered_ids = [s.id for s in topological_order(plan)]
     assert ordered_ids == ["a", "b", "c"]
 
 
 def test_topological_order_handles_multi_root():
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="a", command="echo a"),
-        ShellStep(id="b", command="echo b"),
-        ShellStep(id="c", command="echo c", depends_on=["a", "b"]),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="a", command="echo a"),
+            ShellStep(id="b", command="echo b"),
+            ShellStep(id="c", command="echo c", depends_on=["a", "b"]),
+        ],
+    )
     ordered_ids = [s.id for s in topological_order(plan)]
     assert ordered_ids[-1] == "c"
     assert set(ordered_ids[:2]) == {"a", "b"}
@@ -444,10 +467,15 @@ def test_topological_order_handles_multi_root():
 # log_run / load_run / schema migration tests
 # ---------------------------------------------------------------------------
 
+
 def _sample_session(envelope_id="env_x", plan_id="plan_x", status=RunStatus.SUCCEEDED):
     verification = VerificationResult(
-        ok=True, violations=[], warnings=[],
-        envelope_id=envelope_id, plan_id=plan_id, duration_ms=1.0,
+        ok=True,
+        violations=[],
+        warnings=[],
+        envelope_id=envelope_id,
+        plan_id=plan_id,
+        duration_ms=1.0,
     )
     return RunSession(
         id="run_abcd1234",
@@ -457,9 +485,14 @@ def _sample_session(envelope_id="env_x", plan_id="plan_x", status=RunStatus.SUCC
         verification=verification,
         steps=[
             StepOutcome(
-                step_id="s1", status="succeeded", approved_by="allowlist",
-                rc=0, stdout="hi\n", duration_ms=2.5,
-                started_at="2026-04-13T10:00:00Z", error=None,
+                step_id="s1",
+                status="succeeded",
+                approved_by="allowlist",
+                rc=0,
+                stdout="hi\n",
+                duration_ms=2.5,
+                started_at="2026-04-13T10:00:00Z",
+                error=None,
             ),
         ],
         started_at="2026-04-13T10:00:00Z",
@@ -470,30 +503,37 @@ def _sample_session(envelope_id="env_x", plan_id="plan_x", status=RunStatus.SUCC
 
 def _minimal_envelope():
     return Envelope(
-        id="env_x", generated_by="test", task="t",
+        id="env_x",
+        generated_by="test",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
 
 
 def _minimal_plan():
-    return ActionPlan(id="plan_x", source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo hi"),
-    ])
+    return ActionPlan(
+        id="plan_x",
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo hi"),
+        ],
+    )
 
 
 def test_log_run_writes_yaml_and_sqlite(tmp_path):
     j = Journal(data_dir=tmp_path)
     session = _sample_session()
-    trace_id = j.log_run(session, task="demo task", envelope=_minimal_envelope(),
-                         plan=_minimal_plan())
+    trace_id = j.log_run(
+        session, task="demo task", envelope=_minimal_envelope(), plan=_minimal_plan()
+    )
     assert (tmp_path / "journal" / "traces" / f"{trace_id}.yaml").exists()
 
 
 def test_log_run_round_trips_session(tmp_path):
     j = Journal(data_dir=tmp_path)
     original = _sample_session()
-    trace_id = j.log_run(original, task="demo", envelope=_minimal_envelope(),
-                         plan=_minimal_plan())
+    trace_id = j.log_run(original, task="demo", envelope=_minimal_envelope(), plan=_minimal_plan())
     loaded = j.load_run(trace_id)
     assert loaded.id == original.id
     assert loaded.status == original.status
@@ -507,12 +547,16 @@ def test_log_run_updates_sqlite_index(tmp_path):
     j = Journal(data_dir=tmp_path)
     session = _sample_session(status=RunStatus.FAILED)
     session.steps[0] = StepOutcome(
-        step_id="s1", status="failed", approved_by="allowlist",
-        rc=2, stdout="", duration_ms=3.0,
-        started_at="2026-04-13T10:00:00Z", error=None,
+        step_id="s1",
+        status="failed",
+        approved_by="allowlist",
+        rc=2,
+        stdout="",
+        duration_ms=3.0,
+        started_at="2026-04-13T10:00:00Z",
+        error=None,
     )
-    trace_id = j.log_run(session, task="demo", envelope=_minimal_envelope(),
-                         plan=_minimal_plan())
+    trace_id = j.log_run(session, task="demo", envelope=_minimal_envelope(), plan=_minimal_plan())
     con = sqlite3.connect(tmp_path / "journal" / "index.db")
     row = con.execute(
         "SELECT run_id, run_status, failed_step_id FROM traces WHERE id=?",
@@ -560,15 +604,28 @@ def test_schema_migration_adds_new_columns_to_existing_db(tmp_path):
     assert "total_duration_ms" in trace_cols
     assert "cache_key" in ref_cols
     # v0.19: receipts table gains model_id; user_version bumps to 4.
-    receipt_cols = [r[1] for r in sqlite3.connect(db_path).execute(
-        "PRAGMA table_info(receipts)").fetchall()]
+    receipt_cols = [
+        r[1] for r in sqlite3.connect(db_path).execute("PRAGMA table_info(receipts)").fetchall()
+    ]
     assert "model_id" in receipt_cols
     # v0.24: traces gain structure_signature; user_version bumps to 5.
-    trace_cols_post = [r[1] for r in sqlite3.connect(db_path).execute(
-        "PRAGMA table_info(traces)").fetchall()]
+    trace_cols_post = [
+        r[1] for r in sqlite3.connect(db_path).execute("PRAGMA table_info(traces)").fetchall()
+    ]
     assert "structure_signature" in trace_cols_post
     # v0.27: provenance_log table added; user_version bumps to 6.
-    prov_tables = [r[0] for r in sqlite3.connect(db_path).execute(
-        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    prov_tables = [
+        r[0]
+        for r in sqlite3.connect(db_path)
+        .execute("SELECT name FROM sqlite_master WHERE type='table'")
+        .fetchall()
+    ]
     assert "provenance_log" in prov_tables
-    assert version == 6
+    # v0.41 (Stage 8): receipts gain the deed-ledger columns; user_version bumps to 7.
+    receipt_cols_post = [
+        r[1] for r in sqlite3.connect(db_path).execute("PRAGMA table_info(receipts)").fetchall()
+    ]
+    assert "effect_class" in receipt_cols_post
+    assert "reversibility" in receipt_cols_post
+    assert "reversal_json" in receipt_cols_post
+    assert version == 7

@@ -29,16 +29,22 @@ def _success(journal, task: str):
     ``tests/test_distiller_tend.py``.
     """
     env = Envelope(
-        generated_by="test", task=task,
+        generated_by="test",
+        task=task,
         permissions=Permission(shell=True, shell_allowlist=["find"]),
     )
     plan = ActionPlan(
-        source="t", task=task,
+        source="t",
+        task=task,
         steps=[ShellStep(id="s1", command="find /tmp -name '*.tmp'")],
     )
     r = VerificationResult(
-        ok=True, violations=[], warnings=[],
-        envelope_id=env.id, plan_id=plan.id, duration_ms=0.1,
+        ok=True,
+        violations=[],
+        warnings=[],
+        envelope_id=env.id,
+        plan_id=plan.id,
+        duration_ms=0.1,
     )
     trace_id = journal.log(task=task, envelope=env, plan=plan, result=r)
     run_id = f"run_{trace_id}"
@@ -64,22 +70,26 @@ async def test_full_loop_accumulate_tend_consume(tmp_path, mock_llm_client, monk
     store = d.pathway_store
     unit = np.array([1.0, 0.0, 0.0])
     monkeypatch.setattr(
-        Distiller, "_embed_tasks",
+        Distiller,
+        "_embed_tasks",
         lambda self, tasks: np.tile(unit, (len(tasks), 1)),
     )
     monkeypatch.setattr(
-        Distiller, "_embed_plan_structures",
+        Distiller,
+        "_embed_plan_structures",
         lambda self, sigs: np.tile(unit, (len(sigs), 1)),
     )
     monkeypatch.setattr(store, "_embed_query", lambda _: unit)
 
     # Stub LLM generalization (deterministic template).
     env_tmpl = Envelope(
-        generated_by="distilled", task="T",
+        generated_by="distilled",
+        task="T",
         permissions=Permission(shell=True, shell_allowlist=["find"]),
     )
     plan_tmpl = ActionPlan(
-        source="template", task="T",
+        source="template",
+        task="T",
         steps=[ShellStep(id="s1", command="find /tmp -name '*.tmp'")],
     )
 
@@ -90,6 +100,7 @@ async def test_full_loop_accumulate_tend_consume(tmp_path, mock_llm_client, monk
         )
 
     from opendaisugi import distiller as dist_mod
+
     monkeypatch.setattr(dist_mod, "_generalize_template", _fake_gen)
 
     # Run tend.

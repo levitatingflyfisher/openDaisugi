@@ -13,11 +13,20 @@ never relaxes it.
 
 ## Enforcement class, stated up front
 
-- **Claude Code: hard enforcement, contract-tested.** A committed live test
-  (`tests/test_hook_gate_contract.py`) proves settings-injected PreToolUse
-  hooks fire in headless runs and that the gate's exit-2 deny actually
-  blocks the call, on the pinned CLI version. This includes a test where the
-  *real shipped gate* denies a real `Read` in a real `claude -p` run.
+- **Claude Code: hard enforcement, contract-tested — for the `--settings`-injected
+  path.** A committed live test (`tests/test_hook_gate_contract.py`) proves a
+  PreToolUse hook passed inline via `claude --settings '<json>'` fires in
+  headless runs and that the gate's exit-2 deny actually blocks the call, on
+  the pinned CLI version. This includes a test where the *real shipped gate*
+  denies a real `Read` in a real `claude -p` run. **`daisugi start` uses a
+  different delivery mechanism** — a hook written into the project's own
+  `.claude/settings.json`, not passed on the command line — and that path is
+  *not* covered by the same contract test. Claude Code's project-level
+  settings are also typically subject to a one-time folder-trust approval
+  that inline `--settings` is not. Confirm the hook actually fired before
+  relying on it: `daisugi gate report` after a session shows calls once it
+  has, and shadow mode never blocks, so there is nothing to lose by checking
+  first.
 - **Hermes / OpenClaw: unverified.** The block shapes are emitted
   belt-and-braces (Hermes gets both `decision` and `action` keys), but no
   per-version contract test exists yet — treat these paths as observation
@@ -42,14 +51,19 @@ never relaxes it.
 ## Just want it working? One command
 
 ```bash
-daisugi gate quickstart          # in your project directory
+daisugi start          # in your project directory
 ```
 
-This generates and registers a starter envelope for the current directory and
-prints the whole shadow → report → enforce → disarm flow to copy-paste. The
-hand-held version is the tutorial
+This finds the harness, installs the gate hook into this directory's
+`.claude/settings.json` (never a machine-global hook), registers a starter
+envelope keyed to this directory, starts the resident gate, and opens the
+live view — four steps, each reported done / skipped / failed / would;
+`--dry-run` changes nothing; `--enforce` arms it. The hand-held version is the
+tutorial
 [Protect an agent you're already running](../tutorials/protect-your-existing-session.md).
-The rest of this page is the reference for each step.
+The rest of this page is the reference for each underlying step (`gate init`,
+`gate report`, `gate settings`, `gate disarm`) if you want to wire them by
+hand instead.
 
 ## 1. Register an envelope
 
@@ -94,6 +108,33 @@ metachar denials (`a && b` — the verifier offers a decomposition instead)
 and host tools the classification map doesn't know (deny-by-default sweeps
 those up wholesale). Tune the envelope until the would-denies are the calls
 you actually want denied.
+
+### Letting `a && b` through, soundly
+
+Compound commands are the first over-denial most sessions hit. You can admit
+them without loosening the allowlist ([ADR-0010](../adr/)):
+
+```bash
+uv add 'opendaisugi[shell]'                    # the bash grammar this needs
+daisugi gate init --allow-shell-decomposition  # --force to regenerate an existing one
+```
+
+The verifier then parses the command with a real bash grammar and checks
+**every** head against the allowlist, so `git status && ls` passes while
+`git status && rm -rf /` still denies on `rm`. Redirection, `$(…)`, a
+non-literal head like `$CMD`, and command-taking wrappers (`xargs`, `sh -c`)
+are still rejected outright — the opt-in is "check each command", never
+"allow compound shell".
+
+It fails closed on a missing capability: with the field on and the grammar
+absent, compound commands are **denied**, not waved through. `gate init` warns
+when that is the case. Note that `--force` regenerates the envelope from
+scratch, discarding any hand-tuning.
+
+The same opt-in governs the bulk paths that replay history — `onboard`,
+`journal ingest`, `hook to-trace`, `hook auto-tend` — with the default persisted
+in `config.yaml`. See **[Let `a && b` through](compound-shell.md)** for that
+side, including what the opt-in measurably recovers and what it does not.
 
 You can also tune offline against an existing passive capture, without
 running an agent at all:
@@ -171,4 +212,4 @@ of the allow path.
 | Disarmed | allow | allow |
 
 Passive capture (`daisugi hook record`) is unchanged and still never
-blocks — capture and gate share a seam, not a failure policy.
+blocks — capture and gate share a code path, not a failure policy.

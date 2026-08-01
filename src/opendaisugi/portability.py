@@ -41,7 +41,9 @@ def _pkg_version() -> str:
     time anyone calls us, ``__init__`` has finished running.
     """
     import opendaisugi
+
     return opendaisugi.__version__
+
 
 ExportFormat = Literal["json", "skill", "mermaid", "md", "smtlib"]
 
@@ -103,7 +105,35 @@ def _export_skill(pathway: CompiledPathway) -> str:
     }
     head = yaml.safe_dump(frontmatter, sort_keys=False, default_flow_style=False)
     body = _skill_body(pathway)
-    return f"---\n{head}---\n\n{body}"
+    return f"---\n{head}---\n\n{body}\n\n{_render_inputs_md(pathway)}"
+
+
+def _render_inputs_md(pathway: CompiledPathway) -> str:
+    """Render the callable signature: a typed skill's holes, or 'fixed' if frozen.
+
+    This is what makes an exported pathway *callable* — a reader (human or agent)
+    sees exactly what to pass. Frozen pathways declare no inputs and run verbatim.
+    """
+    if not pathway.parameters:
+        return (
+            "## Inputs\n\n"
+            "None — this is a **fixed** pathway. When its steps are shell/file/"
+            "network it runs verbatim with zero inference; reuse just replays it."
+        )
+    lines = [
+        "## Inputs",
+        "",
+        "A **typed skill**: reuse binds these holes for the specific task, then "
+        "re-verifies the concrete plan against your envelope. A bound value may "
+        "change the data, never the capability head.",
+        "",
+    ]
+    for p in pathway.parameters:
+        examples = ", ".join(f"`{v}`" for v in p.observed[:3]) or "—"
+        lines.append(
+            f"- **{p.name}** — fills the `{p.field}` of a `{p.head}` step; e.g. {examples}"
+        )
+    return "\n".join(lines)
 
 
 def _step_detail(step) -> str:
@@ -202,7 +232,6 @@ def _export_smtlib(pathway: CompiledPathway) -> str:
     """
     import z3
 
-
     # Re-encode the self-consistency checks into a fresh solver and sexpr
     # it out. We don't use the z3_checks helper directly because it
     # builds and discards the solver internally; replicating the key
@@ -280,6 +309,13 @@ def _skill_body(pathway: CompiledPathway) -> str:
         "openDaisugi will re-verify the plan template against the envelope above.",
         "If verification passes, the pathway is admitted to the local PathwayStore",
         "and becomes a Tier-0 cache hit for matching tasks.",
+        "",
+        "## Graduating this into a polished skill",
+        "",
+        "openDaisugi *distilled* this from real successes; it doesn't author",
+        "triggering descriptions or evals. To turn it into a durable, well-triggering",
+        "skill, hand this file to a skill-authoring tool (e.g. `skill-creator`): keep",
+        "the verified plan + envelope, and let it add the name, description, and evals.",
     ]
     return "\n".join(lines) + "\n"
 

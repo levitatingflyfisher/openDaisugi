@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import opendaisugi
 from opendaisugi import Daisugi
 from opendaisugi.exceptions import TaskTooLongError
 
@@ -13,7 +14,9 @@ def test_daisugi_default_construction():
     assert dai.model == "anthropic/claude-sonnet-4-20250514"
     assert dai.max_task_chars == 4000
     assert dai.z3_timeout_ms == 500
-    assert dai.data_dir == Path.home() / ".opendaisugi"
+    # The default resolves to DEFAULT_DATA_DIR (redirected to a tmp dir under
+    # test by the autouse isolation fixture, never the real ~/.opendaisugi).
+    assert dai.data_dir == opendaisugi.DEFAULT_DATA_DIR
 
 
 def test_daisugi_kwargs_override_defaults():
@@ -76,7 +79,9 @@ def test_daisugi_verify_uses_facade_z3_timeout(sample_plan, sample_envelope, mon
     # the z3_timeout_ms kwarg the facade passes through. We return a minimal
     # VerificationResult rather than running the real pipeline — this test
     # is about the delegation contract, not the pipeline itself.
-    import opendaisugi
+    # (v0.44: Daisugi moved to opendaisugi.facade — ADR-0017 lazy init — so
+    # the private alias it closes over now lives there, not on the package.)
+    import opendaisugi.facade
     from opendaisugi.models import VerificationResult
 
     captured = {}
@@ -92,7 +97,7 @@ def test_daisugi_verify_uses_facade_z3_timeout(sample_plan, sample_envelope, mon
             duration_ms=0.0,
         )
 
-    monkeypatch.setattr(opendaisugi, "_verify", fake_verify)
+    monkeypatch.setattr(opendaisugi.facade, "_verify", fake_verify)
 
     dai = Daisugi(z3_timeout_ms=1234)
     dai.verify(sample_plan, sample_envelope)

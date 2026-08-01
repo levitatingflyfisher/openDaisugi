@@ -46,9 +46,11 @@ class Tier1Provider(Protocol):
     name: str
 
     async def generate_envelope(
-        self, task: str, *, context: str | None = None,
-    ) -> Envelope | None:
-        ...
+        self,
+        task: str,
+        *,
+        context: str | None = None,
+    ) -> Envelope | None: ...
 
 
 # Prompt used by real-request adapters. Kept minimal so small local models
@@ -103,7 +105,10 @@ class LiteLLMTier1Provider:
         self.name = name or f"litellm:{model}"
 
     async def generate_envelope(
-        self, task: str, *, context: str | None = None,
+        self,
+        task: str,
+        *,
+        context: str | None = None,
     ) -> Envelope | None:
         from opendaisugi import llm as _llm  # local import; keeps module import cheap
 
@@ -133,8 +138,11 @@ class LiteLLMTier1Provider:
                 timeout=self.timeout_s,
             )
         except asyncio.TimeoutError:
-            _log.info("LiteLLMTier1Provider %r timed out after %.1fs — declining",
-                      self.name, self.timeout_s)
+            _log.info(
+                "LiteLLMTier1Provider %r timed out after %.1fs — declining",
+                self.name,
+                self.timeout_s,
+            )
             return None
         except Exception as exc:  # adapter failure must never block generation
             _log.info("LiteLLMTier1Provider %r failed: %s — declining", self.name, exc)
@@ -221,18 +229,25 @@ class ClaudeCodeTier1Provider:
         )
 
     async def generate_envelope(
-        self, task: str, *, context: str | None = None,
+        self,
+        task: str,
+        *,
+        context: str | None = None,
     ) -> Envelope | None:
         import json
 
         # Reuse the shared injection-safe builder: model bound with --model=,
-        # prompt after a -- separator, and operator-configured DAISUGI_CLAUDE_ARGS
-        # (e.g. --dangerously-skip-permissions) merged in alongside self.extra_args.
+        # the prompt fed on stdin (unbounded + never option-parsed), and
+        # operator-configured DAISUGI_CLAUDE_ARGS (e.g.
+        # --dangerously-skip-permissions) merged in alongside self.extra_args.
         from opendaisugi.claude_code_llm import _build_claude_args
+
         args = _build_claude_args(
-            self.binary, self._build_prompt(task, context),
-            self.model_flag, tuple(self.extra_args),
+            self.binary,
+            self.model_flag,
+            tuple(self.extra_args),
         )
+        prompt = self._build_prompt(task, context)
 
         proc = None
         try:
@@ -240,6 +255,7 @@ class ClaudeCodeTier1Provider:
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError:
             _log.info("ClaudeCodeTier1Provider: binary %r not found — declining", self.binary)
@@ -250,23 +266,27 @@ class ClaudeCodeTier1Provider:
 
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=self.timeout_s,
+                proc.communicate(input=prompt.encode("utf-8")),
+                timeout=self.timeout_s,
             )
         except asyncio.TimeoutError:
             _log.info("ClaudeCodeTier1Provider timed out after %.1fs — declining", self.timeout_s)
             from opendaisugi.claude_code_llm import _terminate_and_reap
+
             await _terminate_and_reap(proc)
             return None
         except BaseException:
             # Cancelled from above — terminate AND reap so we don't leak a zombie.
             from opendaisugi.claude_code_llm import _terminate_and_reap
+
             await _terminate_and_reap(proc)
             raise
 
         if proc.returncode != 0:
             _log.info(
                 "ClaudeCodeTier1Provider: exit=%d stderr=%r — declining",
-                proc.returncode, stderr_bytes[:200].decode("utf-8", "replace"),
+                proc.returncode,
+                stderr_bytes[:200].decode("utf-8", "replace"),
             )
             return None
 

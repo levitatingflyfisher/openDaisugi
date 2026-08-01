@@ -65,10 +65,10 @@ def test_prompt_has_four_few_shot_examples():
 def test_prompt_examples_cover_distinct_scenarios():
     text = ENVELOPE_SYSTEM_PROMPT
     # Rough scenario coverage — each example mentions a distinctive term.
-    assert ".csv" in text              # filesystem read (row count task)
-    assert "out/" in text              # filesystem write with allowlist
-    assert "find" in text              # shell with tight allowlist
-    assert "https://" in text          # network-using composed task
+    assert ".csv" in text  # filesystem read (row count task)
+    assert "out/" in text  # filesystem write with allowlist
+    assert "find" in text  # shell with tight allowlist
+    assert "https://" in text  # network-using composed task
 
 
 def test_validate_task_length_accepts_short_task():
@@ -115,9 +115,7 @@ async def test_generate_envelope_rejects_empty_task(mock_llm_client):
     assert mock_llm_client.chat.completions.last_call == {}
 
 
-async def test_mock_llm_client_fixture_returns_sample_envelope(
-    mock_llm_client, sample_envelope
-):
+async def test_mock_llm_client_fixture_returns_sample_envelope(mock_llm_client, sample_envelope):
     # Calling .chat.completions.create(...) on the mocked client returns
     # the sample_envelope regardless of args.
     result = await mock_llm_client.chat.completions.create(
@@ -202,6 +200,7 @@ async def test_generate_envelope_wraps_client_error(monkeypatch, sample_envelope
         chat = ExplodingChat()
 
     from opendaisugi import llm
+
     monkeypatch.setattr(llm, "get_instructor_client", lambda model: ExplodingClient())
 
     with pytest.raises(EnvelopeGenerationError) as exc:
@@ -213,7 +212,8 @@ async def test_generate_envelope_wraps_client_error(monkeypatch, sample_envelope
 
 def test_check_assert_equals_passes():
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=False),
     )
     assert _check_assert(env, {"path": "permissions.shell", "equals": False}) is True
@@ -221,7 +221,8 @@ def test_check_assert_equals_passes():
 
 def test_check_assert_equals_fails():
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True),
     )
     assert _check_assert(env, {"path": "permissions.shell", "equals": False}) is False
@@ -229,7 +230,8 @@ def test_check_assert_equals_fails():
 
 def test_check_assert_contains_glob_passes():
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(file_read=["/data/sales.csv"]),
     )
     assertion = {"path": "permissions.file_read", "contains_glob": "/data/sales.csv"}
@@ -238,7 +240,8 @@ def test_check_assert_contains_glob_passes():
 
 def test_check_assert_contains_glob_wildcard():
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(file_write=["out/sales.png", "out/revenue.png"]),
     )
     assertion = {"path": "permissions.file_write", "contains_glob": "out/*.png"}
@@ -247,7 +250,8 @@ def test_check_assert_contains_glob_wildcard():
 
 def test_check_assert_not_empty():
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell_allowlist=["find"]),
     )
     assert _check_assert(env, {"path": "permissions.shell_allowlist", "not_empty": True}) is True
@@ -255,7 +259,8 @@ def test_check_assert_not_empty():
 
 def test_check_assert_empty():
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(file_write=[]),
     )
     assert _check_assert(env, {"path": "permissions.file_write", "empty": True}) is True
@@ -263,7 +268,8 @@ def test_check_assert_empty():
 
 def test_check_assert_not_glob_rejects_degenerate_envelope():
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(file_write=["/**"]),
     )
     # "/**" is the canonical all-write glob — must be rejected.
@@ -273,7 +279,8 @@ def test_check_assert_not_glob_rejects_degenerate_envelope():
 
 def test_check_assert_list_assertion_on_scalar_raises():
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True),
     )
     # permissions.shell is a bool — not_empty should raise, not silently fail.
@@ -285,7 +292,8 @@ def test_resolve_path_error_includes_full_path():
     from opendaisugi.envelope import _resolve_path
 
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(),
     )
     with pytest.raises(AttributeError, match="permissions.file_reaad"):
@@ -349,6 +357,7 @@ async def test_run_calibration_counts_producer_exceptions_as_failures(sample_env
 
 def test_envelope_prompt_version_is_a_string():
     from opendaisugi.envelope import ENVELOPE_PROMPT_VERSION
+
     assert isinstance(ENVELOPE_PROMPT_VERSION, str)
     assert len(ENVELOPE_PROMPT_VERSION) > 0
 
@@ -393,9 +402,14 @@ async def test_generate_envelope_stamps_cache_key(mock_llm_client):
 async def test_generate_envelope_cache_key_matches_make_cache_key(mock_llm_client):
     """Stamped cache_key equals make_cache_key() for the call args."""
     from opendaisugi.envelope_cache import make_cache_key
+
     expected = make_cache_key(
-        task="task-x", context=None, model="anthropic/test-model",
-        parent_envelope_id=None, summarize=False, thinking_budget="standard",
+        task="task-x",
+        context=None,
+        model="anthropic/test-model",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="standard",
     )
     env = await generate_envelope("task-x", model="anthropic/test-model")
     assert env.cache_key == expected
@@ -408,6 +422,7 @@ async def test_generate_envelope_cache_key_matches_make_cache_key(mock_llm_clien
 
 def test_refinement_hints_block_empty_for_no_records():
     from opendaisugi.envelope import _refinement_hints_block
+
     assert _refinement_hints_block([]) == ""
 
 
@@ -419,12 +434,16 @@ def test_refinement_hints_block_formats_violations():
     rec = RefinementRecord(
         step=ShellStep(id="s1", command="rm -rf /"),
         violations=[
-            Violation(stage="permissions",
-                      message="shell command 'rm' not in allowlist",
-                      detail={"step": "s1"}),
-            Violation(stage="invariants",
-                      message="file_unchanged invariant violated for /etc/hosts",
-                      detail={}),
+            Violation(
+                stage="permissions",
+                message="shell command 'rm' not in allowlist",
+                detail={"step": "s1"},
+            ),
+            Violation(
+                stage="invariants",
+                message="file_unchanged invariant violated for /etc/hosts",
+                detail={},
+            ),
         ],
         z3_counterexample=None,
         envelope_id="env_1",
@@ -447,12 +466,14 @@ def test_refinement_hints_block_deduplicates_by_message():
     def _rec(ts):
         return RefinementRecord(
             step=ShellStep(id="s1", command="rm"),
-            violations=[Violation(stage="permissions",
-                                   message="shell not allowed",
-                                   detail={})],
-            z3_counterexample=None, envelope_id="e", fallback_action="halted",
-            timestamp=ts, cache_key="k",
+            violations=[Violation(stage="permissions", message="shell not allowed", detail={})],
+            z3_counterexample=None,
+            envelope_id="e",
+            fallback_action="halted",
+            timestamp=ts,
+            cache_key="k",
         )
+
     block = _refinement_hints_block([_rec(1.0), _rec(2.0), _rec(3.0)])
     assert block.count("shell not allowed") == 1
 
@@ -466,11 +487,12 @@ def test_refinement_hints_block_caps_at_ten():
     records = [
         RefinementRecord(
             step=ShellStep(id="s1", command="rm"),
-            violations=[Violation(stage="permissions",
-                                   message=f"violation number {i}",
-                                   detail={})],
-            z3_counterexample=None, envelope_id="e", fallback_action="halted",
-            timestamp=float(i), cache_key="k",
+            violations=[Violation(stage="permissions", message=f"violation number {i}", detail={})],
+            z3_counterexample=None,
+            envelope_id="e",
+            fallback_action="halted",
+            timestamp=float(i),
+            cache_key="k",
         )
         for i in range(15)
     ]
@@ -500,17 +522,22 @@ async def test_generate_envelope_injects_refinement_hints(tmp_path, mock_llm_cli
 
     journal = Journal(data_dir=tmp_path)
     key = make_cache_key(
-        task="do risky thing", context=None, model="anthropic/test-model",
-        parent_envelope_id=None, summarize=False, thinking_budget="standard",
+        task="do risky thing",
+        context=None,
+        model="anthropic/test-model",
+        parent_envelope_id=None,
+        summarize=False,
+        thinking_budget="standard",
     )
     journal.write_refinement(
         RefinementRecord(
             step=ShellStep(id="s1", command="rm -rf /"),
-            violations=[Violation(stage="permissions",
-                                   message="shell not allowed",
-                                   detail={})],
-            z3_counterexample=None, envelope_id="e", fallback_action="halted",
-            timestamp=1.0, cache_key=key,
+            violations=[Violation(stage="permissions", message="shell not allowed", detail={})],
+            z3_counterexample=None,
+            envelope_id="e",
+            fallback_action="halted",
+            timestamp=1.0,
+            cache_key=key,
         ),
         session_id="run_x",
     )
@@ -580,29 +607,43 @@ async def test_generate_envelope_cache_bust_on_newer_refinement(tmp_path, mock_l
 
     # Pre-seed cache.
     old_env = Envelope(
-        generated_by="t", task="risky", permissions=Permission(shell=True),
+        generated_by="t",
+        task="risky",
+        permissions=Permission(shell=True),
     )
     cache.put(
-        old_env, task="risky", context=None, model="anthropic/test-model",
-        parent_envelope_id=None, summarize=False,
+        old_env,
+        task="risky",
+        context=None,
+        model="anthropic/test-model",
+        parent_envelope_id=None,
+        summarize=False,
     )
-    cached_at = cache.get_inserted_at(make_cache_key(
-        task="risky", context=None, model="anthropic/test-model",
-        parent_envelope_id=None, summarize=False,
-    ))
+    cached_at = cache.get_inserted_at(
+        make_cache_key(
+            task="risky",
+            context=None,
+            model="anthropic/test-model",
+            parent_envelope_id=None,
+            summarize=False,
+        )
+    )
 
     # Write a refinement AFTER the cached entry.
     key = make_cache_key(
-        task="risky", context=None, model="anthropic/test-model",
-        parent_envelope_id=None, summarize=False,
+        task="risky",
+        context=None,
+        model="anthropic/test-model",
+        parent_envelope_id=None,
+        summarize=False,
     )
     journal.write_refinement(
         RefinementRecord(
             step=ShellStep(id="s1", command="rm"),
-            violations=[Violation(stage="permissions",
-                                   message="shell not allowed",
-                                   detail={})],
-            z3_counterexample=None, envelope_id="e", fallback_action="halted",
+            violations=[Violation(stage="permissions", message="shell not allowed", detail={})],
+            z3_counterexample=None,
+            envelope_id="e",
+            fallback_action="halted",
             timestamp=cached_at + 1.0,  # strictly newer
             cache_key=key,
         ),
@@ -611,14 +652,17 @@ async def test_generate_envelope_cache_bust_on_newer_refinement(tmp_path, mock_l
 
     # Configure mock to return a NEW envelope on regeneration.
     new_env = Envelope(
-        generated_by="t", task="risky",
+        generated_by="t",
+        task="risky",
         permissions=Permission(shell=False),  # tightened
     )
     mock_llm_client.set_next_envelope(new_env)
 
     result = await generate_envelope(
-        "risky", model="anthropic/test-model",
-        cache=cache, journal=journal,
+        "risky",
+        model="anthropic/test-model",
+        cache=cache,
+        journal=journal,
     )
     # Should be the tightened one — cache was busted, LLM was called.
     assert result.id == new_env.id
@@ -641,16 +685,22 @@ async def test_generate_envelope_no_cache_bust_when_refinement_is_older(tmp_path
     journal = Journal(data_dir=tmp_path)
 
     key = make_cache_key(
-        task="t", context=None, model="anthropic/test-model",
-        parent_envelope_id=None, summarize=False,
+        task="t",
+        context=None,
+        model="anthropic/test-model",
+        parent_envelope_id=None,
+        summarize=False,
     )
     # Write an old refinement first.
     journal.write_refinement(
         RefinementRecord(
             step=ShellStep(id="s1", command="rm"),
             violations=[Violation(stage="permissions", message="m", detail={})],
-            z3_counterexample=None, envelope_id="e", fallback_action="halted",
-            timestamp=1.0, cache_key=key,
+            z3_counterexample=None,
+            envelope_id="e",
+            fallback_action="halted",
+            timestamp=1.0,
+            cache_key=key,
         ),
         session_id="run_x",
     )
@@ -658,14 +708,20 @@ async def test_generate_envelope_no_cache_bust_when_refinement_is_older(tmp_path
     # Then cache a fresh envelope (inserted_at will be now — much later).
     fresh = Envelope(generated_by="t", task="t", permissions=Permission())
     cache.put(
-        fresh, task="t", context=None, model="anthropic/test-model",
-        parent_envelope_id=None, summarize=False,
+        fresh,
+        task="t",
+        context=None,
+        model="anthropic/test-model",
+        parent_envelope_id=None,
+        summarize=False,
     )
 
     initial_calls = mock_llm_client.call_count
     result = await generate_envelope(
-        "t", model="anthropic/test-model",
-        cache=cache, journal=journal,
+        "t",
+        model="anthropic/test-model",
+        cache=cache,
+        journal=journal,
     )
     # Cache served; no LLM call.
     assert result.id == fresh.id

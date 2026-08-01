@@ -7,7 +7,10 @@ from opendaisugi.exceptions import EnvelopeGenerationError
 from opendaisugi.llm import _redact_keys, get_instructor_client, translate_llm_error
 
 
-def test_get_instructor_client_returns_async_client():
+def test_get_instructor_client_returns_async_client(monkeypatch):
+    # preflight (v0.41) requires a key for an Anthropic model on litellm; a
+    # dead client that fails only at call time was the defect it fixes.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     client = get_instructor_client(model="anthropic/claude-sonnet-4-20250514")
     # instructor.from_litellm returns an instance with .chat.completions.create
     assert hasattr(client, "chat")
@@ -15,9 +18,10 @@ def test_get_instructor_client_returns_async_client():
     assert hasattr(client.chat.completions, "create")
 
 
-def test_get_instructor_client_uses_json_mode():
+def test_get_instructor_client_uses_json_mode(monkeypatch):
     # We want Mode.JSON, not Mode.TOOLS, per spec §"Structured output mode".
     # instructor exposes .mode on the wrapped client.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     client = get_instructor_client(model="anthropic/claude-sonnet-4-20250514")
     assert client.mode == instructor.Mode.JSON
 

@@ -56,6 +56,7 @@ OLLAMA = "http://localhost:11434"
 
 # --- token accounting: tally every litellm call in one orchestrate ----------
 
+
 class _Tally:
     """Tokens for every litellm call in one orchestrate, captured by WRAPPING
     acompletion/completion — synchronous with the await, so it can't be lost to
@@ -76,12 +77,13 @@ class _Tally:
     def _add(self, resp):
         u = getattr(resp, "usage", None)
         if u is not None:
-            self.total += (getattr(u, "total_tokens", 0) or 0)
+            self.total += getattr(u, "total_tokens", 0) or 0
             self.calls += 1
 
 
 def _install_tally() -> _Tally:
     import litellm
+
     litellm.drop_params = True
     tally = _Tally()
     orig_a, orig_s = litellm.acompletion, litellm.completion
@@ -119,6 +121,7 @@ def _resident_model() -> str | None:
 # fresh `a && b`), and paired with an envelope broad enough that a competent
 # small model's natural plan verifies a real fraction of the time.
 
+
 def _envelope(cwd: str) -> Envelope:
     real = os.path.realpath(cwd)
     return Envelope(
@@ -138,8 +141,19 @@ def _envelope(cwd: str) -> Envelope:
             file_read=["**", f"{real}/**"],
             file_write=["**", f"{real}/**"],
             shell=True,
-            shell_allowlist=["ls", "cat", "grep", "find", "wc", "head", "tail",
-                             "git", "echo", "sort", "uniq"],
+            shell_allowlist=[
+                "ls",
+                "cat",
+                "grep",
+                "find",
+                "wc",
+                "head",
+                "tail",
+                "git",
+                "echo",
+                "sort",
+                "uniq",
+            ],
             network=False,
         ),
         stakes="low",
@@ -174,14 +188,17 @@ def _metric(res, tokens: int, dt_ms: float) -> RunMetric:
     sess = res.session
     plan_rejected = 1 if res.status == "rejected" else 0
     step_denials = sum(
-        1 for s in getattr(sess, "steps", [])
+        1
+        for s in getattr(sess, "steps", [])
         if getattr(s, "approved_by", None) == "denied"
         or str(getattr(s, "status", "")).startswith("rejected")
     )
     return RunMetric(
-        tokens=tokens, latency_ms=dt_ms,
+        tokens=tokens,
+        latency_ms=dt_ms,
         success=(res.status == "succeeded"),
-        denials=plan_rejected + step_denials, violations=0,
+        denials=plan_rejected + step_denials,
+        violations=0,
     )
 
 
@@ -196,7 +213,7 @@ def make_runner(model: str, *, cwd: str, verbose: bool = False):
     # route to it instead of falling through to a cloud model with no API key.
     tier1 = LiteLLMTier1Provider(model=model, base_url=OLLAMA, api_key=None)
     stats = {"warm_reused": 0, "warm_total": 0}
-    warm_dirs: dict[str, str] = {}   # task_id -> primed, isolated data_dir
+    warm_dirs: dict[str, str] = {}  # task_id -> primed, isolated data_dir
 
     def _prime(task, *, tries: int = 4) -> str:
         """Run the task in a fresh isolated store and distill, so a matching
@@ -221,11 +238,12 @@ def make_runner(model: str, *, cwd: str, verbose: bool = False):
                     return d
             except Exception as exc:
                 if verbose:
-                    print(f"  prime {task['id']} attempt: {type(exc).__name__}: "
-                          f"{str(exc)[:80]}", file=sys.stderr)
+                    print(
+                        f"  prime {task['id']} attempt: {type(exc).__name__}: {str(exc)[:80]}",
+                        file=sys.stderr,
+                    )
         if verbose:
-            print(f"  prime {task['id']}: no pathway after {tries} tries",
-                  file=sys.stderr)
+            print(f"  prime {task['id']}: no pathway after {tries} tries", file=sys.stderr)
         return d
 
     def runner(task, *, warm, seed):
@@ -259,8 +277,11 @@ def make_runner(model: str, *, cwd: str, verbose: bool = False):
             return asyncio.run(asyncio.wait_for(_go(), timeout=180))
         except Exception as exc:  # timeout, ollama restart, decompose blowup
             if verbose:
-                print(f"  drop {task['id']} warm={warm} seed={seed}: "
-                      f"{type(exc).__name__}: {str(exc)[:100]}", file=sys.stderr)
+                print(
+                    f"  drop {task['id']} warm={warm} seed={seed}: "
+                    f"{type(exc).__name__}: {str(exc)[:100]}",
+                    file=sys.stderr,
+                )
             return None
 
     return runner, stats
@@ -285,16 +306,26 @@ def main() -> int:
 
     print("\n=== gates ===")
     reuse_rate = (stats["warm_reused"] / stats["warm_total"]) if stats["warm_total"] else 0.0
-    print(f"gate 1 — reuse fires on warm: {stats['warm_reused']}/{stats['warm_total']} "
-          f"({reuse_rate:.0%})  {'PASS' if reuse_rate > 0.5 else 'FAIL — warm≈cold, void'}")
-    print(f"gate 2 — cold success rate: {s['cold_success_rate']:.0%}  "
-          f"{'PASS' if s['cold_success_rate'] > 0 else 'FAIL — no cost story, outcome only'}")
+    print(
+        f"gate 1 — reuse fires on warm: {stats['warm_reused']}/{stats['warm_total']} "
+        f"({reuse_rate:.0%})  {'PASS' if reuse_rate > 0.5 else 'FAIL — warm≈cold, void'}"
+    )
+    print(
+        f"gate 2 — cold success rate: {s['cold_success_rate']:.0%}  "
+        f"{'PASS' if s['cold_success_rate'] > 0 else 'FAIL — no cost story, outcome only'}"
+    )
 
     print("\n=== results ===")
     print(f"cost_delta_tasks (paired successes): {s['cost_delta_tasks']}")
-    print(f"token delta (warm−cold, successes):  {s['token_delta_mean']}  ci95={s['token_delta_ci95']}")
-    print(f"latency delta ms (successes):        {s['latency_delta_mean']}  ci95={s['latency_delta_ci95']}")
-    print(f"success rate cold/warm:              {s['cold_success_rate']:.0%} / {s['warm_success_rate']:.0%}")
+    print(
+        f"token delta (warm−cold, successes):  {s['token_delta_mean']}  ci95={s['token_delta_ci95']}"
+    )
+    print(
+        f"latency delta ms (successes):        {s['latency_delta_mean']}  ci95={s['latency_delta_ci95']}"
+    )
+    print(
+        f"success rate cold/warm:              {s['cold_success_rate']:.0%} / {s['warm_success_rate']:.0%}"
+    )
     print(f"safety regression:                   {s['safety_regression']}")
     print(f"meets Stage-4 bar (≥20×≥5):          {meets_stage4_bar(results)}")
     return 0
@@ -302,7 +333,9 @@ def main() -> int:
 
 if __name__ == "__main__":
     if os.environ.get("DAISUGI_CLAUDE_CODE_INTEGRATION") != "1":
-        print("Set DAISUGI_CLAUDE_CODE_INTEGRATION=1 to run the live pilot "
-              "(it drives a local Ollama model). Needs Ollama up on :11434.")
+        print(
+            "Set DAISUGI_CLAUDE_CODE_INTEGRATION=1 to run the live pilot "
+            "(it drives a local Ollama model). Needs Ollama up on :11434."
+        )
         sys.exit(1)
     sys.exit(main())

@@ -18,6 +18,22 @@ MJCF_TWO_JOINT_ARM = Path(__file__).parent / "fixtures" / "mjcf" / "two_joint_ar
 
 
 @pytest.fixture(autouse=True)
+def _isolate_default_data_dir(tmp_path_factory, monkeypatch):
+    """Redirect the default data dir to a per-test tmp dir for every test.
+
+    A bare ``Daisugi()`` defaults its ``data_dir`` to ``DEFAULT_DATA_DIR`` at
+    construction time; without this, such a test writes ``envelope_cache.db`` and
+    real journal traces into the user's actual ``~/.opendaisugi`` (the source of
+    the ``task: t`` smoke-test pollution). ``Daisugi.__init__`` reads the module
+    attribute at call time, so patching it here isolates every test at once.
+    """
+    d = tmp_path_factory.mktemp("daisugi_home")
+    import opendaisugi
+
+    monkeypatch.setattr(opendaisugi, "DEFAULT_DATA_DIR", d)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_llm_backend_env():
     """Snapshot+restore OPENDAISUGI_LLM_BACKEND around every test.
 
@@ -29,6 +45,12 @@ def _isolate_llm_backend_env():
     """
     sentinel = object()
     before = os.environ.get("OPENDAISUGI_LLM_BACKEND", sentinel)
+    if before is sentinel:
+        # resolve_backend now auto-detects (claude-code when a `claude` CLI is on PATH
+        # and no key is set), so a test that doesn't pin a backend would otherwise fire
+        # real `claude -p` subprocesses instead of hitting its litellm mock. Pin the
+        # historical default; tests that want another backend set it explicitly.
+        os.environ["OPENDAISUGI_LLM_BACKEND"] = "litellm"
     try:
         yield
     finally:
@@ -140,5 +162,6 @@ def mock_llm_client(monkeypatch, sample_envelope):
     fake = _FakeInstructorClient(sample_envelope)
 
     from opendaisugi import llm
+
     monkeypatch.setattr(llm, "get_instructor_client", lambda model: fake)
     return fake

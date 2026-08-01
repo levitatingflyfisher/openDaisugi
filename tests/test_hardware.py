@@ -16,10 +16,18 @@ from opendaisugi.hardware import (
 
 # ---- recommendation (pure) ----
 
-def _profile(*, ram_gb=16.0, vram_gb=0.0, gpu_name=None, unified=False, system="Linux", arch="x86_64", cpu=8):
+
+def _profile(
+    *, ram_gb=16.0, vram_gb=0.0, gpu_name=None, unified=False, system="Linux", arch="x86_64", cpu=8
+):
     return HardwareProfile(
-        system=system, arch=arch, cpu_count=cpu,
-        ram_gb=ram_gb, vram_gb=vram_gb, gpu_name=gpu_name, unified_memory=unified,
+        system=system,
+        arch=arch,
+        cpu_count=cpu,
+        ram_gb=ram_gb,
+        vram_gb=vram_gb,
+        gpu_name=gpu_name,
+        unified_memory=unified,
     )
 
 
@@ -40,8 +48,8 @@ def test_budget_apple_unified_uses_ram():
 
 
 def test_recommend_scales_with_budget():
-    small = recommend_model(_profile(ram_gb=4.0))     # budget ~2.4
-    mid = recommend_model(_profile(ram_gb=16.0))      # budget ~9.6
+    small = recommend_model(_profile(ram_gb=4.0))  # budget ~2.4
+    mid = recommend_model(_profile(ram_gb=16.0))  # budget ~9.6
     big = recommend_model(_profile(ram_gb=64.0, vram_gb=24.0, gpu_name="RTX 4090"))  # ~19.2
     assert small.params_b_max < mid.params_b_max < big.params_b_max
 
@@ -49,11 +57,11 @@ def test_recommend_scales_with_budget():
 def test_recommendation_is_provisional_and_llamafile_and_hedged():
     rec = recommend_model(_profile(ram_gb=16.0))
     assert isinstance(rec, ModelRecommendation)
-    assert rec.provisional is True                      # never asserted-best
-    assert rec.runtime == "llamafile"                   # onefile default
-    assert "qualif" in rec.rationale.lower()            # must say: qualify before trusting
-    assert len(rec.candidate_families) >= 2             # examples, not a single winner
-    assert rec.quant                                    # a concrete quant suggestion
+    assert rec.provisional is True  # never asserted-best
+    assert rec.runtime == "llamafile"  # onefile default
+    assert "qualif" in rec.rationale.lower()  # must say: qualify before trusting
+    assert len(rec.candidate_families) >= 2  # examples, not a single winner
+    assert rec.quant  # a concrete quant suggestion
 
 
 def test_cpu_only_recommendation_flags_slowness():
@@ -62,6 +70,7 @@ def test_cpu_only_recommendation_flags_slowness():
 
 
 # ---- detection (best-effort, degradation paths) ----
+
 
 def test_detect_never_raises_and_returns_profile():
     p = detect_hardware()
@@ -80,9 +89,9 @@ def test_detect_handles_no_gpu(monkeypatch):
 def test_detect_handles_missing_ram_probe(monkeypatch):
     monkeypatch.setattr(hw, "_detect_ram_gb", lambda: None)
     monkeypatch.setattr(hw, "_detect_gpu", lambda: (0.0, None))
-    p = detect_hardware()              # must not raise even if RAM unknown
+    p = detect_hardware()  # must not raise even if RAM unknown
     assert p.ram_gb is None
-    assert p.model_budget_gb == 0.0    # unknown budget, not a crash
+    assert p.model_budget_gb == 0.0  # unknown budget, not a crash
 
 
 def test_detect_gpu_path(monkeypatch):

@@ -152,7 +152,9 @@ def partition_and_assign(
     slabs = partition_airspace(
         total.permissions.workspace_bounds, len(drone_ids), axis=axis, margin=margin
     )
-    return {did: _with_workspace_bounds(total, slab) for did, slab in zip(drone_ids, slabs, strict=True)}
+    return {
+        did: _with_workspace_bounds(total, slab) for did, slab in zip(drone_ids, slabs, strict=True)
+    }
 
 
 @dataclass(frozen=True)
@@ -248,14 +250,20 @@ def verify_swarm_tasking(
             a_box = assignments[a_id].permissions.workspace_bounds
             b_box = assignments[b_id].permissions.workspace_bounds
             if a_box is None or b_box is None or a_id in invalid_boxes or b_id in invalid_boxes:
-                bad_ids = [d for d in (a_id, b_id)
-                           if assignments[d].permissions.workspace_bounds is None
-                           or d in invalid_boxes]
-                conflicts.append(SwarmConflict(
-                    drone_a=a_id, drone_b=b_id, region=None,
-                    reason=f"drone(s) {bad_ids} have missing or malformed workspace_bounds "
-                           f"(cannot prove disjoint → denied)",
-                ))
+                bad_ids = [
+                    d
+                    for d in (a_id, b_id)
+                    if assignments[d].permissions.workspace_bounds is None or d in invalid_boxes
+                ]
+                conflicts.append(
+                    SwarmConflict(
+                        drone_a=a_id,
+                        drone_b=b_id,
+                        region=None,
+                        reason=f"drone(s) {bad_ids} have missing or malformed workspace_bounds "
+                        f"(cannot prove disjoint → denied)",
+                    )
+                )
                 continue
             if not aabb_disjoint(a_box, b_box, margin=margin):
                 region = aabb_intersection(a_box, b_box)
@@ -263,9 +271,14 @@ def verify_swarm_tasking(
                     reason = f"assigned airspace overlaps in region {region}"
                 else:
                     reason = f"assigned airspace separated by less than safety margin {margin}"
-                conflicts.append(SwarmConflict(
-                    drone_a=a_id, drone_b=b_id, region=region, reason=reason,
-                ))
+                conflicts.append(
+                    SwarmConflict(
+                        drone_a=a_id,
+                        drone_b=b_id,
+                        region=region,
+                        reason=reason,
+                    )
+                )
 
     return SwarmVerdict(
         all_subsumed=(not subsumption_failures),

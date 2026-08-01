@@ -21,7 +21,8 @@ def _roundtrip(plan: ActionPlan) -> ActionPlan:
 
 def test_shell_step_roundtrip():
     plan = ActionPlan(
-        source="test", task="t",
+        source="test",
+        task="t",
         steps=[ShellStep(id="s1", command="echo hi")],
     )
     rt = _roundtrip(plan)
@@ -31,7 +32,8 @@ def test_shell_step_roundtrip():
 
 def test_file_read_step_roundtrip():
     plan = ActionPlan(
-        source="test", task="t",
+        source="test",
+        task="t",
         steps=[FileReadStep(id="s1", path="/tmp/x")],
     )
     rt = _roundtrip(plan)
@@ -41,7 +43,8 @@ def test_file_read_step_roundtrip():
 
 def test_file_write_step_roundtrip():
     plan = ActionPlan(
-        source="test", task="t",
+        source="test",
+        task="t",
         steps=[FileWriteStep(id="s1", path="/tmp/x", content="hello")],
     )
     rt = _roundtrip(plan)
@@ -51,7 +54,8 @@ def test_file_write_step_roundtrip():
 
 def test_network_step_roundtrip():
     plan = ActionPlan(
-        source="test", task="t",
+        source="test",
+        task="t",
         steps=[NetworkStep(id="s1", url="https://example.com/x")],
     )
     rt = _roundtrip(plan)
@@ -62,7 +66,8 @@ def test_network_step_roundtrip():
 
 def test_unknown_type_rejected_at_parse_time():
     raw = {
-        "source": "test", "task": "t",
+        "source": "test",
+        "task": "t",
         "steps": [{"id": "s1", "type": "bogus", "command": "echo hi"}],
     }
     with pytest.raises(ValidationError):
@@ -71,7 +76,8 @@ def test_unknown_type_rejected_at_parse_time():
 
 def test_missing_required_field_rejected():
     raw = {
-        "source": "test", "task": "t",
+        "source": "test",
+        "task": "t",
         "steps": [{"id": "s1", "type": "file_read"}],  # missing path
     }
     with pytest.raises(ValidationError):
@@ -80,7 +86,8 @@ def test_missing_required_field_rejected():
 
 def test_mixed_kind_plan_roundtrip():
     plan = ActionPlan(
-        source="test", task="t",
+        source="test",
+        task="t",
         steps=[
             ShellStep(id="a", command="echo hi"),
             FileReadStep(id="b", path="/tmp/x", depends_on=["a"]),
@@ -90,7 +97,10 @@ def test_mixed_kind_plan_roundtrip():
     )
     rt = _roundtrip(plan)
     assert [type(s).__name__ for s in rt.steps] == [
-        "ShellStep", "FileReadStep", "FileWriteStep", "NetworkStep",
+        "ShellStep",
+        "FileReadStep",
+        "FileWriteStep",
+        "NetworkStep",
     ]
 
 
@@ -103,5 +113,6 @@ def test_network_hosts_empty_list_is_permissive_default():
     Task 7; this test guards against accidentally inverting the default.
     """
     from opendaisugi.models import Permission
+
     p = Permission(network=True)
     assert p.network_hosts == []

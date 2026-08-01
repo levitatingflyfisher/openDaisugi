@@ -16,6 +16,7 @@ local cache; ``pull()`` populates it from bundles in the local git clone;
 GitPathwayStore — ``find()`` and ``put()`` retain their PathwayStore
 semantics.
 """
+
 from __future__ import annotations
 
 import json
@@ -46,7 +47,9 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
     """
     return subprocess.run(
         ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, check=check,
+        capture_output=True,
+        text=True,
+        check=check,
     )
 
 
@@ -132,9 +135,11 @@ class GitPathwayStore(PathwayStore):
             if (self.repo_path / self.TRUSTED_SIGNERS_FILE).exists():
                 _log.warning(
                     "git_pathway_store.in_repo_trust_ignored",
-                    extra={"hint": "trusted-signers.json in the registry is remote-"
-                                   "controlled and is NOT used as a trust anchor; "
-                                   "set trusted_signers_path to a local file"},
+                    extra={
+                        "hint": "trusted-signers.json in the registry is remote-"
+                        "controlled and is NOT used as a trust anchor; "
+                        "set trusted_signers_path to a local file"
+                    },
                 )
             return set()
         try:
@@ -246,9 +251,7 @@ class GitPathwayStore(PathwayStore):
         )
         rel = bundle_path.relative_to(self.repo_path)
         _git(self.repo_path, "add", str(rel))
-        msg = commit_message or (
-            f"publish pathway {pathway.id} (bundle {bundle.bundle_hash[:12]})"
-        )
+        msg = commit_message or (f"publish pathway {pathway.id} (bundle {bundle.bundle_hash[:12]})")
         _git(self.repo_path, "commit", "-m", msg)
         if push:
             try:
@@ -267,12 +270,12 @@ class GitPathwayStore(PathwayStore):
     def status(self) -> dict[str, Any]:
         """Return registry diagnostic info for the CLI's ``registry status``."""
         try:
-            commit = _git(self.repo_path, "rev-parse", "HEAD",
-                          check=False).stdout.strip()
+            commit = _git(self.repo_path, "rev-parse", "HEAD", check=False).stdout.strip()
         except FileNotFoundError:
             commit = "(git binary missing)"
-        bundle_files = list(self._pathways_dir.glob("*.yaml")) \
-            if self._pathways_dir.exists() else []
+        bundle_files = (
+            list(self._pathways_dir.glob("*.yaml")) if self._pathways_dir.exists() else []
+        )
         cached = self.list_all()
         return {
             "repo_path": str(self.repo_path),
