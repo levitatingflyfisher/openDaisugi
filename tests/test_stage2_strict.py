@@ -2,6 +2,7 @@
 silently pass opaque enforced postconditions under strict mode. Pre-existing
 fail-open: verify.py was hardened but the parallel stage2 path was not.
 """
+
 from __future__ import annotations
 
 from opendaisugi.models import Envelope, Permission, Postcondition, ShellStep
@@ -9,8 +10,13 @@ from opendaisugi.stage2 import verify_completed_step
 
 
 def _env(stakes, *, postconditions):
-    return Envelope(generated_by="t", task="t", permissions=Permission(),
-                    stakes=stakes, postconditions=postconditions)
+    return Envelope(
+        generated_by="t",
+        task="t",
+        permissions=Permission(),
+        stakes=stakes,
+        postconditions=postconditions,
+    )
 
 
 def _step():
@@ -18,21 +24,33 @@ def _step():
 
 
 def test_stage2_rejects_opaque_postcondition_under_strict():
-    env = _env("high", postconditions=[
-        Postcondition(type="no_pii_in_output", description="custom", expr=None, enforce=True)])
+    env = _env(
+        "high",
+        postconditions=[
+            Postcondition(type="no_pii_in_output", description="custom", expr=None, enforce=True)
+        ],
+    )
     violations = verify_completed_step(_step(), env)
     assert any(v.detail.get("reason") == "opaque_unrecognized" for v in violations)
 
 
 def test_stage2_allows_opaque_postcondition_at_low_stakes():
-    env = _env("low", postconditions=[
-        Postcondition(type="no_pii_in_output", description="custom", expr=None, enforce=True)])
+    env = _env(
+        "low",
+        postconditions=[
+            Postcondition(type="no_pii_in_output", description="custom", expr=None, enforce=True)
+        ],
+    )
     assert verify_completed_step(_step(), env) == []
 
 
 def test_stage2_skips_opaque_postcondition_enforce_false():
-    env = _env("physical", postconditions=[
-        Postcondition(type="no_pii_in_output", description="custom", expr=None, enforce=False)])
+    env = _env(
+        "physical",
+        postconditions=[
+            Postcondition(type="no_pii_in_output", description="custom", expr=None, enforce=False)
+        ],
+    )
     assert verify_completed_step(_step(), env) == []
 
 
@@ -73,16 +91,20 @@ def test_stage2_file_exists_fail(tmp_path):
 def test_stage2_file_size_range_pass(tmp_path):
     p = tmp_path / "out.png"
     p.write_bytes(b"x" * 500)
-    env = _env("low", postconditions=[
-        Postcondition(type="file_size_range", path=str(p), min=100, max=10_000)])
+    env = _env(
+        "low",
+        postconditions=[Postcondition(type="file_size_range", path=str(p), min=100, max=10_000)],
+    )
     assert verify_completed_step(_step(), env) == []
 
 
 def test_stage2_file_size_range_fail_too_small(tmp_path):
     p = tmp_path / "out.png"
     p.write_bytes(b"x" * 50)
-    env = _env("low", postconditions=[
-        Postcondition(type="file_size_range", path=str(p), min=100, max=10_000)])
+    env = _env(
+        "low",
+        postconditions=[Postcondition(type="file_size_range", path=str(p), min=100, max=10_000)],
+    )
     violations = verify_completed_step(_step(), env)
     assert len(violations) == 1
     assert violations[0].detail["size"] == 50

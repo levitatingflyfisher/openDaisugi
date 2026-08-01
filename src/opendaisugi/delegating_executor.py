@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -108,11 +109,36 @@ class DelegatingExecutor:
         # wants free text. json_mode=False drops the response_format so the model
         # answers the subtask in prose instead of being forced into a JSON object.
         self.json_mode = json_mode
-        self.last = _LastInvocation()
-        # Set by the backend call as a side channel; folded into self.last after
-        # each call so a patched _call (returning a bare str) leaves them None.
-        self._last_usage: int | None = None
-        self._last_cost: float | None = None
+        # v0.40: per-call scratch is THREAD-LOCAL so concurrent run() calls on one
+        # shared executor instance (parallel task-step prefetch) don't clobber each
+        # other's model/usage/cost. The sequential path is unchanged: run() and its
+        # readers execute in the same thread, so each sees its own values. Authoritative
+        # per-call attribution is ALSO returned on the ExecutorResult (see run()).
+        self._tls = threading.local()
+
+    @property
+    def last(self) -> _LastInvocation:
+        return getattr(self._tls, "last", None) or _LastInvocation()
+
+    @last.setter
+    def last(self, value: _LastInvocation) -> None:
+        self._tls.last = value
+
+    @property
+    def _last_usage(self) -> int | None:
+        return getattr(self._tls, "usage", None)
+
+    @_last_usage.setter
+    def _last_usage(self, value: int | None) -> None:
+        self._tls.usage = value
+
+    @property
+    def _last_cost(self) -> float | None:
+        return getattr(self._tls, "cost", None)
+
+    @_last_cost.setter
+    def _last_cost(self, value: float | None) -> None:
+        self._tls.cost = value
 
     @staticmethod
     def _default_prompt(step: StepBase) -> str:
@@ -127,13 +153,18 @@ class DelegatingExecutor:
         return getattr(step, "preferred_model", None) or self.default_model
 
     def _call_litellm_sync(
-        self, model: str, prompt: str,
-        *, timeout_s: int, max_tokens: int,
+        self,
+        model: str,
+        prompt: str,
+        *,
+        timeout_s: int,
+        max_tokens: int,
     ) -> str:
         """Synchronous wrapper around the async litellm call. Honors timeout
         and a max-tokens cap derived from the supervisor's max_output_bytes.
         """
         from litellm import completion
+
         # Direct litellm call (not instructor) — we want the raw text content;
         # response_schema validation runs in our retry loop, not via instructor.
         extra = {"response_format": {"type": "json_object"}} if self.json_mode else {}
@@ -149,7 +180,11 @@ class DelegatingExecutor:
         return result.choices[0].message.content or ""
 
     def _call_claude_code_sync(
-        self, model: str, prompt: str, *, timeout_s: int,
+        self,
+        model: str,
+        prompt: str,
+        *,
+        timeout_s: int,
     ) -> str:
         # Honor json_mode on the claude-code backend too: a prose TaskStep
         # (json_mode=False) must get raw text, not be forced through JSON
@@ -157,6 +192,7 @@ class DelegatingExecutor:
         # metered variant also captures Claude Code's exact usage + cost.
         if not self.json_mode:
             from opendaisugi.claude_code_llm import call_claude_p_metered
+
             text, meter = call_claude_p_metered(prompt, timeout_s=float(timeout_s), model=model)
             self._last_usage = meter.get("tokens")
             self._last_cost = meter.get("cost_usd")
@@ -166,20 +202,29 @@ class DelegatingExecutor:
         # (budget undercount), and blamed "no JSON object" when the real cause
         # was a tool-needing prompt answered with prose from the empty sandbox.
         from opendaisugi.claude_code_llm import call_claude_p_json_metered
+
         body, meter = call_claude_p_json_metered(prompt, timeout_s=float(timeout_s), model=model)
         self._last_usage = meter.get("tokens")
         self._last_cost = meter.get("cost_usd")
         return json.dumps(body)
 
     def _call(
-        self, model: str, prompt: str,
-        *, timeout_s: int, max_tokens: int,
+        self,
+        model: str,
+        prompt: str,
+        *,
+        timeout_s: int,
+        max_tokens: int,
     ) -> str:
         from opendaisugi.llm import resolve_backend
+
         if resolve_backend(self.backend) == "claude-code":
             return self._call_claude_code_sync(model, prompt, timeout_s=timeout_s)
         return self._call_litellm_sync(
-            model, prompt, timeout_s=timeout_s, max_tokens=max_tokens,
+            model,
+            prompt,
+            timeout_s=timeout_s,
+            max_tokens=max_tokens,
         )
 
     def run(
@@ -204,18 +249,27 @@ class DelegatingExecutor:
             self._last_cost = None
             try:
                 content = self._call(
-                    model, prompt,
-                    timeout_s=timeout_s, max_tokens=max_tokens,
+                    model,
+                    prompt,
+                    timeout_s=timeout_s,
+                    max_tokens=max_tokens,
                 )
                 self.last = _LastInvocation(
-                    model=model, attempts=attempt,
-                    tokens=self._last_usage, cost_usd=self._last_cost,
+                    model=model,
+                    attempts=attempt,
+                    tokens=self._last_usage,
+                    cost_usd=self._last_cost,
                 )
             except Exception as exc:  # noqa: BLE001 — translate at boundary
                 last_error = str(translate_llm_error(exc))
                 _log.warning(
                     "delegate.call_error",
-                    extra={"step_id": step.id, "model": model, "attempt": attempt, "error": last_error},
+                    extra={
+                        "step_id": step.id,
+                        "model": model,
+                        "attempt": attempt,
+                        "error": last_error,
+                    },
                 )
                 continue
             last_content = content
@@ -237,6 +291,9 @@ class DelegatingExecutor:
                 stdout=f"delegating_executor: exhausted retries: {last_error}",
                 duration_ms=(time.time() - started) * 1000.0,
                 timed_out=False,
+                model=model,
+                tokens=self.last.tokens,
+                cost_usd=self.last.cost_usd,
             )
 
         return ExecutorResult(
@@ -244,4 +301,7 @@ class DelegatingExecutor:
             stdout=last_content,
             duration_ms=(time.time() - started) * 1000.0,
             timed_out=False,
+            model=model,
+            tokens=self.last.tokens,
+            cost_usd=self.last.cost_usd,
         )

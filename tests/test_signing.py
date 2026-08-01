@@ -160,7 +160,8 @@ def test_delegation_accepts_signed_contract_with_trusted_registry(tmp_path: Path
     c.signature = sign_contract(c, priv)
 
     d = verify_delegation(
-        caller, c,
+        caller,
+        c,
         trusted_signers=["robin-v1"],
         signer_registry=reg,
     )
@@ -184,7 +185,8 @@ def test_delegation_rejects_tampered_signed_contract(tmp_path: Path):
     c.skill_id = "malicious-rebind"
 
     d = verify_delegation(
-        caller, c,
+        caller,
+        c,
         trusted_signers=["robin-v1"],
         signer_registry=reg,
     )

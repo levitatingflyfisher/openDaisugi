@@ -1,0 +1,52 @@
+// openDaisugi architecture — the forward (orchestrate) and backward (tend) loops.
+// Render: dot -Tpng -Gdpi=150 architecture.dot -o architecture.png
+digraph arch {
+  rankdir=LR;
+  bgcolor="#fbfaf7";
+  labelloc="t"; fontname="Helvetica"; fontsize=17;
+  label=<<b>openDaisugi &#8212; how it works</b><br/><font point-size="11" color="#6b6b6b">forward: a prompt becomes a verified result &#183; backward: successes become reusable callables</font><br/> >;
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11,
+        color="#d8d8d8", penwidth=1.1, margin="0.16,0.10"];
+  edge [fontname="Helvetica", fontsize=9, color="#8a8a8a"];
+
+  subgraph cluster_fwd {
+    label=<<b>FORWARD &#8212; orchestrate</b> (orchestrator.py)>;
+    fontname="Helvetica"; fontsize=11; fontcolor="#2a5b8c"; color="#cfe0f0"; style="rounded"; bgcolor="#eef4fb";
+    prompt [label="prompt", fillcolor="#eef2f7"];
+    reuse  [label=<reuse?<br/><font point-size="9" color="#6b6b6b">pathway_store.find &#8805; 0.55</font>>, shape=diamond, fillcolor="#e2eefb"];
+    frozen [label=<serve frozen<br/><font point-size="9" color="#2f6b39">0 tokens</font>>, fillcolor="#e4f3e6"];
+    bind   [label=<bind + re-verify<br/><font point-size="9" color="#6b6b6b">pathway_bind.py</font>>, fillcolor="#e2eefb"];
+    decomp [label=<decompose<br/><font point-size="9" color="#6b6b6b">LLM &#8594; typed DAG</font>>, fillcolor="#efe7f7"];
+    size   [label=<size<br/><font point-size="9" color="#6b6b6b">step &#8594; cheapest model</font>>, fillcolor="#eef2f7"];
+    exec   [label=<supervise + execute<br/><font point-size="9" color="#6b6b6b">re-verify each step</font>>, fillcolor="#eef2f7"];
+    synth  [label="synthesize", fillcolor="#eef2f7"];
+    answer [label="answer", fillcolor="#eef2f7"];
+
+    prompt -> reuse;
+    reuse -> frozen [label="hit (frozen)"];
+    reuse -> bind   [label="hit (typed)"];
+    reuse -> decomp [label="miss"];
+    frozen -> size; bind -> size; decomp -> size;
+    size -> exec -> synth -> answer;
+  }
+
+  guard [label=<<b>Z3 guard</b><br/><font point-size="9" color="#8a5a17">verify(plan &#8838; envelope)<br/>fail-closed, ~free</font>>, shape=hexagon, fillcolor="#fde8cf"];
+  guard -> bind   [style=dashed, color="#c98a3a", constraint=false];
+  guard -> decomp [style=dashed, color="#c98a3a", constraint=false];
+  guard -> exec   [style=dashed, color="#c98a3a", constraint=false];
+
+  subgraph cluster_bwd {
+    label=<<b>BACKWARD &#8212; tend</b> (offline)>;
+    fontname="Helvetica"; fontsize=11; fontcolor="#3f6b47"; color="#cfe2d3"; style="rounded"; bgcolor="#eef5ef";
+    capture [label=<capture / journal<br/><font point-size="9" color="#6b6b6b">hook.py &#183; journal.py</font>>, fillcolor="#eef2f7"];
+    distill [label=<distil<br/><font point-size="9" color="#6b6b6b">cluster &#8594; diff &#8594; params<br/>distiller.py &#183; pathway_params.py</font>>, fillcolor="#efe7f7"];
+    store   [label=<pathway store<br/><font point-size="9" color="#6b6b6b">frozen &amp; typed callables</font>>, fillcolor="#e4f3e6"];
+    garden  [label=<Gardener<br/><font point-size="9" color="#6b6b6b">prune / promote</font>>, fillcolor="#efe7f7"];
+
+    capture -> distill -> store -> garden;
+    garden -> distill [label="re-tend", style=dashed];
+  }
+
+  exec -> capture [label="journals runs", style=dashed, color="#7aa37f", constraint=false];
+  store -> reuse  [label="serves reuse", style=dashed, color="#7aa37f", constraint=false];
+}

@@ -21,6 +21,7 @@ We don't ship them in v0.26 because (a) the model weights are GPU-sized
 and not a fit for the package, and (b) the model card / processor
 signatures shift and pinning a version in core would rot.
 """
+
 from __future__ import annotations
 
 import json
@@ -56,6 +57,7 @@ class VLAExecutorBase:
 
     def _load_mujoco(self) -> None:
         import mujoco
+
         self._mujoco = mujoco
         self._model = mujoco.MjModel.from_xml_path(self.mjcf_path)
         self._data = mujoco.MjData(self._model)
@@ -90,7 +92,9 @@ class VLAExecutorBase:
         return obs
 
     def _predict_actions(
-        self, step: VLAStep, observation: dict[str, Any],
+        self,
+        step: VLAStep,
+        observation: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """Return a list of action dicts to roll out. Each action is
         ``{joint_name: target}`` — the executor sets the actuator targets and
@@ -149,27 +153,35 @@ class VLAExecutorBase:
     ) -> ExecutorResult:
         if not isinstance(step, VLAStep):
             return ExecutorResult(
-                rc=1, stdout=f"VLAExecutorBase: not a VLAStep ({type(step).__name__})",
-                duration_ms=0.0, timed_out=False,
+                rc=1,
+                stdout=f"VLAExecutorBase: not a VLAStep ({type(step).__name__})",
+                duration_ms=0.0,
+                timed_out=False,
             )
         started = time.time()
         if self._data is None:
             return ExecutorResult(
-                rc=1, stdout="VLAExecutorBase: no MJCF loaded; pass mjcf_path",
-                duration_ms=0.0, timed_out=False,
+                rc=1,
+                stdout="VLAExecutorBase: no MJCF loaded; pass mjcf_path",
+                duration_ms=0.0,
+                timed_out=False,
             )
         observation = self._current_observation()
         try:
             actions = self._predict_actions(step, observation)
         except NotImplementedError:
             return ExecutorResult(
-                rc=1, stdout="VLAExecutorBase._predict_actions not implemented",
-                duration_ms=0.0, timed_out=False,
+                rc=1,
+                stdout="VLAExecutorBase._predict_actions not implemented",
+                duration_ms=0.0,
+                timed_out=False,
             )
         except Exception as exc:
             return ExecutorResult(
-                rc=1, stdout=f"VLA inference error: {type(exc).__name__}: {exc}",
-                duration_ms=0.0, timed_out=False,
+                rc=1,
+                stdout=f"VLA inference error: {type(exc).__name__}: {exc}",
+                duration_ms=0.0,
+                timed_out=False,
             )
         # Cap by both the step's max_actions AND the executor's global cap
         # so a misbehaving policy can't run forever.
@@ -247,23 +259,26 @@ class TransformersVLAExecutor(VLAExecutorBase):
             return
         import torch
         from transformers import AutoModel, AutoProcessor
+
         self._torch = torch
         _log.info(
             "TransformersVLAExecutor.load",
             extra={"model_id": self.model_id, "device": self.device},
         )
         self._processor = AutoProcessor.from_pretrained(
-            self.model_id, cache_dir=self.cache_dir, trust_remote_code=True,
+            self.model_id,
+            cache_dir=self.cache_dir,
+            trust_remote_code=True,
         )
         self._policy = AutoModel.from_pretrained(
-            self.model_id, cache_dir=self.cache_dir, trust_remote_code=True,
+            self.model_id,
+            cache_dir=self.cache_dir,
+            trust_remote_code=True,
         ).to(self.device)
         self._policy.eval()
         # Joint order convention: derive from the loaded MJCF unless the
         # subclass overrides. The 2-DOF test fixture uses j1, j2, j_grip.
-        self._joint_action_keys = [
-            n for n in self._joint_names if n
-        ][: self.action_horizon]
+        self._joint_action_keys = [n for n in self._joint_names if n][: self.action_horizon]
 
     def _capture_image(self):
         """Render the current MuJoCo scene to an RGB array. Subclasses can
@@ -301,15 +316,21 @@ class TransformersVLAExecutor(VLAExecutorBase):
         # what to drop. Real-PI subclasses build the inputs the way
         # their model expects.
         torch = self._torch
-        inputs = self._processor(
-            images=image, text=step.task, return_tensors="pt",
-        ) if image is not None else {}
+        inputs = (
+            self._processor(
+                images=image,
+                text=step.task,
+                return_tensors="pt",
+            )
+            if image is not None
+            else {}
+        )
         if proprio:
             inputs["state"] = torch.tensor(
-                [proprio], dtype=torch.float32,
+                [proprio],
+                dtype=torch.float32,
             ).to(self.device)
-        inputs = {k: (v.to(self.device) if hasattr(v, "to") else v)
-                  for k, v in inputs.items()}
+        inputs = {k: (v.to(self.device) if hasattr(v, "to") else v) for k, v in inputs.items()}
         with torch.no_grad():
             output = self._policy(**inputs)
         # Unpack output. Modern VLAs return a dataclass or dict; handle both.
@@ -327,15 +348,11 @@ class TransformersVLAExecutor(VLAExecutorBase):
         action_tensor = action_tensor.cpu().numpy()
         # Translate to {joint: target} dicts
         if not self._joint_action_keys:
-            self._joint_action_keys = [
-                n for n in self._joint_names if n
-            ][: action_tensor.shape[1]]
+            self._joint_action_keys = [n for n in self._joint_names if n][: action_tensor.shape[1]]
         keys = self._joint_action_keys[: action_tensor.shape[1]]
         actions: list[dict[str, Any]] = []
         for t in range(min(action_tensor.shape[0], step.max_actions)):
-            actions.append({
-                k: float(action_tensor[t, i]) for i, k in enumerate(keys)
-            })
+            actions.append({k: float(action_tensor[t, i]) for i, k in enumerate(keys)})
         return actions
 
 
@@ -350,7 +367,10 @@ class MockVLAExecutor(VLAExecutorBase):
     """
 
     def __init__(
-        self, *, mjcf_path: str, num_actions: int = 10,
+        self,
+        *,
+        mjcf_path: str,
+        num_actions: int = 10,
     ) -> None:
         super().__init__(mjcf_path=mjcf_path)
         self.num_actions = num_actions

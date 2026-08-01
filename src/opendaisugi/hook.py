@@ -28,6 +28,7 @@ import json
 import os
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -65,8 +66,7 @@ def stdout_for_format(fmt: str, *, block: bool, reason: str = "") -> str:
     """
     if fmt == "hermes":
         return json.dumps(
-            {"decision": "block", "action": "block", "reason": reason}
-            if block else {}
+            {"decision": "block", "action": "block", "reason": reason} if block else {}
         )
     if fmt == "openclaw":
         return json.dumps({"block": True, "blockReason": reason} if block else {})
@@ -133,7 +133,7 @@ def _parse_mcp_tool_name(name: str) -> tuple[str, str] | None:
     """
     if not name.startswith("mcp__"):
         return None
-    rest = name[len("mcp__"):]
+    rest = name[len("mcp__") :]
     parts = rest.split("__", 1)
     if len(parts) != 2 or not parts[0] or not parts[1]:
         return None
@@ -151,22 +151,13 @@ def _payload_to_record(payload: dict[str, Any]) -> dict[str, Any] | None:
     call. Caller is expected to skip these (still emitting continue:true
     on stdout to keep the host runtime happy).
     """
-    tool_name = (
-        payload.get("tool_name")
-        or payload.get("tool")
-        or payload.get("name")
-    )
+    tool_name = payload.get("tool_name") or payload.get("tool") or payload.get("name")
     if not tool_name:
         return None
     step_type = _classify_tool(tool_name)
     if step_type is None:
         return None
-    inp = (
-        payload.get("tool_input")
-        or payload.get("args")
-        or payload.get("input")
-        or {}
-    )
+    inp = payload.get("tool_input") or payload.get("args") or payload.get("input") or {}
     record = {
         "captured_at": time.time(),
         "session_id": _safe_session_id(payload.get("session_id")),
@@ -176,12 +167,7 @@ def _payload_to_record(payload: dict[str, Any]) -> dict[str, Any] | None:
     if step_type == "shell":
         record["command"] = inp.get("command") or inp.get("cmd") or ""
     elif step_type in ("file_read", "file_write"):
-        record["path"] = (
-            inp.get("file_path")
-            or inp.get("path")
-            or inp.get("pattern")
-            or ""
-        )
+        record["path"] = inp.get("file_path") or inp.get("path") or inp.get("pattern") or ""
         if step_type == "file_write":
             # Don't store full content — captures are for distillation,
             # not exfil. Hash + length is enough.
@@ -210,9 +196,7 @@ def _safe_session_id(raw: object) -> str:
     return safe or "no-session"
 
 
-def record_call(
-    payload: dict[str, Any], *, root: Path = DEFAULT_CAPTURES_ROOT
-) -> Path | None:
+def record_call(payload: dict[str, Any], *, root: Path = DEFAULT_CAPTURES_ROOT) -> Path | None:
     """Append a normalized tool-call capture to ``<root>/<session_id>.jsonl``.
 
     Returns the file path written, or ``None`` if the payload didn't
@@ -242,7 +226,6 @@ def record_call(
     return path
 
 
-
 def list_sessions(*, root: Path = DEFAULT_CAPTURES_ROOT) -> list[dict[str, Any]]:
     """Return a summary of captured sessions in ``root``.
 
@@ -270,12 +253,14 @@ def list_sessions(*, root: Path = DEFAULT_CAPTURES_ROOT) -> list[dict[str, Any]]
             last = json.loads(last_line)
         except json.JSONDecodeError:
             continue
-        rows.append({
-            "session_id": f.stem,
-            "calls": calls,
-            "first_at": first.get("captured_at"),
-            "last_at": last.get("captured_at"),
-        })
+        rows.append(
+            {
+                "session_id": f.stem,
+                "calls": calls,
+                "first_at": first.get("captured_at"),
+                "last_at": last.get("captured_at"),
+            }
+        )
     rows.sort(key=lambda r: r["last_at"] or 0, reverse=True)
     return rows
 
@@ -366,19 +351,26 @@ def _records_to_steps(records: list[dict[str, Any]]) -> list:
         elif r["step_type"] == "file_read":
             steps.append(FileReadStep(id=sid, path=r.get("path") or "", depends_on=deps))
         elif r["step_type"] == "file_write":
-            steps.append(FileWriteStep(
-                id=sid, path=r.get("path") or "", content="", depends_on=deps,
-            ))
+            steps.append(
+                FileWriteStep(
+                    id=sid,
+                    path=r.get("path") or "",
+                    content="",
+                    depends_on=deps,
+                )
+            )
         elif r["step_type"] == "network":
             steps.append(NetworkStep(id=sid, url=r.get("url") or "", depends_on=deps))
         elif r["step_type"] == "mcp":
-            steps.append(MCPStep(
-                id=sid,
-                server=r.get("mcp_server") or "",
-                tool=r.get("mcp_tool") or "",
-                arguments=r.get("arguments") or {},
-                depends_on=deps,
-            ))
+            steps.append(
+                MCPStep(
+                    id=sid,
+                    server=r.get("mcp_server") or "",
+                    tool=r.get("mcp_tool") or "",
+                    arguments=r.get("arguments") or {},
+                    depends_on=deps,
+                )
+            )
         prev_id = sid
     return steps
 
@@ -399,6 +391,7 @@ def captures_to_trace(
     ``journal.log``. Returns the trace id.
     """
     from opendaisugi.verify import verify
+
     records: list[dict[str, Any]] = []
     with session_jsonl.open(encoding="utf-8") as f:
         for line in f:
@@ -422,3 +415,58 @@ def captures_to_trace(
         plan=plan,
         result=result,
     )
+
+
+def _spawn_detached_auto_tend(data_dir: Path) -> None:
+    """Fire-and-forget `daisugi hook auto-tend` in a fully detached process."""
+    import subprocess
+
+    subprocess.Popen(
+        ["daisugi", "hook", "auto-tend", "--data-dir", str(data_dir)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def maybe_trigger_background_tend(
+    data_dir: Path,
+    *,
+    now: float,
+    spawn: Callable[[Path], None] | None = None,
+    min_interval_s: int = 1800,
+) -> bool:
+    """The "no cron" trigger: kick off distillation from the capture hook itself.
+
+    The capture hook already runs on every tool call, so it can start a
+    background tend without the user scheduling anything. Fires at most once per
+    ``min_interval_s`` and only when the user consented (``config.auto_tend``);
+    the spawn is fully detached, so it never blocks or disrupts the host runtime.
+    Returns True iff it spawned. Swallows every error and returns False rather
+    than ever letting a background concern break the hook's allow contract.
+    """
+    try:
+        # Cheap interval check FIRST — this runs on every tool call, so avoid the
+        # config YAML parse in the common (not-due) case. Config is loaded only
+        # once the interval has actually elapsed.
+        stamp = data_dir / ".hook-record-tend-trigger"
+        last = 0.0
+        if stamp.exists():
+            try:
+                last = float(stamp.read_text().strip())
+            except ValueError:
+                last = 0.0
+        if (now - last) < min_interval_s:
+            return False
+
+        from opendaisugi.config import auto_tend_enabled, load_config
+
+        if not auto_tend_enabled(load_config(data_dir / "config.yaml")):
+            return False
+        data_dir.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(f"{now}")
+        (spawn or _spawn_detached_auto_tend)(data_dir)
+        return True
+    except Exception:
+        return False

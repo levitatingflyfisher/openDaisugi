@@ -21,13 +21,16 @@ def test_search_dispatches_to_semantic_search_when_available(tmp_path, monkeypat
     # Install a fake _search module in sys.modules so Journal.search()
     # finds semantic_search without triggering the real top-level import.
     import types
+
     fake = types.ModuleType("opendaisugi._search")
     calls = {}
+
     def fake_semantic_search(journal, query, *, limit):
         calls["journal"] = journal
         calls["query"] = query
         calls["limit"] = limit
         return ["fake-result"]
+
     fake.semantic_search = fake_semantic_search
     monkeypatch.setitem(sys.modules, "opendaisugi._search", fake)
 
@@ -54,15 +57,27 @@ def test_semantic_search_orders_by_cosine_similarity(tmp_path, monkeypatch):
     # Log 3 traces with different tasks.
     for i, task in enumerate(["read csv data", "delete tmp files", "parse xml feed"]):
         env = Envelope(id=f"env_{i:02d}", generated_by="t", task=task, permissions=Permission())
-        plan = ActionPlan(id=f"plan_{i:02d}", source="t", task=task, steps=[
-            ShellStep(id="s1", command="echo hi"),
-        ])
+        plan = ActionPlan(
+            id=f"plan_{i:02d}",
+            source="t",
+            task=task,
+            steps=[
+                ShellStep(id="s1", command="echo hi"),
+            ],
+        )
         result = VerificationResult(
-            ok=True, violations=[], warnings=[],
-            envelope_id=env.id, plan_id=plan.id, duration_ms=1.0,
+            ok=True,
+            violations=[],
+            warnings=[],
+            envelope_id=env.id,
+            plan_id=plan.id,
+            duration_ms=1.0,
         )
         j.log(
-            task=task, envelope=env, plan=plan, result=result,
+            task=task,
+            envelope=env,
+            plan=plan,
+            result=result,
             trace_id=f"2026-04-09-{i:08d}",
             created_at=f"2026-04-09T10:0{i}:00Z",
         )
@@ -74,8 +89,10 @@ def test_semantic_search_orders_by_cosine_similarity(tmp_path, monkeypatch):
     class FakeEncoder:
         def __init__(self, model_name):
             pass
+
         def encode(self, texts, convert_to_numpy=True):
             import numpy as np
+
             vectors = []
             for t in texts:
                 if "csv" in t or t == "csv":

@@ -20,27 +20,67 @@ from typing import Final
 
 from opendaisugi.models import SHELL_INTERPRETERS
 
-_SHELL_C_INTERPRETERS: Final[frozenset[str]] = frozenset({
-    "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh",
-})
+_SHELL_C_INTERPRETERS: Final[frozenset[str]] = frozenset(
+    {
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "ksh",
+        "fish",
+        "csh",
+        "tcsh",
+    }
+)
 
-_OPAQUE_INTERPRETERS: Final[frozenset[str]] = frozenset({
-    "python", "python3", "python2",
-    "perl", "ruby", "node", "deno",
-    "awk", "gawk", "sed",
-    "make",
-    "eval", "exec", "source",
-})
+_OPAQUE_INTERPRETERS: Final[frozenset[str]] = frozenset(
+    {
+        "python",
+        "python3",
+        "python2",
+        "perl",
+        "ruby",
+        "node",
+        "deno",
+        "awk",
+        "gawk",
+        "sed",
+        "make",
+        "eval",
+        "exec",
+        "source",
+    }
+)
 
-_XARGS_VALUE_FLAGS: Final[frozenset[str]] = frozenset({
-    "-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a",
-    "--max-args", "--replace", "--max-procs", "--max-lines",
-    "--delimiter", "--eof", "--max-chars", "--arg-file",
-})
+_XARGS_VALUE_FLAGS: Final[frozenset[str]] = frozenset(
+    {
+        "-n",
+        "-I",
+        "-P",
+        "-L",
+        "-d",
+        "-E",
+        "-s",
+        "-a",
+        "--max-args",
+        "--replace",
+        "--max-procs",
+        "--max-lines",
+        "--delimiter",
+        "--eof",
+        "--max-chars",
+        "--arg-file",
+    }
+)
 
-_FIND_EXEC_FLAGS: Final[frozenset[str]] = frozenset({
-    "-exec", "-execdir", "-ok", "-okdir",
-})
+_FIND_EXEC_FLAGS: Final[frozenset[str]] = frozenset(
+    {
+        "-exec",
+        "-execdir",
+        "-ok",
+        "-okdir",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -118,7 +158,7 @@ def _parse_shell_c(head: str, tokens: list[str]) -> InterpreterPayload:
         # Chars before 'c' must look like clustered short flags (letters).
         if cluster[:cpos] and not cluster[:cpos].isalpha():
             continue
-        attached = cluster[cpos + 1:]
+        attached = cluster[cpos + 1 :]
         if attached:  # ``-cSCRIPT`` / ``-ecSCRIPT`` — command attached to the token
             return InterpreterPayload(head=head, inner_commands=[attached])
         if i + 1 < len(tokens):  # ``-c SCRIPT`` / ``-ec SCRIPT`` — next token

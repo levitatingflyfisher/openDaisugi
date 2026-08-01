@@ -47,8 +47,10 @@ def record_run_outcome(
     if status != "succeeded" or integrity_passed is False:
         pathway.failure_count = getattr(pathway, "failure_count", 0) + 1
     if outcomes is not None:
-        outcomes.append(RunOutcome(
-            pathway_id=getattr(pathway, "id", "<unknown>"),
-            status=status,
-            integrity_passed=integrity_passed,
-        ))
+        outcomes.append(
+            RunOutcome(
+                pathway_id=getattr(pathway, "id", "<unknown>"),
+                status=status,
+                integrity_passed=integrity_passed,
+            )
+        )

@@ -1,4 +1,5 @@
 """Gardener counts integrity-failed runs as pathway failures (v0.18 L8)."""
+
 from dataclasses import dataclass
 
 from opendaisugi.gardener import RunOutcome, record_run_outcome

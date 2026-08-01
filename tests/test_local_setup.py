@@ -53,21 +53,31 @@ def test_gate_counts_valid_declined_and_errors():
 def test_gate_passes_only_above_threshold():
     # 3 of 5 valid = 0.6
     script = [_env(), _env(), _env(), None, None]
-    below = asyncio.run(qualify_local_model(_FlakyProvider(script), probe_tasks=list("abcde"), threshold=0.8))
-    above = asyncio.run(qualify_local_model(_FlakyProvider(script), probe_tasks=list("abcde"), threshold=0.6))
+    below = asyncio.run(
+        qualify_local_model(_FlakyProvider(script), probe_tasks=list("abcde"), threshold=0.8)
+    )
+    above = asyncio.run(
+        qualify_local_model(_FlakyProvider(script), probe_tasks=list("abcde"), threshold=0.6)
+    )
     assert below.passed is False
     assert above.passed is True
     assert below.pass_rate == above.pass_rate == 0.6
 
 
 def test_gate_all_declines_fails_clean():
-    res = asyncio.run(qualify_local_model(_FlakyProvider([None]), probe_tasks=list("abc"), threshold=0.5))
+    res = asyncio.run(
+        qualify_local_model(_FlakyProvider([None]), probe_tasks=list("abc"), threshold=0.5)
+    )
     assert res.valid == 0 and res.pass_rate == 0.0 and res.passed is False
 
 
 def test_gate_repeats_samples_each_task_multiple_times():
     # repeats multiplies attempts so a probabilistic model is sampled, not asked once
-    res = asyncio.run(qualify_local_model(_FlakyProvider([_env()]), probe_tasks=["a", "b"], threshold=0.5, repeats=3))
+    res = asyncio.run(
+        qualify_local_model(
+            _FlakyProvider([_env()]), probe_tasks=["a", "b"], threshold=0.5, repeats=3
+        )
+    )
     assert res.attempts == 6
 
 
@@ -77,6 +87,7 @@ def test_default_probe_battery_is_used_when_none_given():
 
 
 # ---- config wiring ----
+
 
 def test_write_then_load_tier1_config(tmp_path):
     write_tier1_config(tmp_path, model="qwen2.5:1.5b", base_url="http://localhost:8080/v1")
@@ -98,7 +109,8 @@ def test_ingest_episodes_consults_configured_tier1(tmp_path):
     from opendaisugi.parsers import Episode, ParseResult
 
     env = Envelope(
-        generated_by="x", task="t",
+        generated_by="x",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["echo"]),
     )
 
@@ -114,15 +126,18 @@ def test_ingest_episodes_consults_configured_tier1(tmp_path):
 
     tier1 = _Tier1()
     pr = ParseResult(
-        source="claude-code", source_file="/x/s.jsonl", parsed_at="2026-06-24",
-        episodes=[Episode(
-            id="ep_00", task="echo hi",
-            steps=[ShellStep(id="s1", command="echo hi")],
-            source_range={"first_message": 0, "last_message": 1},
-        )],
+        source="claude-code",
+        source_file="/x/s.jsonl",
+        parsed_at="2026-06-24",
+        episodes=[
+            Episode(
+                id="ep_00",
+                task="echo hi",
+                steps=[ShellStep(id="s1", command="echo hi")],
+                source_range={"first_message": 0, "last_message": 1},
+            )
+        ],
     )
-    summary = asyncio.run(
-        ingest_episodes(pr, Journal(data_dir=tmp_path), tier1=tier1)
-    )
-    assert tier1.calls >= 1          # the local Tier-1 was consulted (offline, no API key)
+    summary = asyncio.run(ingest_episodes(pr, Journal(data_dir=tmp_path), tier1=tier1))
+    assert tier1.calls >= 1  # the local Tier-1 was consulted (offline, no API key)
     assert summary.total == 1

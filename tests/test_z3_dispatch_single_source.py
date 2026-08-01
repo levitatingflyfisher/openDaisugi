@@ -3,6 +3,7 @@ RECOGNIZED_OPAQUE_TYPES constant. Otherwise a 5th recognized type added to
 _invariant_types.py gets the strict-reject carve-out for free but has no handler
 here, silently leaving that invariant unchecked.
 """
+
 from __future__ import annotations
 
 from opendaisugi._invariant_types import RECOGNIZED_OPAQUE_TYPES

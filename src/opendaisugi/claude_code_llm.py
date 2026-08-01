@@ -66,28 +66,30 @@ def _configured_extra_args() -> tuple[str, ...]:
 
 
 def _build_claude_args(
-    binary: str, prompt: str, model: str | None, extra_args: tuple[str, ...]
+    binary: str, model: str | None, extra_args: tuple[str, ...]
 ) -> list[str]:
-    """Build an injection-safe ``claude -p`` argv.
+    """Build an injection-safe ``claude -p`` argv. The prompt is NOT included.
 
-    The ``prompt`` and ``model`` can be LLM-authored (a decomposed TaskStep's text,
-    a plan's ``preferred_model``), so a value starting with ``-`` must NOT be
-    reparsable as a claude CLI flag (e.g. ``--dangerously-skip-permissions``):
-    - ``model`` is bound with the ``--model=<value>`` form (the value can't become
-      a separate flag);
-    - the ``prompt`` positional is placed after a ``--`` end-of-options separator,
-      so the parser always treats it as the query, never a flag.
+    The prompt rides on the subprocess's **stdin**, never as an argv element:
+    - it can be arbitrarily large. Onboarding a big episode passed the whole
+      prompt as one argv element and blew past the OS single-argument limit
+      (Linux MAX_ARG_STRLEN, ~128KB) → ``execve`` failed with E2BIG. stdin is
+      unbounded.
+    - an LLM-authored prompt starting with ``-`` can never be reparsed as a
+      claude CLI flag (e.g. ``--dangerously-skip-permissions``), because stdin
+      is never option-parsed. ``claude -p`` with no positional query reads the
+      prompt from stdin (``--input-format text``, the default under ``--print``).
 
-    Operator-configured flags (``DAISUGI_CLAUDE_ARGS``) and any call-site
-    ``extra_args`` are inserted as real options BEFORE the ``--`` separator.
+    ``model`` can also be LLM-authored (a plan's ``preferred_model``), so it is
+    bound with the ``--model=<value>`` form — the value can't become a separate
+    flag. Operator-configured flags (``DAISUGI_CLAUDE_ARGS``) and any call-site
+    ``extra_args`` are inserted as real options.
     """
     args = [binary, "-p"]
     if model is not None:
         args.append(f"--model={model}")
     args.extend(_configured_extra_args())
     args.extend(extra_args)
-    args.append("--")
-    args.append(prompt)
     return args
 
 
@@ -130,24 +132,23 @@ async def call_claude_p_async(
     context (CLAUDE.md/.git) never leaks into the LLM call; pass an explicit
     ``cwd`` to override.
     """
-    args = _build_claude_args(binary, prompt, model, extra_args)
+    args = _build_claude_args(binary, model, extra_args)
 
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            stdin=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE,
             cwd=cwd if cwd is not None else _neutral_cwd(),
         )
     except FileNotFoundError as exc:
-        raise EnvelopeGenerationError(
-            f"claude binary not found: {binary!r}"
-        ) from exc
+        raise EnvelopeGenerationError(f"claude binary not found: {binary!r}") from exc
 
     try:
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout_s,
+            proc.communicate(input=prompt.encode("utf-8")),
+            timeout=timeout_s,
         )
     except asyncio.TimeoutError:
         await _terminate_and_reap(proc)
@@ -158,9 +159,7 @@ async def call_claude_p_async(
 
     if proc.returncode != 0:
         stderr = stderr_bytes[:500].decode("utf-8", "replace")
-        raise EnvelopeGenerationError(
-            f"claude -p exited {proc.returncode}: {stderr!r}"
-        )
+        raise EnvelopeGenerationError(f"claude -p exited {proc.returncode}: {stderr!r}")
 
     return stdout_bytes.decode("utf-8", "replace").strip()
 
@@ -179,7 +178,7 @@ def call_claude_p_sync(
     Runs in a neutral working directory by default so project context never
     leaks into the LLM call; pass an explicit ``cwd`` to override.
     """
-    args = _build_claude_args(binary, prompt, model, extra_args)
+    args = _build_claude_args(binary, model, extra_args)
 
     try:
         result = subprocess.run(
@@ -188,23 +187,17 @@ def call_claude_p_sync(
             text=True,
             timeout=timeout_s,
             check=False,
-            stdin=subprocess.DEVNULL,
+            input=prompt,
             cwd=cwd if cwd is not None else _neutral_cwd(),
         )
     except FileNotFoundError as exc:
-        raise EnvelopeGenerationError(
-            f"claude binary not found: {binary!r}"
-        ) from exc
+        raise EnvelopeGenerationError(f"claude binary not found: {binary!r}") from exc
     except subprocess.TimeoutExpired as exc:
-        raise EnvelopeGenerationError(
-            f"claude -p timed out after {timeout_s}s"
-        ) from exc
+        raise EnvelopeGenerationError(f"claude -p timed out after {timeout_s}s") from exc
 
     if result.returncode != 0:
         stderr = (result.stderr or "")[:500]
-        raise EnvelopeGenerationError(
-            f"claude -p exited {result.returncode}: {stderr!r}"
-        )
+        raise EnvelopeGenerationError(f"claude -p exited {result.returncode}: {stderr!r}")
 
     return (result.stdout or "").strip()
 
@@ -213,15 +206,11 @@ def _extract_first_json_object(text: str) -> dict:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end <= start:
-        raise EnvelopeGenerationError(
-            f"no JSON object in claude -p stdout: {text[:200]!r}"
-        )
+        raise EnvelopeGenerationError(f"no JSON object in claude -p stdout: {text[:200]!r}")
     try:
         return json.loads(text[start : end + 1])
     except json.JSONDecodeError as exc:
-        raise EnvelopeGenerationError(
-            f"claude -p stdout was not valid JSON: {exc}"
-        ) from exc
+        raise EnvelopeGenerationError(f"claude -p stdout was not valid JSON: {exc}") from exc
 
 
 def call_claude_p_json_sync(
@@ -233,7 +222,10 @@ def call_claude_p_json_sync(
 ) -> dict:
     """Call ``claude -p`` synchronously; return the first JSON object in stdout."""
     stdout = call_claude_p_sync(
-        prompt, timeout_s=timeout_s, model=model, binary=binary,
+        prompt,
+        timeout_s=timeout_s,
+        model=model,
+        binary=binary,
     )
     return _extract_first_json_object(stdout)
 
@@ -254,7 +246,11 @@ def call_claude_p_metered(
     with empty meter if the envelope can't be parsed.
     """
     raw = call_claude_p_sync(
-        prompt, timeout_s=timeout_s, model=model, binary=binary, cwd=cwd,
+        prompt,
+        timeout_s=timeout_s,
+        model=model,
+        binary=binary,
+        cwd=cwd,
         extra_args=("--output-format", "json"),
     )
     try:
@@ -275,8 +271,12 @@ def call_claude_p_metered(
     # so the token budget would never bite. total_cost_usd already prices the
     # cache discount, so the exact dollar figure is unaffected either way.
     tokens: int | None = None
-    fields = ("input_tokens", "output_tokens",
-              "cache_creation_input_tokens", "cache_read_input_tokens")
+    fields = (
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    )
     present = [usage.get(f) for f in fields if usage.get(f) is not None]
     if present:
         tokens = sum(int(v) for v in present)
@@ -301,7 +301,11 @@ def call_claude_p_json_metered(
     (the old message sent one operator debugging the wrong layer entirely).
     """
     text, meter = call_claude_p_metered(
-        prompt, timeout_s=timeout_s, model=model, binary=binary, cwd=cwd,
+        prompt,
+        timeout_s=timeout_s,
+        model=model,
+        binary=binary,
+        cwd=cwd,
     )
     try:
         return _extract_first_json_object(text), meter
@@ -323,9 +327,7 @@ _SCHEMA_PREAMBLE = (
 
 def _augment_prompt_with_schema(prompt: str, model: type[BaseModel]) -> str:
     schema = json.dumps(model.model_json_schema(), indent=2)
-    return (
-        f"{_SCHEMA_PREAMBLE}<json_schema>\n{schema}\n</json_schema>\n\n{prompt}"
-    )
+    return f"{_SCHEMA_PREAMBLE}<json_schema>\n{schema}\n</json_schema>\n\n{prompt}"
 
 
 def _flatten_messages(messages: list[dict]) -> str:
@@ -348,7 +350,10 @@ async def call_claude_p_structured(
     """Call ``claude -p`` with a schema-augmented prompt; validate the output."""
     augmented = _augment_prompt_with_schema(prompt, response_model)
     stdout = await call_claude_p_async(
-        augmented, timeout_s=timeout_s, model=model, binary=binary,
+        augmented,
+        timeout_s=timeout_s,
+        model=model,
+        binary=binary,
     )
     payload = _extract_first_json_object(stdout)
     try:

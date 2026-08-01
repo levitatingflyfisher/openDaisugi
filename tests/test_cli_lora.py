@@ -26,16 +26,25 @@ def _seed(journal: Journal, *, task: str, trace_id: str) -> None:
         permissions=Permission(shell=True),
     )
     plan = ActionPlan(
-        id=f"plan_{trace_id}", task=task, source="test",
+        id=f"plan_{trace_id}",
+        task=task,
+        source="test",
         steps=[ShellStep(id="s1", command="echo hi")],
     )
     result = VerificationResult(
-        plan_id=plan.id, envelope_id=env.id,
-        ok=True, violations=[], warnings=[], duration_ms=1.0,
+        plan_id=plan.id,
+        envelope_id=env.id,
+        ok=True,
+        violations=[],
+        warnings=[],
+        duration_ms=1.0,
     )
     journal.log(
-        trace_id=trace_id, task=task,
-        envelope=env, plan=plan, result=result,
+        trace_id=trace_id,
+        task=task,
+        envelope=env,
+        plan=plan,
+        result=result,
     )
     with sqlite3.connect(journal._db_path) as con:
         con.execute(
@@ -76,10 +85,15 @@ def test_lora_export_chat(tmp_path):
     result = runner.invoke(
         app,
         [
-            "lora", "export", str(out),
-            "--data-dir", str(tmp_path),
-            "--format", "chat",
-            "--system-prompt", "You produce envelopes.",
+            "lora",
+            "export",
+            str(out),
+            "--data-dir",
+            str(tmp_path),
+            "--format",
+            "chat",
+            "--system-prompt",
+            "You produce envelopes.",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -94,9 +108,13 @@ def test_lora_export_rejects_unknown_format(tmp_path):
     result = runner.invoke(
         app,
         [
-            "lora", "export", str(tmp_path / "x.jsonl"),
-            "--data-dir", str(tmp_path),
-            "--format", "markdown",
+            "lora",
+            "export",
+            str(tmp_path / "x.jsonl"),
+            "--data-dir",
+            str(tmp_path),
+            "--format",
+            "markdown",
         ],
     )
     assert result.exit_code == 2
@@ -129,9 +147,13 @@ def test_lora_export_days_filter(tmp_path):
     result = runner.invoke(
         app,
         [
-            "lora", "export", str(out),
-            "--data-dir", str(tmp_path),
-            "--days", "30",
+            "lora",
+            "export",
+            str(out),
+            "--data-dir",
+            str(tmp_path),
+            "--days",
+            "30",
         ],
     )
     assert result.exit_code == 0, result.output

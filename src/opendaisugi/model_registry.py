@@ -30,13 +30,13 @@ _log = logging.getLogger("opendaisugi.model_registry")
 # conservative and overridable per call; the research found llamafiles spread
 # across many orgs, so a tool must allow extension, not assume one canonical org.
 DEFAULT_TRUSTED_ORGS: tuple[str, ...] = (
-    "mozilla-ai",          # official llamafile builds + engine
-    "ggml-org",            # llama.cpp / GGUF reference org
+    "mozilla-ai",  # official llamafile builds + engine
+    "ggml-org",  # llama.cpp / GGUF reference org
     "Qwen",
-    "google",              # Gemma
+    "google",  # Gemma
     "meta-llama",
-    "microsoft",           # Phi
-    "bartowski",           # widely-used community GGUF quantizer
+    "microsoft",  # Phi
+    "bartowski",  # widely-used community GGUF quantizer
     "lmstudio-community",
 )
 
@@ -69,7 +69,9 @@ def _org_of(repo_id: str) -> str:
     return repo_id.split("/", 1)[0]
 
 
-def is_trusted(repo_id: str, trusted_orgs: "tuple[str, ...] | list[str]" = DEFAULT_TRUSTED_ORGS) -> bool:
+def is_trusted(
+    repo_id: str, trusted_orgs: "tuple[str, ...] | list[str]" = DEFAULT_TRUSTED_ORGS
+) -> bool:
     """True iff ``repo_id``'s org is in the trusted allowlist."""
     return _org_of(repo_id) in set(trusted_orgs)
 

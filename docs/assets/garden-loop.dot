@@ -1,0 +1,35 @@
+// openDaisugi — the garden loop.  Render: dot -Tpng -Gdpi=150 garden-loop.dot -o garden-loop.png
+digraph garden {
+  rankdir=LR;
+  bgcolor="#fbfaf7";
+  labelloc="t"; fontname="Helvetica"; fontsize=17;
+  label=<<b>openDaisugi &#8212; the garden loop</b><br/><font point-size="11" color="#6b6b6b">observe &#8594; distil &#8594; the right tool for the job &#8594; compose &#8594; reuse &#8212; verified on every run</font><br/> >;
+
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12,
+        color="#d8d8d8", penwidth=1.1, margin="0.20,0.13"];
+  edge [fontname="Helvetica", fontsize=10, color="#8a8a8a"];
+
+  sessions [label="agent sessions", fillcolor="#eef2f7"];
+  journal  [label=<journal<br/><font point-size="10" color="#6b6b6b">what actually worked</font>>, fillcolor="#eef2f7"];
+  tend     [label=<tend &#183; the Gardener<br/><font point-size="10" color="#6b6b6b">cluster + diff the successes</font>>, fillcolor="#efe7f7"];
+
+  frozen [label=<<b>frozen script</b><br/><font point-size="10" color="#2f6b39">0 tokens</font>>, fillcolor="#e4f3e6"];
+  typed  [label=<<b>typed skill</b><br/>f(pattern, path)<br/><font point-size="10" color="#2a5b8c">cheap bind</font>>, fillcolor="#e2eefb"];
+  fresh  [label=<left as<br/>fresh decompose>, fillcolor="#efefec"];
+
+  compose [label=<compose into<br/><b>higher-tier skills</b>>, fillcolor="#fbf3df"];
+  run     [label="run", fillcolor="#eef2f7"];
+  guard   [label=<<b>Z3 guard</b><br/><font point-size="10" color="#8a5a17">in-envelope?  ~free, fail-closed</font>>, shape=hexagon, fillcolor="#fde8cf"];
+
+  sessions -> journal [label="capture"];
+  journal  -> tend;
+  tend -> frozen [label="nothing varies"];
+  tend -> typed  [label="inputs vary"];
+  tend -> fresh  [label="structure diverges"];
+  frozen -> compose;
+  typed  -> compose;
+  compose -> run [label="reuse"];
+  guard -> run [label="checks every action", style=dashed, color="#c98a3a", fontcolor="#8a5a17", constraint=false];
+
+  { rank=same; frozen; typed; fresh; }
+}

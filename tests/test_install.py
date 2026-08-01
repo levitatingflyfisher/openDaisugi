@@ -9,6 +9,7 @@ Tests cover:
 - --yes skips confirmation prompt
 - Backup of existing configs before modification
 """
+
 from __future__ import annotations
 
 import json
@@ -25,6 +26,7 @@ from opendaisugi.install import (
 # ---------------------------------------------------------------------------
 # Detection
 # ---------------------------------------------------------------------------
+
 
 def test_detect_claude_code_by_dir(tmp_path):
     claude_dir = tmp_path / ".claude"
@@ -53,6 +55,7 @@ def test_detect_returns_empty_when_nothing_present(tmp_path):
 # InstallPlan / dry-run
 # ---------------------------------------------------------------------------
 
+
 def test_dry_run_writes_nothing(tmp_path):
     claude_dir = tmp_path / ".claude"
     claude_dir.mkdir()
@@ -73,6 +76,7 @@ def test_dry_run_still_reports_planned_changes(tmp_path):
 # Claude Code — settings.json
 # ---------------------------------------------------------------------------
 
+
 def test_install_creates_settings_json(tmp_path):
     # MCP lands in ~/.claude.json (the file Claude Code actually reads), not settings.json.
     (tmp_path / ".claude").mkdir()
@@ -88,10 +92,7 @@ def test_install_adds_pretooluse_hook(tmp_path):
     hooks = settings.get("hooks", {})
     pre = hooks.get("PreToolUse", [])
     commands = [
-        h["command"]
-        for entry in pre
-        for h in entry.get("hooks", [])
-        if h.get("type") == "command"
+        h["command"] for entry in pre for h in entry.get("hooks", []) if h.get("type") == "command"
     ]
     assert any("daisugi" in c and "hook" in c for c in commands)
 
@@ -115,10 +116,7 @@ def test_install_idempotent_settings(tmp_path):
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     pre = settings["hooks"]["PreToolUse"]
     daisugi_hooks = [
-        h
-        for entry in pre
-        for h in entry.get("hooks", [])
-        if "daisugi" in h.get("command", "")
+        h for entry in pre for h in entry.get("hooks", []) if "daisugi" in h.get("command", "")
     ]
     assert len(daisugi_hooks) == len(set(h["command"] for h in daisugi_hooks))
 
@@ -127,14 +125,14 @@ def test_install_merges_into_existing_settings(tmp_path):
     # Existing mcpServers in ~/.claude.json must be preserved alongside ours.
     claude_dir = tmp_path / ".claude"
     claude_dir.mkdir()
-    (tmp_path / ".claude.json").write_text(json.dumps(
-        {"mcpServers": {"other-tool": {"command": "other"}}, "someKey": True}
-    ))
+    (tmp_path / ".claude.json").write_text(
+        json.dumps({"mcpServers": {"other-tool": {"command": "other"}}, "someKey": True})
+    )
     install(home=tmp_path, yes=True)
     cj = json.loads((tmp_path / ".claude.json").read_text())
-    assert cj["someKey"] is True                # unrelated user data preserved
-    assert "other-tool" in cj["mcpServers"]     # existing preserved
-    assert "opendaisugi" in cj["mcpServers"]    # new added
+    assert cj["someKey"] is True  # unrelated user data preserved
+    assert "other-tool" in cj["mcpServers"]  # existing preserved
+    assert "opendaisugi" in cj["mcpServers"]  # new added
 
 
 def test_install_backs_up_existing_settings(tmp_path):
@@ -149,6 +147,7 @@ def test_install_backs_up_existing_settings(tmp_path):
 # ---------------------------------------------------------------------------
 # Claude Code — CLAUDE.md
 # ---------------------------------------------------------------------------
+
 
 def test_install_appends_to_claude_md(tmp_path):
     (tmp_path / ".claude").mkdir()
@@ -180,6 +179,7 @@ def test_install_preserves_existing_claude_md(tmp_path):
 # Hermes
 # ---------------------------------------------------------------------------
 
+
 def test_install_hermes_adds_hook(tmp_path):
     # v0.28.0: Hermes reads config.yaml (cli-config.yaml was a no-op bug).
     (tmp_path / ".hermes").mkdir()
@@ -203,6 +203,7 @@ def test_install_hermes_idempotent(tmp_path):
 # ---------------------------------------------------------------------------
 # InstallResult
 # ---------------------------------------------------------------------------
+
 
 def test_install_result_lists_modified_files(tmp_path):
     (tmp_path / ".claude").mkdir()
@@ -256,11 +257,17 @@ def test_claude_install_does_not_add_session_start(tmp_path):
 def test_claude_install_migrates_out_old_session_start(tmp_path):
     claude = tmp_path / ".claude"
     claude.mkdir()
-    (claude / "settings.json").write_text(json.dumps({
-        "hooks": {"SessionStart": [
-            {"hooks": [{"type": "command", "command": "daisugi install --print-skill"}]}
-        ]}
-    }))
+    (claude / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": "daisugi install --print-skill"}]}
+                    ]
+                }
+            }
+        )
+    )
     ClaudeCodeRuntime().apply(tmp_path)
     settings = json.loads((claude / "settings.json").read_text())
     ss = settings.get("hooks", {}).get("SessionStart", [])
@@ -272,9 +279,9 @@ def test_claude_install_keeps_mcp_and_pretooluse(tmp_path):
     (tmp_path / ".claude").mkdir()
     ClaudeCodeRuntime().apply(tmp_path)
     cj = json.loads((tmp_path / ".claude.json").read_text())
-    assert "opendaisugi" in cj["mcpServers"]   # MCP in the file Claude reads
+    assert "opendaisugi" in cj["mcpServers"]  # MCP in the file Claude reads
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    pre = settings["hooks"]["PreToolUse"]       # hook stays in settings.json
+    pre = settings["hooks"]["PreToolUse"]  # hook stays in settings.json
     cmds = [h["command"] for e in pre for h in e.get("hooks", [])]
     assert any("daisugi hook record" in c for c in cmds)
 
@@ -331,6 +338,7 @@ def test_codex_install_is_idempotent(tmp_path):
 
 
 # --- Task 7: HermesRuntime (config.yaml, skill+mcp+hook) ----------------------
+
 
 def _hermes_cfg(home):
     return yaml.safe_load((home / ".hermes" / "config.yaml").read_text())
@@ -404,6 +412,7 @@ def test_openclaw_detect_requires_dir(tmp_path):
 
 # --- Task 10: OpenClaw before_tool_call plugin -------------------------------
 
+
 def test_openclaw_plugin_materialized(tmp_path):
     (tmp_path / ".openclaw" / "workspace").mkdir(parents=True)
     OpenClawRuntime().apply(tmp_path)
@@ -417,6 +426,7 @@ def test_openclaw_plugin_materialized(tmp_path):
 
 
 # --- Task 11: layer-aware orchestration / dry-run -----------------------------
+
 
 def test_dry_run_reports_all_layers_no_writes(tmp_path):
     (tmp_path / ".claude").mkdir()
@@ -457,6 +467,7 @@ def test_uninstall_preserves_unmanaged_content(tmp_path):
 
 # --- Task 16: combined four-harness install -----------------------------------
 
+
 def test_combined_install_all_harnesses(tmp_path):
     for d in (".claude", ".codex", ".hermes", ".openclaw/workspace"):
         (tmp_path / d).mkdir(parents=True)
@@ -469,8 +480,12 @@ def test_combined_install_all_harnesses(tmp_path):
     # path so it's shared here — assert it directly (the old `or` short-circuited
     # and never actually checked the second arm).
     assert (tmp_path / ".agents" / "skills" / "opendaisugi-checklist" / "SKILL.md").is_file()
-    assert (tmp_path / ".hermes" / "skills" / "opendaisugi" / "opendaisugi-checklist" / "SKILL.md").is_file()
-    assert (tmp_path / ".openclaw" / "workspace" / "skills" / "opendaisugi-checklist" / "SKILL.md").is_file()
+    assert (
+        tmp_path / ".hermes" / "skills" / "opendaisugi" / "opendaisugi-checklist" / "SKILL.md"
+    ).is_file()
+    assert (
+        tmp_path / ".openclaw" / "workspace" / "skills" / "opendaisugi-checklist" / "SKILL.md"
+    ).is_file()
 
 
 # --- SGCM fix: --runtime exact-key selection (was substring over-select) -------
@@ -492,12 +507,13 @@ def test_select_runtimes_exact_keys():
 
 def test_select_runtimes_ambiguous_or_unknown_raises():
     with _pytest.raises(ValueError):
-        _select_runtimes(["c"])       # ambiguous: claude + codex
+        _select_runtimes(["c"])  # ambiguous: claude + codex
     with _pytest.raises(ValueError):
-        _select_runtimes(["bogus"])   # matches nothing
+        _select_runtimes(["bogus"])  # matches nothing
 
 
 # --- SGCM fix: Claude MCP lands in ~/.claude.json (settings.json is dead) ------
+
 
 def test_claude_mcp_goes_to_claude_json_not_settings(tmp_path):
     (tmp_path / ".claude").mkdir()
@@ -506,24 +522,29 @@ def test_claude_mcp_goes_to_claude_json_not_settings(tmp_path):
     assert cj["mcpServers"]["opendaisugi"]["command"] == "daisugi"
     assert cj["mcpServers"]["opendaisugi"]["type"] == "stdio"
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert "mcpServers" not in settings              # the dead file must stay clean
+    assert "mcpServers" not in settings  # the dead file must stay clean
     assert "PreToolUse" in settings.get("hooks", {})  # hook stays in settings.json
 
 
 def test_claude_mcp_preserves_existing_claude_json(tmp_path):
     (tmp_path / ".claude").mkdir()
-    (tmp_path / ".claude.json").write_text(json.dumps({
-        "mcpServers": {"other": {"command": "x"}},
-        "numStartups": 42,
-    }))
+    (tmp_path / ".claude.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {"other": {"command": "x"}},
+                "numStartups": 42,
+            }
+        )
+    )
     ClaudeCodeRuntime().apply(tmp_path)
     cj = json.loads((tmp_path / ".claude.json").read_text())
-    assert cj["numStartups"] == 42               # unrelated user data preserved
-    assert "other" in cj["mcpServers"]           # existing server preserved
+    assert cj["numStartups"] == 42  # unrelated user data preserved
+    assert "other" in cj["mcpServers"]  # existing server preserved
     assert "opendaisugi" in cj["mcpServers"]
 
 
 # --- SGCM fix: reverse paths are backed-up, change-guarded, no empty scaffolding
+
 
 def test_reverse_hermes_no_op_when_not_installed(tmp_path):
     (tmp_path / ".hermes").mkdir()
@@ -559,12 +580,14 @@ def test_reverse_openclaw_no_op_when_not_installed(tmp_path):
 
 # --- SGCM fix: uninstall isolates per-runtime failures ------------------------
 
+
 def test_uninstall_isolates_per_runtime_failures(tmp_path):
     (tmp_path / ".claude").mkdir()
     install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()])
 
     class Boom:
         name = "Boom"
+
         def reverse(self, home):
             raise RuntimeError("kaboom")
 
@@ -606,29 +629,36 @@ from opendaisugi.install import _patch_claude_settings
 
 def test_patch_claude_settings_noop_rerun_no_backup(tmp_path):
     sp = tmp_path / "settings.json"
-    _patch_claude_settings(sp)          # first: creates
+    _patch_claude_settings(sp)  # first: creates
     before = sp.read_text()
     result = _patch_claude_settings(sp)  # second: nothing to change
-    assert result == []                  # reports no modification
-    assert sp.read_text() == before      # byte-identical
+    assert result == []  # reports no modification
+    assert sp.read_text() == before  # byte-identical
     assert not list(tmp_path.glob("settings.json.bak*"))  # no backup on no-op
 
 
 def test_patch_claude_settings_preserves_user_session_start(tmp_path):
     sp = tmp_path / "settings.json"
-    sp.write_text(json.dumps({"hooks": {"SessionStart": [
-        {"hooks": [{"type": "command", "command": "my-own-thing"}]}
-    ]}}))
+    sp.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [{"hooks": [{"type": "command", "command": "my-own-thing"}]}]
+                }
+            }
+        )
+    )
     _patch_claude_settings(sp)
     after1 = sp.read_text()
-    _patch_claude_settings(sp)            # idempotent
-    assert sp.read_text() == after1       # user's SessionStart not churned
+    _patch_claude_settings(sp)  # idempotent
+    assert sp.read_text() == after1  # user's SessionStart not churned
     s = json.loads(sp.read_text())
     cmds = [h["command"] for e in s["hooks"]["SessionStart"] for h in e.get("hooks", [])]
-    assert "my-own-thing" in cmds         # user hook preserved
+    assert "my-own-thing" in cmds  # user hook preserved
 
 
 # --- SGCM fix: OpenClaw plugin must time out a stalled daisugi -----------------
+
 
 def test_openclaw_plugin_has_spawn_timeout(tmp_path):
     (tmp_path / ".openclaw" / "workspace").mkdir(parents=True)
@@ -648,21 +678,27 @@ def test_install_isolates_per_runtime_apply_failures(tmp_path):
 
     class Boom:
         name = "Boom"
-        def detect(self, h): return True
-        def plan(self, h): return []
-        def apply(self, h): raise RuntimeError("boom")
+
+        def detect(self, h):
+            return True
+
+        def plan(self, h):
+            return []
+
+        def apply(self, h):
+            raise RuntimeError("boom")
 
     res = install(home=tmp_path, yes=True, runtimes=[Boom(), ClaudeCodeRuntime()])
     assert (tmp_path / ".claude.json").exists()  # Claude installed despite Boom
-    assert "Boom" in res.summary                 # failure surfaced
+    assert "Boom" in res.summary  # failure surfaced
 
 
 def test_patch_claude_mcp_does_not_clobber_unparseable_file(tmp_path):
     cj = tmp_path / ".claude.json"
     cj.write_text("{ this is : not valid json,,,")
     result = _patch_claude_mcp(cj)
-    assert result == []                          # skipped, not overwritten
-    assert "this is" in cj.read_text()           # user's file preserved verbatim
+    assert result == []  # skipped, not overwritten
+    assert "this is" in cj.read_text()  # user's file preserved verbatim
     assert "opendaisugi" not in cj.read_text()
 
 
@@ -707,14 +743,14 @@ def test_strip_json5_comments_preserves_double_slash_in_strings(tmp_path):
     out = _strip_json5_comments(src)
     d = json.loads(out)
     assert d["url"] == "https://example.com/a//b"  # // inside a string is NOT a comment
-    assert d["x"] == 1                              # block comment still stripped
+    assert d["x"] == 1  # block comment still stripped
 
 
 def test_unpatch_instructions_requires_marker_pair(tmp_path):
     p = tmp_path / "AGENTS.md"
     p.write_text(f"# Notes\nI reference {_MARK} once, in prose.\nKeep this line.\n")
     result = _unpatch_instructions(p)
-    assert result == []                       # single stray marker → no-op
+    assert result == []  # single stray marker → no-op
     assert "Keep this line." in p.read_text()  # file not truncated to EOF
 
 
@@ -730,7 +766,7 @@ def test_remove_dir_is_symlink_safe(tmp_path):
     link = tmp_path / "link"
     link.symlink_to(victim, target_is_directory=True)
     _remove_dir(link)
-    assert not link.exists()                       # the link is gone
+    assert not link.exists()  # the link is gone
     assert victim.exists() and (victim / "keep.txt").read_text() == "precious"  # target untouched
 
 
@@ -746,8 +782,8 @@ def test_openclaw_plugin_does_not_follow_symlink(tmp_path):
     victim.write_text("precious")
     (dest / "index.mjs").symlink_to(victim)  # attacker pre-plants a symlink
     _install_openclaw_plugin(tmp_path)
-    assert victim.read_text() == "precious"            # victim NOT overwritten
-    assert not (dest / "index.mjs").is_symlink()       # link replaced by real file
+    assert victim.read_text() == "precious"  # victim NOT overwritten
+    assert not (dest / "index.mjs").is_symlink()  # link replaced by real file
     assert "before_tool_call" in (dest / "index.mjs").read_text()
 
 
@@ -770,8 +806,9 @@ def test_patch_mcp_warns_when_clobbering_json5_comments(tmp_path):
 
     with _warnings.catch_warnings(record=True) as caught:
         _warnings.simplefilter("always")
-        written = _patch_mcp(cfg, _JSON5, ("mcp", "servers"),
-                             {"command": "daisugi", "args": ["mcp", "serve"]})
+        written = _patch_mcp(
+            cfg, _JSON5, ("mcp", "servers"), {"command": "daisugi", "args": ["mcp", "serve"]}
+        )
 
     assert written == [cfg]
     comment_warnings = [w for w in caught if "JSON5 comments" in str(w.message)]
@@ -794,13 +831,12 @@ def test_patch_mcp_no_warning_when_no_comments_to_lose(tmp_path):
 
     with _warnings.catch_warnings(record=True) as caught:
         _warnings.simplefilter("always")
-        _patch_mcp(cfg, _JSON5, ("mcp", "servers"),
-                   {"command": "daisugi", "args": ["mcp", "serve"]})
+        _patch_mcp(
+            cfg, _JSON5, ("mcp", "servers"), {"command": "daisugi", "args": ["mcp", "serve"]}
+        )
 
     comment_warnings = [w for w in caught if "JSON5 comments" in str(w.message)]
-    assert comment_warnings == [], (
-        "no comments to lose → no warning"
-    )
+    assert comment_warnings == [], "no comments to lose → no warning"
 
 
 def test_patch_claude_settings_does_not_clobber_unparseable_file(tmp_path):
@@ -810,14 +846,17 @@ def test_patch_claude_settings_does_not_clobber_unparseable_file(tmp_path):
     import warnings as _w
 
     from opendaisugi.install import _patch_claude_settings
+
     sp = tmp_path / "settings.json"
-    original = '{"permissions": {"deny": ["Read(./secrets/**)"]}, "env": {"K": "v"},}'  # trailing comma
+    original = (
+        '{"permissions": {"deny": ["Read(./secrets/**)"]}, "env": {"K": "v"},}'  # trailing comma
+    )
     sp.write_text(original)
     with _w.catch_warnings(record=True) as caught:
         _w.simplefilter("always")
         result = _patch_claude_settings(sp)
-    assert result == []                       # skipped (no files modified)
-    assert sp.read_text() == original         # file untouched
+    assert result == []  # skipped (no files modified)
+    assert sp.read_text() == original  # file untouched
     assert any("not valid JSON" in str(x.message) for x in caught)
 
 
@@ -825,6 +864,7 @@ def test_patch_hermes_config_does_not_clobber_unparseable_file(tmp_path):
     import warnings as _w
 
     from opendaisugi.install import _patch_hermes_config
+
     cp = tmp_path / "config.yaml"
     original = "mcp_servers: [\n  - name: x\n   bad_indent: y\n"  # malformed YAML
     cp.write_text(original)

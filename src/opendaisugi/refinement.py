@@ -48,8 +48,7 @@ class RefinementRecord(BaseModel):
     def _require_stepbase(cls, v):
         if v is not None and not isinstance(v, StepBase):
             raise ValueError(
-                f"RefinementRecord step must be a StepBase subclass, "
-                f"got {type(v).__name__}"
+                f"RefinementRecord step must be a StepBase subclass, got {type(v).__name__}"
             )
         return v
 

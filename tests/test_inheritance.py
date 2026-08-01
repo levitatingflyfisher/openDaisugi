@@ -99,10 +99,7 @@ def test_shell_relaxation_violation():
     child = _env(shell=True)
     violations = verify_inheritance(child, parent)
     # Must mention shell but not be the network violation
-    assert any(
-        "shell" in v.message and "network" not in v.message
-        for v in violations
-    )
+    assert any("shell" in v.message and "network" not in v.message for v in violations)
 
 
 def test_shell_allowlist_relaxation_violation():
@@ -202,10 +199,7 @@ def test_parent_with_own_parent_violation():
     parent.parent_envelope = grandparent.id  # depth-2 not supported in v0.1.2
     child = _env()
     violations = verify_inheritance(child, parent)
-    assert any(
-        "parent_envelope" in v.message or "depth" in v.message
-        for v in violations
-    )
+    assert any("parent_envelope" in v.message or "depth" in v.message for v in violations)
 
 
 def test_multiple_violations_all_reported():
@@ -258,14 +252,19 @@ def test_all_violations_have_inheritance_stage():
 
 # --------------------- robotics/mcp/stakes tightening (SGCM review H1) ---------------------
 
+
 def _envp(**perm_and_meta):
     from opendaisugi.models import Envelope, Permission
+
     stakes = perm_and_meta.pop("stakes", "medium")
-    return Envelope(generated_by="t", task="x", stakes=stakes, permissions=Permission(**perm_and_meta))
+    return Envelope(
+        generated_by="t", task="x", stakes=stakes, permissions=Permission(**perm_and_meta)
+    )
 
 
 def test_inheritance_rejects_relaxed_velocity():
     from opendaisugi.inheritance import verify_inheritance
+
     parent = _envp(velocity_limit=0.5, stakes="physical")
     child = _envp(velocity_limit=5.0, stakes="physical")  # 10x faster
     assert verify_inheritance(child, parent)  # non-empty → violations
@@ -273,6 +272,7 @@ def test_inheritance_rejects_relaxed_velocity():
 
 def test_inheritance_rejects_expanded_workspace():
     from opendaisugi.inheritance import verify_inheritance
+
     parent = _envp(workspace_bounds=((0, 0, 0), (1, 1, 1)), stakes="physical")
     child = _envp(workspace_bounds=((0, 0, 0), (100, 100, 100)), stakes="physical")
     assert verify_inheritance(child, parent)
@@ -280,13 +280,15 @@ def test_inheritance_rejects_expanded_workspace():
 
 def test_inheritance_rejects_added_mcp_tool():
     from opendaisugi.inheritance import verify_inheritance
-    parent = _envp(mcp_allowlist=[])          # deny all
+
+    parent = _envp(mcp_allowlist=[])  # deny all
     child = _envp(mcp_allowlist=["github/*"])  # added a tool
     assert verify_inheritance(child, parent)
 
 
 def test_inheritance_rejects_stakes_downgrade():
     from opendaisugi.inheritance import verify_inheritance
+
     parent = _envp(stakes="physical")
     child = _envp(stakes="low")  # downgrade re-enables probabilistic primitives
     assert verify_inheritance(child, parent)
@@ -294,8 +296,17 @@ def test_inheritance_rejects_stakes_downgrade():
 
 def test_inheritance_allows_genuine_tightening():
     from opendaisugi.inheritance import verify_inheritance
-    parent = _envp(velocity_limit=5.0, workspace_bounds=((0, 0, 0), (10, 10, 10)),
-                   mcp_allowlist=["github/*"], stakes="high")
-    child = _envp(velocity_limit=2.0, workspace_bounds=((0, 0, 0), (5, 5, 5)),
-                  mcp_allowlist=[], stakes="physical")
+
+    parent = _envp(
+        velocity_limit=5.0,
+        workspace_bounds=((0, 0, 0), (10, 10, 10)),
+        mcp_allowlist=["github/*"],
+        stakes="high",
+    )
+    child = _envp(
+        velocity_limit=2.0,
+        workspace_bounds=((0, 0, 0), (5, 5, 5)),
+        mcp_allowlist=[],
+        stakes="physical",
+    )
     assert not verify_inheritance(child, parent)

@@ -14,7 +14,8 @@ from opendaisugi.subsumption import envelope_subsumes
 
 def _env(allowlist, invariants=None):
     return Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=list(allowlist)),
         invariants=invariants or [],
     )
@@ -55,9 +56,14 @@ def test_outer_invariant_not_in_inner_fails_delegation():
     no_rm = Invariant(
         type="no_rm",
         description="forbid rm",
-        expr={"op": "forall_steps", "pred": {
-            "op": "not_matches", "path": "command", "regex": r"^rm ",
-        }},
+        expr={
+            "op": "forall_steps",
+            "pred": {
+                "op": "not_matches",
+                "path": "command",
+                "regex": r"^rm ",
+            },
+        },
     )
     outer = _env(["echo", "rm"], invariants=[no_rm])
     inner = _env(["echo", "rm"])  # no invariant
@@ -116,9 +122,9 @@ def test_outer_llm_check_is_not_silently_approved():
     # Subsumption MUST fail: inner admits steps outer's LLMCheck could reject.
     assert not r.holds, "outer LLMCheck should block silent subsumption"
     # AND the soft node surfaces so the caller sees what wasn't proven.
-    assert any(
-        "llm_check" in s for s in r.unverified_invariants
-    ), f"expected llm_check in unverified_invariants, got {r.unverified_invariants}"
+    assert any("llm_check" in s for s in r.unverified_invariants), (
+        f"expected llm_check in unverified_invariants, got {r.unverified_invariants}"
+    )
 
 
 def test_shared_llm_check_in_both_envelopes_still_subsumes():
@@ -133,9 +139,7 @@ def test_shared_llm_check_in_both_envelopes_still_subsumes():
     outer = _env(["echo"], invariants=[shared])
     inner = _env(["echo"], invariants=[shared])
     r = envelope_subsumes(outer, inner)
-    assert r.holds, (
-        f"identical LLMCheck on both sides should subsume; got {r.counterexample}"
-    )
+    assert r.holds, f"identical LLMCheck on both sides should subsume; got {r.counterexample}"
 
 
 # v0.28.3 — subsumption's metachar list must stay in sync with verify's
@@ -159,6 +163,7 @@ def test_subsumption_blocks_command_substitution_substring():
     import z3
 
     from opendaisugi.subsumption import _encode_shell_admission
+
     s = z3.String("cmd")
     perms = Permission(shell=True, shell_allowlist=["cat"])
     admission = _encode_shell_admission(perms, s)
@@ -175,6 +180,7 @@ def test_subsumption_blocks_redirect_substring():
     import z3
 
     from opendaisugi.subsumption import _encode_shell_admission
+
     s = z3.String("cmd")
     perms = Permission(shell=True, shell_allowlist=["cat"])
     admission = _encode_shell_admission(perms, s)
@@ -189,8 +195,10 @@ def test_subsumption_blocks_redirect_substring():
 
 # --------------------- file/network/mcp subsumption (SGCM review VC-1) ---------------------
 
+
 def _penv(**perm):
     from opendaisugi.models import Envelope, Permission
+
     return Envelope(generated_by="t", task="x", permissions=Permission(**perm))
 
 
@@ -214,7 +222,7 @@ def test_subsumption_rejects_inner_network_host_outside_outer():
 
 def test_subsumption_rejects_inner_any_host_under_restricted_outer():
     caller = _penv(network=True, network_hosts=["api.internal"])  # restricted
-    skill = _penv(network=True, network_hosts=[])                 # any host
+    skill = _penv(network=True, network_hosts=[])  # any host
     assert not envelope_subsumes(caller, skill).holds
 
 
@@ -231,29 +239,52 @@ def test_subsumption_rejects_inner_mcp_outside_outer():
 
 
 def test_subsumption_rejects_the_full_vc1_scenario():
-    caller = _penv(shell=True, shell_allowlist=["echo"], file_write=["/tmp/**"],
-                  network=True, network_hosts=["api.internal"], mcp_allowlist=["safe/*"])
-    skill = _penv(shell=True, shell_allowlist=["echo"], file_write=["/etc/**", "/home/**"],
-                 network=True, network_hosts=["evil.com"], mcp_allowlist=["dangerous/*"])
+    caller = _penv(
+        shell=True,
+        shell_allowlist=["echo"],
+        file_write=["/tmp/**"],
+        network=True,
+        network_hosts=["api.internal"],
+        mcp_allowlist=["safe/*"],
+    )
+    skill = _penv(
+        shell=True,
+        shell_allowlist=["echo"],
+        file_write=["/etc/**", "/home/**"],
+        network=True,
+        network_hosts=["evil.com"],
+        mcp_allowlist=["dangerous/*"],
+    )
     assert not envelope_subsumes(caller, skill).holds
 
 
 def test_subsumption_still_holds_for_identical_envelopes():
-    e = _penv(shell=True, shell_allowlist=["echo"], file_read=["/data/**"],
-             file_write=["/tmp/**"], network=True, network_hosts=["a.com"], mcp_allowlist=["gh/*"])
+    e = _penv(
+        shell=True,
+        shell_allowlist=["echo"],
+        file_read=["/data/**"],
+        file_write=["/tmp/**"],
+        network=True,
+        network_hosts=["a.com"],
+        mcp_allowlist=["gh/*"],
+    )
     assert envelope_subsumes(e, e).holds
 
 
 # --------------------- soft-node polarity (SGCM review VC-3) ---------------------
+
 
 def test_outer_soft_deny_rule_not_dropped_under_unsupported_regex():
     # r'\b' (word boundary) is UnsupportedRegexError → the NotMatches compiles to
     # a SOFT node. The old code pinned outer-only soft nodes to False, which under
     # the negation made the deny-rule term True and silently DROPPED it → holds=True.
     soft_deny = Invariant(
-        type="no_sudo", description="forbid sudo",
-        expr={"op": "forall_steps", "pred": {
-            "op": "not_matches", "path": "command", "regex": r".*\bsudo\b.*"}},
+        type="no_sudo",
+        description="forbid sudo",
+        expr={
+            "op": "forall_steps",
+            "pred": {"op": "not_matches", "path": "command", "regex": r".*\bsudo\b.*"},
+        },
     )
     outer = _env(["echo", "sudo"], invariants=[soft_deny])
     inner = _env(["echo", "sudo"])  # no such deny → inner can run sudo
@@ -263,9 +294,12 @@ def test_outer_soft_deny_rule_not_dropped_under_unsupported_regex():
 
 def test_shared_soft_invariant_still_subsumes():
     soft = Invariant(
-        type="x", description="d",
-        expr={"op": "forall_steps", "pred": {
-            "op": "not_matches", "path": "command", "regex": r".*\bsudo\b.*"}},
+        type="x",
+        description="d",
+        expr={
+            "op": "forall_steps",
+            "pred": {"op": "not_matches", "path": "command", "regex": r".*\bsudo\b.*"},
+        },
     )
     e = _env(["echo"], invariants=[soft])
     assert envelope_subsumes(e, e).holds  # shared soft node → subsumes

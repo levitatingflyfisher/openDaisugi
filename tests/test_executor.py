@@ -89,20 +89,27 @@ def test_fake_executor_keys_by_kind():
     shell_res = ExecutorResult(rc=0, stdout="shell-out", duration_ms=0.0, timed_out=False)
     read_res = ExecutorResult(rc=0, stdout="hostfile", duration_ms=0.0, timed_out=False)
     net_res = ExecutorResult(rc=0, stdout="page", duration_ms=0.0, timed_out=False)
-    executor = FakeExecutor(mapping={
-        "ls -la": shell_res,
-        "/etc/hosts": read_res,
-        "https://example.com": net_res,
-    })
-    assert executor.run(
-        ShellStep(id="a", command="ls -la"), timeout_s=30, max_output_bytes=1024
-    ) is shell_res
-    assert executor.run(
-        FileReadStep(id="b", path="/etc/hosts"), timeout_s=30, max_output_bytes=1024
-    ) is read_res
-    assert executor.run(
-        NetworkStep(id="c", url="https://example.com"), timeout_s=30, max_output_bytes=1024
-    ) is net_res
+    executor = FakeExecutor(
+        mapping={
+            "ls -la": shell_res,
+            "/etc/hosts": read_res,
+            "https://example.com": net_res,
+        }
+    )
+    assert (
+        executor.run(ShellStep(id="a", command="ls -la"), timeout_s=30, max_output_bytes=1024)
+        is shell_res
+    )
+    assert (
+        executor.run(FileReadStep(id="b", path="/etc/hosts"), timeout_s=30, max_output_bytes=1024)
+        is read_res
+    )
+    assert (
+        executor.run(
+            NetworkStep(id="c", url="https://example.com"), timeout_s=30, max_output_bytes=1024
+        )
+        is net_res
+    )
 
 
 def test_fake_executor_unknown_key_raises():
@@ -114,9 +121,14 @@ def test_fake_executor_unknown_key_raises():
 
 def test_fake_executor_default_success():
     """When no mapping is provided, FakeExecutor returns rc=0 by default."""
-    executor = FakeExecutor(default=ExecutorResult(
-        rc=0, stdout="", duration_ms=0.1, timed_out=False,
-    ))
+    executor = FakeExecutor(
+        default=ExecutorResult(
+            rc=0,
+            stdout="",
+            duration_ms=0.1,
+            timed_out=False,
+        )
+    )
     step = ShellStep(id="s1", command="anything")
     result = executor.run(step, timeout_s=30, max_output_bytes=1024)
     assert result.rc == 0

@@ -14,17 +14,23 @@ import pytest
 
 from opendaisugi.tier1 import ClaudeCodeTier1Provider, Tier1Provider
 
-_VALID_ENVELOPE_JSON = json.dumps({
-    "generated_by": "claude-code-tier1",
-    "task": "demo",
-    "permissions": {
-        "file_read": [], "file_write": [],
-        "network": False, "shell": False, "shell_allowlist": [],
-        "max_execution_time_s": 30, "max_output_size_mb": 10,
-    },
-    "invariants": [],
-    "postconditions": [{"type": "exit_code", "expected": 0}],
-})
+_VALID_ENVELOPE_JSON = json.dumps(
+    {
+        "generated_by": "claude-code-tier1",
+        "task": "demo",
+        "permissions": {
+            "file_read": [],
+            "file_write": [],
+            "network": False,
+            "shell": False,
+            "shell_allowlist": [],
+            "max_execution_time_s": 30,
+            "max_output_size_mb": 10,
+        },
+        "invariants": [],
+        "postconditions": [{"type": "exit_code", "expected": 0}],
+    }
+)
 
 
 class _FakeProc:
@@ -34,7 +40,8 @@ class _FakeProc:
         self.returncode = returncode
         self._terminated = False
 
-    async def communicate(self) -> tuple[bytes, bytes]:
+    async def communicate(self, input=None) -> tuple[bytes, bytes]:
+        self._input = input
         return self._stdout, self._stderr
 
     def terminate(self) -> None:
@@ -94,7 +101,7 @@ async def test_timeout_terminates_subprocess() -> None:
         terminated = False
         killed = False
 
-        async def communicate(self):
+        async def communicate(self, input=None):
             await asyncio.sleep(10)
             return b"", b""
 

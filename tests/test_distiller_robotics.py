@@ -24,7 +24,8 @@ from opendaisugi.pathway_store import PathwayStore
 
 def _robot_plan_env(task: str) -> tuple[ActionPlan, Envelope]:
     env = Envelope(
-        generated_by="test", task=task,
+        generated_by="test",
+        task=task,
         permissions=Permission(
             workspace_bounds=((0, -0.5, 0), (1, 0.5, 1)),
             velocity_limit=2.0,
@@ -32,22 +33,30 @@ def _robot_plan_env(task: str) -> tuple[ActionPlan, Envelope]:
         ),
         invariants=[Invariant(type="end_effector_in_workspace", description="in ws")],
     )
-    plan = ActionPlan(source="t", task=task, steps=[
-        SimulationResetStep(id="reset"),
-        JointMoveStep(id="home", joint_targets={"j1": 0.0}, duration_s=1.0,
-                      depends_on=["reset"]),
-        CartesianMoveStep(id="go", target_position=(0.3, 0.2, 0.0),
-                          depends_on=["home"]),
-        GripperStep(id="grab", action="close", depends_on=["go"]),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task=task,
+        steps=[
+            SimulationResetStep(id="reset"),
+            JointMoveStep(
+                id="home", joint_targets={"j1": 0.0}, duration_s=1.0, depends_on=["reset"]
+            ),
+            CartesianMoveStep(id="go", target_position=(0.3, 0.2, 0.0), depends_on=["home"]),
+            GripperStep(id="grab", action="close", depends_on=["go"]),
+        ],
+    )
     return plan, env
 
 
 def _write_robot_success_trace(journal: Journal, task: str) -> str:
     plan, env = _robot_plan_env(task)
     result = VerificationResult(
-        ok=True, violations=[], warnings=[],
-        envelope_id=env.id, plan_id=plan.id, duration_ms=0.1,
+        ok=True,
+        violations=[],
+        warnings=[],
+        envelope_id=env.id,
+        plan_id=plan.id,
+        duration_ms=0.1,
     )
     trace_id = journal.log(task=task, envelope=env, plan=plan, result=result)
     run_id = f"run_{trace_id}"
@@ -75,10 +84,8 @@ async def test_tend_distills_robot_traces_into_pathway(tmp_path, monkeypatch):
     )
 
     # Deterministic embedder: cluster all three traces together.
-    monkeypatch.setattr(distiller, "_embed_tasks",
-                        lambda tasks: np.ones((len(tasks), 4)))
-    monkeypatch.setattr(distiller, "_embed_plan_structures",
-                        lambda sigs: np.ones((len(sigs), 4)))
+    monkeypatch.setattr(distiller, "_embed_tasks", lambda tasks: np.ones((len(tasks), 4)))
+    monkeypatch.setattr(distiller, "_embed_plan_structures", lambda sigs: np.ones((len(sigs), 4)))
 
     plan_tmpl, env_tmpl = _robot_plan_env("pick block")
 

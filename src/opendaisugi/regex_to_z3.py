@@ -153,9 +153,7 @@ def _node_to_regex(op, arg) -> z3.ReRef:
             elif sub_op == CATEGORY:
                 pieces.append(_category_regex(sub_arg))
             else:
-                raise UnsupportedRegexError(
-                    f"unsupported char-class element {sub_op!r}"
-                )
+                raise UnsupportedRegexError(f"unsupported char-class element {sub_op!r}")
         if not pieces:
             raise UnsupportedRegexError("empty character class")
         unioned = pieces[0] if len(pieces) == 1 else z3.Union(*pieces)
@@ -184,9 +182,7 @@ def _node_to_regex(op, arg) -> z3.ReRef:
         # (group_num_or_None, add_flags, del_flags, pattern)
         _, add_flags, del_flags, body = arg
         if add_flags or del_flags:
-            raise UnsupportedRegexError(
-                "inline regex flags (?i) / (?m) not supported"
-            )
+            raise UnsupportedRegexError("inline regex flags (?i) / (?m) not supported")
         return _pattern_to_regex(body)
     if op == CATEGORY:
         return _category_regex(arg)
@@ -229,15 +225,25 @@ def _peel_anchors(pattern):
     items = list(pattern)
     anchor_start = False
     anchor_end = False
-    if items and items[0][0] == AT and items[0][1] in (
-        AT_BEGINNING,
-        AT_BEGINNING_STRING,
+    if (
+        items
+        and items[0][0] == AT
+        and items[0][1]
+        in (
+            AT_BEGINNING,
+            AT_BEGINNING_STRING,
+        )
     ):
         anchor_start = True
         items = items[1:]
-    if items and items[-1][0] == AT and items[-1][1] in (
-        AT_END,
-        AT_END_STRING,
+    if (
+        items
+        and items[-1][0] == AT
+        and items[-1][1]
+        in (
+            AT_END,
+            AT_END_STRING,
+        )
     ):
         anchor_end = True
         items = items[:-1]

@@ -55,11 +55,11 @@ def test_z3_rejects_where_python_rejects(pattern, s):
 
 def test_unsupported_features_raise():
     for bad in [
-        r"(?i)hello",        # inline flag
-        r"\bword\b",         # word boundary
-        r"(?=hello)",        # lookahead
-        r"(?!secret)",       # negative lookahead
-        r"(\w+)\1",          # backreference
+        r"(?i)hello",  # inline flag
+        r"\bword\b",  # word boundary
+        r"(?=hello)",  # lookahead
+        r"(?!secret)",  # negative lookahead
+        r"(\w+)\1",  # backreference
     ]:
         with pytest.raises(UnsupportedRegexError):
             translate(bad)

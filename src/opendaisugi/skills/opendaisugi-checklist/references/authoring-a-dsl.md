@@ -22,7 +22,8 @@ class DraftEmail(StepBase):
     body: str
     signature: str
     postcondition: Postcondition | None = Postcondition(
-        type="evidence_present", path="draft_hash",
+        type="evidence_present",
+        path="draft_hash",
     )
 ```
 

@@ -32,22 +32,27 @@ def _plan_and_env(torque_limit: float | None = None) -> tuple[ActionPlan, Envelo
     if torque_limit is not None:
         perms.torque_limit = torque_limit
     env = Envelope(
-        generated_by="t", task="move arm",
+        generated_by="t",
+        task="move arm",
         permissions=perms,
         invariants=[
             Invariant(type="joint_limits_respected", description="joints"),
             Invariant(type="velocity_bounded", description="vel"),
         ],
     )
-    plan = ActionPlan(source="t", task="move arm", steps=[
-        SimulationResetStep(id="reset"),
-        JointMoveStep(
-            id="m",
-            joint_targets={"j1": 0.5},
-            duration_s=1.0,
-            depends_on=["reset"],
-        ),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="move arm",
+        steps=[
+            SimulationResetStep(id="reset"),
+            JointMoveStep(
+                id="m",
+                joint_targets={"j1": 0.5},
+                duration_s=1.0,
+                depends_on=["reset"],
+            ),
+        ],
+    )
     return plan, env
 
 
@@ -88,7 +93,8 @@ async def test_supervisor_obstacle_envelope_enables_contact_guard():
         obstacles=[((10, 10, 10), (11, 11, 11))],  # far away — won't actually hit
     )
     env = Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=perms,
         invariants=[Invariant(type="no_obstacle_penetration", description="no")],
     )

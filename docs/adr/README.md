@@ -19,6 +19,10 @@ whether you're fixing a mistake or unknowingly reopening a settled trade-off.
 | [0005](0005-python-runtime.md) | Stay on Python; Rust only for a profiled bottleneck | Accepted |
 | [0006](0006-claude-p-backend.md) | `claude -p` as a keyless LLM backend (stopgap) | Accepted |
 | [0007](0007-call-time-gate.md) | A call-time tool gate, shadow-by-default, beside plan verification | Accepted |
+| [0008](0008-parameterized-callable-pathways.md) | Distilled pathways become parameterized, callable skills | Accepted |
+| [0009](0009-adopt-ruff-format.md) | Adopt Ruff for lint + format | Accepted |
+| [0010](0010-compound-shell-decomposition.md) | Opt-in compound-shell decomposition, verify each head | Accepted |
+| [0011](0011-verifiable-execution-substrate.md) | A verifiable-execution substrate + cost levers, not "a verifier" | Accepted |
 
 ## Writing a new one
 

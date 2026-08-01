@@ -28,16 +28,22 @@ def _write_success_trace(journal, task: str):
     ``tests/test_journal_distillable.py``.
     """
     env = Envelope(
-        generated_by="test", task=task,
+        generated_by="test",
+        task=task,
         permissions=Permission(shell=True, shell_allowlist=["find"]),
     )
     plan = ActionPlan(
-        source="t", task=task,
+        source="t",
+        task=task,
         steps=[ShellStep(id="s1", command="find /tmp -name '*.tmp'")],
     )
     result = VerificationResult(
-        ok=True, violations=[], warnings=[],
-        envelope_id=env.id, plan_id=plan.id, duration_ms=0.1,
+        ok=True,
+        violations=[],
+        warnings=[],
+        envelope_id=env.id,
+        plan_id=plan.id,
+        duration_ms=0.1,
     )
     trace_id = journal.log(task=task, envelope=env, plan=plan, result=result)
     run_id = f"run_{trace_id}"
@@ -73,11 +79,13 @@ async def test_tend_creates_pathway_from_cluster(tmp_path, monkeypatch):
     from opendaisugi.distiller import GeneralizedTemplate
 
     env_tmpl = Envelope(
-        generated_by="distilled", task="T",
+        generated_by="distilled",
+        task="T",
         permissions=Permission(shell=True, shell_allowlist=["find"]),
     )
     plan_tmpl = ActionPlan(
-        source="template", task="T",
+        source="template",
+        task="T",
         steps=[ShellStep(id="s1", command="find /tmp -name '*.tmp'")],
     )
 

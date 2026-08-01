@@ -30,7 +30,7 @@ When a task involves a learned visuomotor policy (Physical Intelligence's
 @step_type
 class VLAStep(StepBase):
     type: Literal["vla"] = "vla"
-    task: str                                    # natural-language skill
+    task: str  # natural-language skill
     target_pose: tuple[float, float, float] | None = None
     max_actions: int = 50
     timeout_s: float = 5.0

@@ -44,10 +44,27 @@ _DEFAULT_FRONTIER_MODEL = "claude-opus-4-8"
 # Lexical signals that a task involves non-obvious design / failure modes — the
 # regime where a stronger model (or the advisor-tool pairing) earns its cost.
 _HARD_SIGNALS = (
-    "architect", "architecture", "design", "refactor", "migrat", "concurren",
-    "deadlock", "race condition", "distributed", "consensus", "optimi",
-    "security", "vulnerab", "schema", "algorithm", "prove", "proof", "debug",
-    "root cause", "thread-saf", "scal",
+    "architect",
+    "architecture",
+    "design",
+    "refactor",
+    "migrat",
+    "concurren",
+    "deadlock",
+    "race condition",
+    "distributed",
+    "consensus",
+    "optimi",
+    "security",
+    "vulnerab",
+    "schema",
+    "algorithm",
+    "prove",
+    "proof",
+    "debug",
+    "root cause",
+    "thread-saf",
+    "scal",
 )
 
 # Difficulty at/above this is routed to the frontier (and advisor-pairing flagged).
@@ -77,8 +94,8 @@ def advisor_tool_available_for_harness(harness: str) -> bool:
 class RouteAdvice:
     """A routing recommendation for one task."""
 
-    tier: str            # "tier0-pathway" | "tier1-cheap" | "tier2-frontier"
-    model: str           # recommended model id (or "" for Tier-0 reuse)
+    tier: str  # "tier0-pathway" | "tier1-cheap" | "tier2-frontier"
+    model: str  # recommended model id (or "" for Tier-0 reuse)
     reason: str
     difficulty: float
     pathway_id: str | None = None
@@ -164,10 +181,7 @@ class RouteAdvisor:
             return RouteAdvice(
                 tier="tier2-frontier",
                 model=self.frontier_model,
-                reason=(
-                    f"novel and high-difficulty ({difficulty:.2f}); "
-                    f"use the frontier model"
-                ),
+                reason=(f"novel and high-difficulty ({difficulty:.2f}); use the frontier model"),
                 difficulty=difficulty,
                 advisor_pairing=False,
             )

@@ -29,9 +29,11 @@ def _plan(steps: list[ActionStep]) -> ActionPlan:
 
 def test_verify_happy_path():
     env = _env(Permission(shell=True, shell_allowlist=["find"], file_read=["/var/log/**"]))
-    plan = _plan([
-        ShellStep(id="s1", command="find /var/log -name '*.tmp' -delete"),
-    ])
+    plan = _plan(
+        [
+            ShellStep(id="s1", command="find /var/log -name '*.tmp' -delete"),
+        ]
+    )
     result = verify(plan, env)
     assert result.ok is True
     assert result.violations == []
@@ -65,10 +67,12 @@ def test_verify_z3_catches_inconsistent_envelope():
 
 def test_verify_dag_catches_cycle():
     env = _env(Permission(shell=True, shell_allowlist=["echo"]))
-    plan = _plan([
-        ShellStep(id="s1", command="echo a", depends_on=["s2"]),
-        ShellStep(id="s2", command="echo b", depends_on=["s1"]),
-    ])
+    plan = _plan(
+        [
+            ShellStep(id="s1", command="echo a", depends_on=["s2"]),
+            ShellStep(id="s2", command="echo b", depends_on=["s1"]),
+        ]
+    )
     result = verify(plan, env)
     assert result.ok is False
     assert any(v.stage == "dag" for v in result.violations)
@@ -157,10 +161,12 @@ def test_shell_allowlist_literal_does_not_prefix_match():
 def test_shell_allowlist_glob_matches_venv_bin():
     """v0.17: path-qualified venv launchers should match ``.venv/bin/*``."""
     env = _env(Permission(shell=True, shell_allowlist=[".venv/bin/*"]))
-    plan = _plan([
-        ShellStep(id="s1", command=".venv/bin/python -V"),
-        ShellStep(id="s2", command=".venv/bin/pytest"),
-    ])
+    plan = _plan(
+        [
+            ShellStep(id="s1", command=".venv/bin/python -V"),
+            ShellStep(id="s2", command=".venv/bin/pytest"),
+        ]
+    )
     assert check_permissions(plan, env) == []
 
 
@@ -187,15 +193,19 @@ def test_shell_allowlist_glob_does_not_match_absolute_path():
 
 
 def test_shell_allowlist_glob_mixed_with_literals():
-    env = _env(Permission(
-        shell=True,
-        shell_allowlist=["git", "python", ".venv/bin/*"],
-    ))
-    plan = _plan([
-        ShellStep(id="s1", command="git status"),
-        ShellStep(id="s2", command="python --version"),
-        ShellStep(id="s3", command=".venv/bin/pytest -v"),
-    ])
+    env = _env(
+        Permission(
+            shell=True,
+            shell_allowlist=["git", "python", ".venv/bin/*"],
+        )
+    )
+    plan = _plan(
+        [
+            ShellStep(id="s1", command="git status"),
+            ShellStep(id="s2", command="python --version"),
+            ShellStep(id="s3", command=".venv/bin/pytest -v"),
+        ]
+    )
     assert check_permissions(plan, env) == []
 
 
@@ -204,9 +214,11 @@ def test_shell_allowlist_glob_still_triggers_metachar_gate():
     A pipeline is still rejected even when the head matches a glob pattern.
     """
     env = _env(Permission(shell=True, shell_allowlist=[".venv/bin/*"]))
-    plan = _plan([
-        ShellStep(id="s1", command=".venv/bin/python -c 'x' | tee out.log"),
-    ])
+    plan = _plan(
+        [
+            ShellStep(id="s1", command=".venv/bin/python -c 'x' | tee out.log"),
+        ]
+    )
     violations = check_permissions(plan, env)
     assert len(violations) == 1
     assert "metacharacter" in violations[0].message
@@ -221,10 +233,12 @@ def test_env_prefix_extracts_real_command_head():
     invocations (``GIT_DISCOVERY_ACROSS_FILESYSTEM=1 git status``).
     """
     env = _env(Permission(shell=True, shell_allowlist=["git"]))
-    plan = _plan([
-        ShellStep(id="s1", command="GIT_DISCOVERY_ACROSS_FILESYSTEM=1 git status"),
-        ShellStep(id="s2", command="FOO=1 BAR=2 git log"),
-    ])
+    plan = _plan(
+        [
+            ShellStep(id="s1", command="GIT_DISCOVERY_ACROSS_FILESYSTEM=1 git status"),
+            ShellStep(id="s2", command="FOO=1 BAR=2 git log"),
+        ]
+    )
     assert check_permissions(plan, env) == []
 
 
@@ -307,12 +321,17 @@ def test_redirect_and_newline_metachars_rejected(command):
 def test_verify_rejects_non_http_network_scheme():
     from opendaisugi.models import ActionPlan, Envelope, NetworkStep, Permission
     from opendaisugi.verify import verify
-    env = Envelope(generated_by="t", task="x", permissions=Permission(network=True, network_hosts=[]))
+
+    env = Envelope(
+        generated_by="t", task="x", permissions=Permission(network=True, network_hosts=[])
+    )
     for url in ["file:///etc/passwd", "ftp://evil.com/x", "data:text/plain,x"]:
         p = ActionPlan(source="t", task="x", steps=[NetworkStep(id="s", url=url)])
         assert not verify(p, env).ok, url
     # a normal http(s) URL still verifies
-    ok = ActionPlan(source="t", task="x", steps=[NetworkStep(id="s", url="https://api.example.com/data")])
+    ok = ActionPlan(
+        source="t", task="x", steps=[NetworkStep(id="s", url="https://api.example.com/data")]
+    )
     assert verify(ok, env).ok
 
 
@@ -360,6 +379,10 @@ def test_custom_step_allowlist_permits_under_strict():
     denied = Envelope(generated_by="t", task="x", permissions=Permission(), stakes="physical")
     assert not verify(plan, denied).ok
     # declared in the envelope's custom_step_allowlist → permitted under strict
-    allowed = Envelope(generated_by="t", task="x", stakes="physical",
-                       permissions=Permission(custom_step_allowlist=["_sgcm_kit_motion"]))
+    allowed = Envelope(
+        generated_by="t",
+        task="x",
+        stakes="physical",
+        permissions=Permission(custom_step_allowlist=["_sgcm_kit_motion"]),
+    )
     assert verify(plan, allowed).ok

@@ -52,7 +52,9 @@ async def test_v012_cache_inheritance_summarize_e2e(tmp_path, mock_llm_client):
     )
     mock_llm_client.set_next_envelope(child_env)
     child = await d.generate_envelope(
-        "child: a focused subtask", parent=parent, summarize=True,
+        "child: a focused subtask",
+        parent=parent,
+        summarize=True,
     )
     assert child.parent_envelope == parent.id
     assert child.summary == "reads /tmp files only"
@@ -60,7 +62,9 @@ async def test_v012_cache_inheritance_summarize_e2e(tmp_path, mock_llm_client):
 
     # Step 3: same child query → cache hit, no LLM call.
     same = await d.generate_envelope(
-        "child: a focused subtask", parent=parent, summarize=True,
+        "child: a focused subtask",
+        parent=parent,
+        summarize=True,
     )
     assert mock_llm_client.call_count == 2  # unchanged
     assert same.id == child.id

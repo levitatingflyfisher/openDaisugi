@@ -51,51 +51,61 @@ def test_exists_on_path():
 
 
 def test_and_composes_children():
-    expr = parse_expression({
-        "op": "and",
-        "children": [
-            {"op": "equals", "path": "type", "value": "email_send"},
-            {"op": "exists", "path": "metadata.body"},
-        ],
-    })
+    expr = parse_expression(
+        {
+            "op": "and",
+            "children": [
+                {"op": "equals", "path": "type", "value": "email_send"},
+                {"op": "exists", "path": "metadata.body"},
+            ],
+        }
+    )
     assert isinstance(expr, And)
     assert len(expr.children) == 2
 
 
 def test_or_composes_children():
-    expr = parse_expression({
-        "op": "or",
-        "children": [
-            {"op": "equals", "path": "type", "value": "shell"},
-            {"op": "equals", "path": "type", "value": "file_read"},
-        ],
-    })
+    expr = parse_expression(
+        {
+            "op": "or",
+            "children": [
+                {"op": "equals", "path": "type", "value": "shell"},
+                {"op": "equals", "path": "type", "value": "file_read"},
+            ],
+        }
+    )
     assert isinstance(expr, Or)
 
 
 def test_not_wraps_single_child():
-    expr = parse_expression({
-        "op": "not",
-        "child": {"op": "equals", "path": "type", "value": "shell"},
-    })
+    expr = parse_expression(
+        {
+            "op": "not",
+            "child": {"op": "equals", "path": "type", "value": "shell"},
+        }
+    )
     assert isinstance(expr, Not)
     assert isinstance(expr.child, Equals)
 
 
 def test_implies_two_children():
-    expr = parse_expression({
-        "op": "implies",
-        "a": {"op": "equals", "path": "type", "value": "email_send"},
-        "b": {"op": "not_equals", "path": "metadata.signature", "value": "Ada Lin"},
-    })
+    expr = parse_expression(
+        {
+            "op": "implies",
+            "a": {"op": "equals", "path": "type", "value": "email_send"},
+            "b": {"op": "not_equals", "path": "metadata.signature", "value": "Ada Lin"},
+        }
+    )
     assert isinstance(expr, Implies)
 
 
 def test_forall_steps_wraps_predicate():
-    expr = parse_expression({
-        "op": "forall_steps",
-        "pred": {"op": "equals", "path": "type", "value": "shell"},
-    })
+    expr = parse_expression(
+        {
+            "op": "forall_steps",
+            "pred": {"op": "equals", "path": "type", "value": "shell"},
+        }
+    )
     assert isinstance(expr, ForallSteps)
 
 

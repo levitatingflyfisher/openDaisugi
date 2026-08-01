@@ -1,5 +1,108 @@
 # Changelog
 
+## v0.43.0 — 2026-08-01 — The rationale-durability ledger (roadmap Stage 10)
+
+On an irreducible one-off — a heisenbug hunt, a novel design — there is no internal
+repetition to compile (Stage 9) and no prior corpus to reuse (Stage 4), and what
+compaction drops is the *deliberation*. This ships the third and last cost lever from
+[ADR-0011](docs/adr/0011-verifiable-execution-substrate.md): a typed strata store the
+harness consumes. Like the deed ledger ([ADR-0004](docs/adr/0004-layer-not-harness.md)),
+openDaisugi records and reconstructs; it does not rewrite its own prompts.
+
+- **The typed store.** `strata.StrataStore.emit` is the cheap structured-emission hook
+  over four kinds — `fact`, `hypothesis` (kept `ruled_out` so a branch is not
+  re-explored), `constraint`, `goal` — each with provenance and a monotonic, wall-clock-free
+  `seq`. In-memory with `to_json` / `from_json` durability: the property that matters is
+  *external to the transcript*, not on-disk.
+- **Context reconstruction, honestly lossy.** `reconstruct_context` rebuilds a call's
+  context from the store: pinned strata and open constraints always retained, the rest
+  filled by tag then recency under a budget, with `repage` returning any dropped stratum
+  verbatim. The boundary is stated where it lives — *a dropped fact is one the agent will
+  re-derive* — and the relevance selector is deliberately simple, the sophisticated
+  version left to the harness (this stage's own landmine).
+- **Constraint-promotion — the only path to authority, four fail-closed gates.**
+  `promote_constraint` refuses any stratum that is not a `constraint` (facts, hypotheses
+  and goals inform reasoning, never gate actions — a tested tripwire), then gates through
+  `verify_inheritance`: it must only tighten, must *actually* tighten (a no-op is refused),
+  and — via an optional `deny_witness` — must *actually* enforce, so a constraint that
+  compiled to a soft/unenforced node is refused rather than accepted (the fail-open shape
+  this stage exists to prevent).
+- **The scenario, end to end.** "Don't touch tenant X" is held under forced compaction:
+  the pinned constraint survives a JSON round-trip and a punishing reconstruction budget,
+  and the promoted envelope still makes `verify()` deny the tenant-X write while allowing
+  tenant Y.
+- **The meter.** `RederivationLedger` (store-on vs store-off output-token delta) ships as
+  labelled evidence; its at-scale numbers are deferred to a model, as in Stages 4 and 9.
+  Public surface gains `StrataStore`, `Stratum`, `reconstruct`/`repage`, `promote_constraint`,
+  and the `RederivationLedger` meter.
+
+## v0.42.0 — 2026-08-01 — Within-instance batch compilation (roadmap Stage 9)
+
+A task's own internal repetition is normally paid for turn by turn. This ships the
+second cost lever from [ADR-0011](docs/adr/0011-verifiable-execution-substrate.md): an
+agent **declares a batch** — program P, item set I, footprint F, acceptance Q — and the
+library proves the whole footprint is authorized *before any iteration*, refuses
+irreversible work, sample-validates in a deed-ledger fork, and executes all N under a
+monitor with per-element rollback.
+
+- **The declaration is authorable like an envelope.** `batch.BatchDeclaration` is a
+  JSON-round-trippable model (an `ActionPlan` template + ADR-0008 `PathwayParameter`
+  holes + a *concrete* item list + declared footprint F + acceptance postcondition Q),
+  provable from the shell with `daisugi batch prove <decl.json> -e <envelope.json>`. The
+  item set is a concrete list by construction — not a glob or generator — so the
+  footprint is enumerable before iteration.
+- **The proof uses the concrete runtime matcher, soundly.** `prove_footprint` resolves
+  every item up front and proves each write is inside both the envelope and F with the
+  *same* `verify._path_matches_any` the executor gate uses — **not** the envelope↔envelope
+  Z3 glob encoding, which diverges from it (a single `*` crosses `/`; no normalization)
+  and would let a proof admit a write the gate rejects. That divergence is now pinned as
+  a known-gap tripwire (`tests/test_subsumption_glob_known_gap.py`): a real but
+  non-blocking fail-open in `check_skill_delegations` — a false *claim*, not an
+  unauthorized *action*, since the concrete gate still denies at runtime.
+- **Irreversible work can never enter a batch.** A static kind check (only reversible
+  `file_write` and read-only `file_read` / GET-only `network`), a pre-flight
+  reversibility probe, **and** a runtime halt-on-first-`irreversible` deed — because
+  reversibility is not a property of the type (a >1 MB or non-UTF-8 target comes back
+  irreversible at runtime), the static check alone is insufficient. On halt the reversible
+  elements roll back from the ledger and the irreversible one is surfaced in `skipped`.
+- **Fork, monitor, rollback — no CoW.** `run_batch` sample-validates Q on k items in a
+  deed-ledger fork (`apply_reversal`; ADR-0004 forecloses owning workspace snapshots),
+  then runs all N under the supervisor's per-step monitor with per-element rollback.
+- **The two-ledger meter, honestly.** `NetTokenLedger` computes
+  `(output + calls saved) − (spec input injected)` and surfaces the SKILL-DISCO
+  net-cost trap when it goes negative — labelled evidence, not proof. `TwoLedgerReport`
+  keeps the within-instance and cross-instance ledgers separate and never merges them;
+  within-instance the meter reports the honest finding (the win is the proven blast
+  radius, not tokens). Publishing the cross-instance numbers *at scale* is deferred —
+  that is Stage 4's question and shares its local-model dependency.
+
+## v0.41.0 — 2026-08-01 — The deed ledger (roadmap Stage 8)
+
+A wrong-but-allowed action — in-envelope, but wrong for the task, like a
+correctly-scoped delete of the *wrong* file — should cost a rollback, not a
+token-burning recovery arc. This ships the **deed ledger**, the first of the cost
+levers reframed in [ADR-0011](docs/adr/0011-verifiable-execution-substrate.md).
+openDaisugi stays a *layer* ([ADR-0004](docs/adr/0004-layer-not-harness.md)): it
+**records** how to undo each reversible deed; the harness reverts.
+
+- **Deed-carrying receipts.** Each executed step's `Receipt` now carries an
+  `effect_class`, a `reversibility` verdict (`none` / `reversible` / `irreversible`),
+  and, when reversible, a `ReversalHandle`. The `FileWriteExecutor` captures the
+  target's pre-image *before* it mutates — and records any directories it creates — so
+  the write is undoable from the ledger alone. Threaded `ExecutorResult → StepOutcome →
+  Receipt`, thread-safe under concurrent task steps (the same path as `model_id`).
+- **`opendaisugi.deeds`.** `rollback_run(journal, run_id)` undoes a run's reversible
+  deeds newest-first **with no model, no executor, no re-run**; `touched_files`
+  reconstructs the pre-state of the files a run touched. A reversal only ever writes to
+  a path the run itself wrote, so it cannot widen the envelope (the yellow paper's
+  admissibility-preservation law, §7).
+- **Honest boundaries, tested.** `reversibility` is a *positive* claim: a refused write
+  reports `none` (never a false handle); an oversized or non-UTF-8 prior image is
+  marked `irreversible` rather than truncated; and any side-effecting step lacking a
+  handle defaults to `irreversible` — a missing handle can never read as "nothing to
+  undo". Journal schema migrates to `user_version = 7`; the ledger for the call-time
+  *gate* path (harness-performed effects) is deliberately out of scope.
+
 ## v0.39.0 — 2026-07-23 — The distillation-fidelity ruler (roadmap Stage 4 harness)
 
 Stage 4 asks the oldest question in the scorecard — does distillation actually

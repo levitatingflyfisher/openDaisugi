@@ -17,7 +17,9 @@ def cosine_similarity(a: Any, b: Any) -> float:
     va = np.asarray(a, dtype=float)
     vb = np.asarray(b, dtype=float)
     denom = (np.linalg.norm(va) * np.linalg.norm(vb)) or 1e-9
-    return float(va @ vb / denom)
+    # Clamp to [-1, 1]: float rounding can push an identical-vector cosine to
+    # 1.0000000000000002, which then fails PathwayMatch's ``le=1.0`` bound.
+    return float(np.clip(va @ vb / denom, -1.0, 1.0))
 
 
 def cosine_similarity_batch(query: Any, candidates: Any) -> Any:
@@ -33,4 +35,5 @@ def cosine_similarity_batch(query: Any, candidates: Any) -> Any:
     c_norms = np.linalg.norm(c, axis=1)
     denom = c_norms * q_norm
     denom = np.where(denom == 0, 1e-9, denom)
-    return (c @ q) / denom
+    # Clamp to [-1, 1] — see cosine_similarity: float error can overshoot 1.0.
+    return np.clip((c @ q) / denom, -1.0, 1.0)

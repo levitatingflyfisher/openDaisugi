@@ -92,6 +92,7 @@ def _install_skill(home: Path, fallback_subdir: str) -> Path:
 # Data types
 # ---------------------------------------------------------------------------
 
+
 class Layer(str, Enum):
     SKILL = "skill"
     MCP = "mcp"
@@ -118,6 +119,7 @@ class InstallResult:
 # Runtime protocol
 # ---------------------------------------------------------------------------
 
+
 class Runtime(Protocol):
     """An agent harness openDaisugi can install into.
 
@@ -138,6 +140,7 @@ class Runtime(Protocol):
 # Claude Code
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ClaudeCodeRuntime:
     name: str = "Claude Code"
@@ -148,14 +151,14 @@ class ClaudeCodeRuntime:
     def plan(self, home: Path) -> list[InstallStep]:
         claude_dir = home / ".claude"
         return [
-            InstallStep(Layer.SKILL, "Symlink opendaisugi-checklist skill",
-                        _agents_skill_target(home, ".claude/skills")),
-            InstallStep(Layer.MCP, 'Register MCP server "opendaisugi"',
-                        home / ".claude.json"),
-            InstallStep(Layer.CAPTURE, "Add PreToolUse capture hook",
-                        claude_dir / "settings.json"),
-            InstallStep(Layer.INSTRUCTIONS, "Append pathway guidance",
-                        claude_dir / "CLAUDE.md"),
+            InstallStep(
+                Layer.SKILL,
+                "Symlink opendaisugi-checklist skill",
+                _agents_skill_target(home, ".claude/skills"),
+            ),
+            InstallStep(Layer.MCP, 'Register MCP server "opendaisugi"', home / ".claude.json"),
+            InstallStep(Layer.CAPTURE, "Add PreToolUse capture hook", claude_dir / "settings.json"),
+            InstallStep(Layer.INSTRUCTIONS, "Append pathway guidance", claude_dir / "CLAUDE.md"),
         ]
 
     def apply(self, home: Path) -> list[Path]:
@@ -172,7 +175,8 @@ class ClaudeCodeRuntime:
         modified += _remove_skill_both(home, ".claude/skills")
         modified += _pop_json_mcp(home / ".claude.json", mcp_key="mcpServers")
         modified += _pop_json_hook(
-            claude_dir / "settings.json", hook_substr="daisugi hook record",
+            claude_dir / "settings.json",
+            hook_substr="daisugi hook record",
         )
         modified += _unpatch_instructions(claude_dir / "CLAUDE.md")
         return modified
@@ -181,6 +185,7 @@ class ClaudeCodeRuntime:
 @dataclass(frozen=True)
 class _ConfigFormat:
     """A (parse, dump) pair for a structured config dialect."""
+
     parse: "Callable[[str], dict]"
     dump: "Callable[[dict], str]"
 
@@ -210,7 +215,9 @@ _JSON5 = _ConfigFormat(_json5_parse, _json_dump)
 _JSON5_COMMENT_RE = re.compile(r"//|/\*")
 
 
-def _patch_mcp(path: Path, fmt: _ConfigFormat, key_path: tuple[str, ...], entry: dict) -> list[Path]:
+def _patch_mcp(
+    path: Path, fmt: _ConfigFormat, key_path: tuple[str, ...], entry: dict
+) -> list[Path]:
     """Register the opendaisugi MCP entry at ``key_path`` in a structured config.
 
     Generic over JSON / JSON5 via ``fmt``. Never clobbers an unparseable file
@@ -230,7 +237,8 @@ def _patch_mcp(path: Path, fmt: _ConfigFormat, key_path: tuple[str, ...], entry:
             warnings.warn(
                 f"{path} is not valid; skipping MCP registration to avoid "
                 "overwriting user state. Fix the file and re-run `daisugi install`.",
-                UserWarning, stacklevel=2,
+                UserWarning,
+                stacklevel=2,
             )
             return []
     else:
@@ -243,17 +251,14 @@ def _patch_mcp(path: Path, fmt: _ConfigFormat, key_path: tuple[str, ...], entry:
         return []
     if path.exists():
         # v0.28.6 — warn before clobbering JSON5 comments on disk.
-        if (
-            fmt is _JSON5
-            and raw_text is not None
-            and _JSON5_COMMENT_RE.search(raw_text)
-        ):
+        if fmt is _JSON5 and raw_text is not None and _JSON5_COMMENT_RE.search(raw_text):
             warnings.warn(
                 f"{path} contains JSON5 comments which will not survive the "
                 f"rewrite (the writer emits plain JSON). The pre-write backup "
                 f"at {path}.bak* preserves the original text — restore from it "
                 f"if you need the comments back. Tracked as M7 in REVIEW_FINDINGS.md.",
-                UserWarning, stacklevel=2,
+                UserWarning,
+                stacklevel=2,
             )
         _backup(path)
     leaf["opendaisugi"] = entry
@@ -265,7 +270,9 @@ def _patch_claude_mcp(claude_json: Path) -> list[Path]:
     """Register MCP where Claude Code reads user-scope servers: ``~/.claude.json``
     ``mcpServers`` (NOT settings.json, which only honors allow/deny flags)."""
     return _patch_mcp(
-        claude_json, _JSON, ("mcpServers",),
+        claude_json,
+        _JSON,
+        ("mcpServers",),
         {"type": "stdio", "command": "daisugi", "args": ["mcp", "serve"]},
     )
 
@@ -283,7 +290,8 @@ def _patch_claude_settings(settings_path: Path) -> list[Path]:
                 f"{settings_path} is not valid JSON; skipping hook registration to "
                 f"avoid overwriting your Claude Code settings (permissions/env). "
                 f"Fix the file and re-run `daisugi install`.",
-                UserWarning, stacklevel=2,
+                UserWarning,
+                stacklevel=2,
             )
             return []
     else:
@@ -297,10 +305,7 @@ def _patch_claude_settings(settings_path: Path) -> list[Path]:
     # `--format claude` suffix and any future flags.
     pre = hooks.setdefault("PreToolUse", [])
     existing_pre_commands = {
-        h["command"]
-        for entry in pre
-        for h in entry.get("hooks", [])
-        if h.get("type") == "command"
+        h["command"] for entry in pre for h in entry.get("hooks", []) if h.get("type") == "command"
     }
     if not any("daisugi hook record" in c for c in existing_pre_commands):
         pre.append(_PRETOOLUSE_HOOK)
@@ -313,11 +318,13 @@ def _patch_claude_settings(settings_path: Path) -> list[Path]:
     ss = hooks.get("SessionStart")
     if ss and any(
         h.get("command") == "daisugi install --print-skill"
-        for entry in ss for h in entry.get("hooks", [])
+        for entry in ss
+        for h in entry.get("hooks", [])
     ):
         for entry in ss:
             entry["hooks"] = [
-                h for h in entry.get("hooks", [])
+                h
+                for h in entry.get("hooks", [])
                 if h.get("command") != "daisugi install --print-skill"
             ]
         hooks["SessionStart"] = [e for e in ss if e.get("hooks")]
@@ -356,6 +363,7 @@ def _patch_claude_md(md_path: Path) -> list[Path]:
 # Hermes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class HermesRuntime:
     name: str = "Hermes"
@@ -366,12 +374,13 @@ class HermesRuntime:
     def plan(self, home: Path) -> list[InstallStep]:
         h = home / ".hermes"
         return [
-            InstallStep(Layer.SKILL, "Symlink opendaisugi-checklist skill",
-                        h / "skills" / "opendaisugi" / _SKILL_NAME),
-            InstallStep(Layer.MCP, "Register opendaisugi MCP server",
-                        h / "config.yaml"),
-            InstallStep(Layer.CAPTURE, "Add pre_tool_call capture hook",
-                        h / "config.yaml"),
+            InstallStep(
+                Layer.SKILL,
+                "Symlink opendaisugi-checklist skill",
+                h / "skills" / "opendaisugi" / _SKILL_NAME,
+            ),
+            InstallStep(Layer.MCP, "Register opendaisugi MCP server", h / "config.yaml"),
+            InstallStep(Layer.CAPTURE, "Add pre_tool_call capture hook", h / "config.yaml"),
         ]
 
     def apply(self, home: Path) -> list[Path]:
@@ -404,8 +413,11 @@ class HermesRuntime:
         hooks = cfg.get("hooks")
         if isinstance(hooks, dict) and isinstance(hooks.get("pre_tool_call"), list):
             pre = hooks["pre_tool_call"]
-            kept = [hk for hk in pre if not (isinstance(hk, dict)
-                    and "daisugi hook record" in hk.get("command", ""))]
+            kept = [
+                hk
+                for hk in pre
+                if not (isinstance(hk, dict) and "daisugi hook record" in hk.get("command", ""))
+            ]
             if len(kept) != len(pre):
                 changed = True
                 if kept:
@@ -433,7 +445,8 @@ def _patch_hermes_config(config_path: Path) -> list[Path]:
             warnings.warn(
                 f"{config_path} is not valid YAML; skipping to avoid overwriting your "
                 f"Hermes config. Fix the file and re-run `daisugi install`.",
-                UserWarning, stacklevel=2,
+                UserWarning,
+                stacklevel=2,
             )
             return []
     else:
@@ -465,6 +478,7 @@ def _patch_hermes_config(config_path: Path) -> list[Path]:
 # Codex (OpenAI CLI) — detected by binary presence
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class CodexRuntime:
     name: str = "Codex"
@@ -475,12 +489,13 @@ class CodexRuntime:
     def plan(self, home: Path) -> list[InstallStep]:
         codex = home / ".codex"
         return [
-            InstallStep(Layer.SKILL, "Symlink opendaisugi-checklist skill",
-                        _agents_skill_target(home, ".codex/skills")),
-            InstallStep(Layer.MCP, "Register opendaisugi MCP server",
-                        codex / "config.toml"),
-            InstallStep(Layer.INSTRUCTIONS, "Append pathway guidance",
-                        codex / "AGENTS.md"),
+            InstallStep(
+                Layer.SKILL,
+                "Symlink opendaisugi-checklist skill",
+                _agents_skill_target(home, ".codex/skills"),
+            ),
+            InstallStep(Layer.MCP, "Register opendaisugi MCP server", codex / "config.toml"),
+            InstallStep(Layer.INSTRUCTIONS, "Append pathway guidance", codex / "AGENTS.md"),
         ]
 
     def apply(self, home: Path) -> list[Path]:
@@ -506,11 +521,7 @@ class CodexRuntime:
         return modified
 
 
-_CODEX_MCP_BLOCK = (
-    "\n[mcp_servers.opendaisugi]\n"
-    'command = "daisugi"\n'
-    'args = ["mcp", "serve"]\n'
-)
+_CODEX_MCP_BLOCK = '\n[mcp_servers.opendaisugi]\ncommand = "daisugi"\nargs = ["mcp", "serve"]\n'
 
 
 def _patch_codex_config(config_path: Path) -> list[Path]:
@@ -519,15 +530,14 @@ def _patch_codex_config(config_path: Path) -> list[Path]:
         return []
     if config_path.exists():
         _backup(config_path)
-    config_path.write_text(
-        existing.rstrip("\n") + ("\n" if existing else "") + _CODEX_MCP_BLOCK
-    )
+    config_path.write_text(existing.rstrip("\n") + ("\n" if existing else "") + _CODEX_MCP_BLOCK)
     return [config_path]
 
 
 # ---------------------------------------------------------------------------
 # OpenClaw
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class OpenClawRuntime:
@@ -542,14 +552,20 @@ class OpenClawRuntime:
     def plan(self, home: Path) -> list[InstallStep]:
         oc = home / ".openclaw"
         return [
-            InstallStep(Layer.SKILL, "Symlink opendaisugi-checklist skill",
-                        self._workspace(home) / "skills" / _SKILL_NAME),
-            InstallStep(Layer.MCP, "Register opendaisugi MCP server",
-                        oc / "openclaw.json"),
-            InstallStep(Layer.CAPTURE, "Install before_tool_call capture plugin",
-                        oc / "extensions" / "opendaisugi"),
-            InstallStep(Layer.INSTRUCTIONS, "Append pathway guidance",
-                        self._workspace(home) / "AGENTS.md"),
+            InstallStep(
+                Layer.SKILL,
+                "Symlink opendaisugi-checklist skill",
+                self._workspace(home) / "skills" / _SKILL_NAME,
+            ),
+            InstallStep(Layer.MCP, "Register opendaisugi MCP server", oc / "openclaw.json"),
+            InstallStep(
+                Layer.CAPTURE,
+                "Install before_tool_call capture plugin",
+                oc / "extensions" / "opendaisugi",
+            ),
+            InstallStep(
+                Layer.INSTRUCTIONS, "Append pathway guidance", self._workspace(home) / "AGENTS.md"
+            ),
         ]
 
     def apply(self, home: Path) -> list[Path]:
@@ -652,7 +668,9 @@ def _strip_json5_comments(text: str) -> str:
 def _patch_openclaw_config(config_path: Path) -> list[Path]:
     """Register MCP under ``mcp.servers`` in OpenClaw's JSON5 ``openclaw.json``."""
     return _patch_mcp(
-        config_path, _JSON5, ("mcp", "servers"),
+        config_path,
+        _JSON5,
+        ("mcp", "servers"),
         {"command": "daisugi", "args": ["mcp", "serve"]},
     )
 
@@ -661,9 +679,11 @@ def _patch_openclaw_config(config_path: Path) -> list[Path]:
 # Uninstall helpers
 # ---------------------------------------------------------------------------
 
+
 def _remove_skill(target: Path) -> list[Path]:
     """Remove a symlinked (or copied) skill directory if present (symlink-safe)."""
     from opendaisugi.skill_paths import _clear
+
     return [target] if _clear(target) else []
 
 
@@ -692,6 +712,7 @@ def _remove_skill_both(home: Path, fallback_subdir: str) -> list[Path]:
 def _remove_dir(target: Path) -> list[Path]:
     """Remove a materialized directory (e.g. an OpenClaw plugin), symlink-safe."""
     from opendaisugi.skill_paths import _clear
+
     if _clear(target):
         return [target]
     return []
@@ -747,8 +768,7 @@ def _pop_json_hook(settings_path: Path, *, hook_substr: str) -> list[Path]:
         return []
     pre = s.get("hooks", {}).get("PreToolUse")
     if not pre or not any(
-        hook_substr in h.get("command", "")
-        for e in pre for h in e.get("hooks", [])
+        hook_substr in h.get("command", "") for e in pre for h in e.get("hooks", [])
     ):
         return []  # nothing of ours present
     _backup(settings_path)
@@ -768,7 +788,10 @@ def _pop_json_hook(settings_path: Path, *, hook_substr: str) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 _ALL_RUNTIMES: list = [
-    ClaudeCodeRuntime(), CodexRuntime(), HermesRuntime(), OpenClawRuntime(),
+    ClaudeCodeRuntime(),
+    CodexRuntime(),
+    HermesRuntime(),
+    OpenClawRuntime(),
 ]
 
 
@@ -798,8 +821,7 @@ def _select_runtimes(names: list[str]) -> list:
         if len(matches) != 1:
             valid = ", ".join(_RUNTIME_KEYS)
             raise ValueError(
-                f"--runtime {raw!r} matched {len(matches)} runtimes; "
-                f"use one of: {valid}"
+                f"--runtime {raw!r} matched {len(matches)} runtimes; use one of: {valid}"
             )
         name = _RUNTIME_KEYS[matches[0]]
         selected[name] = by_name[name]
@@ -890,6 +912,7 @@ def install(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _backup(path: Path) -> None:
     stamp = time.time_ns()
     dest = path.with_name(f"{path.name}.bak{stamp}")
@@ -921,5 +944,6 @@ def print_skill() -> str:
     ``uv add opendaisugi`` — not just from a source-tree dev checkout.
     """
     import importlib.resources as _ir
+
     ref = _ir.files("opendaisugi").joinpath("skills", "opendaisugi-checklist", "SKILL.md")
     return ref.read_text(encoding="utf-8")

@@ -35,9 +35,7 @@ def test_pathway_store_creates_db_and_schema(tmp_path):
     PathwayStore(db)
     assert db.exists()
     with sqlite3.connect(db) as con:
-        tables = [r[0] for r in con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )]
+        tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]
     assert "pathways" in tables
 
 
@@ -104,9 +102,7 @@ def test_increment_hit(tmp_path):
     store.increment_hit(p.id)
     store.increment_hit(p.id)
     with sqlite3.connect(tmp_path / "p.db") as con:
-        hits = con.execute(
-            "SELECT hit_count FROM pathways WHERE id = ?", (p.id,)
-        ).fetchone()[0]
+        hits = con.execute("SELECT hit_count FROM pathways WHERE id = ?", (p.id,)).fetchone()[0]
     assert hits == 2
 
 
@@ -189,3 +185,45 @@ def test_v028_4_find_returns_none_when_all_rows_stale(tmp_path):
     store._embed_query = lambda _: np.array([1.0, 0.0, 0.0])  # type: ignore[attr-defined]
     match = store.find("query", threshold=0.0)
     assert match is None
+
+
+def test_parameters_and_structure_signature_survive_store_round_trip(tmp_path):
+    """Regression: a typed pathway must not silently degrade to frozen on reload."""
+    from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
+    from opendaisugi.pathway import CompiledPathway, PathwayParameter
+    from opendaisugi.pathway_store import PathwayStore
+
+    store = PathwayStore(tmp_path / "p.db")
+    pw = CompiledPathway(
+        id="pw_typed",
+        task_description="find a pattern",
+        task_embedding=[0.1, 0.2],
+        envelope=Envelope(
+            generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["grep"])
+        ),
+        plan_template=ActionPlan(
+            source="distilled", task="x", steps=[ShellStep(id="s1", command="grep -rn TODO src")]
+        ),
+        source_trace_ids=["t1"],
+        distilled_at=1.0,
+        structure_signature="shell",
+        parameters=[
+            PathwayParameter(
+                name="s1.command",
+                step_index=0,
+                step_id="s1",
+                field="command",
+                head="grep",
+                observed=["grep -rn TODO src", "grep -rn FIXME src"],
+            )
+        ],
+    )
+    store.put(pw)
+    got = store.get("pw_typed")
+    assert got is not None
+    assert got.structure_signature == "shell"
+    assert len(got.parameters) == 1
+    assert got.parameters[0].head == "grep"
+    assert got.parameters[0].observed == ["grep -rn TODO src", "grep -rn FIXME src"]
+    # and via find()'s row path too (list_all → _row_to_pathway)
+    assert store.list_all()[0].parameters[0].field == "command"

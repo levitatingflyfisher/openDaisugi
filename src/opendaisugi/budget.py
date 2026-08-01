@@ -14,6 +14,7 @@ would blow the budget" decided in time to route around it.
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import dataclass, field
 
 # Rough blended $/1M-token prices by model-family substring (input+output blended,
@@ -82,6 +83,13 @@ class BudgetTracker:
     price_table: dict[str, float] = field(default_factory=lambda: dict(APPROX_USD_PER_MTOK))
     _spent: int = field(default=0, init=False)
     _costs: list[StepCost] = field(default_factory=list, init=False)
+    # v0.40: parallel task steps record spend from worker threads. The lock makes
+    # the ``_spent`` read-modify-write and the ``_costs`` append one atomic unit,
+    # so a lost update or a torn (spent-but-not-appended) read can't happen — a
+    # real hazard on free-threaded builds, cheap insurance on GIL builds.
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
+    )
 
     @property
     def total(self) -> int | None:
@@ -119,27 +127,37 @@ class BudgetTracker:
         # raise to SIGNAL the overrun; the caller catches it and keeps the step's
         # result (a completed call's output must not be discarded), while the now-
         # exhausted budget stops the next step and forces deterministic synthesis.
-        self._spent += tokens
-        self._costs.append(StepCost(step_id=step_id, model=model, tokens=tokens, cost_usd=cost_usd))
-        if self.strict and self.total_tokens is not None and self._spent > self.total_tokens:
+        # Under the lock so concurrent recorders can't lose an update or tear the
+        # spent/costs pair (report() reads both).
+        with self._lock:
+            self._spent += tokens
+            self._costs.append(
+                StepCost(step_id=step_id, model=model, tokens=tokens, cost_usd=cost_usd)
+            )
+            over = self.strict and self.total_tokens is not None and self._spent > self.total_tokens
+            spent_now = self._spent
+        if over:
             raise BudgetExceeded(
                 f"recording {tokens} tokens for step {step_id!r} pushed spend to "
-                f"{self._spent} > budget {self.total_tokens}"
+                f"{spent_now} > budget {self.total_tokens}"
             )
 
     def costs(self) -> list[StepCost]:
-        return list(self._costs)
+        with self._lock:
+            return list(self._costs)
 
     def by_model(self) -> dict[str, int]:
+        # Iterate a snapshot (costs()) rather than the live list — a concurrent
+        # record()'s append must not fault this loop on a free-threaded build.
         out: dict[str, int] = {}
-        for c in self._costs:
+        for c in self.costs():
             out[c.model] = out.get(c.model, 0) + c.tokens
         return out
 
     def measured_cost_usd(self) -> float | None:
         """Sum of EXACT per-step costs the backend reported, or None if no step
         reported one. This is the real dollar figure (no estimation)."""
-        measured = [c.cost_usd for c in self._costs if c.cost_usd is not None]
+        measured = [c.cost_usd for c in self.costs() if c.cost_usd is not None]
         if not measured:
             return None
         return round(sum(measured), 6)

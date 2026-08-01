@@ -33,11 +33,15 @@ def test_velocity_scale_bounded_rejects_excessive_velocity():
             Invariant(
                 type="velocity_bounded",
                 description="joint velocities must stay within limit",
-                expr=reg.resolve(parse_expression({
-                    "op": "alias",
-                    "name": "velocity_scale_bounded",
-                    "args": {"max_scale": 0.8},
-                })),
+                expr=reg.resolve(
+                    parse_expression(
+                        {
+                            "op": "alias",
+                            "name": "velocity_scale_bounded",
+                            "args": {"max_scale": 0.8},
+                        }
+                    )
+                ),
             ),
         ],
     )
@@ -60,11 +64,15 @@ def test_velocity_scale_bounded_accepts_within_bounds():
             Invariant(
                 type="velocity_bounded",
                 description="joint velocities must stay within limit",
-                expr=reg.resolve(parse_expression({
-                    "op": "alias",
-                    "name": "velocity_scale_bounded",
-                    "args": {"max_scale": 0.8},
-                })),
+                expr=reg.resolve(
+                    parse_expression(
+                        {
+                            "op": "alias",
+                            "name": "velocity_scale_bounded",
+                            "args": {"max_scale": 0.8},
+                        }
+                    )
+                ),
             ),
         ],
     )
@@ -79,11 +87,15 @@ def test_velocity_scale_bounded_accepts_within_bounds():
 
 def test_never_impersonates_rejects_signed_email():
     reg = _registry()
-    postcond_expr = reg.resolve(parse_expression({
-        "op": "alias",
-        "name": "never_impersonates",
-        "args": {"principal": "Ada"},
-    }))
+    postcond_expr = reg.resolve(
+        parse_expression(
+            {
+                "op": "alias",
+                "name": "never_impersonates",
+                "args": {"principal": "Ada"},
+            }
+        )
+    )
     envelope = Envelope(
         generated_by="t",
         task="email",
@@ -93,11 +105,13 @@ def test_never_impersonates_rejects_signed_email():
     plan = ActionPlan(
         source="t",
         task="email",
-        steps=[ShellStep(
-            id="s1",
-            command="send_email",
-            metadata={"signature": "Ada", "body": "Hey - Ada"},
-        )],
+        steps=[
+            ShellStep(
+                id="s1",
+                command="send_email",
+                metadata={"signature": "Ada", "body": "Hey - Ada"},
+            )
+        ],
     )
     result = verify(plan, envelope)
     assert not result.ok
@@ -105,11 +119,15 @@ def test_never_impersonates_rejects_signed_email():
 
 def test_never_impersonates_accepts_signed_as_agent():
     reg = _registry()
-    postcond_expr = reg.resolve(parse_expression({
-        "op": "alias",
-        "name": "never_impersonates",
-        "args": {"principal": "Ada"},
-    }))
+    postcond_expr = reg.resolve(
+        parse_expression(
+            {
+                "op": "alias",
+                "name": "never_impersonates",
+                "args": {"principal": "Ada"},
+            }
+        )
+    )
     envelope = Envelope(
         generated_by="t",
         task="email",
@@ -119,11 +137,13 @@ def test_never_impersonates_accepts_signed_as_agent():
     plan = ActionPlan(
         source="t",
         task="email",
-        steps=[ShellStep(
-            id="s1",
-            command="send_email",
-            metadata={"signature": "Robin", "body": "Sent on behalf of Ada. - Robin"},
-        )],
+        steps=[
+            ShellStep(
+                id="s1",
+                command="send_email",
+                metadata={"signature": "Robin", "body": "Sent on behalf of Ada. - Robin"},
+            )
+        ],
     )
     result = verify(plan, envelope)
     assert result.ok, result.violations
@@ -131,11 +151,15 @@ def test_never_impersonates_accepts_signed_as_agent():
 
 def test_no_network_writes_rejects_non_get():
     reg = _registry()
-    postcond_expr = reg.resolve(parse_expression({
-        "op": "alias",
-        "name": "no_network_writes",
-        "args": {},
-    }))
+    postcond_expr = reg.resolve(
+        parse_expression(
+            {
+                "op": "alias",
+                "name": "no_network_writes",
+                "args": {},
+            }
+        )
+    )
     envelope = Envelope(
         generated_by="t",
         task="net",
@@ -145,11 +169,13 @@ def test_no_network_writes_rejects_non_get():
     plan = ActionPlan(
         source="t",
         task="net",
-        steps=[ShellStep(
-            id="s1",
-            command="curl",
-            metadata={"type": "network", "method": "POST"},
-        )],
+        steps=[
+            ShellStep(
+                id="s1",
+                command="curl",
+                metadata={"type": "network", "method": "POST"},
+            )
+        ],
     )
     result = verify(plan, envelope)
     # The shell step doesn't have type=="network" at the step level, so forall_steps

@@ -110,7 +110,10 @@ def test_claude_code_json_mode_prose_failure_surfaces_cause(monkeypatch):
     from opendaisugi.exceptions import EnvelopeGenerationError
 
     exe = DelegatingExecutor(
-        default_model="haiku", backend="claude-code", json_mode=True, max_retries=0,
+        default_model="haiku",
+        backend="claude-code",
+        json_mode=True,
+        max_retries=0,
     )
 
     def fake_json_metered(*a, **k):
@@ -124,7 +127,8 @@ def test_claude_code_json_mode_prose_failure_surfaces_cause(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "opendaisugi.claude_code_llm.call_claude_p_json_metered", fake_json_metered,
+        "opendaisugi.claude_code_llm.call_claude_p_json_metered",
+        fake_json_metered,
     )
     r = exe.run(TaskStep(id="t1", prompt="read README.md"), timeout_s=30, max_output_bytes=2048)
     assert r.rc == 1

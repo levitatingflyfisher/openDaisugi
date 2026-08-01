@@ -56,9 +56,7 @@ def _trace_id_for(source_file: str, episode_id: str) -> str:
     return f"import-{_source_prefix(source_file)}-{episode_id}"
 
 
-def _is_already_ingested(
-    journal: Journal, source_file: str, episode_id: str
-) -> bool:
+def _is_already_ingested(journal: Journal, source_file: str, episode_id: str) -> bool:
     """Check if an episode was already ingested by looking for its trace."""
     try:
         journal.load_trace(_trace_id_for(source_file, episode_id))
@@ -157,9 +155,7 @@ async def ingest_episodes(
 
     async def bounded(episode: Episode) -> EpisodeResult:
         async with sem:
-            return await _process_episode(
-                episode, journal, source_file, model, dry_run, tier1
-            )
+            return await _process_episode(episode, journal, source_file, model, dry_run, tier1)
 
     tasks = [bounded(ep) for ep in parse_result.episodes]
     results = await asyncio.gather(*tasks)

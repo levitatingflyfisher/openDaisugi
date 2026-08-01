@@ -106,7 +106,11 @@ def test_tool_type_map_covers_spec_tools():
 
 
 def test_extract_step_edit():
-    tool_use = {"name": "Edit", "id": "t1", "input": {"file_path": "src/app.py", "old_string": "a", "new_string": "b"}}
+    tool_use = {
+        "name": "Edit",
+        "id": "t1",
+        "input": {"file_path": "src/app.py", "old_string": "a", "new_string": "b"},
+    }
     step = _extract_step(tool_use)
     assert step is not None
     assert step["type"] == "file_write"
@@ -121,9 +125,78 @@ def test_extract_step_bash():
     assert step["command"] == "pytest -v"
 
 
-def test_extract_step_unknown_tool_returns_none():
-    tool_use = {"name": "Agent", "id": "t3", "input": {"prompt": "do stuff"}}
-    assert _extract_step(tool_use) is None
+def test_extract_step_bookkeeping_tool_returns_none():
+    # Genuinely-unmapped harness bookkeeping / control-plane tools stay dropped
+    # ON PURPOSE — they are not real work steps.
+    for name in ("TaskCreate", "TaskUpdate", "ToolSearch", "AskUserQuestion", "SomeFutureTool"):
+        assert _extract_step({"name": name, "id": "t3", "input": {}}) is None, name
+
+
+def test_extract_step_agent_becomes_task():
+    # A sub-agent delegation (this harness's `Agent`) is captured as a TaskStep:
+    # the transcript carries the prompt but not the sub-agent's workspace/tools,
+    # so a pure-reasoning task is the faithful, verifiable label.
+    tool_use = {
+        "name": "Agent",
+        "id": "t3",
+        "input": {"prompt": "audit the parser", "subagent_type": "general-purpose"},
+    }
+    step = _extract_step(tool_use)
+    assert step is not None
+    assert step["type"] == "task"
+    assert step["prompt"] == "audit the parser"
+
+
+def test_extract_step_classic_task_tool_becomes_task():
+    # Classic Claude Code names the sub-agent tool `Task` (exact match, not the
+    # `Task*` todo-bookkeeping family).
+    step = _extract_step({"name": "Task", "id": "t3", "input": {"prompt": "go"}})
+    assert step is not None and step["type"] == "task" and step["prompt"] == "go"
+
+
+def test_extract_step_skill_becomes_skill():
+    tool_use = {
+        "name": "Skill",
+        "id": "t4",
+        "input": {"skill": "systematic-debugging", "args": {"scope": "parser"}},
+    }
+    step = _extract_step(tool_use)
+    assert step is not None
+    assert step["type"] == "skill"
+    assert step["skill_id"] == "systematic-debugging"
+    assert step["skill_input"] == {"scope": "parser"}
+
+
+def test_extract_step_mcp_becomes_mcp():
+    tool_use = {
+        "name": "mcp__github__create_issue",
+        "id": "t5",
+        "input": {"title": "bug", "body": "x"},
+    }
+    step = _extract_step(tool_use)
+    assert step is not None
+    assert step["type"] == "mcp"
+    assert step["server"] == "github"
+    assert step["tool"] == "create_issue"
+
+
+def test_parse_captures_agentic_steps_as_typed_steps(tmp_path):
+    """Agent/Skill/mcp tool calls become TaskStep/SkillStep/MCPStep, not dropped."""
+    transcript = tmp_path / "agentic.jsonl"
+    transcript.write_text(
+        '{"role": "user", "content": "orchestrate the work"}\n'
+        '{"role": "assistant", "content": ['
+        '{"type": "tool_use", "id": "t1", "name": "Agent", "input": {"prompt": "sub-task"}},'
+        '{"type": "tool_use", "id": "t2", "name": "Skill", "input": {"skill": "brainstorming", "args": {}}},'
+        '{"type": "tool_use", "id": "t3", "name": "mcp__slack__post", "input": {"text": "hi"}}'
+        "]}\n"
+        '{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}\n',
+        encoding="utf-8",
+    )
+    parser = ClaudeCodeParser(min_tools=1, max_tools=30)
+    result = parser.parse(transcript)
+    assert len(result.episodes) == 1
+    assert [s.type for s in result.episodes[0].steps] == ["task", "skill", "mcp"]
 
 
 from opendaisugi.parsers.claude_code import _is_real_user_message
@@ -138,7 +211,10 @@ def test_real_user_message_human_role():
 
 
 def test_tool_result_is_not_real_user_message():
-    msg = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}
+    msg = {
+        "role": "user",
+        "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+    }
     assert _is_real_user_message(msg) is False
 
 
@@ -262,6 +338,7 @@ def test_parse_splits_large_episode_with_llm():
     The mock returns a single subtask covering every tool in the incoming
     batch so no steps are silently dropped.
     """
+
     def fake_completion(*args, **kwargs):
         user_msg = kwargs["messages"][1]["content"]
         # "Tool calls (N total):" appears in the prompt; parse N
@@ -269,8 +346,12 @@ def test_parse_splits_large_episode_with_llm():
         content = (
             '{"subtasks": ['
             '{"start_index": 0, "end_index": ' + str(n // 2) + ', "task": "first half"},'
-            '{"start_index": ' + str(n // 2 + 1) + ', "end_index": ' + str(n - 1) + ', "task": "second half"}'
-            ']}'
+            '{"start_index": '
+            + str(n // 2 + 1)
+            + ', "end_index": '
+            + str(n - 1)
+            + ', "task": "second half"}'
+            "]}"
         )
         fake_response = MagicMock()
         fake_response.choices = [MagicMock(message=MagicMock(content=content))]
@@ -349,11 +430,16 @@ def test_validate_boundaries_rejects_missing_keys():
 
 def test_parse_falls_back_on_gapped_llm_boundaries():
     """LLM returns non-contiguous boundaries -> episode kept unsplit, no data loss."""
+
     def fake_completion(*args, **kwargs):
-        content = _json.dumps({"subtasks": [
-            {"start_index": 0, "end_index": 0, "task": "first"},
-            {"start_index": 3, "end_index": 4, "task": "skipped middle"},
-        ]})
+        content = _json.dumps(
+            {
+                "subtasks": [
+                    {"start_index": 0, "end_index": 0, "task": "first"},
+                    {"start_index": 3, "end_index": 4, "task": "skipped middle"},
+                ]
+            }
+        )
         fake_response = MagicMock()
         fake_response.choices = [MagicMock(message=MagicMock(content=content))]
         return fake_response
@@ -369,14 +455,19 @@ def test_parse_falls_back_on_gapped_llm_boundaries():
 
 def test_split_sub_episodes_have_distinct_source_ranges():
     """After LLM split, each sub-episode carries step_start/step_end."""
+
     def fake_completion(*args, **kwargs):
         user_msg = kwargs["messages"][1]["content"]
         n = int(user_msg.split("Tool calls (")[1].split(" total")[0])
         mid = n // 2
-        content = _json.dumps({"subtasks": [
-            {"start_index": 0, "end_index": mid, "task": "first half"},
-            {"start_index": mid + 1, "end_index": n - 1, "task": "second half"},
-        ]})
+        content = _json.dumps(
+            {
+                "subtasks": [
+                    {"start_index": 0, "end_index": mid, "task": "first half"},
+                    {"start_index": mid + 1, "end_index": n - 1, "task": "second half"},
+                ]
+            }
+        )
         fake_response = MagicMock()
         fake_response.choices = [MagicMock(message=MagicMock(content=content))]
         return fake_response
@@ -419,9 +510,59 @@ def test_parse_handles_utf8_transcript(tmp_path):
 
 def test_episode_importable_from_top_level():
     from opendaisugi import Episode
+
     assert Episode is not None
 
 
 def test_parse_result_importable_from_top_level():
     from opendaisugi import ParseResult
+
     assert ParseResult is not None
+
+
+# --- network tools: WebFetch's real URL kept, WebSearch's query is not a URL ----
+# Regression: _extract_step never read inp["url"], so WebFetch produced url="";
+# and a WebSearch query fell through the command fallback into NetworkStep.url.
+# Both then failed the verifier's http(s)-scheme check ("URL scheme '' not
+# allowed") — 316 such violations in a real 80-transcript onboard.
+
+
+def test_webfetch_step_carries_the_real_fetched_url():
+    from opendaisugi.parsers.claude_code import _RawEpisode
+
+    parser = ClaudeCodeParser()
+    ep = _RawEpisode(
+        task="t",
+        first_message=0,
+        last_message=0,
+        steps=[
+            _extract_step(
+                {"name": "WebFetch", "id": "a", "input": {"url": "https://example.com/doc", "prompt": "sum"}}
+            )
+        ],
+    )
+    (episode,) = parser._finalize([ep])
+    (step,) = episode.steps
+    assert step.type == "network"
+    assert step.url == "https://example.com/doc"  # was "" — inp["url"] never read
+
+
+def test_websearch_step_is_scheme_valid_url_not_the_raw_query():
+    from urllib.parse import urlparse
+
+    from opendaisugi.parsers.claude_code import _RawEpisode
+
+    parser = ClaudeCodeParser()
+    ep = _RawEpisode(
+        task="t",
+        first_message=0,
+        last_message=0,
+        steps=[_extract_step({"name": "WebSearch", "id": "a", "input": {"query": "find bar"}})],
+    )
+    (episode,) = parser._finalize([ep])
+    (step,) = episode.steps
+    # A search IS network egress, but the query is NOT a URL. It must still be a
+    # scheme-valid http(s) URL so the verifier's scheme check passes.
+    assert urlparse(step.url).scheme == "https"
+    assert step.url != "find bar"
+    assert "find" in step.url  # query preserved (url-encoded) as provenance

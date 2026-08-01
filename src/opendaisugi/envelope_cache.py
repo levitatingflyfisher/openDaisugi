@@ -105,7 +105,8 @@ class EnvelopeCache:
         if self._evicted_on_init > 0:
             _log.info(
                 "envelope_cache: evicted %d stale entries (prompt_version=%r)",
-                self._evicted_on_init, self._prompt_version,
+                self._evicted_on_init,
+                self._prompt_version,
             )
 
     def get(
@@ -121,8 +122,11 @@ class EnvelopeCache:
     ) -> Envelope | None:
         """Return cached envelope for these inputs, or ``None`` on miss."""
         key = make_cache_key(
-            task=task, context=context, model=model,
-            parent_envelope_id=parent_envelope_id, summarize=summarize,
+            task=task,
+            context=context,
+            model=model,
+            parent_envelope_id=parent_envelope_id,
+            summarize=summarize,
             thinking_budget=thinking_budget,
             tier1_provider_name=tier1_provider_name,
         )
@@ -153,8 +157,11 @@ class EnvelopeCache:
         The cache is advisory — a failed write must not break the caller.
         """
         key = make_cache_key(
-            task=task, context=context, model=model,
-            parent_envelope_id=parent_envelope_id, summarize=summarize,
+            task=task,
+            context=context,
+            model=model,
+            parent_envelope_id=parent_envelope_id,
+            summarize=summarize,
             thinking_budget=thinking_budget,
             tier1_provider_name=tier1_provider_name,
         )
@@ -207,9 +214,7 @@ class EnvelopeCache:
     def stats(self) -> dict[str, int]:
         """Return ``{'entries': N, 'evicted_on_init': K}`` for diagnostics."""
         with sqlite3.connect(self._db_path) as con:
-            row = con.execute(
-                "SELECT COUNT(*) FROM envelope_cache"
-            ).fetchone()
+            row = con.execute("SELECT COUNT(*) FROM envelope_cache").fetchone()
         return {
             "entries": int(row[0]) if row else 0,
             "evicted_on_init": self._evicted_on_init,

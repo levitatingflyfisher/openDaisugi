@@ -46,9 +46,13 @@ def test_inner_workspace_within_outer_holds():
 
 
 def test_velocity_limit_fail_closed_and_exceed():
-    assert envelope_subsumes(_env(velocity_limit=1.0), _env(velocity_limit=5.0)).holds is False  # exceeds
-    assert envelope_subsumes(_env(velocity_limit=1.0), _env()).holds is False                    # undeclared
-    assert envelope_subsumes(_env(velocity_limit=5.0), _env(velocity_limit=1.0)).holds is True    # within
+    assert (
+        envelope_subsumes(_env(velocity_limit=1.0), _env(velocity_limit=5.0)).holds is False
+    )  # exceeds
+    assert envelope_subsumes(_env(velocity_limit=1.0), _env()).holds is False  # undeclared
+    assert (
+        envelope_subsumes(_env(velocity_limit=5.0), _env(velocity_limit=1.0)).holds is True
+    )  # within
 
 
 def test_torque_limit_fail_closed():
@@ -59,15 +63,17 @@ def test_torque_limit_fail_closed():
 
 def test_joint_limits_undeclared_and_exceed():
     outer = _env(joint_limits={"j1": (-1.0, 1.0)})
-    assert envelope_subsumes(outer, _env()).holds is False                                # joint undeclared
-    assert envelope_subsumes(outer, _env(joint_limits={"j1": (-2.0, 2.0)})).holds is False  # range exceeds
-    assert envelope_subsumes(outer, _env(joint_limits={"j1": (-0.5, 0.5)})).holds is True   # within
+    assert envelope_subsumes(outer, _env()).holds is False  # joint undeclared
+    assert (
+        envelope_subsumes(outer, _env(joint_limits={"j1": (-2.0, 2.0)})).holds is False
+    )  # range exceeds
+    assert envelope_subsumes(outer, _env(joint_limits={"j1": (-0.5, 0.5)})).holds is True  # within
 
 
 def test_inner_must_avoid_at_least_outer_obstacles():
     obs = [((1.0, 1.0, 1.0), (2.0, 2.0, 2.0))]
     outer = _env(obstacles=obs)
-    assert envelope_subsumes(outer, _env()).holds is False          # inner omits a forbidden region
+    assert envelope_subsumes(outer, _env()).holds is False  # inner omits a forbidden region
     assert envelope_subsumes(outer, _env(obstacles=obs)).holds is True  # inner avoids it too
 
 
@@ -80,7 +86,9 @@ def test_non_robot_envelopes_unaffected():
 def test_verify_delegation_surfaces_robot_reason():
     caller = _env(workspace_bounds=WS_SMALL)
     contract = Contract(
-        contract_id="c1", skill_id="wide-arm", envelope=_env(workspace_bounds=WS_BIG),
+        contract_id="c1",
+        skill_id="wide-arm",
+        envelope=_env(workspace_bounds=WS_BIG),
     )
     decision = verify_delegation(caller, contract)
     assert decision.allowed is False

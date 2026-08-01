@@ -12,6 +12,7 @@ compiled once over the symbolic step — sufficient to detect per-step vacuity.
 For plan-level quantifiers without quantified variables (``DependsOn``,
 ``Before``), the raw expression is compiled directly.
 """
+
 from __future__ import annotations
 
 from collections import OrderedDict

@@ -23,8 +23,8 @@ This is the quadrant we're actively growing. Today the entry points are:
 - **[Protect an agent you're already running](tutorials/protect-your-existing-session.md)**
   — one command to a working shadow-mode gate over a live session, then one flag
   to enforce.
-- The **[README quickstart](../README.md)** — install, generate an envelope, verify
-  a plan.
+- The **[README quickstart](../README.md)** — install, then verify an LLM's plan and
+  watch an out-of-envelope action refused (no API key).
 - The runnable **[examples/](../examples/)** — end-to-end scripts you can read and
   run (orchestrator, safe sub-agent, swarm tasking, robotics sims, the
   [injection-denied](../examples/injection-denied/) live demo).
@@ -39,7 +39,7 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Deployment](deployment.md)** — run it in the modes it supports.
 - **[Integrations](integrations.md)** — wire it into a harness (per-harness adapters).
 - **[Hook integration](hook-integration.md)** — the passive-hook path.
-- **[Gate a live session](gate.md)** — the call-time gate: shadow → report → enforce → disarm.
+- **[Gate a live session](how-to/gate.md)** — the call-time gate: shadow → report → enforce → disarm.
 - **[π0 / VLA integration](pi-vla-integration.md)** — the robotics integration path.
 - Agent-guidance for working *in* this repo: **[AGENTS.md](../AGENTS.md)**.
 
@@ -69,6 +69,9 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Robotics](robotics.md)** — the runtime-assurance-for-VLA thesis (experimental).
 - **[Limitations](limitations.md)** — read before adopting. What it does *not* do.
 - **[Case study: AI council](case-studies/ai-council.md)** — a worked example.
+- **[Exploration: the blind-design gauntlet](exploration/2026-08-blind-design-gauntlet/)**
+  — the convergence experiment (five independent, closed-book architects) that
+  reframed openDaisugi as a substrate + cost levers ([ADR-0011](adr/0011-verifiable-execution-substrate.md)).
 
 ---
 

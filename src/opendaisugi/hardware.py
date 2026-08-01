@@ -55,10 +55,10 @@ class HardwareProfile:
 
 @dataclass(frozen=True)
 class ModelRecommendation:
-    size_class: str          # human label, e.g. "~8B"
-    params_b_max: int        # upper bound of the param class, in billions
-    quant: str               # e.g. "Q4_K_M"
-    runtime: str             # "llamafile"
+    size_class: str  # human label, e.g. "~8B"
+    params_b_max: int  # upper bound of the param class, in billions
+    quant: str  # e.g. "Q4_K_M"
+    runtime: str  # "llamafile"
     est_download_gb: float
     candidate_families: list[str] = field(default_factory=list)
     rationale: str = ""
@@ -66,6 +66,7 @@ class ModelRecommendation:
 
 
 # --- probes (monkeypatched in tests; each is best-effort and never raises) ---
+
 
 def _detect_ram_gb() -> float | None:
     try:
@@ -102,7 +103,9 @@ def _detect_gpu() -> tuple[float, str | None]:
         try:
             out = subprocess.run(
                 [smi, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if out.returncode == 0 and out.stdout.strip():
                 first = out.stdout.strip().splitlines()[0]
@@ -121,8 +124,13 @@ def detect_hardware() -> HardwareProfile:
     vram, gpu = _detect_gpu()
     unified = system == "Darwin" and arch in ("arm64", "aarch64")
     return HardwareProfile(
-        system=system, arch=arch, cpu_count=cpu,
-        ram_gb=ram, vram_gb=vram, gpu_name=gpu, unified_memory=unified,
+        system=system,
+        arch=arch,
+        cpu_count=cpu,
+        ram_gb=ram,
+        vram_gb=vram,
+        gpu_name=gpu,
+        unified_memory=unified,
     )
 
 
@@ -147,10 +155,12 @@ def recommend_model(profile: HardwareProfile) -> ModelRecommendation:
         size_class, params_b_max, est = _TIERS[-1][1], _TIERS[-1][2], _TIERS[-1][3]
 
     where = (
-        f"{profile.vram_gb:g}GB VRAM ({profile.gpu_name})" if profile.has_discrete_gpu
+        f"{profile.vram_gb:g}GB VRAM ({profile.gpu_name})"
+        if profile.has_discrete_gpu
         else f"{profile.ram_gb:g}GB RAM (CPU inference — expect slower generation; "
-             f"favor the smaller end and a low context size)" if profile.ram_gb
-             else "undetected memory (treating conservatively)"
+        f"favor the smaller end and a low context size)"
+        if profile.ram_gb
+        else "undetected memory (treating conservatively)"
     )
     rationale = (
         f"budget ~{budget:.0f}GB from {where}. Recommending a {size_class}-class "

@@ -20,6 +20,17 @@ for Claude, `{}` for Hermes/OpenClaw). It never blocks.
 > per call against a registered envelope). See **[Gate a live
 > session](gate.md)**; this document covers only the passive capture path.
 
+> **Enforcement (blocking) status — read before you rely on the gate.**
+> *Capture* (this doc) works on all four runtimes. *Enforcement* (the gate
+> emitting a block contract) is **verified only on Claude Code**, where a
+> live sub-agent's out-of-envelope call is denied end to end. The Hermes and
+> OpenClaw block contracts are **shipped but unverified against a real host** —
+> their docs disagree with the shapes originally observed, so `daisugi` emits a
+> fail-closed superset (see `hook.stdout_for_format`), but until a per-host
+> contract test exists (roadmap Stage 5) treat Hermes/OpenClaw enforcement as
+> *best-effort, not proven*. Codex enforcement is via the MCP path, not a
+> blocking hook.
+
 ## Claude Code
 
 Add to `~/.claude/settings.json`:

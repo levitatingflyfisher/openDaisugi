@@ -1,4 +1,5 @@
 """Run-end integrity check: no silent step-skipping (v0.18 L4)."""
+
 from pathlib import Path
 
 import pytest
@@ -11,18 +12,23 @@ from opendaisugi.supervisor import Supervisor
 
 
 def _env() -> Envelope:
-    return Envelope(generated_by="t", task="t",
-                    permissions=Permission(shell=True, shell_allowlist=["echo"]))
+    return Envelope(
+        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["echo"])
+    )
 
 
 @pytest.mark.asyncio
 async def test_integrity_passes_when_all_steps_receipted(tmp_path: Path):
     j = Journal(data_dir=tmp_path)
     sup = Supervisor(executors={"shell": DryRunExecutor()}, journal=j)
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo a"),
-        ShellStep(id="s2", command="echo b", depends_on=["s1"]),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo a"),
+            ShellStep(id="s2", command="echo b", depends_on=["s1"]),
+        ],
+    )
     session = await sup.run(plan, _env())
     assert session.status == RunStatus.SUCCEEDED
     assert session.integrity_passed is True
@@ -44,13 +50,17 @@ async def test_integrity_fails_on_silent_skip(tmp_path: Path):
     j.append_receipt = filtering_append
 
     sup = Supervisor(executors={"shell": DryRunExecutor()}, journal=j)
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo a"),
-        ShellStep(id="s2", command="echo b", depends_on=["s1"]),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo a"),
+            ShellStep(id="s2", command="echo b", depends_on=["s1"]),
+        ],
+    )
     session = await sup.run(plan, _env())
-    assert session.status == RunStatus.SUCCEEDED   # supervisor thinks it worked
-    assert session.integrity_passed is False        # but the check catches it
+    assert session.status == RunStatus.SUCCEEDED  # supervisor thinks it worked
+    assert session.integrity_passed is False  # but the check catches it
 
 
 @pytest.mark.asyncio
@@ -69,9 +79,13 @@ async def test_approval_strategy_exception_aborts_cleanly(tmp_path: Path):
         journal=j,
         approval=RaisingApproval(),
     )
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo a"),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo a"),
+        ],
+    )
     session = await sup.run(plan, _env())
     assert session.status == RunStatus.ABORTED
     # Should not have crashed; integrity check ran without journal contamination.
@@ -92,11 +106,15 @@ async def test_integrity_accepts_halt_on_failure_partial(tmp_path: Path):
             return ExecutorResult(rc=0, stdout="", duration_ms=0.0, timed_out=False)
 
     sup = Supervisor(executors={"shell": FailingOnS2()}, journal=j)
-    plan = ActionPlan(source="t", task="t", steps=[
-        ShellStep(id="s1", command="echo a"),
-        ShellStep(id="s2", command="echo b", depends_on=["s1"]),
-        ShellStep(id="s3", command="echo c", depends_on=["s2"]),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            ShellStep(id="s1", command="echo a"),
+            ShellStep(id="s2", command="echo b", depends_on=["s1"]),
+            ShellStep(id="s3", command="echo c", depends_on=["s2"]),
+        ],
+    )
     session = await sup.run(plan, _env())
     assert session.status == RunStatus.FAILED
     assert session.failed_step_id == "s2"

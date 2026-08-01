@@ -20,6 +20,7 @@ def compute_evidence_hash(evidence: dict[str, Any]) -> str:
     canonical = json.dumps(evidence, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+
 # v0.13.0: names treated as shell interpreters for policy purposes. A command
 # whose head matches one of these can carry its dangerous action in an argument
 # (``sh -c "rm -rf /"``, ``find / -delete``, ``xargs rm``, ``python -c "..."``)
@@ -27,26 +28,65 @@ def compute_evidence_hash(evidence: dict[str, Any]) -> str:
 # outside the envelope algebra's scope (deferred to v0.14+ semantic recursion).
 # Envelope.shell_interpreter_policy governs what the tool does when one of
 # these appears in shell_allowlist.
-SHELL_INTERPRETERS: frozenset[str] = frozenset({
-    "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh",
-    "xargs", "find",
-    "python", "python3", "python2",
-    "perl", "ruby", "node", "deno",
-    "make", "awk", "gawk", "sed",
-    "eval", "exec", "source",
-    "env",  # env VAR=val CMD — indirect invocation
-})
+SHELL_INTERPRETERS: frozenset[str] = frozenset(
+    {
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "dash",
+        "ksh",
+        "csh",
+        "tcsh",
+        "xargs",
+        "find",
+        "python",
+        "python3",
+        "python2",
+        "perl",
+        "ruby",
+        "node",
+        "deno",
+        "make",
+        "awk",
+        "gawk",
+        "sed",
+        "eval",
+        "exec",
+        "source",
+        "env",  # env VAR=val CMD — indirect invocation
+    }
+)
 
 
 class Permission(BaseModel):
     """What actions are permitted for a verified plan."""
 
-    file_read: list[str] = Field(default_factory=list, description="Glob patterns of readable paths")
-    file_write: list[str] = Field(default_factory=list, description="Glob patterns of writable paths")
+    file_read: list[str] = Field(
+        default_factory=list, description="Glob patterns of readable paths"
+    )
+    file_write: list[str] = Field(
+        default_factory=list, description="Glob patterns of writable paths"
+    )
     network: bool = False
-    network_hosts: list[str] = Field(default_factory=list, description="If non-empty, restrict NetworkStep URLs to these hosts. Empty list = any host (when network=True).")
+    network_hosts: list[str] = Field(
+        default_factory=list,
+        description="If non-empty, restrict NetworkStep URLs to these hosts. Empty list = any host (when network=True).",
+    )
     shell: bool = False
-    shell_allowlist: list[str] = Field(default_factory=list, description="Allowed shell commands when shell=True")
+    shell_allowlist: list[str] = Field(
+        default_factory=list, description="Allowed shell commands when shell=True"
+    )
+    # v0.40: opt-in compound-shell decomposition. When True, the verifier may
+    # decompose a metacharacter-bearing command (pipes, &&/||/;, newlines) into
+    # its simple commands and verify EACH head against shell_allowlist, instead
+    # of the unconditional metachar rejection. Kept off by default so a plan's
+    # verdict stays a pure function of (plan, envelope): with the field True but
+    # the shell parser (opendaisugi[shell]) absent, the step is REJECTED
+    # (fail-closed on a missing capability), never silently blanket-rejected.
+    # Substitution, redirection, non-literal heads and command-taking wrappers
+    # are always rejected — see shell_decompose.decompose_command.
+    shell_allow_decomposition: bool = False
     # v0.32: MCP tool allowlist for MCPStep. Entries are ``server/tool`` (glob-able,
     # e.g. ``github/*``). Deny-by-default: an empty list admits NO MCP tool, so an
     # MCPStep only verifies against an envelope that explicitly names its tool.
@@ -57,8 +97,8 @@ class Permission(BaseModel):
     custom_step_allowlist: list[str] = Field(
         default_factory=list,
         description="Custom @step_type names this envelope explicitly permits. Under "
-                    "strict mode an unknown step type is rejected unless listed here "
-                    "(a kit declares its own domain step types, e.g. 'approach_dish').",
+        "strict mode an unknown step type is rejected unless listed here "
+        "(a kit declares its own domain step types, e.g. 'approach_dish').",
     )
     max_execution_time_s: int = 30
     max_output_size_mb: int = 10
@@ -147,7 +187,7 @@ class Envelope(BaseModel):
     cache_key: str | None = Field(
         default=None,
         description="Stamped by generate_envelope() at creation time (v0.2.1+). "
-                    "None for hand-built envelopes.",
+        "None for hand-built envelopes.",
     )
     stakes: Literal["low", "medium", "high", "physical"] = Field(
         default="low",
@@ -226,6 +266,7 @@ def step_type(cls=None, *, override: bool = False):
     a misbehaving or adversarial third-party kit from silently shadowing
     a built-in step type. Re-registering the same class is idempotent.
     """
+
     def _do_register(c):
         default = c.model_fields["type"].default
         existing = STEP_TYPE_REGISTRY.get(default)
@@ -237,6 +278,7 @@ def step_type(cls=None, *, override: bool = False):
             )
         STEP_TYPE_REGISTRY[default] = c
         return c
+
     if cls is None:
         # Called with kwargs: @step_type(override=True)
         return _do_register
@@ -453,9 +495,19 @@ class MCPStep(StepBase):
 # ActionStep is a type alias (discriminated union) — not a class.
 # Pydantic dispatches to the right subclass based on the ``type`` field.
 ActionStep = Annotated[
-    ShellStep | FileReadStep | FileWriteStep | NetworkStep
-    | JointMoveStep | CartesianMoveStep | GripperStep | SimulationResetStep
-    | VLAStep | TaskStep | AgenticStep | SkillStep | MCPStep,
+    ShellStep
+    | FileReadStep
+    | FileWriteStep
+    | NetworkStep
+    | JointMoveStep
+    | CartesianMoveStep
+    | GripperStep
+    | SimulationResetStep
+    | VLAStep
+    | TaskStep
+    | AgenticStep
+    | SkillStep
+    | MCPStep,
     Field(discriminator="type"),
 ]
 
@@ -527,6 +579,25 @@ class VerificationResult(BaseModel):
     duration_ms: float
 
 
+class ReversalHandle(BaseModel):
+    """How to undo a reversible deed — the deed ledger's reversal record (Stage 8).
+
+    For a ``file_write``: undo means writing ``prior_content`` back when
+    ``prior_existed``, or deleting the file (and any directories the write
+    created, ``created_dirs``, deepest-first if empty) when it did not. A handle
+    is emitted only when the undo is *complete and honest*: a prior image too
+    large to hold or not valid UTF-8 yields **no** handle, and the deed is marked
+    ``irreversible`` instead — the ledger never claims a reversal it cannot make.
+    """
+
+    kind: Literal["file_write"]
+    path: str
+    prior_existed: bool
+    prior_content: str | None = None
+    created_dirs: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
 class Receipt(BaseModel):
     """Evidence that a step executed, produced by the supervisor after each step.
 
@@ -536,6 +607,7 @@ class Receipt(BaseModel):
     ``evidence_hash`` is content-addressed (see ``compute_evidence_hash``) so
     receipts are comparable across runs without leaking raw evidence. v0.18.0+.
     """
+
     step_id: str
     run_id: str
     timestamp: float
@@ -549,6 +621,15 @@ class Receipt(BaseModel):
     # success/failure to specific models (e.g. "Haiku failure rate on
     # DraftEmail steps").
     model_id: str | None = None
+    # v0.41 (Stage 8, the deed ledger): the step's effect class (its kind) and,
+    # for a reversible side effect, the handle a harness uses to undo it from the
+    # ledger alone. ``reversibility`` is a *positive* claim — "none" (read-only or
+    # nothing mutated), "reversible" (a handle is present), or "irreversible" (a
+    # side effect we cannot honestly undo). A missing handle is never silently
+    # read as "none": any side-effecting step without one defaults to irreversible.
+    effect_class: str | None = None
+    reversibility: str | None = None
+    reversal: ReversalHandle | None = None
 
 
 class Trace(BaseModel):

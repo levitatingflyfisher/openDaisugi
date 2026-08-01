@@ -39,6 +39,7 @@ def _read_payload(path: str) -> dict:
 
 # ---------------------------------------------------------------- allow path
 
+
 def test_in_envelope_read_is_allowed():
     d = evaluate_call(_read_payload("/allowed/notes.txt"), _envelope(), mode="enforce")
     assert isinstance(d, GateDecision)
@@ -55,6 +56,7 @@ def test_decision_carries_detail_and_elapsed():
 
 
 # ----------------------------------------------------------------- deny paths
+
 
 def test_out_of_envelope_read_is_denied_with_violation_reason():
     d = evaluate_call(_read_payload("/etc/passwd"), _envelope(), mode="enforce")
@@ -84,6 +86,7 @@ def test_non_dict_payload_is_denied():
 def test_internal_exception_denies(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("verifier exploded")
+
     monkeypatch.setattr("opendaisugi.gate.verify", _boom)
     d = evaluate_call(_read_payload("/allowed/x"), _envelope(), mode="enforce")
     assert d.allow is False
@@ -93,10 +96,13 @@ def test_internal_exception_denies(monkeypatch):
 def test_slow_verifier_denies_via_inner_timeout(monkeypatch):
     def _slow(*a, **k):
         time.sleep(2.0)
+
     monkeypatch.setattr("opendaisugi.gate.verify", _slow)
     t0 = time.monotonic()
     d = evaluate_call(
-        _read_payload("/allowed/x"), _envelope(), mode="enforce",
+        _read_payload("/allowed/x"),
+        _envelope(),
+        mode="enforce",
         verify_timeout_s=0.1,
     )
     assert time.monotonic() - t0 < 1.5  # denied without waiting the full sleep
@@ -105,6 +111,7 @@ def test_slow_verifier_denies_via_inner_timeout(monkeypatch):
 
 
 # --------------------------------------------------------------- shadow mode
+
 
 def test_shadow_mode_allows_but_records_would_deny():
     d = evaluate_call(_read_payload("/etc/passwd"), _envelope(), mode="shadow")
@@ -121,6 +128,7 @@ def test_shadow_mode_in_envelope_records_no_would_deny():
 
 # ------------------------------------------------- strictness from the stakes
 
+
 def test_strictness_is_left_to_the_envelope(monkeypatch):
     """The gate must pass strict=None so resolve_strict() derives strictness
     from the envelope's stakes — never relaxed (or hardened) at the gate."""
@@ -129,6 +137,7 @@ def test_strictness_is_left_to_the_envelope(monkeypatch):
     def _spy(plan, envelope, **kwargs):
         seen.update(kwargs)
         from opendaisugi.verify import verify as real_verify
+
         return real_verify(plan, envelope, **kwargs)
 
     monkeypatch.setattr("opendaisugi.gate.verify", _spy)
@@ -173,6 +182,7 @@ def _payload_bytes(path: str, session: str = "sess1") -> bytes:
 
 # ------------------------------------------------- registration channel
 
+
 def test_register_and_load_envelope_roundtrip(tmp_path):
     env = _envelope()
     p = register_envelope(env, session_id="sessA", root=tmp_path)
@@ -207,6 +217,7 @@ def test_registered_envelope_file_is_private(tmp_path):
 
 # --------------------------------------------------------- disarm switch
 
+
 def test_disarm_arm_roundtrip(tmp_path):
     assert is_disarmed(tmp_path) is False
     disarm(tmp_path)
@@ -219,7 +230,10 @@ def test_disarmed_gate_allows_everything_even_out_of_envelope(tmp_path):
     register_envelope(_envelope(), root=tmp_path)
     disarm(tmp_path)
     out = gate_and_contract(
-        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="claude", mode="enforce",
+        _payload_bytes("/etc/passwd"),
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
     )
     assert out.exit_code == 0
     assert "disarmed" in out.decision.reason
@@ -227,10 +241,14 @@ def test_disarmed_gate_allows_everything_even_out_of_envelope(tmp_path):
 
 # --------------------------------------------------- gate_and_contract
 
+
 def test_enforce_deny_is_exit_2_with_reason_on_stderr(tmp_path):
     register_envelope(_envelope(), root=tmp_path)
     out = gate_and_contract(
-        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="claude", mode="enforce",
+        _payload_bytes("/etc/passwd"),
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
     )
     assert out.exit_code == 2
     assert "/etc/passwd" in out.stderr
@@ -240,7 +258,10 @@ def test_enforce_deny_is_exit_2_with_reason_on_stderr(tmp_path):
 def test_enforce_allow_is_exit_0_with_continue_contract(tmp_path):
     register_envelope(_envelope(), root=tmp_path)
     out = gate_and_contract(
-        _payload_bytes("/allowed/notes.txt"), root=tmp_path, fmt="claude", mode="enforce",
+        _payload_bytes("/allowed/notes.txt"),
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
     )
     assert out.exit_code == 0
     assert json.loads(out.stdout) == {"continue": True}
@@ -249,7 +270,10 @@ def test_enforce_allow_is_exit_0_with_continue_contract(tmp_path):
 def test_shadow_never_blocks_but_logs_would_deny(tmp_path):
     register_envelope(_envelope(), root=tmp_path)
     out = gate_and_contract(
-        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="claude", mode="shadow",
+        _payload_bytes("/etc/passwd"),
+        root=tmp_path,
+        fmt="claude",
+        mode="shadow",
     )
     assert out.exit_code == 0
     log = tmp_path / "shadow" / "sess1.jsonl"
@@ -261,7 +285,10 @@ def test_shadow_never_blocks_but_logs_would_deny(tmp_path):
 
 def test_missing_envelope_enforce_denies_and_names_both_exits(tmp_path):
     out = gate_and_contract(
-        _payload_bytes("/anything"), root=tmp_path, fmt="claude", mode="enforce",
+        _payload_bytes("/anything"),
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
     )
     assert out.exit_code == 2
     assert "register" in out.stderr
@@ -270,7 +297,10 @@ def test_missing_envelope_enforce_denies_and_names_both_exits(tmp_path):
 
 def test_missing_envelope_shadow_allows_but_flags(tmp_path):
     out = gate_and_contract(
-        _payload_bytes("/anything"), root=tmp_path, fmt="claude", mode="shadow",
+        _payload_bytes("/anything"),
+        root=tmp_path,
+        fmt="claude",
+        mode="shadow",
     )
     assert out.exit_code == 0
     assert out.decision.would_deny is True
@@ -293,17 +323,25 @@ def test_outer_exception_enforce_denies_shadow_allows(tmp_path, monkeypatch):
 
     def _boom(*a, **k):
         raise RuntimeError("io layer exploded")
+
     monkeypatch.setattr("opendaisugi.gate.load_envelope", _boom)
-    out = gate_and_contract(_payload_bytes("/allowed/x"), root=tmp_path, fmt="claude", mode="enforce")
+    out = gate_and_contract(
+        _payload_bytes("/allowed/x"), root=tmp_path, fmt="claude", mode="enforce"
+    )
     assert out.exit_code == 2
-    out2 = gate_and_contract(_payload_bytes("/allowed/x"), root=tmp_path, fmt="claude", mode="shadow")
+    out2 = gate_and_contract(
+        _payload_bytes("/allowed/x"), root=tmp_path, fmt="claude", mode="shadow"
+    )
     assert out2.exit_code == 0
 
 
 def test_hermes_fmt_deny_is_block_json_exit_0(tmp_path):
     register_envelope(_envelope(), root=tmp_path)
     out = gate_and_contract(
-        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="hermes", mode="enforce",
+        _payload_bytes("/etc/passwd"),
+        root=tmp_path,
+        fmt="hermes",
+        mode="enforce",
     )
     assert out.exit_code == 0
     body = json.loads(out.stdout)
@@ -320,15 +358,23 @@ from opendaisugi.gate import replay_captures, shadow_report  # noqa: E402
 def _drive_shadow_session(root, session="sessR"):
     register_envelope(_envelope(shell=True, shell_allowlist=["echo"]), root=root)
     calls = [
-        _read_payload("/allowed/ok.txt"),                                   # allowed
-        _read_payload("/etc/passwd"),                                       # real deny
-        {"tool_name": "Bash", "tool_input": {"command": "echo a && echo b"},},  # FP candidate
-        {"tool_name": "TodoWrite", "tool_input": {"todos": []}},            # unrecognized host tool → FP candidate
+        _read_payload("/allowed/ok.txt"),  # allowed
+        _read_payload("/etc/passwd"),  # real deny
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo a && echo b"},
+        },  # FP candidate
+        {
+            "tool_name": "TodoWrite",
+            "tool_input": {"todos": []},
+        },  # unrecognized host tool → FP candidate
     ]
     for c in calls:
         gate_and_contract(
             json.dumps(c | {"session_id": session}).encode(),
-            root=root, fmt="claude", mode="shadow",
+            root=root,
+            fmt="claude",
+            mode="shadow",
         )
 
 
@@ -367,12 +413,27 @@ def test_replay_captures_produces_report_from_passive_session(tmp_path):
     captured real session, false-positive candidates included."""
     captures = tmp_path / "cap.jsonl"
     rows = [
-        {"captured_at": 1.0, "session_id": "cap", "tool_name": "Read",
-         "step_type": "file_read", "path": "/allowed/a.txt"},
-        {"captured_at": 2.0, "session_id": "cap", "tool_name": "Read",
-         "step_type": "file_read", "path": "/secret/b.txt"},
-        {"captured_at": 3.0, "session_id": "cap", "tool_name": "Bash",
-         "step_type": "shell", "command": "echo hi && rm -rf /"},
+        {
+            "captured_at": 1.0,
+            "session_id": "cap",
+            "tool_name": "Read",
+            "step_type": "file_read",
+            "path": "/allowed/a.txt",
+        },
+        {
+            "captured_at": 2.0,
+            "session_id": "cap",
+            "tool_name": "Read",
+            "step_type": "file_read",
+            "path": "/secret/b.txt",
+        },
+        {
+            "captured_at": 3.0,
+            "session_id": "cap",
+            "tool_name": "Bash",
+            "step_type": "shell",
+            "command": "echo hi && rm -rf /",
+        },
     ]
     captures.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     env = _envelope(shell=True, shell_allowlist=["echo"])
@@ -388,6 +449,7 @@ def test_replay_captures_produces_report_from_passive_session(tmp_path):
 # Captures mirroring: gated sessions feed the distillation pipeline
 # =================================================================
 
+
 def test_allowed_calls_mirror_into_captures_format(tmp_path):
     """With a captures_root, calls the gate allows are recorded in passive-
     capture format — so a gated session distills through the existing
@@ -395,8 +457,11 @@ def test_allowed_calls_mirror_into_captures_format(tmp_path):
     register_envelope(_envelope(), root=tmp_path)
     caps = tmp_path / "caps"
     gate_and_contract(
-        _payload_bytes("/allowed/ok.txt"), root=tmp_path, fmt="claude",
-        mode="enforce", captures_root=caps,
+        _payload_bytes("/allowed/ok.txt"),
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
+        captures_root=caps,
     )
     files = list(caps.glob("*.jsonl"))
     assert files, "no capture written for an allowed call"
@@ -411,8 +476,11 @@ def test_denied_calls_do_not_mirror_into_captures(tmp_path):
     register_envelope(_envelope(), root=tmp_path)
     caps = tmp_path / "caps"
     gate_and_contract(
-        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="claude",
-        mode="enforce", captures_root=caps,
+        _payload_bytes("/etc/passwd"),
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
+        captures_root=caps,
     )
     assert not list(caps.glob("*.jsonl")) if caps.exists() else True
 
@@ -423,8 +491,11 @@ def test_shadow_mode_mirrors_everything_it_allows(tmp_path):
     register_envelope(_envelope(), root=tmp_path)
     caps = tmp_path / "caps"
     gate_and_contract(
-        _payload_bytes("/etc/passwd"), root=tmp_path, fmt="claude",
-        mode="shadow", captures_root=caps,
+        _payload_bytes("/etc/passwd"),
+        root=tmp_path,
+        fmt="claude",
+        mode="shadow",
+        captures_root=caps,
     )
     files = list(caps.glob("*.jsonl"))
     assert files, "shadow mode must capture calls that actually ran"
@@ -432,6 +503,7 @@ def test_shadow_mode_mirrors_everything_it_allows(tmp_path):
 
 def test_settings_json_carries_captures_root(tmp_path):
     from opendaisugi.gate import gate_settings_json
+
     caps = tmp_path / "caps"
     settings = json.loads(gate_settings_json(root=tmp_path, captures_root=caps))
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
@@ -454,9 +526,11 @@ def test_main_returns_2_on_baseexception(tmp_path, monkeypatch):
 
     def _boom(*a, **k):
         raise SystemExit(1)
+
     monkeypatch.setattr("opendaisugi.gate.gate_and_contract", _boom)
     monkeypatch.setattr(
-        _sys, "stdin",
+        _sys,
+        "stdin",
         type("S", (), {"buffer": io.BytesIO(b"{}")})(),
     )
     code = gate_main(["--mode", "enforce", "--root", str(tmp_path)])
@@ -468,6 +542,7 @@ def test_claude_settings_command_maps_any_nonzero_to_deny(tmp_path):
     `... || exit 2` so an import failure or crash (exit 1) — where main()
     never runs — still blocks. Live-verified: without this the read leaks."""
     from opendaisugi.gate import gate_settings_json
+
     settings = json.loads(gate_settings_json(mode="enforce", root=tmp_path))
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert cmd.rstrip().endswith("|| exit 2")
@@ -478,6 +553,7 @@ def test_non_claude_settings_command_is_not_wrapped(tmp_path):
     JSON-on-stdout, so wrapping would be meaningless (their crash-time
     behavior is part of the already-documented 'unverified' enforcement)."""
     from opendaisugi.gate import gate_settings_json
+
     settings = json.loads(gate_settings_json(mode="enforce", root=tmp_path, fmt="hermes"))
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "|| exit 2" not in cmd
@@ -486,6 +562,7 @@ def test_non_claude_settings_command_is_not_wrapped(tmp_path):
 # =================================================================
 # Envelope pinning: authorization must not key on untrusted input
 # =================================================================
+
 
 def test_payload_session_id_can_select_another_envelope_when_unpinned(tmp_path):
     """Documents the unpinned behavior: the payload's session_id chooses the
@@ -496,7 +573,9 @@ def test_payload_session_id_can_select_another_envelope_when_unpinned(tmp_path):
     register_envelope(_envelope(file_read=["/**"]), session_id="admin", root=tmp_path)
     out = gate_and_contract(
         _payload_bytes("/etc/passwd", session="admin"),
-        root=tmp_path, fmt="claude", mode="enforce",
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
     )
     assert out.exit_code == 0  # the permissive 'admin' envelope was selected
 
@@ -509,7 +588,10 @@ def test_pinned_session_ignores_the_payloads_session_id(tmp_path):
     register_envelope(_envelope(file_read=["/**"]), session_id="admin", root=tmp_path)
     out = gate_and_contract(
         _payload_bytes("/etc/passwd", session="admin"),
-        root=tmp_path, fmt="claude", mode="enforce", pin_session="default",
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
+        pin_session="default",
     )
     assert out.exit_code == 2
 
@@ -518,12 +600,18 @@ def test_pinned_session_selects_the_named_envelope(tmp_path):
     register_envelope(_envelope(file_read=["/only-here/**"]), session_id="job7", root=tmp_path)
     allowed = gate_and_contract(
         _payload_bytes("/only-here/x", session="whatever"),
-        root=tmp_path, fmt="claude", mode="enforce", pin_session="job7",
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
+        pin_session="job7",
     )
     assert allowed.exit_code == 0
     denied = gate_and_contract(
         _payload_bytes("/elsewhere/x", session="whatever"),
-        root=tmp_path, fmt="claude", mode="enforce", pin_session="job7",
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
+        pin_session="job7",
     )
     assert denied.exit_code == 2
 
@@ -532,7 +620,10 @@ def test_pinned_log_record_keeps_the_real_session_for_traceability(tmp_path):
     register_envelope(_envelope(), root=tmp_path)
     gate_and_contract(
         _payload_bytes("/etc/passwd", session="claimed-session"),
-        root=tmp_path, fmt="claude", mode="enforce", pin_session="default",
+        root=tmp_path,
+        fmt="claude",
+        mode="enforce",
+        pin_session="default",
     )
     rep = shadow_report(root=tmp_path)
     assert rep["would_deny"] == 1
@@ -541,6 +632,7 @@ def test_pinned_log_record_keeps_the_real_session_for_traceability(tmp_path):
 
 def test_settings_emitter_pins_the_session_when_asked(tmp_path):
     from opendaisugi.gate import gate_settings_json
+
     settings = json.loads(gate_settings_json(root=tmp_path, session="job7"))
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "--session job7" in cmd
@@ -550,17 +642,20 @@ def test_settings_emitter_pins_the_session_when_asked(tmp_path):
 # MCP classification: allowed vs undeclared must be a REAL distinction
 # =================================================================
 
+
 def _mcp_env():
-    return Envelope(generated_by="t", task="t",
-                    permissions=Permission(file_read=["/work/**"],
-                                           mcp_allowlist=["github/*"]))
+    return Envelope(
+        generated_by="t",
+        task="t",
+        permissions=Permission(file_read=["/work/**"], mcp_allowlist=["github/*"]),
+    )
 
 
 def test_allowed_mcp_call_is_admitted():
     d = evaluate_call(
-        {"tool_name": "mcp__github__create_issue", "tool_input": {"title": "x"},
-         "session_id": "s"},
-        _mcp_env(), mode="enforce",
+        {"tool_name": "mcp__github__create_issue", "tool_input": {"title": "x"}, "session_id": "s"},
+        _mcp_env(),
+        mode="enforce",
     )
     assert d.step_type == "mcp"
     assert d.allow is True
@@ -569,9 +664,9 @@ def test_allowed_mcp_call_is_admitted():
 
 def test_undeclared_mcp_call_is_denied_by_allowlist():
     d = evaluate_call(
-        {"tool_name": "mcp__stripe__create_charge", "tool_input": {},
-         "session_id": "s"},
-        _mcp_env(), mode="enforce",
+        {"tool_name": "mcp__stripe__create_charge", "tool_input": {}, "session_id": "s"},
+        _mcp_env(),
+        mode="enforce",
     )
     assert d.step_type == "mcp"
     assert d.would_deny is True
@@ -581,9 +676,9 @@ def test_undeclared_mcp_call_is_denied_by_allowlist():
 def test_mcp_tool_name_with_underscores_parses_server_and_tool():
     """`mcp__<server>__<tool>` where the tool name itself contains `__`."""
     d = evaluate_call(
-        {"tool_name": "mcp__github__list__issues", "tool_input": {},
-         "session_id": "s"},
-        _mcp_env(), mode="enforce",
+        {"tool_name": "mcp__github__list__issues", "tool_input": {}, "session_id": "s"},
+        _mcp_env(),
+        mode="enforce",
     )
     assert d.step_type == "mcp"
     assert d.allow is True  # github/* still matches
@@ -624,11 +719,17 @@ def test_starter_envelope_is_registrable_and_gates(tmp_path):
     register_envelope(starter_envelope(ws), root=root)
     # A read inside the workspace is allowed; outside is denied.
     inside = gate_and_contract(
-        _payload_bytes(str(ws / "main.py")), root=root, fmt="claude", mode="enforce",
+        _payload_bytes(str(ws / "main.py")),
+        root=root,
+        fmt="claude",
+        mode="enforce",
     )
     assert inside.exit_code == 0
     outside = gate_and_contract(
-        _payload_bytes("/etc/passwd"), root=root, fmt="claude", mode="enforce",
+        _payload_bytes("/etc/passwd"),
+        root=root,
+        fmt="claude",
+        mode="enforce",
     )
     assert outside.exit_code == 2
 
@@ -640,6 +741,7 @@ def test_shadow_settings_command_has_no_fail_closed_suffix(tmp_path):
     into a blocking deny on any gate error, exactly the regression shadow
     exists to avoid."""
     from opendaisugi.gate import gate_settings_json
+
     shadow = json.loads(gate_settings_json(mode="shadow", root=tmp_path))
     cmd = shadow["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "|| exit 2" not in cmd

@@ -93,6 +93,12 @@ def discover_transcripts(
         for path in root.rglob("*.jsonl"):
             if not path.is_file():
                 continue
+            if path.name == "journal.jsonl":
+                # openDaisugi's own journal and Claude Code Workflow run-journals
+                # both use this name and are NOT conversation transcripts (their
+                # rows record trace/agent results, not user/assistant turns).
+                # Discovering them would feed the journal back into ingest.
+                continue
             resolved = path.resolve()
             if resolved in seen:
                 continue
@@ -136,9 +142,7 @@ class StatusReport:
         return self.journal_total > 0
 
 
-def gather_status(
-    data_dir: Path, *, threshold: float = DEFAULT_PATHWAY_THRESHOLD
-) -> StatusReport:
+def gather_status(data_dir: Path, *, threshold: float = DEFAULT_PATHWAY_THRESHOLD) -> StatusReport:
     """Read pathway-store + journal state under ``data_dir`` into a StatusReport.
 
     Read-only and resilient: a missing store or journal reports zeros rather
@@ -167,7 +171,9 @@ def gather_status(
 
         jstats = Journal(data_dir=data_dir).stats()
         journal_total, journal_passed, journal_failed = (
-            jstats.total, jstats.passed, jstats.failed,
+            jstats.total,
+            jstats.passed,
+            jstats.failed,
         )
     except Exception as exc:
         _log.warning("status: could not read journal: %s", exc)
@@ -247,6 +253,7 @@ async def onboard(
         return report
 
     _say(f"onboard: processing {len(transcripts)} transcript(s)")
+    first_error: str | None = None
     for t in transcripts:
         try:
             parsed = parse_one(t)
@@ -268,10 +275,36 @@ async def onboard(
         report.traces_failed += getattr(summary, "failed", 0)
         report.traces_skipped += getattr(summary, "skipped", 0)
         report.traces_errored += getattr(summary, "errored", 0)
+        if first_error is None:
+            for er in getattr(summary, "episodes", []) or []:
+                if getattr(er, "status", None) == "ERROR" and getattr(er, "error", None):
+                    first_error = er.error
+                    break
         _say(
             f"onboard: {t.path.name} -> {len(parsed.episodes)} episode(s) "
             f"({getattr(summary, 'passed', 0)} passed)"
         )
+
+    # A silent empty journal is the worst onboarding outcome — it reads as
+    # "0 traces, nothing to distill" when the real cause is usually that
+    # envelope generation had no model to call. If every processed episode
+    # errored and none logged, say so loudly and actionably.
+    if (
+        report.transcripts_processed > 0
+        and report.traces_errored > 0
+        and report.traces_passed == 0
+        and report.traces_failed == 0
+    ):
+        hint = (
+            f"onboard: envelope generation failed for all {report.traces_errored} "
+            "processed episode(s) and no traces were logged — is your model "
+            "backend configured? Set OPENDAISUGI_LLM_BACKEND=claude-code for "
+            "no-API-key mode, or provide an API key for your model."
+        )
+        if first_error:
+            hint += f" First error: {first_error}"
+        report.warnings.append(hint)
+        _say(hint)
 
     if dry_run:
         _say("onboard: dry-run — skipping distillation (no pathways written)")

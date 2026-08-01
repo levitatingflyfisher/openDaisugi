@@ -104,8 +104,16 @@ class DecomposedPlan(BaseModel):
 
 
 _TYPE_FIELDS = (
-    "prompt", "skill_id", "skill_input", "server", "tool", "arguments",
-    "command", "path", "content", "url",
+    "prompt",
+    "skill_id",
+    "skill_input",
+    "server",
+    "tool",
+    "arguments",
+    "command",
+    "path",
+    "content",
+    "url",
 )
 
 
@@ -202,7 +210,9 @@ async def decompose(
             ],
         )
     except Exception as e:  # noqa: BLE001 — normalize at the boundary
-        raise DecompositionError(f"decomposition LLM call failed: {_llm.translate_llm_error(e)}") from e
+        raise DecompositionError(
+            f"decomposition LLM call failed: {_llm.translate_llm_error(e)}"
+        ) from e
 
     if not decomposed.steps:
         raise DecompositionError("decomposition produced no steps")

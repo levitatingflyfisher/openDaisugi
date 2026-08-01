@@ -48,9 +48,7 @@ def _invoke_model(rule: str, payload: dict[str, Any]) -> tuple[bool, str]:
     timeout, rate-limit, JSON parse failure). Callers should use
     ``run_llm_check`` which wraps this with fail-closed error handling.
     """
-    model = os.environ.get(
-        "OPENDAISUGI_LLM_CHECK_MODEL", "anthropic/claude-haiku-4-5-20251001"
-    )
+    model = os.environ.get("OPENDAISUGI_LLM_CHECK_MODEL", "anthropic/claude-haiku-4-5-20251001")
     system = (
         "You are a strict verifier. Answer in strict JSON: "
         '{"satisfied": true|false, "rationale": "short reason"}. '
@@ -74,6 +72,7 @@ def _invoke_model(rule: str, payload: dict[str, Any]) -> tuple[bool, str]:
         return bool(parsed.get("satisfied", False)), str(parsed.get("rationale", ""))
 
     import litellm
+
     response = litellm.completion(
         model=model,
         messages=[

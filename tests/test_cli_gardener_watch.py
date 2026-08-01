@@ -17,14 +17,19 @@ def _seed_stale(data_dir) -> None:
     store = PathwayStore(data_dir / "pathways.db")
     env = Envelope(generated_by="test", task="T", permissions=Permission(shell=True))
     plan = ActionPlan(source="tmpl", task="T", steps=[ShellStep(id="s1", command="echo")])
-    store.put(CompiledPathway(
-        id="stale", task_description="T",
-        task_embedding=[1.0, 0.0, 0.0],
-        envelope=env, plan_template=plan,
-        source_trace_ids=[], distilled_at=time.time(),
-        hit_count=10,
-        last_activation_at=time.time() - 90 * 86_400,
-    ))
+    store.put(
+        CompiledPathway(
+            id="stale",
+            task_description="T",
+            task_embedding=[1.0, 0.0, 0.0],
+            envelope=env,
+            plan_template=plan,
+            source_trace_ids=[],
+            distilled_at=time.time(),
+            hit_count=10,
+            last_activation_at=time.time() - 90 * 86_400,
+        )
+    )
 
 
 def test_watch_runs_first_time(tmp_path):

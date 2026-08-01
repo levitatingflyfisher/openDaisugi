@@ -9,10 +9,14 @@ from opendaisugi.orchestration_executors import MCPExecutor, SkillExecutor
 
 # --------------------------- SkillExecutor ---------------------------
 
+
 def test_skill_executor_runs_matching_handler():
     exe = SkillExecutor(handlers={"greet": lambda step: f"hello {step.skill_input.get('name')}"})
-    r = exe.run(SkillStep(id="k1", skill_id="greet", skill_input={"name": "sam"}),
-                timeout_s=1, max_output_bytes=1024)
+    r = exe.run(
+        SkillStep(id="k1", skill_id="greet", skill_input={"name": "sam"}),
+        timeout_s=1,
+        max_output_bytes=1024,
+    )
     assert r.rc == 0
     assert r.stdout == "hello sam"
 
@@ -27,6 +31,7 @@ def test_skill_executor_unknown_skill_is_rc1():
 def test_skill_executor_handler_error_is_rc1():
     def boom(step):
         raise RuntimeError("kaboom")
+
     exe = SkillExecutor(handlers={"x": boom})
     r = exe.run(SkillStep(id="k1", skill_id="x"), timeout_s=1, max_output_bytes=1024)
     assert r.rc == 1
@@ -44,6 +49,7 @@ def test_skill_executor_rejects_non_skill_step():
 
 # --------------------------- MCPExecutor ---------------------------
 
+
 def test_mcp_executor_invokes_transport_and_json_encodes_result():
     calls = []
 
@@ -52,8 +58,11 @@ def test_mcp_executor_invokes_transport_and_json_encodes_result():
         return {"issue": 42}
 
     exe = MCPExecutor(transport=transport)
-    r = exe.run(MCPStep(id="m1", server="gh", tool="create", arguments={"title": "x"}),
-                timeout_s=1, max_output_bytes=1024)
+    r = exe.run(
+        MCPStep(id="m1", server="gh", tool="create", arguments={"title": "x"}),
+        timeout_s=1,
+        max_output_bytes=1024,
+    )
     assert r.rc == 0
     assert json.loads(r.stdout) == {"issue": 42}
     assert calls == [("gh", "create", {"title": "x"})]
@@ -69,6 +78,7 @@ def test_mcp_executor_without_transport_is_rc1():
 def test_mcp_executor_transport_error_is_rc1():
     def transport(server, tool, arguments):
         raise ConnectionError("server down")
+
     exe = MCPExecutor(transport=transport)
     r = exe.run(MCPStep(id="m1", server="gh", tool="create"), timeout_s=1, max_output_bytes=64)
     assert r.rc == 1

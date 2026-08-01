@@ -23,9 +23,7 @@ from opendaisugi.stage2 import verify_completed_step as _verify_completed_step
 # Without this, a hung delegated step blocks the FastMCP stdio transport
 # indefinitely — and stdio is single-threaded, so the entire agent session
 # calling our server hangs with it.
-_DEFAULT_RUN_PLAN_TIMEOUT = float(
-    os.environ.get("OPENDAISUGI_MCP_RUN_TIMEOUT", "300")
-)
+_DEFAULT_RUN_PLAN_TIMEOUT = float(os.environ.get("OPENDAISUGI_MCP_RUN_TIMEOUT", "300"))
 
 
 def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
@@ -100,9 +98,7 @@ def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
         return result.model_dump(mode="json")
 
     @mcp.tool()
-    def verify_completed_step(
-        step: dict[str, Any], envelope: dict[str, Any]
-    ) -> dict[str, Any]:
+    def verify_completed_step(step: dict[str, Any], envelope: dict[str, Any]) -> dict[str, Any]:
         """Stage 2: verify a post-execution step against envelope postconditions.
 
         Call immediately after the step runs and before its effect
@@ -213,9 +209,7 @@ def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
         # construction (confused deputy). Use the real approval gate (allowlist /
         # DAISUGI_APPROVE) for live runs — the operator opts into live execution,
         # not a possibly-injected MCP client. Dry-run touches nothing → auto-ok.
-        approval = (
-            CallbackStrategy(lambda step, env: True) if dry_run else default_strategy()
-        )
+        approval = CallbackStrategy(lambda step, env: True) if dry_run else default_strategy()
         sup = Supervisor(
             journal=d.journal,
             approval=approval,
@@ -241,13 +235,15 @@ def build_server(daisugi: Daisugi | None = None, *, name: str = "opendaisugi"):
         receipts = []
         if d.journal is not None:
             for r in d.journal.receipts_for_run(session.id):
-                receipts.append({
-                    "step_id": r.step_id,
-                    "timestamp": r.timestamp,
-                    "evidence_hash": r.evidence_hash,
-                    "verify_result": r.verify_result,
-                    "model_id": r.model_id,
-                })
+                receipts.append(
+                    {
+                        "step_id": r.step_id,
+                        "timestamp": r.timestamp,
+                        "evidence_hash": r.evidence_hash,
+                        "verify_result": r.verify_result,
+                        "model_id": r.model_id,
+                    }
+                )
         return {
             "run_id": session.id,
             "status": session.status.value,

@@ -46,6 +46,8 @@ def resolve_strict(strict: bool | None, envelope: Envelope) -> bool:
     if strict is not None:
         return strict
     return envelope.stakes in _STRICT_STAKES
+
+
 _MAX_INTERPRETER_DEPTH = 4
 _GLOB_CHARS_RE = re.compile(r"[*?\[]")
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -85,6 +87,7 @@ def _build_decomposition_remediation(step_id: str, command: str) -> str | None:
     """
     # Lazy import to avoid circular dependency with parsers.
     from opendaisugi.parsers.claude_code import _split_compound_shell
+
     parts = _split_compound_shell(command)
     if len(parts) <= 1:
         return None
@@ -93,7 +96,7 @@ def _build_decomposition_remediation(step_id: str, command: str) -> str | None:
     lines = []
     for i, p in enumerate(parts):
         new_id = f"{step_id}_d{i}"
-        depends = f", depends_on=['{step_id}_d{i-1}']" if i > 0 else ""
+        depends = f", depends_on=['{step_id}_d{i - 1}']" if i > 0 else ""
         lines.append(f"  ShellStep(id='{new_id}', command={p!r}{depends})")
     return "Decompose into sequential ShellSteps:\n" + "\n".join(lines)
 
@@ -134,6 +137,7 @@ def _check_shell_command(
     perms: Permission,
     policy: str,
     depth: int = 0,
+    _from_decomposition: bool = False,
 ) -> list[Violation]:
     """Check a shell command string against the envelope, recursing into
     tractable interpreter payloads (``sh -c`` / ``xargs`` / ``find -exec``
@@ -148,14 +152,16 @@ def _check_shell_command(
     """
     violations: list[Violation] = []
     if depth > _MAX_INTERPRETER_DEPTH:
-        return [Violation(
-            stage="permissions",
-            message=(
-                f"Step '{step_id}' interpreter recursion exceeded "
-                f"max depth {_MAX_INTERPRETER_DEPTH}"
-            ),
-            detail={"step": step_id, "command": command, "depth": depth},
-        )]
+        return [
+            Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step_id}' interpreter recursion exceeded "
+                    f"max depth {_MAX_INTERPRETER_DEPTH}"
+                ),
+                detail={"step": step_id, "command": command, "depth": depth},
+            )
+        ]
     stripped = command.strip()
     if not stripped:
         return violations
@@ -166,56 +172,97 @@ def _check_shell_command(
     # cover and the reason the supervisor can treat ShellStep as
     # "single-command" under the envelope. Redirection and newline coverage
     # added in v0.28.2 — see CHANGELOG.
+    #
+    # v0.40: the ONE sanctioned softening is an explicit envelope opt-in
+    # (shell_allow_decomposition). Even then it is not a softening of the
+    # single-command guarantee: a real bash grammar decomposes the command into
+    # plain simple-commands and re-verifies EACH through this same function, so
+    # every head still faces the full allowlist + interpreter policy, and any
+    # substitution / redirection / non-literal head / wrapper / parse error is
+    # rejected. Without the opt-in, the branch is the historical blanket reject.
     if _SHELL_METACHAR_RE.search(command):
+        metachar_reason: str | None = None
+        if perms.shell_allow_decomposition and not _from_decomposition:
+            from opendaisugi.shell_decompose import decompose_command
+
+            decomp = decompose_command(command)
+            if decomp.ok:
+                # Re-verify each simple command at the same depth; the flag stops
+                # a decomposed part that still holds a (quoted) metacharacter from
+                # recursing into decomposition forever.
+                for simple in decomp.commands:
+                    violations.extend(
+                        _check_shell_command(
+                            simple, step_id, perms, policy, depth, _from_decomposition=True
+                        )
+                    )
+                return violations
+            metachar_reason = decomp.reason  # why decomposition refused → annotate
+
         # v0.18: when the command composes with && / || / ; only (no $( or
         # backticks), offer a decomposed form as suggested_remediation so an
         # agent reading the rejection can emit the corrected plan directly.
         remediation = _build_decomposition_remediation(step_id, command)
-        violations.append(Violation(
-            stage="permissions",
-            message=(
-                f"Step '{step_id}' shell command contains dangerous "
-                f"metacharacters (;, |, &, `, <, >, $(, newline)"
-                + (f" (inside interpreter at depth {depth})" if depth else "")
-            ),
-            detail={"step": step_id, "command": command, "depth": depth},
-            suggested_remediation=remediation,
-        ))
+        detail = {"step": step_id, "command": command, "depth": depth}
+        if metachar_reason:
+            detail["decomposition_refused"] = metachar_reason
+        violations.append(
+            Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step_id}' shell command contains dangerous "
+                    f"metacharacters (;, |, &, `, <, >, $(, newline)"
+                    + (f" (inside interpreter at depth {depth})" if depth else "")
+                ),
+                detail=detail,
+                suggested_remediation=remediation,
+            )
+        )
         return violations
     head = _extract_shell_head(stripped)
     if head is None:
         # Comment-only line or bare env-assignment — nothing executes.
         return violations
     if not _head_allowed(head, perms.shell_allowlist):
-        violations.append(Violation(
-            stage="permissions",
-            message=(
-                f"Step '{step_id}' shell command '{head}' "
-                f"not in allowlist {perms.shell_allowlist}"
-                + (f" (inside interpreter at depth {depth})" if depth else "")
-            ),
-            detail={"step": step_id, "command_head": head, "depth": depth},
-        ))
+        violations.append(
+            Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step_id}' shell command '{head}' "
+                    f"not in allowlist {perms.shell_allowlist}"
+                    + (f" (inside interpreter at depth {depth})" if depth else "")
+                ),
+                detail={"step": step_id, "command_head": head, "depth": depth},
+            )
+        )
         return violations
     payload = parse_interpreter(command)
     if payload is None:
         return violations
     if payload.opaque:
         if policy == "strict":
-            violations.append(Violation(
-                stage="permissions",
-                message=(
-                    f"Step '{step_id}' invokes opaque interpreter "
-                    f"'{payload.head}' whose payload cannot be recursively "
-                    f"verified (strict shell_interpreter_policy rejects)"
-                ),
-                detail={"step": step_id, "interpreter": payload.head},
-            ))
+            violations.append(
+                Violation(
+                    stage="permissions",
+                    message=(
+                        f"Step '{step_id}' invokes opaque interpreter "
+                        f"'{payload.head}' whose payload cannot be recursively "
+                        f"verified (strict shell_interpreter_policy rejects)"
+                    ),
+                    detail={"step": step_id, "interpreter": payload.head},
+                )
+            )
         return violations
     for inner in payload.inner_commands:
-        violations.extend(_check_shell_command(
-            inner, step_id, perms, policy, depth + 1,
-        ))
+        violations.extend(
+            _check_shell_command(
+                inner,
+                step_id,
+                perms,
+                policy,
+                depth + 1,
+            )
+        )
     return violations
 
 
@@ -250,11 +297,23 @@ def _match_glob(p: PurePosixPath, path: str, glob: str) -> bool:
 # sim_reset/vla via z3_checks + robot-capability subsumption), or gating
 # elsewhere (task = contained leaf; skill = check_skill_delegations). Any type
 # NOT here is a custom @step_type with no verification story — an unknown effect.
-_KNOWN_STEP_TYPES: frozenset[str] = frozenset({
-    "shell", "network", "file_read", "file_write", "mcp", "task", "skill",
-    "agentic",
-    "joint_move", "cartesian_move", "gripper", "sim_reset", "vla",
-})
+_KNOWN_STEP_TYPES: frozenset[str] = frozenset(
+    {
+        "shell",
+        "network",
+        "file_read",
+        "file_write",
+        "mcp",
+        "task",
+        "skill",
+        "agentic",
+        "joint_move",
+        "cartesian_move",
+        "gripper",
+        "sim_reset",
+        "vla",
+    }
+)
 
 
 # Host tool name → the Permission capability that must back it before an
@@ -283,48 +342,56 @@ def _check_agentic_step(step, perms: Permission) -> list[Violation]:
     """
     violations: list[Violation] = []
     if not step.tools:
-        violations.append(Violation(
-            stage="permissions",
-            message=(
-                f"Step '{step.id}' is agentic but requests no tools — a "
-                f"tool-less delegated subtask is a TaskStep (pure reasoning); "
-                f"use that instead"
-            ),
-            detail={"step": step.id},
-        ))
+        violations.append(
+            Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step.id}' is agentic but requests no tools — a "
+                    f"tool-less delegated subtask is a TaskStep (pure reasoning); "
+                    f"use that instead"
+                ),
+                detail={"step": step.id},
+            )
+        )
         return violations
     if not _path_matches_any(step.workspace, perms.file_read):
-        violations.append(Violation(
-            stage="permissions",
-            message=(
-                f"Step '{step.id}' agentic workspace '{step.workspace}' is not "
-                f"inside the envelope's file_read globs {perms.file_read} — a "
-                f"sub-agent must be able to read its own working directory"
-            ),
-            detail={"step": step.id, "workspace": step.workspace},
-        ))
+        violations.append(
+            Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step.id}' agentic workspace '{step.workspace}' is not "
+                    f"inside the envelope's file_read globs {perms.file_read} — a "
+                    f"sub-agent must be able to read its own working directory"
+                ),
+                detail={"step": step.id, "workspace": step.workspace},
+            )
+        )
     for tool in step.tools:
         cap = _AGENTIC_TOOL_CAPABILITIES.get(tool)
         if cap is None:
-            violations.append(Violation(
-                stage="permissions",
-                message=(
-                    f"Step '{step.id}' requests host tool '{tool}' which has "
-                    f"no capability mapping — denied by default"
-                ),
-                detail={"step": step.id, "tool": tool},
-            ))
+            violations.append(
+                Violation(
+                    stage="permissions",
+                    message=(
+                        f"Step '{step.id}' requests host tool '{tool}' which has "
+                        f"no capability mapping — denied by default"
+                    ),
+                    detail={"step": step.id, "tool": tool},
+                )
+            )
             continue
         granted = getattr(perms, cap)
         if not granted:  # False for bools, [] for glob lists — both deny
-            violations.append(Violation(
-                stage="permissions",
-                message=(
-                    f"Step '{step.id}' requests host tool '{tool}' but the "
-                    f"envelope grants no {cap} capability"
-                ),
-                detail={"step": step.id, "tool": tool, "capability": cap},
-            ))
+            violations.append(
+                Violation(
+                    stage="permissions",
+                    message=(
+                        f"Step '{step.id}' requests host tool '{tool}' but the "
+                        f"envelope grants no {cap} capability"
+                    ),
+                    detail={"step": step.id, "tool": tool, "capability": cap},
+                )
+            )
     return violations
 
 
@@ -356,9 +423,14 @@ def check_permissions(
                         )
                     )
                     continue
-                violations.extend(_check_shell_command(
-                    step.command, step.id, perms, envelope.shell_interpreter_policy,
-                ))
+                violations.extend(
+                    _check_shell_command(
+                        step.command,
+                        step.id,
+                        perms,
+                        envelope.shell_interpreter_policy,
+                    )
+                )
             case "network":
                 if not perms.network:
                     violations.append(
@@ -511,15 +583,21 @@ def check_skill_delegations(
                 f"contract_envelope; delegation cannot be proved subsumed"
             )
             if strict:
-                violations.append(Violation(
-                    stage="delegation",
-                    message=msg + " (strict mode rejects)",
-                    detail={"step": step.id, "skill_id": step.skill_id, "reason": "opaque_skill"},
-                    suggested_remediation=(
-                        "attach the skill's published contract_envelope so subsumption "
-                        "can be proved, or lower stakes below high to allow it"
-                    ),
-                ))
+                violations.append(
+                    Violation(
+                        stage="delegation",
+                        message=msg + " (strict mode rejects)",
+                        detail={
+                            "step": step.id,
+                            "skill_id": step.skill_id,
+                            "reason": "opaque_skill",
+                        },
+                        suggested_remediation=(
+                            "attach the skill's published contract_envelope so subsumption "
+                            "can be proved, or lower stakes below high to allow it"
+                        ),
+                    )
+                )
             elif warnings_out is not None:
                 warnings_out.append(msg + " (allowed under lenient mode)")
             continue
@@ -528,18 +606,18 @@ def check_skill_delegations(
             skill_id=step.skill_id,
             envelope=contract_env,
         )
-        decision = verify_delegation(
-            envelope, contract, strict=strict, timeout_ms=timeout_ms
-        )
+        decision = verify_delegation(envelope, contract, strict=strict, timeout_ms=timeout_ms)
         if not decision.allowed:
-            violations.append(Violation(
-                stage="delegation",
-                message=(
-                    f"Step '{step.id}' skill '{step.skill_id}' delegation refused: "
-                    f"{decision.reason}"
-                ),
-                detail={"step": step.id, "skill_id": step.skill_id, "reason": "not_subsumed"},
-            ))
+            violations.append(
+                Violation(
+                    stage="delegation",
+                    message=(
+                        f"Step '{step.id}' skill '{step.skill_id}' delegation refused: "
+                        f"{decision.reason}"
+                    ),
+                    detail={"step": step.id, "skill_id": step.skill_id, "reason": "not_subsumed"},
+                )
+            )
         elif decision.unverified_invariants and warnings_out is not None:
             warnings_out.append(
                 f"Step '{step.id}' skill '{step.skill_id}' has unverified invariants: "
@@ -595,10 +673,15 @@ def verify(
     # Stage 1b (v0.32): skill-delegation subsumption. Each SkillStep's contract
     # envelope must be subsumed by the caller's — proved via Z3, opaque skills
     # gated by strict. Its own stage so check_permissions stays Z3-free.
-    violations.extend(check_skill_delegations(
-        plan, envelope, strict=effective_strict,
-        timeout_ms=z3_timeout_ms, warnings_out=warnings,
-    ))
+    violations.extend(
+        check_skill_delegations(
+            plan,
+            envelope,
+            strict=effective_strict,
+            timeout_ms=z3_timeout_ms,
+            warnings_out=warnings,
+        )
+    )
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
 
@@ -618,7 +701,11 @@ def verify(
         return _result(plan, envelope, violations, warnings, t0)
 
     # Stage 2b: predicate-algebra invariants + postconditions
-    violations.extend(_check_predicate_invariants(plan, envelope, strict=effective_strict, aliases=aliases, warnings_out=warnings))
+    violations.extend(
+        _check_predicate_invariants(
+            plan, envelope, strict=effective_strict, aliases=aliases, warnings_out=warnings
+        )
+    )
     # Stage 2c: numerical trajectory checks (robotics Z3 — not expressible as predicates)
     try:
         violations.extend(check_plan_invariants(plan, envelope, timeout_ms=z3_timeout_ms))
@@ -678,10 +765,15 @@ def verify_step(
     # Skill-delegation subsumption is step-local (the SkillStep carries its own
     # contract), so it belongs on the per-step hot path too. strict is resolved
     # from the envelope here since verify_step takes no strict kwarg.
-    violations.extend(check_skill_delegations(
-        plan, envelope, strict=resolve_strict(None, envelope),
-        timeout_ms=z3_timeout_ms, warnings_out=warnings,
-    ))
+    violations.extend(
+        check_skill_delegations(
+            plan,
+            envelope,
+            strict=resolve_strict(None, envelope),
+            timeout_ms=z3_timeout_ms,
+            warnings_out=warnings,
+        )
+    )
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
 
@@ -735,9 +827,7 @@ def _normalize_expr(raw):
     return raw
 
 
-def _check_delegation_safety(
-    plan: ActionPlan, envelope: Envelope
-) -> list[Violation]:
+def _check_delegation_safety(plan: ActionPlan, envelope: Envelope) -> list[Violation]:
     """v0.19 L4: refuse to delegate physical-stakes plans.
 
     A plan whose envelope is stakes='physical' AND any step has a
@@ -754,27 +844,34 @@ def _check_delegation_safety(
         # so physical stakes refuse it outright — with or without a
         # preferred_model hint.
         if getattr(step, "type", None) == "agentic":
-            violations.append(Violation(
-                stage="permissions",
-                message=(
-                    f"Step '{step.id}' is an agentic delegation but envelope "
-                    f"stakes='physical'; physical-stakes plans cannot be "
-                    f"LLM-delegated"
-                ),
-                detail={"step": step.id, "stakes": "physical"},
-            ))
+            violations.append(
+                Violation(
+                    stage="permissions",
+                    message=(
+                        f"Step '{step.id}' is an agentic delegation but envelope "
+                        f"stakes='physical'; physical-stakes plans cannot be "
+                        f"LLM-delegated"
+                    ),
+                    detail={"step": step.id, "stakes": "physical"},
+                )
+            )
             continue
         if getattr(step, "preferred_model", None):
-            violations.append(Violation(
-                stage="permissions",
-                message=(
-                    f"Step '{step.id}' requests delegation to "
-                    f"'{step.preferred_model}' but envelope stakes='physical'; "
-                    f"physical-stakes plans cannot be LLM-delegated"
-                ),
-                detail={"step": step.id, "stakes": "physical",
-                        "preferred_model": step.preferred_model},
-            ))
+            violations.append(
+                Violation(
+                    stage="permissions",
+                    message=(
+                        f"Step '{step.id}' requests delegation to "
+                        f"'{step.preferred_model}' but envelope stakes='physical'; "
+                        f"physical-stakes plans cannot be LLM-delegated"
+                    ),
+                    detail={
+                        "step": step.id,
+                        "stakes": "physical",
+                        "preferred_model": step.preferred_model,
+                    },
+                )
+            )
     return violations
 
 
@@ -817,17 +914,23 @@ def _check_predicate_item(
         # declared-but-unbacked robotics invariant is silently vacuous even at
         # physical stakes: reject it (fail-closed) rather than trust an unenforced
         # guard.
-        backing_reason = _robotics_backing_missing(type_name, envelope.permissions) if label == "invariant" else None
+        backing_reason = (
+            _robotics_backing_missing(type_name, envelope.permissions)
+            if label == "invariant"
+            else None
+        )
         if backing_reason is not None:
-            return [Violation(
-                stage="predicate",
-                message=(
-                    f"invariant '{type_name}' is declared but its backing permission "
-                    f"({backing_reason}) is absent; the check no-ops and the invariant "
-                    f"is unenforced — add the bound or remove the invariant"
-                ),
-                detail={label: type_name, "reason": "robotics_invariant_unbacked"},
-            )]
+            return [
+                Violation(
+                    stage="predicate",
+                    message=(
+                        f"invariant '{type_name}' is declared but its backing permission "
+                        f"({backing_reason}) is absent; the check no-ops and the invariant "
+                        f"is unenforced — add the bound or remove the invariant"
+                    ),
+                    detail={label: type_name, "reason": "robotics_invariant_unbacked"},
+                )
+            ]
         discharged_elsewhere = (
             (label == "invariant" and type_name in RECOGNIZED_OPAQUE_TYPES)
             # v0.28.3: stage2 has concrete handlers for exit_code /
@@ -837,14 +940,19 @@ def _check_predicate_item(
             or (label == "postcondition" and type_name in RECOGNIZED_STAGE2_POSTCONDITION_TYPES)
         )
         if strict and not discharged_elsewhere:
-            return [Violation(
-                stage="predicate",
-                message=f"{label} '{type_name}' declares a safety property with no "
-                        f"verifiable expr; cannot be discharged under strict mode",
-                detail={label: type_name, "reason": "opaque_unrecognized",
+            return [
+                Violation(
+                    stage="predicate",
+                    message=f"{label} '{type_name}' declares a safety property with no "
+                    f"verifiable expr; cannot be discharged under strict mode",
+                    detail={
+                        label: type_name,
+                        "reason": "opaque_unrecognized",
                         "suggested_remediation": "add an `expr` to make it verifiable, "
-                                                 "or set enforce=False to keep it as documentation"},
-            )]
+                        "or set enforce=False to keep it as documentation",
+                    },
+                )
+            ]
         return []
 
     # Resolve alias references through the registry (if provided). An unresolved
@@ -852,31 +960,45 @@ def _check_predicate_item(
     # would reintroduce the fail-open bug.
     if isinstance(expr, AliasRef):
         if aliases is None:
-            return [Violation(
-                stage="predicate",
-                message=f"{label} '{type_name}' references unresolved alias '{expr.name}'; "
-                        f"pass an AliasRegistry via aliases= to verify()",
-                detail={label: type_name, "reason": "unresolved_alias", "alias": expr.name,
-                        "suggested_remediation": "register the alias in an AliasRegistry and pass aliases= to verify()"},
-            )]
+            return [
+                Violation(
+                    stage="predicate",
+                    message=f"{label} '{type_name}' references unresolved alias '{expr.name}'; "
+                    f"pass an AliasRegistry via aliases= to verify()",
+                    detail={
+                        label: type_name,
+                        "reason": "unresolved_alias",
+                        "alias": expr.name,
+                        "suggested_remediation": "register the alias in an AliasRegistry and pass aliases= to verify()",
+                    },
+                )
+            ]
         try:
             expr = aliases.resolve(expr)
         except UnknownAliasError as e:
             # The unresolved name may be a NESTED ref discovered during recursive
             # resolution, not the outer AliasRef — report the actual missing name.
             missing = e.args[0] if e.args else expr.name
-            return [Violation(
-                stage="predicate",
-                message=f"{label} '{type_name}' references unresolved alias '{missing}'",
-                detail={label: type_name, "reason": "unresolved_alias", "alias": missing,
-                        "suggested_remediation": "register the alias in an AliasRegistry and pass aliases= to verify()"},
-            )]
+            return [
+                Violation(
+                    stage="predicate",
+                    message=f"{label} '{type_name}' references unresolved alias '{missing}'",
+                    detail={
+                        label: type_name,
+                        "reason": "unresolved_alias",
+                        "alias": missing,
+                        "suggested_remediation": "register the alias in an AliasRegistry and pass aliases= to verify()",
+                    },
+                )
+            ]
         except Exception as e:
-            return [Violation(
-                stage="predicate",
-                message=f"{label} '{type_name}' alias resolution error: {e}",
-                detail={label: type_name},
-            )]
+            return [
+                Violation(
+                    stage="predicate",
+                    message=f"{label} '{type_name}' alias resolution error: {e}",
+                    detail={label: type_name},
+                )
+            ]
     elif aliases is not None:
         # Resolve any nested alias refs within the expression tree.
         try:
@@ -890,33 +1012,46 @@ def _check_predicate_item(
     # - tautology: hard error under strict; warning under non-strict.
     try:
         from opendaisugi.vacuity import check_vacuity
+
         vacuity_verdict = check_vacuity(expr)
     except Exception:
         # Unsupported expr, Z3 unavailable, timeout — skip and fall through to eval.
         vacuity_verdict = "non_trivial"
 
     if vacuity_verdict == "contradiction":
-        return [Violation(
-            stage="predicate",
-            message=f"{label} '{type_name}' can never be satisfied (unsatisfiable); "
-                    f"the envelope can never pass — fix the predicate",
-            detail={label: type_name, "reason": "contradiction",
+        return [
+            Violation(
+                stage="predicate",
+                message=f"{label} '{type_name}' can never be satisfied (unsatisfiable); "
+                f"the envelope can never pass — fix the predicate",
+                detail={
+                    label: type_name,
+                    "reason": "contradiction",
                     "suggested_remediation": f"this {label} is unsatisfiable (always false); "
-                                             f"the envelope can never pass — fix the predicate"},
-        )]
+                    f"the envelope can never pass — fix the predicate",
+                },
+            )
+        ]
     if vacuity_verdict == "tautology":
         if strict:
-            return [Violation(
-                stage="predicate",
-                message=f"{label} '{type_name}' is a tautology (constrains nothing); "
-                        f"tighten the predicate or remove it",
-                detail={label: type_name, "reason": "tautology",
+            return [
+                Violation(
+                    stage="predicate",
+                    message=f"{label} '{type_name}' is a tautology (constrains nothing); "
+                    f"tighten the predicate or remove it",
+                    detail={
+                        label: type_name,
+                        "reason": "tautology",
                         "suggested_remediation": f"this {label} constrains nothing; "
-                                                 f"tighten the predicate or remove it"},
-            )]
+                        f"tighten the predicate or remove it",
+                    },
+                )
+            ]
         # Non-strict: surface as a result warning (not just a log line), then evaluate.
-        _taut_msg = (f"{label} '{type_name}' is a tautology (constrains nothing); "
-                     f"tighten the predicate or remove it")
+        _taut_msg = (
+            f"{label} '{type_name}' is a tautology (constrains nothing); "
+            f"tighten the predicate or remove it"
+        )
         if warnings_out is not None:
             warnings_out.append(_taut_msg)
         else:
@@ -927,23 +1062,31 @@ def _check_predicate_item(
     try:
         ok = evaluate_predicate(expr, plan, envelope)
     except Exception as e:
-        return [Violation(
-            stage="predicate",
-            message=f"{label} '{type_name}' evaluation error: {e}",
-            detail={label: type_name},
-        )]
+        return [
+            Violation(
+                stage="predicate",
+                message=f"{label} '{type_name}' evaluation error: {e}",
+                detail={label: type_name},
+            )
+        ]
     if not ok:
-        return [Violation(
-            stage="predicate",
-            message=f"{label} '{type_name}' violated",
-            detail={label: type_name, "description": description},
-        )]
+        return [
+            Violation(
+                stage="predicate",
+                message=f"{label} '{type_name}' violated",
+                detail={label: type_name, "description": description},
+            )
+        ]
     return []
 
 
 def _check_predicate_invariants(
-    plan: ActionPlan, envelope: Envelope, *, strict: bool = False,
-    aliases: AliasRegistry | None = None, warnings_out: list[str] | None = None,
+    plan: ActionPlan,
+    envelope: Envelope,
+    *,
+    strict: bool = False,
+    aliases: AliasRegistry | None = None,
+    warnings_out: list[str] | None = None,
 ) -> list[Violation]:
     """Evaluate predicate-algebra invariants and postconditions against the plan.
 
@@ -953,19 +1096,35 @@ def _check_predicate_invariants(
     """
     violations: list[Violation] = []
     for inv in envelope.invariants:
-        violations.extend(_check_predicate_item(
-            label="invariant", type_name=inv.type, raw_expr=inv.expr,
-            enforce=inv.enforce, description=inv.description,
-            plan=plan, envelope=envelope, strict=strict, aliases=aliases,
-            warnings_out=warnings_out,
-        ))
+        violations.extend(
+            _check_predicate_item(
+                label="invariant",
+                type_name=inv.type,
+                raw_expr=inv.expr,
+                enforce=inv.enforce,
+                description=inv.description,
+                plan=plan,
+                envelope=envelope,
+                strict=strict,
+                aliases=aliases,
+                warnings_out=warnings_out,
+            )
+        )
     for pc in envelope.postconditions:
-        violations.extend(_check_predicate_item(
-            label="postcondition", type_name=pc.type, raw_expr=pc.expr,
-            enforce=pc.enforce, description=pc.description,
-            plan=plan, envelope=envelope, strict=strict, aliases=aliases,
-            warnings_out=warnings_out,
-        ))
+        violations.extend(
+            _check_predicate_item(
+                label="postcondition",
+                type_name=pc.type,
+                raw_expr=pc.expr,
+                enforce=pc.enforce,
+                description=pc.description,
+                plan=plan,
+                envelope=envelope,
+                strict=strict,
+                aliases=aliases,
+                warnings_out=warnings_out,
+            )
+        )
     return violations
 
 

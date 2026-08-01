@@ -100,6 +100,7 @@ class RecomputeHandler:
             return FallbackOutcome(action="halted")
 
         from opendaisugi.models import ActionPlan
+
         singleton_plan = ActionPlan(source="recompute", task=envelope.task, steps=[replacement])
         vr = verify(singleton_plan, envelope, z3_timeout_ms=self._z3_timeout_ms)
         if vr.ok:
@@ -124,5 +125,7 @@ class RecomputeHandler:
         if envelope.fallback.include_refinement and result.violations:
             violation_strs = [f"- [{v.stage}] {v.message}" for v in result.violations]
             parts.append("\nViolations:\n" + "\n".join(violation_strs))
-        parts.append("\nProduce a replacement step that accomplishes the same goal within these permissions.")
+        parts.append(
+            "\nProduce a replacement step that accomplishes the same goal within these permissions."
+        )
         return "\n".join(parts)

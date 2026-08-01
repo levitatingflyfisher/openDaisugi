@@ -54,6 +54,7 @@ def _mk_envelope(generated_by: str) -> Envelope:
 
 class _FakeJournal:
     """Minimal journal shape: list_successful_traces + load_trace."""
+
     def __init__(self, traces: list[tuple[str, str]]) -> None:
         # (trace_id, generated_by)
         now = time.time()
@@ -71,12 +72,18 @@ class _FakeJournal:
         ]
         self._bodies = {
             tid: TraceRecord(
-                id=tid, created_at="2026-04-17T00:00:00Z",
-                task="t", envelope=_mk_envelope(gb),
+                id=tid,
+                created_at="2026-04-17T00:00:00Z",
+                task="t",
+                envelope=_mk_envelope(gb),
                 plan=ActionPlan(id=tid, task="t", source="test", steps=[]),
                 result=VerificationResult(
-                    plan_id=tid, envelope_id="env", ok=True,
-                    violations=[], warnings=[], duration_ms=1.0,
+                    plan_id=tid,
+                    envelope_id="env",
+                    ok=True,
+                    violations=[],
+                    warnings=[],
+                    duration_ms=1.0,
                 ),
             )
             for tid, gb in traces
@@ -90,13 +97,15 @@ class _FakeJournal:
 
 
 def test_tier_stats_buckets_correctly() -> None:
-    journal = _FakeJournal([
-        ("t1", "compiled-pathway:abc"),
-        ("t2", "compiled-pathway:xyz"),
-        ("t3", "tier1:my-box"),
-        ("t4", "tier1:ollama"),
-        ("t5", "anthropic/claude-sonnet-4-20250514"),
-    ])
+    journal = _FakeJournal(
+        [
+            ("t1", "compiled-pathway:abc"),
+            ("t2", "compiled-pathway:xyz"),
+            ("t3", "tier1:my-box"),
+            ("t4", "tier1:ollama"),
+            ("t5", "anthropic/claude-sonnet-4-20250514"),
+        ]
+    )
     stats = tier_stats(journal)
     assert stats.total == 5
     assert stats.by_tier["tier0"] == 2
@@ -118,8 +127,10 @@ def test_tier_stats_empty() -> None:
 
 def test_tier_stats_missing_methods_returns_empty() -> None:
     """A journal-ish object that exposes neither listing method must not crash."""
+
     class Bare:
         pass
+
     assert tier_stats(Bare()).total == 0
 
 
@@ -137,6 +148,7 @@ def test_cli_tiers_stats_smoke(tmp_path) -> None:
 
 def test_cli_tiers_stats_json_smoke(tmp_path) -> None:
     import json
+
     runner = CliRunner()
     Journal(data_dir=tmp_path)
     result = runner.invoke(app, ["tiers", "stats", "--data-dir", str(tmp_path), "--json"])

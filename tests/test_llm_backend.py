@@ -46,9 +46,11 @@ def test_llm_check_routes_through_backend(monkeypatch):
 
     monkeypatch.setenv("OPENDAISUGI_LLM_BACKEND", "claude-code")
     monkeypatch.setattr(
-        "opendaisugi.claude_code_llm.call_claude_p_json_sync", fake_claude_json,
+        "opendaisugi.claude_code_llm.call_claude_p_json_sync",
+        fake_claude_json,
     )
     import litellm as _lt
+
     monkeypatch.setattr(_lt, "completion", fake_litellm)
 
     satisfied, rationale = lc.call_llm_check("rule", {"x": 1})
@@ -75,9 +77,11 @@ def test_llm_check_default_uses_litellm(monkeypatch):
 
     monkeypatch.delenv("OPENDAISUGI_LLM_BACKEND", raising=False)
     monkeypatch.setattr(
-        "opendaisugi.claude_code_llm.call_claude_p_json_sync", fake_claude_json,
+        "opendaisugi.claude_code_llm.call_claude_p_json_sync",
+        fake_claude_json,
     )
     import litellm as _lt
+
     monkeypatch.setattr(_lt, "completion", fake_litellm)
 
     satisfied, rationale = lc.call_llm_check("rule", {"x": 1})
@@ -97,7 +101,8 @@ def test_parser_split_routes_through_backend(monkeypatch):
 
     monkeypatch.setenv("OPENDAISUGI_LLM_BACKEND", "claude-code")
     monkeypatch.setattr(
-        "opendaisugi.claude_code_llm.call_claude_p_json_sync", fake_claude_json,
+        "opendaisugi.claude_code_llm.call_claude_p_json_sync",
+        fake_claude_json,
     )
 
     parser = ClaudeCodeParser()

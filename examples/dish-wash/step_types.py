@@ -12,6 +12,7 @@ chained sequentially. This tests two things at once:
    ship a SubPlanStep type but the depends_on DAG already handles
    sequential composition cleanly.
 """
+
 from __future__ import annotations
 
 from typing import Literal
@@ -22,47 +23,55 @@ from opendaisugi.models import Postcondition, StepBase, step_type
 @step_type
 class ApproachDish(StepBase):
     """Move the end-effector above a target dish in the stack."""
+
     type: Literal["approach_dish"] = "approach_dish"
     dish_index: int
     approach_height_m: float = 0.05
     duration_s: float = 1.5
     postcondition: Postcondition | None = Postcondition(
-        type="evidence_present", path="end_effector_xyz",
+        type="evidence_present",
+        path="end_effector_xyz",
     )
 
 
 @step_type
 class LocateRim(StepBase):
     """Use vision to find the dish rim and refine the end-effector pose."""
+
     type: Literal["locate_rim"] = "locate_rim"
     dish_index: int
     pose_tolerance_mm: float = 2.0
     postcondition: Postcondition | None = Postcondition(
-        type="evidence_present", path="rim_pose_error_mm",
+        type="evidence_present",
+        path="rim_pose_error_mm",
     )
 
 
 @step_type
 class BeginScrub(StepBase):
     """Start the scrubbing motion (oscillating sponge contact along rim)."""
+
     type: Literal["begin_scrub"] = "begin_scrub"
     dish_index: int
     duration_s: float = 8.0
     contact_force_n: float = 4.0
     postcondition: Postcondition | None = Postcondition(
-        type="evidence_present", path="scrub_complete",
+        type="evidence_present",
+        path="scrub_complete",
     )
 
 
 @step_type
 class RinseWithHose(StepBase):
     """Activate the hose nozzle and rinse the dish under flowing water."""
+
     type: Literal["rinse_with_hose"] = "rinse_with_hose"
     dish_index: int
     duration_s: float = 3.0
     flow_rate_lps: float = 0.15
     postcondition: Postcondition | None = Postcondition(
-        type="evidence_present", path="rinse_volume_ml",
+        type="evidence_present",
+        path="rinse_volume_ml",
     )
 
 
@@ -75,9 +84,11 @@ class ReturnToDock(StepBase):
     invariant 'forall_steps: every plate-wash ends with ReturnToDock'
     encodes this contract — verifier rejects any plan that drops it.
     """
+
     type: Literal["return_to_dock"] = "return_to_dock"
     dish_index: int
     duration_s: float = 1.0
     postcondition: Postcondition | None = Postcondition(
-        type="evidence_present", path="end_effector_xyz",
+        type="evidence_present",
+        path="end_effector_xyz",
     )

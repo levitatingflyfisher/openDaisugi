@@ -56,6 +56,7 @@ def plan_structure_signature(plan: "ActionPlan") -> str:
     is by step id, matching ``opendaisugi.dag.topological_order``.
     """
     from opendaisugi.dag import topological_order
+
     return "→".join(s.type for s in topological_order(plan))
 
 
@@ -102,6 +103,7 @@ def _normalize_task_for_embedding(task: str) -> str:
 
 class TendReport(BaseModel):
     """Summary of a distillation run."""
+
     created: int
     updated: int
     skipped: int
@@ -185,6 +187,7 @@ def _extract_pitfalls(records: list) -> list[str]:
 
 class GeneralizedTemplate(BaseModel):
     """LLM response shape for template generalization."""
+
     task_description: str
     plan_template: ActionPlan
 
@@ -193,8 +196,9 @@ _GENERALIZE_SYSTEM = (
     "You are a planner distilling multiple successful runs into a reusable template.\n"
     "Produce a generalized task description and a concrete plan template.\n"
     "The plan template must be a valid ActionPlan with REAL (not placeholder) values —\n"
-    "concrete paths, commands, URLs. A later adapt_plan() step rewrites these to\n"
-    "match specific tasks. Do not invent <placeholder> tokens."
+    "concrete paths, commands, URLs; use the cluster's most representative values.\n"
+    "At reuse, only the fields that varied across the cluster are re-bound (a typed,\n"
+    "re-verified data bind, ADR-0008); the rest run as-is. No <placeholder> tokens."
 )
 
 
@@ -212,9 +216,7 @@ async def _generalize_template(
     on the CompiledPathway.
     """
     client = get_instructor_client(model)
-    pitfall_block = (
-        "\n".join(f"- {p}" for p in pitfalls) if pitfalls else "(none recorded)"
-    )
+    pitfall_block = "\n".join(f"- {p}" for p in pitfalls) if pitfalls else "(none recorded)"
     user = (
         f"Representative plan:\n{plan.model_dump_json(indent=2)}\n\n"
         f"Envelope constraints:\n{envelope.model_dump_json(indent=2)}\n\n"
@@ -272,8 +274,7 @@ async def _improve_envelope(
     """Ask LLM to widen envelope permissions that blocked valid test plans."""
     client = get_instructor_client(model)
     failures_block = "\n\n".join(
-        f"Plan {p.id}:\n{p.model_dump_json(indent=2)}"
-        for p in failing_plans
+        f"Plan {p.id}:\n{p.model_dump_json(indent=2)}" for p in failing_plans
     )
     user = (
         f"Current envelope (too tight):\n{envelope.model_dump_json(indent=2)}\n\n"
@@ -318,9 +319,7 @@ class Distiller:
         # 1.0 = pure structural clustering, 0.5 = balanced. Per-domain
         # tuning happens in v0.25+ Gardener fitness.
         if not 0.0 <= structure_weight <= 1.0:
-            raise ValueError(
-                f"structure_weight must be in [0, 1], got {structure_weight}"
-            )
+            raise ValueError(f"structure_weight must be in [0, 1], got {structure_weight}")
         self.structure_weight = structure_weight
 
     def _embed_tasks(self, tasks: list[str]) -> np.ndarray:
@@ -330,6 +329,7 @@ class Distiller:
         semantic task intent, not repeated boilerplate from ``/skill …`` opens.
         """
         from opendaisugi._search import _get_model
+
         normalized = [_normalize_task_for_embedding(t) for t in tasks]
         return _get_model().encode(normalized, convert_to_numpy=True)
 
@@ -344,6 +344,7 @@ class Distiller:
         which keeps the embedding tensor shape consistent.
         """
         from opendaisugi._search import _get_model
+
         normalized = [s or "" for s in signatures]
         return _get_model().encode(normalized, convert_to_numpy=True)
 
@@ -366,8 +367,11 @@ class Distiller:
             )
             _log.info(msg)
             return TendReport(
-                created=0, updated=0, skipped=len(traces),
-                pathways=[], duration_s=time.time() - started,
+                created=0,
+                updated=0,
+                skipped=len(traces),
+                pathways=[],
+                duration_s=time.time() - started,
                 warnings=[msg],
             )
 
@@ -381,22 +385,29 @@ class Distiller:
             # sum of per-component distances (under L2-normalized inputs).
             # Sentence-transformers returns L2-normalized vectors by default.
             import numpy as _np
+
             tw = (1.0 - self.structure_weight) ** 0.5
-            sw = self.structure_weight ** 0.5
+            sw = self.structure_weight**0.5
             vecs = _np.concatenate([task_vecs * tw, struct_vecs * sw], axis=1)
         else:
             vecs = task_vecs
         embed_s = time.time() - embed_started
         cluster_started = time.time()
         clustered = _cluster_with_centroids(
-            list(range(len(traces))), vecs, threshold=self.similarity_threshold,
+            list(range(len(traces))),
+            vecs,
+            threshold=self.similarity_threshold,
         )
         cluster_s = time.time() - cluster_started
         _log.info(
             "tend: embedded %d tasks in %.2fs; clustered into %d group(s) in %.2fs "
             "(sizes=%s, threshold=%.2f)",
-            len(traces), embed_s, len(clustered), cluster_s,
-            [len(c) for c, _ in clustered], self.similarity_threshold,
+            len(traces),
+            embed_s,
+            len(clustered),
+            cluster_s,
+            [len(c) for c, _ in clustered],
+            self.similarity_threshold,
         )
 
         for cluster, _combined_centroid in clustered:
@@ -429,13 +440,19 @@ class Distiller:
                 updated += 1
 
         return TendReport(
-            created=created, updated=updated, skipped=skipped,
-            pathways=pathway_ids, duration_s=time.time() - started,
+            created=created,
+            updated=updated,
+            skipped=skipped,
+            pathways=pathway_ids,
+            duration_s=time.time() - started,
             warnings=warnings,
         )
 
     async def _distill_cluster(
-        self, cluster_traces: list, centroid: np.ndarray, warnings: list[str],
+        self,
+        cluster_traces: list,
+        centroid: np.ndarray,
+        warnings: list[str],
     ) -> "CompiledPathway | None":
         """Distill one cluster into a CompiledPathway, or None if validation fails hard."""
         from opendaisugi.pathway import CompiledPathway
@@ -513,14 +530,18 @@ class Distiller:
 
         _log.info(
             "cluster distilled: size=%d train=%d test=%d pitfalls=%d score=%.2f",
-            len(cluster_traces), len(train_records), len(test_records),
-            len(pitfalls), score,
+            len(cluster_traces),
+            len(train_records),
+            len(test_records),
+            len(pitfalls),
+            score,
         )
         # The stored pathway's core invariant is plan_template ⊆ envelope. The
         # template is LLM-generalized, so verify it against the intersected envelope
         # before storing — otherwise an inconsistent pathway is later served as a
         # Tier-0 cache hit and adapt_plan's fallback returns it unverified.
         from opendaisugi.verify import verify as _verify_plan
+
         tmpl_ok = _verify_plan(generalized.plan_template, intersected_envelope)
         if not tmpl_ok.ok:
             warnings.append(
@@ -534,6 +555,19 @@ class Distiller:
             structure_sig = plan_structure_signature(generalized.plan_template)
         except Exception:
             structure_sig = None
+        # ADR-0008 B3: diff the cluster's concrete plans into typed data-holes,
+        # then re-express them against the generalized template by position.
+        # Empty ⇒ a frozen pathway (served verbatim). Never fails distillation.
+        from opendaisugi.pathway_params import diff_plans_for_parameters, rekey_to_template
+
+        try:
+            cluster_plans = [r.plan for r in train_records] + [r.plan for r in test_records]
+            parameters = rekey_to_template(
+                diff_plans_for_parameters(cluster_plans), generalized.plan_template
+            )
+        except Exception as exc:
+            warnings.append(f"parameter diff failed (kept frozen): {exc}")
+            parameters = []
         return CompiledPathway(
             id=f"pathway_{secrets.token_hex(4)}",
             task_description=generalized.task_description,
@@ -547,6 +581,7 @@ class Distiller:
             hit_count=0,
             distilled_at=time.time(),
             structure_signature=structure_sig,
+            parameters=parameters,
         )
 
     def _load_records(self, trace_metas: list, warnings: list[str]) -> list:
@@ -569,7 +604,9 @@ class Distiller:
         return None
 
     def _cluster_has_new_traces(
-        self, pathway: "CompiledPathway", cluster_traces: list,
+        self,
+        pathway: "CompiledPathway",
+        cluster_traces: list,
     ) -> bool:
         """True if any cluster trace isn't already in pathway.source_trace_ids."""
         known = set(pathway.source_trace_ids)

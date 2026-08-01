@@ -18,10 +18,7 @@ def _make_episode(ep_id: str, task: str, num_steps: int = 2) -> Episode:
     return Episode(
         id=ep_id,
         task=task,
-        steps=[
-            ShellStep(id=f"s{i}", command=f"echo step{i}")
-            for i in range(num_steps)
-        ],
+        steps=[ShellStep(id=f"s{i}", command=f"echo step{i}") for i in range(num_steps)],
         source_range={"first_message": 0, "last_message": 5},
     )
 
@@ -104,7 +101,9 @@ async def test_ingest_partial_failure_continues(journal):
             raise RuntimeError("LLM timeout")
         return _fake_envelope(task)
 
-    with patch("opendaisugi.ingest.generate_envelope", new_callable=AsyncMock, side_effect=flaky_gen):
+    with patch(
+        "opendaisugi.ingest.generate_envelope", new_callable=AsyncMock, side_effect=flaky_gen
+    ):
         summary = await ingest_episodes(pr, journal)
 
     assert summary.total == 3
@@ -164,6 +163,7 @@ async def test_ingest_concurrency_parameter(journal):
     pr = _make_parse_result(*episodes)
 
     import asyncio as _asyncio
+
     in_flight = 0
     max_in_flight = 0
     lock = _asyncio.Lock()
@@ -180,7 +180,9 @@ async def test_ingest_concurrency_parameter(journal):
             in_flight -= 1
         return _fake_envelope(task)
 
-    with patch("opendaisugi.ingest.generate_envelope", new_callable=AsyncMock, side_effect=tracked_gen):
+    with patch(
+        "opendaisugi.ingest.generate_envelope", new_callable=AsyncMock, side_effect=tracked_gen
+    ):
         summary = await ingest_episodes(pr, journal, concurrency=2)
 
     assert summary.total == 6

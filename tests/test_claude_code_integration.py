@@ -32,8 +32,14 @@ def test_parse_real_transcript_via_claude_code(tmp_path):
     out = tmp_path / "episodes.yaml"
     proc = subprocess.run(
         [
-            "daisugi", "journal", "parse", _TRANSCRIPT,
-            "-o", str(out), "--llm", "claude-code",
+            "daisugi",
+            "journal",
+            "parse",
+            _TRANSCRIPT,
+            "-o",
+            str(out),
+            "--llm",
+            "claude-code",
         ],
         capture_output=True,
         text=True,

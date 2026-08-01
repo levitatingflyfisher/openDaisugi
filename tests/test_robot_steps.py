@@ -20,9 +20,13 @@ def _roundtrip(plan: ActionPlan) -> ActionPlan:
 
 
 def test_joint_move_roundtrip():
-    plan = ActionPlan(source="t", task="t", steps=[
-        JointMoveStep(id="s1", joint_targets={"j1": 0.5, "j2": -0.2}, duration_s=2.0),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            JointMoveStep(id="s1", joint_targets={"j1": 0.5, "j2": -0.2}, duration_s=2.0),
+        ],
+    )
     rt = _roundtrip(plan)
     assert isinstance(rt.steps[0], JointMoveStep)
     assert rt.steps[0].joint_targets == {"j1": 0.5, "j2": -0.2}
@@ -31,13 +35,17 @@ def test_joint_move_roundtrip():
 
 
 def test_cartesian_move_roundtrip():
-    plan = ActionPlan(source="t", task="t", steps=[
-        CartesianMoveStep(
-            id="s1",
-            target_position=(0.5, 0.0, 0.3),
-            target_orientation=(1.0, 0.0, 0.0, 0.0),
-        ),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            CartesianMoveStep(
+                id="s1",
+                target_position=(0.5, 0.0, 0.3),
+                target_orientation=(1.0, 0.0, 0.0, 0.0),
+            ),
+        ],
+    )
     rt = _roundtrip(plan)
     assert isinstance(rt.steps[0], CartesianMoveStep)
     assert rt.steps[0].target_position == (0.5, 0.0, 0.3)
@@ -50,9 +58,13 @@ def test_cartesian_move_orientation_optional():
 
 
 def test_gripper_step_roundtrip():
-    plan = ActionPlan(source="t", task="t", steps=[
-        GripperStep(id="s1", action="close", hold_s=0.5),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            GripperStep(id="s1", action="close", hold_s=0.5),
+        ],
+    )
     rt = _roundtrip(plan)
     assert isinstance(rt.steps[0], GripperStep)
     assert rt.steps[0].action == "close"
@@ -64,24 +76,35 @@ def test_gripper_action_rejects_unknown():
 
 
 def test_sim_reset_roundtrip():
-    plan = ActionPlan(source="t", task="t", steps=[
-        SimulationResetStep(id="s1", seed=123),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            SimulationResetStep(id="s1", seed=123),
+        ],
+    )
     rt = _roundtrip(plan)
     assert isinstance(rt.steps[0], SimulationResetStep)
     assert rt.steps[0].seed == 123
 
 
 def test_mixed_robotics_plan_roundtrip():
-    plan = ActionPlan(source="t", task="t", steps=[
-        SimulationResetStep(id="r"),
-        JointMoveStep(id="a", joint_targets={"j1": 0.1}, depends_on=["r"]),
-        CartesianMoveStep(id="b", target_position=(0.4, 0.0, 0.2), depends_on=["a"]),
-        GripperStep(id="c", action="close", depends_on=["b"]),
-    ])
+    plan = ActionPlan(
+        source="t",
+        task="t",
+        steps=[
+            SimulationResetStep(id="r"),
+            JointMoveStep(id="a", joint_targets={"j1": 0.1}, depends_on=["r"]),
+            CartesianMoveStep(id="b", target_position=(0.4, 0.0, 0.2), depends_on=["a"]),
+            GripperStep(id="c", action="close", depends_on=["b"]),
+        ],
+    )
     rt = _roundtrip(plan)
     assert [type(s).__name__ for s in rt.steps] == [
-        "SimulationResetStep", "JointMoveStep", "CartesianMoveStep", "GripperStep",
+        "SimulationResetStep",
+        "JointMoveStep",
+        "CartesianMoveStep",
+        "GripperStep",
     ]
 
 

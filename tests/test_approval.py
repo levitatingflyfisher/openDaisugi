@@ -30,6 +30,7 @@ def _shell_step(cmd: str) -> ShellStep:
 
 def test_approval_decision_is_frozen():
     from dataclasses import FrozenInstanceError
+
     d = ApprovalDecision(approved=True, approved_by="allowlist", reason="ok")
     with pytest.raises(FrozenInstanceError):
         d.approved = False
@@ -79,14 +80,17 @@ def test_allowlist_bypass_skips_non_shell_steps():
 # fall through to the inner strategy regardless of head match.
 
 
-@pytest.mark.parametrize("cmd", [
-    "cat > /etc/passwd",
-    "cat < /etc/shadow",
-    "cat >> /etc/passwd",
-    "echo $(rm -rf /)",
-    "echo hi; rm -rf /",
-    "echo hi\nrm -rf /",
-])
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "cat > /etc/passwd",
+        "cat < /etc/shadow",
+        "cat >> /etc/passwd",
+        "echo $(rm -rf /)",
+        "echo hi; rm -rf /",
+        "echo hi\nrm -rf /",
+    ],
+)
 def test_allowlist_bypass_rejects_metachar_laden_commands(cmd):
     """v0.28.4 — head-token allowlist check is gated by metachar inspection."""
     s = AllowlistBypassStrategy(inner=DenyStrategy())
@@ -106,6 +110,7 @@ def test_protocol_conformance():
 def test_callback_strategy_approves_when_callback_returns_true():
     def always_yes(step, envelope):
         return True
+
     s = CallbackStrategy(always_yes)
     decision = s.decide(_shell_step("anything"), _env())
     assert decision.approved is True
@@ -115,6 +120,7 @@ def test_callback_strategy_approves_when_callback_returns_true():
 def test_callback_strategy_denies_when_callback_returns_false():
     def always_no(step, envelope):
         return False
+
     s = CallbackStrategy(always_no)
     decision = s.decide(_shell_step("anything"), _env())
     assert decision.approved is False

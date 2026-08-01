@@ -33,11 +33,35 @@ from typing import Any, Callable
 # normal 1.96 would understate the interval. df ≥ 30 falls back to the normal
 # approximation.
 _T95: dict[int, float] = {
-    1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
-    8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145,
-    15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
-    21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056,
-    27: 2.052, 28: 2.048, 29: 2.045,
+    1: 12.706,
+    2: 4.303,
+    3: 3.182,
+    4: 2.776,
+    5: 2.571,
+    6: 2.447,
+    7: 2.365,
+    8: 2.306,
+    9: 2.262,
+    10: 2.228,
+    11: 2.201,
+    12: 2.179,
+    13: 2.160,
+    14: 2.145,
+    15: 2.131,
+    16: 2.120,
+    17: 2.110,
+    18: 2.101,
+    19: 2.093,
+    20: 2.086,
+    21: 2.080,
+    22: 2.074,
+    23: 2.069,
+    24: 2.064,
+    25: 2.060,
+    26: 2.056,
+    27: 2.052,
+    28: 2.048,
+    29: 2.045,
 }
 
 
@@ -114,7 +138,7 @@ def _ci95(values: list[float]) -> tuple[float, float]:
     if n == 1:
         return (m, m)
     sd = statistics.stdev(values)
-    se = sd / (n ** 0.5)
+    se = sd / (n**0.5)
     h = _t95(n - 1) * se
     return (m - h, m + h)
 
@@ -186,16 +210,17 @@ def summarize(results: list[PairedResult]) -> dict[str, Any]:
         "warm_violations_total": warm_viol,
         "safety_regression": safety_regression,
         "raw": {
-            "cold_tokens": cold_tokens, "warm_tokens": warm_tokens,
+            "cold_tokens": cold_tokens,
+            "warm_tokens": warm_tokens,
             "cold_latency_ms": [m.latency_ms for r in results for m in r.cold],
             "warm_latency_ms": [m.latency_ms for r in results for m in r.warm],
         },
     }
 
 
-def _paired_deltas(results: list[PairedResult],
-                   metric: Callable[[RunMetric], float],
-                   *, success_only: bool = False) -> list[float]:
+def _paired_deltas(
+    results: list[PairedResult], metric: Callable[[RunMetric], float], *, success_only: bool = False
+) -> list[float]:
     """Per-task warm−cold deltas of the metric means, so the CI is over
     task-level effects rather than conflating within- and between-task variance.
     With ``success_only``, each arm is restricted to its successful runs; a task
@@ -213,14 +238,12 @@ def _paired_deltas(results: list[PairedResult],
     return deltas
 
 
-def meets_stage4_bar(results: list[PairedResult], *,
-                     min_tasks: int = 20, min_repeats: int = 5) -> bool:
+def meets_stage4_bar(
+    results: list[PairedResult], *, min_tasks: int = 20, min_repeats: int = 5
+) -> bool:
     """True iff the run met Stage 4's stated bar: ≥``min_tasks`` tasks, each
     with ≥``min_repeats`` cold AND warm runs. Guards against publishing a
     flattering-but-thin sample as if it settled the question."""
     if len(results) < min_tasks:
         return False
-    return all(
-        len(r.cold) >= min_repeats and len(r.warm) >= min_repeats
-        for r in results
-    )
+    return all(len(r.cold) >= min_repeats and len(r.warm) >= min_repeats for r in results)

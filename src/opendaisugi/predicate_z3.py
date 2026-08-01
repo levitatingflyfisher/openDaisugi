@@ -128,9 +128,7 @@ def _eval_scalar(expr: Any, scope: dict[str, Any]) -> bool:
     if isinstance(expr, Implies):
         return (not _eval_scalar(expr.a, scope)) or _eval_scalar(expr.b, scope)
     if isinstance(expr, LLMCheck):
-        raise ValueError(
-            "LLMCheck must be evaluated via evaluate_llm_check, not _eval_scalar"
-        )
+        raise ValueError("LLMCheck must be evaluated via evaluate_llm_check, not _eval_scalar")
     if isinstance(expr, AliasRef):
         raise ValueError(
             f"unresolved alias reference '{expr.name}'; resolve aliases before evaluation"
@@ -166,6 +164,7 @@ def evaluate_predicate(expr: Any, plan: ActionPlan, envelope: Envelope) -> bool:
                     "llm_check blocked for physical stakes — use sound primitives only"
                 )
             from opendaisugi.llm_check import run_llm_check
+
             payload = {"task": plan.task, "steps": step_dicts}
             res = run_llm_check(e.rule, payload)
             # Fail CLOSED: a failed probabilistic check (network/timeout/
@@ -300,7 +299,11 @@ def _compile_scalar(
             return z3.BoolVal(False)
         return var != _z3_lit(expr.value)
     if isinstance(expr, InSet):
-        if expr.values and isinstance(expr.values[0], (int, float)) and not isinstance(expr.values[0], bool):
+        if (
+            expr.values
+            and isinstance(expr.values[0], (int, float))
+            and not isinstance(expr.values[0], bool)
+        ):
             var, present = scope.resolve_numeric(expr.path)
         else:
             var, present = scope.resolve_string(expr.path)
@@ -310,7 +313,11 @@ def _compile_scalar(
             return z3.BoolVal(False)
         return z3.Or(*[var == _z3_lit(v) for v in expr.values])
     if isinstance(expr, NotInSet):
-        if expr.values and isinstance(expr.values[0], (int, float)) and not isinstance(expr.values[0], bool):
+        if (
+            expr.values
+            and isinstance(expr.values[0], (int, float))
+            and not isinstance(expr.values[0], bool)
+        ):
             var, present = scope.resolve_numeric(expr.path)
         else:
             var, present = scope.resolve_string(expr.path)
@@ -556,9 +563,7 @@ def verify_predicate_z3(
     solver.add(z3.Not(compiled.term))
     result = solver.check()
     if result == z3.unknown:
-        raise VerificationTimeout(
-            f"Z3 predicate check exceeded {timeout_ms}ms"
-        )
+        raise VerificationTimeout(f"Z3 predicate check exceeded {timeout_ms}ms")
     if result == z3.unsat:
         return True, None
     model = solver.model()

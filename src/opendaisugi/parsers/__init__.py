@@ -51,10 +51,7 @@ def get_parser(format_name: str = "claude-code", **kwargs) -> ConversationParser
     """
     if format_name not in _PARSERS:
         available = sorted(_PARSERS) or ["(none registered)"]
-        raise ValueError(
-            f"Unknown parser format: {format_name!r}. "
-            f"Available: {available}"
-        )
+        raise ValueError(f"Unknown parser format: {format_name!r}. Available: {available}")
     return _PARSERS[format_name](**kwargs)
 
 

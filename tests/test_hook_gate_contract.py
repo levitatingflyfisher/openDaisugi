@@ -27,8 +27,7 @@ import subprocess
 import pytest
 
 _GATED = pytest.mark.skipif(
-    shutil.which("claude") is None
-    or os.environ.get("DAISUGI_CLAUDE_CODE_INTEGRATION") != "1",
+    shutil.which("claude") is None or os.environ.get("DAISUGI_CLAUDE_CODE_INTEGRATION") != "1",
     reason="requires the claude binary and DAISUGI_CLAUDE_CODE_INTEGRATION=1",
 )
 
@@ -37,10 +36,13 @@ _SECRET = "DAISUGI-GATE-SENTINEL-7f3a9c"
 
 def _run_claude(prompt: str, *, cwd, extra_args: list[str]) -> dict:
     proc = subprocess.run(
-        ["claude", "-p", "--model=haiku", "--output-format", "json",
-         *extra_args, "--", prompt],
-        capture_output=True, text=True, timeout=180, check=False,
-        stdin=subprocess.DEVNULL, cwd=str(cwd),
+        ["claude", "-p", "--model=haiku", "--output-format", "json", *extra_args, "--", prompt],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        cwd=str(cwd),
     )
     assert proc.returncode == 0, f"claude -p failed: {proc.stderr[:500]}"
     return json.loads(proc.stdout)
@@ -49,10 +51,7 @@ def _run_claude(prompt: str, *, cwd, extra_args: list[str]) -> dict:
 def _sentinel_setup(tmp_path):
     secret_file = tmp_path / "sentinel.txt"
     secret_file.write_text(_SECRET + "\n")
-    prompt = (
-        f"Use the Read tool to read the file {secret_file} and reply with "
-        "its exact content."
-    )
+    prompt = f"Use the Read tool to read the file {secret_file} and reply with its exact content."
     return secret_file, prompt
 
 
@@ -81,12 +80,18 @@ def test_pretooluse_hook_via_settings_denies_read(tmp_path):
         "exit 2\n"
     )
     hook.chmod(0o755)
-    settings = json.dumps({
-        "hooks": {"PreToolUse": [{
-            "matcher": "*",
-            "hooks": [{"type": "command", "command": str(hook), "timeout": 20}],
-        }]},
-    })
+    settings = json.dumps(
+        {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "*",
+                        "hooks": [{"type": "command", "command": str(hook), "timeout": 20}],
+                    }
+                ]
+            },
+        }
+    )
 
     out = _run_claude(prompt, cwd=tmp_path, extra_args=["--settings", settings])
 
@@ -130,13 +135,12 @@ def test_real_gate_denies_read_in_live_host(tmp_path):
     out = _run_claude(prompt, cwd=tmp_path, extra_args=["--settings", settings])
 
     # The secret must NOT have reached the model.
-    assert _SECRET not in str(out.get("result", "")), (
-        "the gate failed to block the sentinel read"
-    )
+    assert _SECRET not in str(out.get("result", "")), "the gate failed to block the sentinel read"
     # The gate evaluated and denied it, with the verifier's reason on record.
     rep = shadow_report(root=gate_root)
     denies = [
-        r for r in rep["denied"]
+        r
+        for r in rep["denied"]
         if r.get("tool_name") == "Read" and str(secret_file) in (r.get("detail") or "")
     ]
     assert denies, f"no gate denial recorded for the sentinel: {rep!r}"
@@ -162,27 +166,44 @@ def test_gate_unavailable_denies_fail_closed(tmp_path):
     secret_file, prompt = _sentinel_setup(tmp_path)
 
     def _settings(command: str) -> str:
-        return json.dumps({"hooks": {"PreToolUse": [{
-            "matcher": "*",
-            "hooks": [{"type": "command", "command": command, "timeout": 20}],
-        }]}})
+        return json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "*",
+                            "hooks": [{"type": "command", "command": command, "timeout": 20}],
+                        }
+                    ]
+                }
+            }
+        )
 
     py = sys.executable
 
     # Baseline: an unwrapped crashing hook LEAKS — this is why the guard exists.
-    leak = _run_claude(prompt, cwd=tmp_path, extra_args=[
-        "--settings", _settings(f'{py} -c "import sys; sys.exit(1)"')])
+    leak = _run_claude(
+        prompt,
+        cwd=tmp_path,
+        extra_args=["--settings", _settings(f'{py} -c "import sys; sys.exit(1)"')],
+    )
     assert _SECRET in str(leak.get("result", "")), (
         "expected the unwrapped exit-1 baseline to leak; if it doesn't, the "
         "host contract changed and the guard's premise needs re-checking"
     )
 
     # Guarded crash: `|| exit 2` turns the exit-1 into a deny.
-    blocked = _run_claude(prompt, cwd=tmp_path, extra_args=[
-        "--settings", _settings(f'{py} -c "import sys; sys.exit(1)" || exit 2')])
+    blocked = _run_claude(
+        prompt,
+        cwd=tmp_path,
+        extra_args=["--settings", _settings(f'{py} -c "import sys; sys.exit(1)" || exit 2')],
+    )
     assert _SECRET not in str(blocked.get("result", ""))
 
     # Guarded import failure: main() never runs, but the boundary still denies.
-    import_fail = _run_claude(prompt, cwd=tmp_path, extra_args=[
-        "--settings", _settings(f'{py} -m opendaisugi.nonexistent_xyz || exit 2')])
+    import_fail = _run_claude(
+        prompt,
+        cwd=tmp_path,
+        extra_args=["--settings", _settings(f"{py} -m opendaisugi.nonexistent_xyz || exit 2")],
+    )
     assert _SECRET not in str(import_fail.get("result", ""))

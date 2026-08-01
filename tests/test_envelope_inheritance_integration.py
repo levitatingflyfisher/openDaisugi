@@ -14,14 +14,18 @@ from opendaisugi.models import Envelope, Permission
 
 async def test_generate_with_parent_sets_parent_envelope_id(mock_llm_client):
     parent = Envelope(
-        generated_by="t", task="parent task",
+        generated_by="t",
+        task="parent task",
         permissions=Permission(file_read=["/tmp/**"], shell=True, shell_allowlist=["echo"]),
     )
     # Configure mock to return a child envelope strictly tighter than parent.
-    mock_llm_client.set_next_envelope(Envelope(
-        generated_by="t", task="child task",
-        permissions=Permission(file_read=["/tmp/**"], shell=False),
-    ))
+    mock_llm_client.set_next_envelope(
+        Envelope(
+            generated_by="t",
+            task="child task",
+            permissions=Permission(file_read=["/tmp/**"], shell=False),
+        )
+    )
 
     child = await generate_envelope("child task", parent=parent)
     assert child.parent_envelope == parent.id
@@ -29,13 +33,17 @@ async def test_generate_with_parent_sets_parent_envelope_id(mock_llm_client):
 
 async def test_generate_with_parent_raises_on_relaxation(mock_llm_client):
     parent = Envelope(
-        generated_by="t", task="parent task",
+        generated_by="t",
+        task="parent task",
         permissions=Permission(network=False),
     )
-    mock_llm_client.set_next_envelope(Envelope(
-        generated_by="t", task="child task",
-        permissions=Permission(network=True),  # relaxes parent
-    ))
+    mock_llm_client.set_next_envelope(
+        Envelope(
+            generated_by="t",
+            task="child task",
+            permissions=Permission(network=True),  # relaxes parent
+        )
+    )
 
     with pytest.raises(EnvelopeInheritanceError) as exc_info:
         await generate_envelope("child task", parent=parent)
@@ -43,10 +51,13 @@ async def test_generate_with_parent_raises_on_relaxation(mock_llm_client):
 
 
 async def test_generate_without_parent_unchanged_behavior(mock_llm_client):
-    mock_llm_client.set_next_envelope(Envelope(
-        generated_by="t", task="standalone",
-        permissions=Permission(),
-    ))
+    mock_llm_client.set_next_envelope(
+        Envelope(
+            generated_by="t",
+            task="standalone",
+            permissions=Permission(),
+        )
+    )
     env = await generate_envelope("standalone")
     assert env.parent_envelope is None  # not stamped
 
@@ -71,9 +82,13 @@ async def test_cache_hit_short_circuits_llm_call(tmp_path, mock_llm_client):
 
 async def test_cache_miss_calls_llm_then_stores(tmp_path, mock_llm_client):
     cache = EnvelopeCache(tmp_path / "cache.db", prompt_version="v1")
-    mock_llm_client.set_next_envelope(Envelope(
-        generated_by="t", task="fresh task", permissions=Permission(),
-    ))
+    mock_llm_client.set_next_envelope(
+        Envelope(
+            generated_by="t",
+            task="fresh task",
+            permissions=Permission(),
+        )
+    )
 
     result = await generate_envelope("fresh task", cache=cache)
     assert mock_llm_client.call_count == 1
@@ -86,13 +101,17 @@ async def test_cache_miss_calls_llm_then_stores(tmp_path, mock_llm_client):
 async def test_inheritance_violation_does_not_cache(tmp_path, mock_llm_client):
     cache = EnvelopeCache(tmp_path / "cache.db", prompt_version="v1")
     parent = Envelope(
-        generated_by="t", task="p",
+        generated_by="t",
+        task="p",
         permissions=Permission(network=False),
     )
-    mock_llm_client.set_next_envelope(Envelope(
-        generated_by="t", task="c",
-        permissions=Permission(network=True),  # relaxation
-    ))
+    mock_llm_client.set_next_envelope(
+        Envelope(
+            generated_by="t",
+            task="c",
+            permissions=Permission(network=True),  # relaxation
+        )
+    )
 
     with pytest.raises(EnvelopeInheritanceError):
         await generate_envelope("c", parent=parent, cache=cache)

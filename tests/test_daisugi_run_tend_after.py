@@ -4,6 +4,7 @@
 - Failed/rejected runs do not count toward the threshold
 - tend() resets the counter so every N successes fires once
 """
+
 from __future__ import annotations
 
 from unittest import mock
@@ -26,7 +27,8 @@ def _plan():
 
 def _env():
     return Envelope(
-        generated_by="t", task="t",
+        generated_by="t",
+        task="t",
         permissions=Permission(shell=True, shell_allowlist=["ls"]),
     )
 

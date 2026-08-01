@@ -4,7 +4,51 @@ from pathlib import Path
 
 import yaml
 
-from opendaisugi.config import Config, default_config, load_config, save_config
+from opendaisugi.config import (
+    Config,
+    auto_tend_enabled,
+    default_config,
+    ensure_auto_tend_consent,
+    load_config,
+    save_config,
+)
+
+
+def test_auto_tend_defaults_to_unasked():
+    # None = we haven't asked yet (distinct from an explicit no).
+    assert Config().auto_tend is None
+
+
+def test_auto_tend_enabled_only_when_consented_true():
+    assert auto_tend_enabled(Config(auto_tend=True)) is True
+    assert auto_tend_enabled(Config(auto_tend=False)) is False
+    assert auto_tend_enabled(Config(auto_tend=None)) is False
+
+
+def test_ensure_auto_tend_consent_asks_once_and_persists(tmp_path):
+    path = tmp_path / "config.yaml"
+    calls = {"n": 0}
+
+    def ask() -> bool:
+        calls["n"] += 1
+        return True
+
+    cfg = ensure_auto_tend_consent(load_config(path), ask, path=path)
+    assert cfg.auto_tend is True
+    assert calls["n"] == 1
+    assert load_config(path).auto_tend is True  # persisted
+
+    # Already answered → never asks again.
+    cfg2 = ensure_auto_tend_consent(load_config(path), ask, path=path)
+    assert calls["n"] == 1
+    assert cfg2.auto_tend is True
+
+
+def test_ensure_auto_tend_consent_records_a_decline(tmp_path):
+    path = tmp_path / "config.yaml"
+    cfg = ensure_auto_tend_consent(load_config(path), lambda: False, path=path)
+    assert cfg.auto_tend is False
+    assert load_config(path).auto_tend is False
 
 
 def test_default_config_has_expected_defaults():
@@ -32,11 +76,15 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
 
 def test_load_config_reads_existing_yaml(tmp_path):
     path = tmp_path / "config.yaml"
-    path.write_text(yaml.safe_dump({
-        "model": "openai/gpt-4o-mini",
-        "max_task_chars": 1500,
-        "z3_timeout_ms": 250,
-    }))
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "model": "openai/gpt-4o-mini",
+                "max_task_chars": 1500,
+                "z3_timeout_ms": 250,
+            }
+        )
+    )
     cfg = load_config(path)
     assert cfg.model == "openai/gpt-4o-mini"
     assert cfg.max_task_chars == 1500
@@ -46,10 +94,14 @@ def test_load_config_reads_existing_yaml(tmp_path):
 def test_load_config_ignores_unknown_keys(tmp_path):
     # Unknown keys must not crash — forward compat with v0.1 fields.
     path = tmp_path / "config.yaml"
-    path.write_text(yaml.safe_dump({
-        "model": "anthropic/claude-sonnet-4-20250514",
-        "future_v01_field": "ignore_me",
-    }))
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "model": "anthropic/claude-sonnet-4-20250514",
+                "future_v01_field": "ignore_me",
+            }
+        )
+    )
     cfg = load_config(path)
     assert cfg.model == "anthropic/claude-sonnet-4-20250514"
 
@@ -80,16 +132,20 @@ def test_config_ignores_retired_runtime_supervision_fields(tmp_path):
     v0.9.0. This test pins the forward-compat guarantee: a config.yaml written
     by v0.1–v0.8 still loads, thanks to load_config's unknown-key filtering."""
     path = tmp_path / "legacy.yaml"
-    path.write_text(yaml.safe_dump({
-        "model": "anthropic/claude-sonnet-4-20250514",
-        "max_task_chars": 4000,
-        "z3_timeout_ms": 500,
-        "data_dir": str(Path.home() / ".opendaisugi"),
-        "step_timeout_s": 60,
-        "execution_timeout_s": 1200,
-        "approval_policy": "allowlist+env",
-        "max_output_bytes": 5 * 1024 * 1024,
-    }))
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "model": "anthropic/claude-sonnet-4-20250514",
+                "max_task_chars": 4000,
+                "z3_timeout_ms": 500,
+                "data_dir": str(Path.home() / ".opendaisugi"),
+                "step_timeout_s": 60,
+                "execution_timeout_s": 1200,
+                "approval_policy": "allowlist+env",
+                "max_output_bytes": 5 * 1024 * 1024,
+            }
+        )
+    )
     loaded = load_config(path)
     assert loaded.model == "anthropic/claude-sonnet-4-20250514"
     assert loaded.max_task_chars == 4000

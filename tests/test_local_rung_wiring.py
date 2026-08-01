@@ -43,7 +43,9 @@ def test_endpoint_override_threads_base_url_to_completion():
     exe = DelegatingExecutor(
         default_model="openai/qwen2.5-3b",
         json_mode=False,
-        endpoint_overrides={"openai/qwen2.5-3b": {"api_base": "http://localhost:8080/v1", "api_key": "x"}},
+        endpoint_overrides={
+            "openai/qwen2.5-3b": {"api_base": "http://localhost:8080/v1", "api_key": "x"}
+        },
     )
     captured = {}
 
@@ -106,7 +108,10 @@ async def test_facade_threads_configured_local_model(monkeypatch):
     ladder = captured["ladder"]
     assert ladder.rungs[0].name == "local"
     assert ladder.rungs[0].model == "openai/qwen2.5-3b"  # provider auto-prefixes
-    assert captured["endpoint_overrides"]["openai/qwen2.5-3b"]["api_base"] == "http://localhost:8080/v1"
+    assert (
+        captured["endpoint_overrides"]["openai/qwen2.5-3b"]["api_base"]
+        == "http://localhost:8080/v1"
+    )
 
 
 async def test_facade_no_local_model_uses_safe_default(monkeypatch):

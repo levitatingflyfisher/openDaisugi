@@ -62,15 +62,13 @@ def test_onboard_chains_every_transcript_then_tends_once():
     assert report.transcripts_processed == 2
     assert len(calls["parse"]) == 2
     assert len(calls["ingest"]) == 2
-    assert calls["tend"] == 1            # tend runs once, after all ingests
-    assert report.traces_passed == 4     # 2 episodes * 2 transcripts
+    assert calls["tend"] == 1  # tend runs once, after all ingests
+    assert report.traces_passed == 4  # 2 episodes * 2 transcripts
     assert report.pathways_created == 1
 
 
 def test_onboard_limit_caps_transcripts():
-    report, calls = _run(
-        discover=lambda roots=None: [_t("a"), _t("b"), _t("c")], limit=2
-    )
+    report, calls = _run(discover=lambda roots=None: [_t("a"), _t("b"), _t("c")], limit=2)
     assert report.transcripts_found == 3
     assert report.transcripts_processed == 2
     assert len(calls["parse"]) == 2
@@ -86,11 +84,9 @@ def test_onboard_harness_filter():
 
 
 def test_onboard_dry_run_skips_tend():
-    report, calls = _run(
-        discover=lambda roots=None: [_t("a")], dry_run=True
-    )
+    report, calls = _run(discover=lambda roots=None: [_t("a")], dry_run=True)
     assert report.dry_run is True
-    assert calls["tend"] == 0            # no distillation / no writes in dry-run
+    assert calls["tend"] == 0  # no distillation / no writes in dry-run
     assert report.pathways_created == 0
 
 
@@ -99,6 +95,30 @@ def test_onboard_no_transcripts_warns_and_skips_tend():
     assert report.transcripts_found == 0
     assert calls["tend"] == 0
     assert any("no transcripts" in w.lower() for w in report.warnings)
+
+
+def test_onboard_warns_loudly_when_every_episode_errors():
+    """No model configured -> ingest errors every episode and logs 0 traces.
+
+    The worst onboarding outcome is a silent empty journal that looks like
+    "0 traces / nothing to distill". Onboard must surface an actionable warning.
+    """
+
+    async def ingest_one(pr):
+        return _StubIngest(errored=2)
+
+    report, _calls = _run(discover=lambda roots=None: [_t("a")], ingest_one=ingest_one)
+    assert report.traces_passed == 0
+    assert report.traces_errored == 2
+    assert any(
+        "envelope" in w.lower() and "configured" in w.lower() for w in report.warnings
+    ), report.warnings
+
+
+def test_onboard_no_error_warning_on_healthy_run():
+    # A run with real passes must NOT trip the all-errored warning.
+    report, _calls = _run(discover=lambda roots=None: [_t("a")])
+    assert not any("envelope generation failed" in w.lower() for w in report.warnings)
 
 
 def test_onboard_skips_harness_with_no_parser():

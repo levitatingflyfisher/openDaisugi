@@ -71,8 +71,10 @@ class SkillExecutor:
             )
         text = out if isinstance(out, str) else json.dumps(out, default=str)
         return ExecutorResult(
-            rc=0, stdout=truncate_output(text, max_output_bytes),
-            duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+            rc=0,
+            stdout=truncate_output(text, max_output_bytes),
+            duration_ms=(time.monotonic() - start) * 1000.0,
+            timed_out=False,
         )
 
 
@@ -109,8 +111,10 @@ class MCPExecutor:
             )
         text = json.dumps(result, default=str)
         return ExecutorResult(
-            rc=0, stdout=truncate_output(text, max_output_bytes),
-            duration_ms=(time.monotonic() - start) * 1000.0, timed_out=False,
+            rc=0,
+            stdout=truncate_output(text, max_output_bytes),
+            duration_ms=(time.monotonic() - start) * 1000.0,
+            timed_out=False,
         )
 
 

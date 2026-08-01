@@ -1,37 +1,118 @@
-# opendaisugi
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.png">
+    <img alt="openDaisugi — as simple as the job allows, but no simpler" src="docs/assets/logo.png" width="560">
+  </picture>
+</p>
 
-[![CI](https://github.com/levitatingflyfisher/openDaisugi/actions/workflows/ci.yml/badge.svg)](https://github.com/levitatingflyfisher/openDaisugi/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://github.com/levitatingflyfisher/openDaisugi/actions/workflows/ci.yml"><img src="https://github.com/levitatingflyfisher/openDaisugi/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/python-3.12%2B-blue.svg" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT">
+</p>
 
-> A restricted predicate algebra authorable by agents, compiling to SMT-LIB2
-> that Z3 solves. We verify plans authored by LLMs at runtime.
+**A JIT compiler for AI agents, with a runtime-assurance guard.** Agents are billed
+by the token yet re-plan the same work from scratch every time. openDaisugi compiles
+that repetition: it distils your repeated successes into reusable **skills** — frozen
+scripts and typed pathways that replay without re-planning, the deterministic ones for
+**zero tokens** — and sizes every step that still needs a model to the cheapest one
+that can run it. Underneath, a Z3-backed check proves each action stays inside a
+declared safety *envelope* **before it runs** — fail-closed, usually milliseconds and
+no tokens. Cheapest and safest turn out to be the same move: **separate what is
+_allowed_ from what is _decided_.**
 
-Runtime assurance for agent actions: generate a safety envelope for a task,
-verify proposed action plans against it via Z3, and log replayable traces.
-Skills can be treated as contracts — one agent can delegate to another
-(including LoRA-tuned smaller models) with a mechanical proof that the
-delegation is safe.
+## Install
 
-## Vision
+```bash
+uv add opendaisugi          # or: pip install opendaisugi
+```
 
-**Separate what is _allowed_ from what is _decided._** What's decided comes from a
-black box (an LLM, a neural policy, a VLA) — capable and fundamentally unverifiable.
-What's allowed comes from a space of checkable calculations. The key move: an LLM
-closes the verification loop not by becoming verifiable, but by *generating*
-verifiable constraints — the envelope — which a deterministic layer then enforces.
-It's [Runtime Assurance](https://en.wikipedia.org/wiki/Runtime_assurance) (Simplex,
-verified envelopes) pointed somewhere it never has been: LLM agents and robot
-foundation models.
+Python 3.12+. The `z3-solver` native dependency installs automatically. Add
+`opendaisugi[search]` if you want pathway reuse (it pulls in
+`sentence-transformers`; without it `find_pathway()` returns `None` and every run
+re-plans — no error, just no reuse).
 
-→ **[VISION.md](VISION.md)** for the full north star — the invariants that must
-stay true, and an honest scorecard of what's built vs. aspirational.
-→ **[docs/](docs/README.md)** for the [Diátaxis](https://diataxis.fr/)-organized
-docs (tutorials · how-to · reference · explanation).
+<details>
+<summary>Optional extras — reuse, MCP server, robotics, LoRA</summary>
 
-### Gate an agent you're already running
+```bash
+uv add 'opendaisugi[search]'    # REQUIRED for pathway reuse (sentence-transformers, ~80 MB)
+uv add 'opendaisugi[mcp]'       # MCP server for Claude Code / Codex / Hermes / OpenClaw
+uv add 'opendaisugi[robotics]'  # MuJoCo executor (experimental)
+uv add 'opendaisugi[lora]'      # LoRA training-data pipeline
+```
 
-One command puts a fail-closed gate in front of a live Claude Code session:
-every tool call is proven inside an envelope *before it runs*, shadow-mode
-first, one flag to enforce.
+Bare `uv add opendaisugi` stays lightweight (the verifier and routing work without
+`[search]`); only Tier-0 reuse needs the embedding model.
+</details>
+
+## See it refuse an unsafe action
+
+No API key, no network — pure Z3, milliseconds. The envelope says what's allowed;
+the plan an LLM proposed must stay inside it, **proven before anything runs**:
+
+```python
+from opendaisugi import ActionPlan, Daisugi, Envelope, Permission, ShellStep
+
+dai = Daisugi()
+
+# The envelope is the contract: this agent may only run `find`.
+envelope = Envelope(
+    generated_by="you",
+    task="clean up stale logs",
+    permissions=Permission(shell=True, shell_allowlist=["find"]),
+)
+
+# An LLM proposed this plan. Prove it's in-bounds BEFORE anything runs.
+plan = ActionPlan(
+    source="some-llm",
+    task="clean up stale logs",
+    steps=[ShellStep(id="s1", command="rm -rf /var/log")],  # not `find`!
+)
+
+result = dai.verify(plan, envelope)  # pure, sync, milliseconds, zero tokens
+print("allowed:", result.ok)
+for v in result.violations:
+    print(f"  [{v.stage}] {v.message}")
+```
+
+```
+allowed: False
+  [permissions] Step 's1' shell command 'rm' not in allowlist ['find']
+```
+
+That `False` is a Z3 result, not a string match — the plan asked to run `rm`, the
+envelope only admits `find`, so it never executes. Swap the command for
+`find /var/log -name '*.tmp' -delete` and it verifies. That's the whole idea, and
+everything below is built on it.
+
+---
+
+## What it does
+
+Three ways to use it, each its own section below:
+
+- **[Gate an agent you're already running](#gate-an-agent-youre-already-running)** —
+  drop a fail-closed guard in front of a live Claude Code / Codex / Hermes /
+  OpenClaw session; shadow-mode first, one flag to enforce.
+- **[Run a whole prompt end to end](#run-a-whole-prompt-end-to-end--the-orchestrator)** —
+  one prompt → a verified, typed-step plan → each reasoning step routed to the
+  cheapest capable model → synthesized answer.
+- **[Compile the work you repeat](#compile-the-work-you-repeat)** — distil repeated
+  successes into pathways that skip planning and, when deterministic, run for zero
+  tokens.
+
+All three sit *on top of* the same guarantee: every plan and every step is
+re-verified against its envelope before it runs — so routing and reuse make agents
+cheaper without ever making them less safe.
+
+---
+
+## Gate an agent you're already running
+
+The fail-closed guard from the hello-world, in front of a live session: every tool
+call is proven inside an envelope *before it runs*, shadow-mode first, one flag to
+enforce.
 
 ```bash
 daisugi gate quickstart      # → a working shadow-mode gate in minutes
@@ -52,7 +133,186 @@ The same 13-attack corpus that gates this project's own merges is one command:
 `daisugi gate audit` (denial 1.00; false-positive rate published, not hidden).
 Start here: **[Protect an agent you're already running](docs/tutorials/protect-your-existing-session.md)**.
 
-### See it: runtime assurance for a robot swarm
+---
+
+## Run a whole prompt end to end — the Orchestrator
+
+One prompt becomes a verified, typed-step plan; each reasoning step runs on a
+model sized to its difficulty under a token budget; the results are synthesized
+into an answer. A prompt that matches a distilled pathway skips planning and
+reuses the stored plan.
+
+```python
+from opendaisugi import Daisugi
+
+dai = Daisugi()
+result = await dai.orchestrate(
+    "summarize the open PRs and draft a standup note",
+    budget_tokens=20_000,          # gates routing DURING the run, not after
+)
+print(result.final_answer)
+for s in result.sizings:           # per-step: difficulty → the model it ran on
+    print(s.step_id, s.difficulty, s.tier, s.model)
+print(result.budget.spent, "tokens")
+```
+
+Or from the CLI: `daisugi orchestrate "…" --budget 20000`.
+
+**What routing actually does** (it is not a static up-front pick):
+
+- **Capability sizing.** Each reasoning step is sized to the cheapest model that
+  can handle its difficulty — a quick classification doesn't get the frontier
+  model. Steps that touch the shell, filesystem, or network run directly, with
+  no model to size.
+- **Live budget gating.** As the run spends, each remaining step is re-sized
+  against what is *left*; when the budget is tight the model is downgraded, and
+  in strict mode a step whose cheapest rung is still unaffordable fails
+  **without an LLM call** rather than overspending.
+- **Tier-0 reuse.** If a distilled pathway already covers the prompt, the plan
+  is reused and re-verified against *your* envelope — skipping the decompose
+  call entirely.
+
+The decomposed plan is verified against a safety envelope before it runs, and
+each step is re-verified at execution time — routing and assembly sit *on top
+of* the assurance guarantees, never weakening them. The pieces are composable:
+`decompose()`, `size_plan()`, `BudgetTracker`, `synthesize()`.
+
+---
+
+## Compile the work you repeat
+
+![The openDaisugi garden loop: agent sessions are captured to a journal; tend (the Gardener) clusters and diffs the successes and distils each into the right tool — a frozen script (0 tokens), a typed skill f(pattern, path), or left as a fresh decompose when the structure diverges; those compose into higher-tier skills that get reused; the Z3 guard checks every action, fail-closed and near-free.](docs/assets/garden-loop.png)
+
+`daisugi tend` is a batch pass over your journal. When a task has succeeded a few
+times (three, by default), it distills those runs into a pathway — the plan and
+the envelope it ran inside. Later, when a prompt is close enough to a stored
+pathway (cosine similarity ≥ 0.55), the orchestrator reuses that plan instead of
+calling a model to derive a new one. Two consequences:
+
+- **The planning call doesn't happen.** Reuse serves the stored plan directly.
+- **Deterministic steps run without a model.** A plan is a graph of typed steps.
+  `shell`, `file_read`, `file_write`, and `network` steps run via subprocess and
+  urllib — no inference. A pathway made only of those does its work for zero
+  tokens; the one model call left is the final assembly of the answer, and
+  `--deterministic-synthesis` turns that off too, for a run that spends nothing.
+  Other step types do use a model: `task` and `agentic` reason, `skill` and
+  `mcp` are whatever their handler is, `vla` runs a policy.
+
+The whole idea is one table — *the right tool for the job*, where the cheapest
+tool is usually the safest one too:
+
+| The job | Right tool | Token cost | Why it's *also* the safe choice |
+|---|---|---|---|
+| A fixed command you run constantly | **frozen script** | 0 | nothing to inject — no model in it to fool; runs verbatim inside its envelope |
+| Same shape, varying inputs (*read `report-{date}.md`*) | **typed skill** | ~0 (bind) | the input is *data* whose location is pinned (a file's directory, a URL's host), re-checked against the envelope before it runs |
+| Genuine reasoning | **LLM fit to purpose** | a right-sized model | the smallest capable model is cheaper *and* has less attack surface |
+| Never seen before | **fresh decompose** | full plan | planned under an envelope, verified before a single action runs |
+
+Run it yourself, offline, with no API key —
+[`examples/reuse-receipt/`](examples/reuse-receipt/) seeds a distilled `grep`
+pathway, reuses it, and prints:
+
+```
+prompt reused a distilled pathway : True
+plan step types                   : ['shell']
+synthesis used an LLM             : False
+tokens spent (whole run)          : 0
+```
+
+**Two reuse paths — don't confuse them.** The orchestrator's **Tier-0 reuse**
+serves a matched pathway's plan *verbatim* and re-verifies it against your
+envelope — no planning call, deterministic steps for zero tokens (the receipt
+above). Separately, `dai.adapt_plan(match, task=…)` is an *optional* helper for
+when you want to reshape a template to a near-neighbour task: it spends one cheap
+Tier-1 call, then re-verifies (falling back to the untouched template if the
+adaptation fails to verify). It is **not** what `orchestrate()` calls — reuse is
+verbatim by default. So "reuse" means "serve the proven plan again," not "adapt it
+to a novel prompt"; the 0.55 threshold is what keeps those the same thing.
+
+<details>
+<summary>The honest edges of reuse (cold start, cost, what's proven)</summary>
+
+| | |
+|---|---|
+| **Cold start** | Pathways require ≥ 3 successful traces of a similar task before `tend()` produces one. The first few runs of any new task type pay full cost. |
+| **`tend()` is not free** | It costs one LLM call per cluster. Use `tend_after` conservatively or run it offline (`daisugi tend`). |
+| **Verbatim ≠ adapt** | Tier-0 reuse is ~free but only fires on a close match. `adapt_plan` reshapes a template with a cheap Tier-1 call — not zero tokens. |
+| **Reuse is re-verified** | Every reused or adapted plan is re-verified against the stored envelope before it runs. A pathway that drifts out of policy fails verification and falls back to the cold path automatically. |
+| **Does it pay?** | Real in direction, not yet proven at scale — measure it on *your* corpus with `examples/jit-metrics/`, and watch [Stage 4](docs/roadmap.md). |
+</details>
+
+### The tool that's cheapest is usually the one that's safest
+
+Most systems trade cost against safety. openDaisugi's structure collapses the
+trade, because both come from the same move — *not putting a general intelligence
+where a specific tool belongs.* A distilled `grep` script costs **zero tokens**
+*and* **cannot be prompt-injected**: there is no model in it to fool. Sizing a
+step to the smallest capable model is cheaper *and* narrows its attack surface.
+Saving tokens and staying safe stop being two goals; they are one.
+
+Underneath sits the line the whole system is built on — *separate what is
+**allowed** from what is **decided:***
+
+![Allowed vs decided: the LLM crosses the intent gap — turning fuzzy intent into a concrete plan, kept a black box — and the plan must stay inside the envelope, where symbolic predicates are proven by Z3 (a guarantee, near-free) and perceptual predicates are judged by an LLM or VLM (the perception gap: bounded, not proven).](docs/assets/allowed-vs-decided.png)
+
+The LLM **decides** — it crosses the *intent gap* no other tool can, turning
+fuzzy intent into a concrete plan. The envelope says what is **allowed**. Where a
+bound is *symbolic*, Z3 **proves** it — a guarantee, for milliseconds and no
+tokens. Where a bound is *perceptual* ("is the doorway clear?", "is this reply
+kind?"), only an LLM or VLM can **judge** it — that is the *perception gap*, and
+openDaisugi is honest that a judgment is bounded, not proven. Guarantee what you
+can, judge-and-bound what you can't, and never let the second pretend to be the
+first.
+
+---
+
+## Measured, not claimed
+
+Two claims the "JIT compiler for agent inference" framing makes checkable, run
+over a real journal corpus (reproduce: `python examples/jit-metrics/measure_corpus.py`):
+
+| Question | Measured answer |
+|---|---|
+| **Is the safety guard cheap?** | Z3 `verify` runs in a **sub-4 ms** median with a **0% timeout rate** over the corpus. |
+| **Does the guard need an LLM?** | For every envelope in this corpus the guard is **purely symbolic — zero tokens**.¹ |
+| **How much of the corpus is compilable into reusable pathways?** | **≈46% of all interactions** — an explicit **upper bound**.² |
+
+¹ *100% here because this corpus's envelopes carry no perceptual (`llm_check`)
+predicates. Envelopes that do carry one pay an LLM at Stage-2 discharge — the
+ruler reports that fraction honestly for whatever corpus you point it at.*
+
+² *"Compilable" = the interaction lands in a cluster of ≥3 similar successes
+(the distiller's own precondition) **and** its plan still verifies. It proves an
+interaction is authorized and structurally distillable — **not** that a reused
+plan would be correct. There is no correctness oracle; the number is a ceiling,
+and the corpus is benchmark-generated, so treat it as "what the ruler finds
+here," then point it at your own journal.*
+
+The guard cost is the honest, proven "easy win": a fail-closed proof that every
+action is in-bounds, for milliseconds and no tokens, orders of magnitude below
+the LLM call that authored the plan. That is [runtime
+assurance](https://en.wikipedia.org/wiki/Runtime_assurance)'s founding
+assumption — *checking must be far cheaper than doing* — satisfied and measured,
+not asserted. The ruler and its full output live in
+[`examples/jit-metrics/`](examples/jit-metrics/).
+
+**On token savings, honestly.** The provable, demonstrated win is narrow and
+real: a reused deterministic pathway spends zero tokens — the receipt above shows
+it with no API key. Routing is a difficulty heuristic, not a proof; it is usually
+cheaper, but a downgraded step that fails can recompute, so read it as an
+expectation, not a guarantee. The *average* saving across a mixed workload
+depends on how much of your work recurs and how much is deterministic rather than
+genuine reasoning — so this repo ships a **ruler to measure your savings on your
+corpus** rather than a billboard number. Settling the reuse question at scale is
+roadmap [Stage 4](docs/roadmap.md#stage-4--the-distillation-fidelity-problem).
+
+---
+
+## See it: runtime assurance for a robot swarm
+
+The guard is domain-agnostic — the same `verify()` that gates a shell command
+gates a robot's next move. Pointed at a foundation-model swarm it looks like
+this:
 
 ![Property-security patrol — openDaisugi gating a (mock) VLA swarm in MuJoCo](docs/assets/property-patrol.gif)
 
@@ -73,74 +333,24 @@ And delegation — *a message that carries authority is a delegation*, verified 
 gap — **accepted** only after `verify_swarm_tasking` re-proves it's still contained
 *and* deconflicted; the "hand it to both neighbors" alternative flashes the overlap
 **red — rejected before any drone moves**. Four such scenarios (hierarchy · hand-off ·
-comms-loss · cross-swarm) in [`examples/swarm-comms-delegation/`](examples/swarm-comms-delegation/).
-
-And sixteen kinds of refusal at once — each tile a *real* `verify()` rejection of a
-different unsafe action (keep-in · no-fly · deconflict · delegation · formation ·
-moving keep-out · geofence · reassignment · cross-swarm · nested delegation · slalom ·
-hand-off · leash · restricted airspace · corridor merge · a "must return to base"
-*invariant*):
-
-![Sixteen runtime-assurance scenarios, each a real openDaisugi rejection](docs/assets/gallery-grid.gif)
-
-Every gate is proven *before* a single frame is rendered — the renderer asserts each
-scenario accepts the safe case and refuses the unsafe one first. See
-[`examples/gallery/`](examples/gallery/).
-
-**Status (v0.27.0):** verification-core is sound — strict mode (default-on
-at `stakes` high/physical) rejects opaque invariants and postconditions that
-can't be discharged, Z3 vacuity detection catches tautological or
-contradictory predicates before they reach the solver, and `AliasRegistry`
-lets agents author named constraints that propagate through the full
-verify → supervise → journal pipeline. The reproduction substrate is
-complete: per-step receipts, integrity check, reusable pathways, tiered
-model routing. The MCP server exposes the full runtime. Many features are
-production-candidate; some surfaces (robotics, LoRA training pipeline,
-pathway portability) remain experimental. See
-[docs/feature-status.md](docs/feature-status.md) and
-[docs/limitations.md](docs/limitations.md) before adopting.
+comms-loss · cross-swarm) in [`examples/swarm-comms-delegation/`](examples/swarm-comms-delegation/),
+and sixteen kinds of refusal at once in [`examples/gallery/`](examples/gallery/) — each
+tile a *real* `verify()` rejection, asserted before a single frame renders.
 
 ---
 
-## Install
+## Wire it into your agent
 
-```bash
-uv add opendaisugi
-```
-
-Python 3.12+. `z3-solver` is a required native dependency (installed
-automatically). (`pip install opendaisugi` works too if you're not using uv.)
-
-Optional extras:
-
-```bash
-uv add 'opendaisugi[search]'    # REQUIRED for pathway token savings (sentence-transformers)
-uv add 'opendaisugi[mcp]'       # MCP server for Claude Code / OpenClaw
-uv add 'opendaisugi[robotics]'  # MuJoCo executor (experimental)
-uv add 'opendaisugi[lora]'      # LoRA training-data pipeline
-```
-
-> **If you want token savings via the pathway store** — which is the core
-> value proposition for most users — install `[search]` from the start.
-> Without it, `find_pathway()` silently returns `None` and every run pays
-> full LLM cost. The `[search]` extra adds `sentence-transformers` (~80 MB)
-> which pulls a small CPU-only PyTorch slice. It is optional to keep bare
-> `uv add opendaisugi` lightweight for CI and server deployments that
-> only use the verifier.
-
-### Wire it into your agent — `daisugi install` (v0.28.0+)
-
-One command detects every agent harness on your machine and wires openDaisugi
-in from a single source of truth:
+One command detects every agent harness on your machine and wires openDaisugi in
+from a single source of truth:
 
 ```bash
 daisugi install             # detect + configure every harness
 daisugi install --dry-run   # preview every change, write nothing
 daisugi install --uninstall # reverse every managed change
-daisugi install --runtime claude   # target one harness only
 ```
 
-It installs three layers per harness — all idempotent, backed up, reversible:
+It installs three idempotent, backed-up, reversible layers per harness:
 
 | Layer | What | Claude Code | Codex | Hermes | OpenClaw |
 |-------|------|-------------|-------|--------|----------|
@@ -148,452 +358,175 @@ It installs three layers per harness — all idempotent, backed up, reversible:
 | **Tools** | `daisugi mcp serve` (MCP) | `~/.claude.json` | `config.toml` | `config.yaml` | `openclaw.json` |
 | **Capture** | pre-tool-call → distillation | PreToolUse hook | (verify per version) | `pre_tool_call` hook | `before_tool_call` plugin |
 
-The skill is discovered on demand via the cross-vendor `.agents/skills`
-standard — no SessionStart injection, so simple sessions pay zero extra tokens.
-OpenClaw needs a gateway restart to load the capture plugin; Hermes reads
-`~/.hermes/config.yaml` (not `cli-config.yaml`).
+The skill is discovered on demand via the cross-vendor `.agents/skills` standard —
+no SessionStart injection, so simple sessions pay zero extra tokens.
 
-### Subscription-credits path (no API key) — v0.12.0+
+**No API key?** If you have Claude Code installed, route every LLM call through your
+subscription instead: `export OPENDAISUGI_LLM_BACKEND=claude-code` (or `--llm
+claude-code` per command) covers all eight call sites.
 
-If you have Claude Code installed, every LLM call in opendaisugi can
-route through your existing subscription instead of an API key:
+**Turn months of existing conversations into savings + trust.** `daisugi onboard`
+discovers your `~/.claude/projects`, `~/.codex`, … transcripts, replays them into
+the verified journal, and distills reusable pathways — so from today, matching
+tasks skip envelope generation and every replayed action is verified. Pair it with
+`daisugi setup` to detect your hardware and wire a right-sized **local** model as a
+free-ish Tier-1 (only if it passes a qualification gate). Not sure where to start?
+`daisugi quickstart` prints your hardware, a recommended model, the transcripts it
+found, and the exact command sequence.
 
-```bash
-export OPENDAISUGI_LLM_BACKEND=claude-code    # or pass --llm claude-code per command
-daisugi generate-envelope "Delete .tmp files older than 7 days in /var/log"
-```
-
-Covers all eight LLM call sites (envelope generation, distillation,
-recompute fallback, LLMCheck verification, transcript parsing, Tier-1).
-Implemented in `src/opendaisugi/claude_code_llm.py`.
-
-### Day one — turn your existing convos into savings + trust (v0.29.0+)
-
-Already have months of agent conversations? One command discovers them, replays
-them into the verified journal, and distills reusable pathways — so from today
-matching tasks skip envelope generation (token savings) and every replayed action
-is verified (trust):
-
-```bash
-uv add 'opendaisugi[search]'        # required for pathway savings
-
-# 0. (optional) wire a hardware-appropriate LOCAL model so distillation is cheap
-daisugi setup                       # detect hardware → recommend a llamafile model + next steps
-#   ...start the recommended llamafile, then:
-daisugi setup --endpoint http://localhost:8080/v1 --model <name> --wire  # qualify + wire it
-
-# 1. turn existing convos into verified pathways
-daisugi onboard --dry-run           # preview: what it would discover + distill
-daisugi onboard                     # discover ~/.claude/projects, ~/.codex, … → distill
-daisugi onboard --llm claude-code   # no API key — use your Claude Code subscription
-
-daisugi status                      # hardware + local model wired? token savings LIVE? journal verified?
-daisugi route "refactor the auth module"   # cheapest viable model/tier for a task
-```
-
-`daisugi setup` recommends a model *sized to your box* and — crucially — only
-wires it as Tier-1 if it passes a **qualification gate** (it must emit valid
-envelopes at an acceptable rate on your hardware). The model family is your pick;
-none is asserted-best. Once wired, `onboard`/`tend` run bulk envelope generation
-on the local model.
-
-`onboard` honors `--limit`, `--harness`, `--threshold`, `--lookback-days`
-(default: all history), and `--json`. Point discovery anywhere with
-`OPENDAISUGI_TRANSCRIPT_ROOTS=claude-code=/path/to/exported`.
-
-**Routing vs Anthropic's advisor tool.** The advisor tool (beta
-`advisor-tool-2026-03-01`) makes a fixed cheap executor smarter via a
-mid-generation Opus consult — re-derived every request, unverified. `daisugi
-route` is complementary: a *repeat* task that matches a distilled pathway routes
-to Tier-0 reuse — ~free **and** re-verified against its envelope — because the
-pathway store is the cross-request memory the advisor tool doesn't have. For a
-hard *novel* task, `route` points you at the advisor-tool pairing.
-
-Not sure where to start? `daisugi quickstart` prints your hardware, a recommended
-local model, the transcripts it found, and the exact command sequence.
-
-### Safe subagents from local models (v0.31.0+)
-
-Run cheap local-model subagents that can't act outside a verified scope:
-
-```python
-from opendaisugi import SafeSubagent, Contract, Envelope, Permission
-from opendaisugi.subagent import DelegationDenied
-
-# A subagent can only be minted if its contract is subsumed by the parent's
-# authority (subsumption, incl. fail-closed robot-capability checks):
-sub = SafeSubagent.create(parent_envelope=parent, contract=inspector_contract, tier1=local_model)
-await sub.run(plan)          # every plan re-verified against the scope; dry-run by default
-```
-
-`create` raises `DelegationDenied` if the subagent asks for more than the parent
-grants. `tier1` is the local model (free-ish tokens) the subagent reasons with;
-SafeSubagent is the runtime safety gate. See `examples/safe-local-subagent/`.
-This is plan-level runtime assurance, not an OS sandbox.
-
-### Run a whole prompt end to end — the Orchestrator (v0.32.0+)
-
-`tend()` looks backward (traces → distilled skills). The **Orchestrator** looks
-forward: one prompt → a verified typed-step DAG → each step routed to the cheapest
-capable model under a token budget → a synthesized final answer. Repeat prompts
-reuse a distilled pathway.
-
-```python
-from opendaisugi import Daisugi
-
-dai = Daisugi()
-result = await dai.orchestrate(
-    "summarize the open PRs and draft a standup note",
-    budget_tokens=20_000,          # gates routing DURING the run, not after
-)
-print(result.final_answer)
-for s in result.sizings:           # per-step: difficulty → model
-    print(s.step_id, s.difficulty, s.tier, s.model)
-print(result.budget.spent, "tokens")
-```
-
-Or from the CLI: `daisugi orchestrate "…" --budget 20000`. The decomposed plan is
-verified against an envelope before it runs and each step is re-verified at
-execution time — the orchestrator adds routing and assembly *on top of* the
-assurance guarantees. Pieces are composable too: `decompose()`, `size_plan()`,
-`BudgetTracker`, `synthesize()`. New step types `TaskStep` / `SkillStep` /
-`MCPStep` each carry a real verify surface (skills prove subsumption; MCP tools
-gate against a deny-by-default `mcp_allowlist`). `AgenticStep` (v0.36) is the
-tool-using delegation type: unlike TaskStep's pure-reasoning leaf, it runs a
-sub-agent with real tools — bounded by the parent envelope via a computed
-`--allowedTools` wall *and* the call-time gate wired into the sub-agent's own
-hook config (`AgenticExecutor`).
-
----
-
-## The 30-second demo
-
-Prove that an orchestrator can safely delegate to one skill but not another:
-
-```bash
-python examples/delegation_demo.py
-```
-
-Output:
-
-```
-Scenario 1: orchestrator delegates to narrow echo skill
-  allowed:       True
-  subsumption:   holds=True  89.3 ms
-  reason:        subsumption holds; delegation safe
-
-Scenario 2: orchestrator delegates to wider destroyer skill
-  allowed:       False
-  subsumption:   holds=False  44.3 ms
-  counterexample:
-    command:             'rm'
-    outer rule violated: shell_allowlist
-    inner justification: shell_allowlist
-  reason:        subsumption failed: inner allows 'rm' but outer rejects via shell_allowlist
-```
-
-The counterexample is a literal Z3 model — the concrete `ShellStep` the
-inner envelope admits that the outer forbids. Not demo theater; the solver
-produced it.
-
----
-
-## Tutorial — your first verified plan
-
-Generate a safety envelope for a task, verify a plan against it, log the
-trace.
-
-```python
-import asyncio
-from opendaisugi import ActionPlan, Daisugi, ShellStep
-
-
-async def main():
-    dai = Daisugi()
-
-    # 1. Generate a safety envelope (calls the configured LLM provider;
-    #    requires ANTHROPIC_API_KEY or equivalent).
-    envelope = await dai.generate_envelope(
-        task="Delete .tmp files older than 7 days in /var/log"
-    )
-
-    # 2. Your LLM of choice proposes a plan (mocked here for brevity).
-    plan = ActionPlan(
-        source="vanilla-llm",
-        task="Delete .tmp files older than 7 days in /var/log",
-        steps=[
-            ShellStep(
-                id="s1",
-                command="find /var/log -name '*.tmp' -mtime +7 -delete",
-            ),
-        ],
-    )
-
-    # 3. Verify the plan against the envelope. Pure, sync, no I/O.
-    result = dai.verify(plan, envelope)
-    if not result.ok:
-        for v in result.violations:
-            print(f"[{v.stage}] {v.message}")
-        return
-
-    # 4. You run the plan (opendaisugi stays out of execution).
-    # subprocess.run(...) or your framework's executor.
-
-    # 5. Log the trace for replay / regression catching.
-    dai.journal.log(
-        task=envelope.task, envelope=envelope, plan=plan, result=result,
-    )
-
-
-asyncio.run(main())
-```
-
-For a hand-written envelope (no LLM call needed), see
-[examples/agent-council/](examples/agent-council/).
-
----
-
-## Saving tokens with pathways
-
-After a few successful runs of the same class of task, opendaisugi
-distills them into a **compiled pathway**: a reusable plan template +
-pre-verified envelope stored in a local SQLite file. Future runs that
-match the task semantically skip the expensive `generate_envelope()` LLM
-call entirely and instead adapt the cached template with a cheap Tier-1
-call.
-
-**Prerequisites:** install the `[search]` extra (see Install above).
-
-### The loop
-
-```python
-import asyncio
-from opendaisugi import Daisugi, ActionPlan, ShellStep
-
-async def main():
-    # tend_after=5 means: after every 5 successful runs, distill automatically.
-    # Omit tend_after and call `await dai.tend()` on your own schedule instead.
-    dai = Daisugi(tend_after=5)
-
-    envelope = await dai.generate_envelope("Delete stale .tmp files in /var/log")
-
-    # Use dai.run() instead of Supervisor directly — it tracks successes and
-    # auto-tends when the threshold is reached.
-    plan = ActionPlan(
-        source="llm", task="Delete stale .tmp files in /var/log",
-        steps=[ShellStep(id="s1", command="find /var/log -name '*.tmp' -mtime +7 -delete")],
-    )
-    session = await dai.run(plan, envelope)
-
-asyncio.run(main())
-```
-
-### On subsequent runs
-
-```python
-async def main():
-    dai = Daisugi(tend_after=5)
-
-    # Check if we already have a distilled pathway for this task.
-    match = await dai.find_pathway("Delete stale .tmp files in /var/log")
-    if match:
-        # Adapt the cached template — one cheap LLM call, no envelope generation.
-        plan = await dai.adapt_plan(match, task="Delete stale .tmp files in /var/log")
-        envelope = match.pathway.envelope
-    else:
-        # Cold path: generate envelope + plan as normal.
-        envelope = await dai.generate_envelope("Delete stale .tmp files in /var/log")
-        plan = ...  # your LLM proposes a plan
-
-    session = await dai.run(plan, envelope)
-```
-
-### What to know
-
-| | |
-|---|---|
-| **Cold start** | Pathways require ≥ 3 successful traces of a similar task before `tend()` produces one. First few runs of any new task type pay full cost. |
-| **`tend_after` vs manual** | `tend_after=N` auto-tends every N successes via `dai.run()`. For batch pipelines or custom schedules, omit it and call `await dai.tend()` yourself (or `daisugi tend` from the CLI). |
-| **`tend()` costs one LLM call per cluster** | It is not free. Use `tend_after` conservatively or run it offline. |
-| **Pathway validity** | Adapted plans are re-verified against the stored envelope before being returned. A pathway that drifts out of policy fails verification and falls back to the cold path automatically. |
+**Safe subagents from local models.** `SafeSubagent.create(...)` mints a subagent
+only if its contract is *subsumed* by the parent's authority (`DelegationDenied`
+otherwise); every plan it runs is re-verified against that scope. See
+`examples/safe-local-subagent/`.
 
 ---
 
 ## Architecture
 
-How it all fits together — the verify→supervise→journal→distill spine, the two
-loops, the consumption surfaces, and the module map, with diagrams.
+How it all fits together — the two loops, and where each module lives:
 
-→ **[docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md)**
+![openDaisugi architecture: the FORWARD orchestrate loop (prompt → reuse? → serve a frozen pathway / bind+re-verify a typed one / decompose fresh → size → supervise+execute → synthesize → answer, orchestrator.py) and the BACKWARD tend loop (capture/journal → distil: cluster→diff→params, distiller.py + pathway_params.py → pathway store → Gardener prune/promote, re-tend). The Z3 guard verifies plan ⊆ envelope, fail-closed and near-free, at every bind / decompose / execute point. Execution journals runs; the store serves reuse.](docs/assets/architecture.png)
 
-The *why* behind the load-bearing decisions (fail-closed, Z3-over-heuristics,
-envelope-as-contract, layer-not-harness, the Python runtime, the `claude -p`
-backend) lives in **[docs/adr/](docs/adr/)**.
-
-## Concepts
-
-How opendaisugi actually works — envelopes, the predicate algebra, Z3
-compilation, soft nodes, verification stages, subsumption.
-
-→ **[docs/concepts.md](docs/concepts.md)**
+The verify→supervise→journal→distill spine, the consumption surfaces, and the
+full module map live in
+**[docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md)**. The *why*
+behind the load-bearing decisions (fail-closed, Z3-over-heuristics,
+envelope-as-contract, layer-not-harness, the Python runtime) is in
+**[docs/adr/](docs/adr/)**.
 
 ---
 
-## How-to guides
+## Documentation
 
-Task-oriented recipes.
+Full docs are organized on the [Diátaxis](https://diataxis.fr/) model —
+**[docs/README.md](docs/README.md)** is the hub, routing by *what you're trying to
+do*:
 
-- **Run a verified plan with per-step receipts and integrity check** —
-  `examples/agent-council/run_dogfood.py` is a runnable kit showing the
-  full v0.18+ loop (envelope authoring → verify → execute → receipts
-  → integrity).
-- **Capture tool calls from Claude Code / Hermes / OpenClaw** —
-  see [docs/hook-integration.md](docs/hook-integration.md) for the
-  one-line wiring recipe per host runtime.
-- **Author a problem-specific DSL** — see the
-  [opendaisugi-checklist skill](skills/opendaisugi-checklist/SKILL.md)
-  and its references for the workflow.
-- **Delegate from an orchestrator to a skill** —
-  `examples/delegation_demo.py`, uses `verify_delegation`.
-- **Integrate with Hermes / OpenClaw** —
-  [docs/integrations.md](docs/integrations.md) and
-  `examples/integrations/`
-- **Verify a robot plan in MuJoCo** —
-  [docs/robotics.md](docs/robotics.md) (experimental)
-- **Export / import a compiled pathway** —
-  [docs/pathway-skill-format.md](docs/pathway-skill-format.md)
-- **Serve opendaisugi as an MCP server** —
-  `daisugi mcp serve` (requires `[mcp]` extra)
+- **Tutorials** (learn by doing) — [protect a live session](docs/tutorials/protect-your-existing-session.md), the runnable [`examples/`](examples/).
+- **How-to guides** (accomplish a task) — [gate a session](docs/how-to/gate.md), [integrations](docs/integrations.md), [hook capture](docs/hook-integration.md), [robotics / VLA](docs/pi-vla-integration.md), [delegate with a literal Z3 counterexample](examples/delegation_demo.py).
+- **Reference** (exact details) — [step vocabulary](docs/step-vocabulary.md), [pathway/skill bundle format](docs/pathway-skill-format.md), [feature status](docs/feature-status.md); the public API is the `opendaisugi` package surface (`Daisugi`, `verify`, `verify_step`, `verify_delegation`, `generate_envelope`, `orchestrate`, `Supervisor`, `Journal`, `SafeSubagent`, …).
+- **Explanation** (understand why) — [Vision + honest scorecard](VISION.md), [concepts](docs/concepts.md), [security model](docs/security-model.md), [case study: AI council](docs/case-studies/ai-council.md), [limitations](docs/limitations.md), the [white paper](docs/whitepaper.md) and the [yellow paper / formal spec](docs/spec/yellow-paper.md).
+
+CLI tree: `daisugi --help` at each level. Top-level commands: `orchestrate`,
+`route`, `run`, `generate-envelope`, `verify`, `tend`, `onboard`, `setup`,
+`status`, `quickstart`, `install`, `models`; subcommand groups `gate`, `journal`,
+`pathways`, `tiers`, `gardener`, `lora`, `mcp`, `hook`, `registry`.
 
 ---
 
-## Reference
+## What openDaisugi does *not* do
 
-- **API:** the public surface is defined in
-  [`src/opendaisugi/__init__.py`](src/opendaisugi/__init__.py). The
-  core primitives are `Envelope`, `Permission`, `Invariant`, `Contract`,
-  `verify`, `verify_step`, `verify_delegation`, `Supervisor`, `Journal`,
-  `Daisugi`, `Receipt`, `DelegatingExecutor`, `StepBase`, `step_type`,
-  `coerce_step`. v0.21+ also exposes `opendaisugi.hook` for passive
-  capture and `opendaisugi.mcp_server` for the MCP integration.
-- **CLI:** `daisugi --help` for the command tree. Top-level commands:
-  `run`, `generate-envelope`, `verify`, `tend`. Subcommand groups:
-  `journal`, `pathways`, `tiers`, `gardener`, `lora`, `mcp`, `hook`.
-- **Step metadata keys:** [docs/step-vocabulary.md](docs/step-vocabulary.md)
-- **Pathway bundle format:** [docs/pathway-skill-format.md](docs/pathway-skill-format.md)
-- **YAML envelope schema:** see `tests/fixtures/agent.envelope.yaml`
+Before adopting, read [docs/limitations.md](docs/limitations.md). Short version:
 
----
-
-## What opendaisugi does not do
-
-Before adopting, read [docs/limitations.md](docs/limitations.md). Short
-version:
-
-- Not an OS-level sandbox. `Supervisor` is a Python-level gate, not a
-  container. For runtime cross-process exfiltration prevention, use
-  SELinux / AppArmor / seccomp at the OS layer; we sit above that.
-- Not a hallucination detector. It verifies plans, not free-form output —
-  with the exception of the `llm_check` predicate primitive, which uses
-  a cheap LLM to evaluate explicitly-named perceptual claims (and is
-  refused under `stakes='physical'` envelopes).
-- Not a tool-blocking hook. Claude Code, Hermes, and OpenClaw all ship
-  tool-call hooks that can block; v0.21's passive hook deliberately
-  doesn't compete with them. It captures runs to feed the reproduction
-  substrate; enforcement runs through the Supervisor or MCP `run_plan`.
-- Unsupported regex features (lookaround, backrefs, case-insensitive
-  flags) fall back to soft nodes — surfaced explicitly, never silently
-  approved.
+- **Not an OS-level sandbox.** `Supervisor` is a Python-level gate, not a
+  container. For cross-process exfiltration prevention use SELinux / AppArmor /
+  seccomp at the OS layer; we sit above that.
+- **Not a hallucination detector.** It verifies plans, not free-form output — with
+  the exception of the `llm_check` predicate, which uses a cheap LLM to evaluate
+  explicitly-named perceptual claims (and is refused under `stakes='physical'`).
+- **Not a magic token-saver.** Routing is cheaper by construction and reuse can
+  skip planning, but the size of the saving depends on your workload — measure it.
+- **Not a tool-blocking hook.** The passive capture hook deliberately doesn't
+  compete with a harness's own blocking hooks; enforcement runs through the
+  Supervisor or MCP `run_plan`.
+- Unsupported regex features (lookaround, backrefs, case-insensitive flags) fall
+  back to soft nodes — surfaced explicitly, never silently approved.
 
 ---
 
-## Feature status
+## The neighborhood
 
-Maturity per feature, at a glance:
-[docs/feature-status.md](docs/feature-status.md).
+Cutting an agent's token bill splits into two families by *which* tokens you cut:
+the **input** you show the model each turn, and the **output** it generates across
+however many calls a task takes. The two compose. openDaisugi works the output side
+and relies on the input side, so it is worth naming the whole street. Most of this is
+good work by other people, and openDaisugi is built to sit alongside it.
 
-- **Production-candidate** (~10 features) — core thesis; audit-ready.
-- **Working** (~15 features) — functional, tested, not heavily
-  battle-tested.
-- **Experimental** (~3 features) — shipped but has sharp edges
-  (robotics executor, pathway portability).
-- **Planned** — arithmetic-over-paths operator in the algebra.
-  (Signature verification shipped v0.15.0; `LengthRange` /
-  string-length operator shipped v0.15.0 too; distributed pathway
-  registry shipped v0.25.0.)
+**Cheaper input.** Reducing what the model reads each turn is largely a solved,
+production concern, and openDaisugi adopts rather than reinvents it.
+[Prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
+reuses a stable prompt prefix instead of re-reading it.
+[Sub-agent context isolation](https://docs.langchain.com/oss/python/langchain/multi-agent/subagents)
+hands bulky reading to a helper that reports back a short summary.
+[Retrieval](https://arxiv.org/abs/2005.11401) fetches only the passages a task needs,
+and operating-system-style [memory management](https://arxiv.org/abs/2310.08560) pages
+context in and out of a fixed window. One member of this family carries a warning:
+summarizing history to shrink it, a move called *compaction*, can silently drop the
+safety policy along with the old turns.
+[Governance Decay](https://arxiv.org/abs/2606.22528) measured violations rising from
+0% to 30%, and to 59% on some models, once the constraint fell out of the summary.
+That result is a large part of why openDaisugi keeps the envelope *outside* the token
+stream.
+
+**Cheaper calls.** A second family lowers the price of each call, or skips it.
+[Model cascades](https://arxiv.org/abs/2305.05176) send easy work to a small model and
+escalate only when it fails; [learned routers](https://arxiv.org/abs/2406.18665) do the
+same with a trained policy.
+[Semantic caching](https://github.com/zilliztech/GPTCache) returns a stored answer when
+a new query is close enough to an old one. openDaisugi's per-step model sizer is a
+router of this kind, applied inside a verified plan.
+
+**Reusing a solved plan.** The output side of openDaisugi, distilling a repeated task
+into something you run instead of re-deriving it, is an active research line with
+peer-reviewed results. [Agentic Plan Caching](https://arxiv.org/abs/2506.14852)
+(NeurIPS 2025) reuses plan templates across similar tasks and reports a 50.31% average
+cost reduction. [Agent Workflow Memory](https://arxiv.org/abs/2409.07429) induces
+reusable workflows from an agent's own traces.
+[SKILL-DISCO](https://arxiv.org/abs/2606.26669) compiles distilled traces into callable
+code. [SKILL.nb](https://arxiv.org/abs/2606.08049) promotes verified steps into
+deterministic cells and falls back to natural language when the environment drifts,
+which is close to the direction openDaisugi is taking next.
+[AgentRR](https://arxiv.org/abs/2505.17716) records and replays, with a "check function"
+gating every replayed action. openDaisugi reads these as company and borrows from them.
+
+**What openDaisugi adds.** Most of these systems certify a reused plan with precondition
+checks, syntactic filters, or an offline pass over held-out tasks. openDaisugi proves
+each action against a declared envelope with a Z3 solver at the moment it would run,
+whatever authored the plan, from a frontier model down to a distilled script, and it
+keeps that envelope outside the context where a summary cannot erase it. A solver-backed
+per-action gate over a persistent constraint is the position the *Governance Decay*
+result suggests the field still needs.
+
+**On the size of the win.** The loudest savings figures in this area have not always
+held up; several headline numbers we read did not survive a close check, and the
+credible, peer-reviewed anchor is Agentic Plan Caching's ~50%. A skill library that
+grows unmanaged can also cost more in prompt bloat than it saves. So openDaisugi ships a
+[ruler to measure the win on your own corpus](#measured-not-claimed) instead of a single
+advertised number.
 
 ---
 
-## Case studies
+## Status & roadmap
 
-Concrete scenarios where runtime assurance earns its keep:
+**v0.39.0.** The verify → supervise → journal → distill spine is the load-bearing,
+tested core (the [scorecard](VISION.md#honest-scorecard--built-vs-aspirational)
+calls it "the whole thesis, and it holds"). The orchestrator, Tier-0 pathway
+reuse, tiered model routing, the signed-pathway reproduction substrate, and swarm
+deconfliction are all real and tested; the MCP server exposes the full runtime.
+Maturity per feature: [docs/feature-status.md](docs/feature-status.md).
 
-- **[AI Council — structural gates around perceptual judgment](docs/case-studies/ai-council.md)**:
-  envelope-enforced PII redaction across a voting panel of LLMs.
+- **Production-candidate** — the verify/subsume/supervise/journal core; audit-ready.
+- **Working** — orchestrator, routing, distillation, MCP server, install.
+- **Experimental** — robotics executor, pathway portability, LoRA pipeline.
 
+The roadmap is framed as **problems, not a dated feature list** — full status in
+**[docs/roadmap.md](docs/roadmap.md)**; the open questions in brief:
 
----
+- **Stage 4 — distillation fidelity.** *Does reusing a distilled pathway actually
+  pay?* A ruler exists (`examples/jit-metrics/`) and a pilot has run; the
+  ≥20-task × 5-repeat bar with a reliable model is the remaining gap.
+- **Stage 7 — trust.** CI is public and green with the adversarial suite as a
+  required check; pathway bundles are signed; the one open gap is **release
+  artifact signing** — until it lands, install from a pinned git ref you have read.
 
-## CLI (quick reference)
-
-```bash
-# Generate an envelope.
-daisugi generate-envelope "Read /data/sales.csv and print the row count"
-
-# Run a whole prompt end to end (decompose → size → execute → synthesize).
-daisugi orchestrate "summarize the sales csv and draft a one-line takeaway" --budget 20000
-
-# Recommend the cheapest viable model/tier for a task.
-daisugi route "refactor the auth module"
-
-# Verify a plan against an envelope.
-daisugi verify plan.yaml --envelope envelope.yaml
-
-# Inspect the journal.
-daisugi journal stats
-daisugi journal search "csv processing"       # requires [search] extra
-daisugi journal replay 2026-04-09-a1b2c3d4    # re-verify; exit 1 on drift
-
-# Parse a transcript into episodes and ingest them.
-daisugi journal parse session.jsonl -o episodes.yaml
-daisugi journal ingest episodes.yaml
-
-# MCP server.
-daisugi mcp serve
-```
-
-Full command tree via `daisugi --help` at each level.
-
----
-
-## Roadmap
-
-Recent releases (last 60 days):
-
-- **v0.15** — ed25519 contract signing + length algebra
-- **v0.16** — structured logging + deployment / security-model docs
-- **v0.17** — envelope realism (shell allowlist globs, env-prefix head
-  extraction, parser compound-shell decomposition)
-- **v0.18** — reproduction substrate: per-step receipts, run-end
-  integrity check, dynamic step-type registry, two contract-orchestration
-  kit (`examples/agent-council/`)
-- **v0.19** — cheap-model delegation: `DelegatingExecutor`,
-  `_StepBase.preferred_model`, `Receipt.model_id`, physical-stakes guard
-- **v0.20** — MCP runtime: `run_plan`, `receipts_for_run`, `recent_runs`
-- **v0.21** — passive hook: capture tool calls from Claude Code /
-  Hermes / OpenClaw via `daisugi hook record`, convert to journal
-  traces via `daisugi hook to-trace`
-- **v0.21.1** — architectural-readiness pass: security/robustness
-  hardening, registry collision detection, DRY refactors
-- **v0.22** — perf (lightweight `verify_step`, sqlite connection reuse),
-  README rewrite, deps pinned to `<2`, `StepBase` rename, `run_plan`
-  timeout, `CompiledPathway.activation_count`
-
-Future:
-
-- Auto-tend daemon (close the captures → traces → distillation loop)
-- More predicate-algebra operators (string-length, arithmetic over step
-  metadata, scalar-context `exists_step`)
+**Direction (2026-08).** A blind-design convergence experiment
+([the gauntlet](docs/exploration/2026-08-blind-design-gauntlet/)) reframed the
+project: openDaisugi is a **verifiable-execution substrate** whose gate makes the
+token-savers safe, plus a small family of cost levers it underwrites
+([ADR-0011](docs/adr/0011-verifiable-execution-substrate.md), roadmap Stages 8–10).
+Stage 8 — an external deed ledger so a wrong-but-allowed action costs a rollback, not
+a recovery arc — is **built and tested** (`opendaisugi.deeds`); Stage 9 (the cost
+ratchet) is next.
 
 Full version history: [CHANGELOG.md](CHANGELOG.md).
 

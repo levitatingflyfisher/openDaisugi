@@ -61,9 +61,7 @@ def check_envelope_self_consistency(
 
     result = solver.check()
     if result == z3.unknown:
-        raise VerificationTimeout(
-            f"Z3 self-consistency check exceeded {timeout_ms}ms"
-        )
+        raise VerificationTimeout(f"Z3 self-consistency check exceeded {timeout_ms}ms")
     if result == z3.unsat:
         return [
             Violation(
@@ -101,9 +99,7 @@ def check_plan_against_envelope(
 
     result = solver.check()
     if result == z3.unknown:
-        raise VerificationTimeout(
-            f"Z3 plan-vs-envelope check exceeded {timeout_ms}ms"
-        )
+        raise VerificationTimeout(f"Z3 plan-vs-envelope check exceeded {timeout_ms}ms")
     if result == z3.unsat:
         return [
             Violation(
@@ -138,25 +134,25 @@ def _check_workspace_containment(plan: ActionPlan, envelope: Envelope) -> list[V
             target = step.target_position
         else:
             from opendaisugi.models import VLAStep as _VLAStep
+
             if isinstance(step, _VLAStep) and step.target_pose is not None:
                 target = step.target_pose
         if target is None:
             continue
         x, y, z = target
         if not (xmin <= x <= xmax and ymin <= y <= ymax and zmin <= z <= zmax):
-            violations.append(Violation(
-                stage="z3",
-                message=(
-                    f"Step '{step.id}' target {target} "
-                    f"outside workspace bounds {bounds}"
-                ),
-                detail={
-                    "invariant": "end_effector_in_workspace",
-                    "step": step.id,
-                    "target": list(target),
-                    "bounds": [list(bounds[0]), list(bounds[1])],
-                },
-            ))
+            violations.append(
+                Violation(
+                    stage="z3",
+                    message=(f"Step '{step.id}' target {target} outside workspace bounds {bounds}"),
+                    detail={
+                        "invariant": "end_effector_in_workspace",
+                        "step": step.id,
+                        "target": list(target),
+                        "bounds": [list(bounds[0]), list(bounds[1])],
+                    },
+                )
+            )
     return violations
 
 
@@ -170,35 +166,38 @@ def _check_joint_limits(plan: ActionPlan, envelope: Envelope) -> list[Violation]
             continue
         for joint, target in step.joint_targets.items():
             if joint not in limits:
-                violations.append(Violation(
-                    stage="z3",
-                    message=(
-                        f"Step '{step.id}' joint {joint!r} not declared in "
-                        f"envelope joint_limits {list(limits)}"
-                    ),
-                    detail={
-                        "invariant": "joint_limits_respected",
-                        "step": step.id,
-                        "joint": joint,
-                    },
-                ))
+                violations.append(
+                    Violation(
+                        stage="z3",
+                        message=(
+                            f"Step '{step.id}' joint {joint!r} not declared in "
+                            f"envelope joint_limits {list(limits)}"
+                        ),
+                        detail={
+                            "invariant": "joint_limits_respected",
+                            "step": step.id,
+                            "joint": joint,
+                        },
+                    )
+                )
                 continue
             lo, hi = limits[joint]
             if not (lo <= target <= hi):
-                violations.append(Violation(
-                    stage="z3",
-                    message=(
-                        f"Step '{step.id}' joint {joint!r} target {target} "
-                        f"outside [{lo}, {hi}]"
-                    ),
-                    detail={
-                        "invariant": "joint_limits_respected",
-                        "step": step.id,
-                        "joint": joint,
-                        "target": target,
-                        "range": [lo, hi],
-                    },
-                ))
+                violations.append(
+                    Violation(
+                        stage="z3",
+                        message=(
+                            f"Step '{step.id}' joint {joint!r} target {target} outside [{lo}, {hi}]"
+                        ),
+                        detail={
+                            "invariant": "joint_limits_respected",
+                            "step": step.id,
+                            "joint": joint,
+                            "target": target,
+                            "range": [lo, hi],
+                        },
+                    )
+                )
     return violations
 
 
@@ -225,20 +224,22 @@ def _check_velocity_bounds(
             duration = max(step.duration_s, 1e-6)
             peak = abs(target - prev) / duration * step.velocity_scale
             if peak > limit:
-                violations.append(Violation(
-                    stage="z3",
-                    message=(
-                        f"Step '{step.id}' joint {joint!r} peak velocity "
-                        f"{peak:.3f} rad/s > limit {limit}"
-                    ),
-                    detail={
-                        "invariant": "velocity_bounded",
-                        "step": step.id,
-                        "joint": joint,
-                        "peak_rad_s": peak,
-                        "limit_rad_s": limit,
-                    },
-                ))
+                violations.append(
+                    Violation(
+                        stage="z3",
+                        message=(
+                            f"Step '{step.id}' joint {joint!r} peak velocity "
+                            f"{peak:.3f} rad/s > limit {limit}"
+                        ),
+                        detail={
+                            "invariant": "velocity_bounded",
+                            "step": step.id,
+                            "joint": joint,
+                            "peak_rad_s": peak,
+                            "limit_rad_s": limit,
+                        },
+                    )
+                )
             state[joint] = target
     return violations
 
@@ -294,19 +295,21 @@ def _check_obstacle_avoidance(plan: ActionPlan, envelope: Envelope) -> list[Viol
             if (step_id, idx) in flagged_steps:
                 continue
             if xmin <= x <= xmax and ymin <= y <= ymax and zmin <= z <= zmax:
-                violations.append(Violation(
-                    stage="z3",
-                    message=(
-                        f"Step '{step_id}' trajectory sample "
-                        f"({x:.3f}, {y:.3f}, {z:.3f}) inside obstacle #{idx}"
-                    ),
-                    detail={
-                        "invariant": "no_obstacle_penetration",
-                        "step": step_id,
-                        "obstacle_index": idx,
-                        "sample_point": [x, y, z],
-                    },
-                ))
+                violations.append(
+                    Violation(
+                        stage="z3",
+                        message=(
+                            f"Step '{step_id}' trajectory sample "
+                            f"({x:.3f}, {y:.3f}, {z:.3f}) inside obstacle #{idx}"
+                        ),
+                        detail={
+                            "invariant": "no_obstacle_penetration",
+                            "step": step_id,
+                            "obstacle_index": idx,
+                            "sample_point": [x, y, z],
+                        },
+                    )
+                )
                 flagged_steps.add((step_id, idx))
     return violations
 

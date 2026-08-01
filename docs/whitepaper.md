@@ -41,7 +41,7 @@ honest options have each been unsatisfying:
 
 **Separate what is _allowed_ from what is _decided._**
 
-- *Decided* comes from the black box. Keep it black. Let it be as capable as it is.
+- *Decided* comes from the black box. Keep it a black box. Let it be as capable as it is.
 - *Allowed* comes from a space of verifiable calculations — a specification.
 
 The load-bearing move: **the black box generates the specification, and a
@@ -53,6 +53,17 @@ This resolves the DSL tension. The specification isn't pre-written by a human
 anticipating every case (impossible) nor is it the model's raw output (untrusted).
 It's model-generated *and* independently checkable, with a human-set ceiling it can
 only tighten.
+
+The boundary also carries a cost story, and it is worth stating precisely because it
+is easy to get backwards. The envelope is not itself a token-saving trick. It is the
+**trust substrate** that makes token-saving *safe*: once an action is proven
+in-bounds, you can compile a batch you would never run unverified, route to a smaller
+model you would not otherwise trust, and compact context that no longer needs to hold
+the policy. So openDaisugi is a verifiable-execution substrate plus a small family of
+cost *levers* it underwrites — a framing reached independently by five blind
+architects in a [convergence experiment](exploration/2026-08-blind-design-gauntlet/)
+and recorded as [ADR-0011](adr/0011-verifiable-execution-substrate.md). The levers are
+direction, not yet code (§7).
 
 ## 3. The lineage: Runtime Assurance
 
@@ -149,10 +160,15 @@ or as a library — with no API key required.
 
 **Aspirational — documents, not code:** the *empirical* claim (what fraction of real
 usage is compilable, and how much compilation actually saves) has never been
-measured, though the machinery to measure it now exists. Robotics is **sim-only and
-plan-level** — no 100Hz CBF-QP, no hardware, no π0 in the loop; that needs a
-collaborator with an arm. Papers, defense/SBIR revenue, and a pathway marketplace
-are optionality with nothing built toward them.
+measured, though the machinery to measure it now exists. The **cost levers** of §2 are
+mostly direction, with the first now built: a *deed ledger* records how to undo each
+reversible action, so a harness rolls back a wrong-but-allowed action from the ledger
+alone (roadmap Stage 8, shipped and tested). Still direction, not code:
+*within-instance batch compilation* (the cost ratchet), gate-underwritten routing to
+smaller models, and a *rationale ledger* that externalizes deliberation for the
+irreducible one-off — roadmap Stages 9–10. Robotics is **sim-only and plan-level** — no 100Hz CBF-QP, no hardware, no π0
+in the loop; that needs a collaborator with an arm. Papers, defense/SBIR revenue, and
+a pathway marketplace are optionality with nothing built toward them.
 
 The honest boundary matters: swarm deconfliction is analytic geometry, not a
 flight-safety certificate (waypoint-in-box ≠ path-in-box; set margins accordingly).
@@ -169,6 +185,16 @@ new solver. It is the architecture that lets a capable black box operate under a
 formal safety bound *that the black box itself helped write* — and the demonstration
 that this same architecture spans LLM agents and robot policies, which are the same
 problem wearing different clothes.
+
+There is a second reason, quieter but real: the architecture appears to be the
+*convergent* one. Five independent architects, each given a neutral statement of the
+problem and told nothing about openDaisugi, rebuilt its spine — enforcement outside
+the context window, fail-closed pre-execution gating, a human floor a model may only
+tighten — and two of the pieces they reinvented were never hinted at in their brief
+(the monotone-narrowing subsumption law and within-instance compilation). Convergence
+that was not planted is the cheapest strong evidence a design is right. The
+[record](exploration/2026-08-blind-design-gauntlet/) is public, adversarial critiques
+and sober scores included.
 
 ---
 
