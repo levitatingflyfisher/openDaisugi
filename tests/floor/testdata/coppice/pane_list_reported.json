@@ -1,0 +1,34 @@
+{
+  "panes": [
+    {
+      "ask": {
+        "deadline": 9999999999.5,
+        "id": "a1",
+        "summary": "rm -rf",
+        "tier": "permanent",
+        "tool": "Bash"
+      },
+      "closed": false,
+      "cmd": [
+        "sh",
+        "-c",
+        "sleep 300"
+      ],
+      "cols": 120,
+      "cwd": "/workspace/pane",
+      "detail": "needs an answer",
+      "harness": "",
+      "id": "w1:p2",
+      "kind": "pty",
+      "label": "reported probe",
+      "quiet_for": 0.002399601,
+      "rows": 40,
+      "session_id": "s1",
+      "source": "gate",
+      "state": "blocked",
+      "tab": "w1:t1",
+      "ts": 1234.5,
+      "workspace": "w1"
+    }
+  ]
+}

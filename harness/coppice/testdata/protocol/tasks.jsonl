@@ -1,0 +1,19 @@
+# The replay has no git repo, so no case here passes worktree: true. The worktree path is proven in internal/server/tasks_test.go with a temp repo.
+{"id":"1","cmd":"task.create","label":"team"}
+{"id":"$id","ok":true,"result":{"task":"$team","worktree":""}}
+{"id":"2","cmd":"task.create","label":"child","parent":"$team","cwd":"/","worktree":false}
+{"id":"$id","ok":true,"result":{"task":"$child","worktree":""}}
+{"id":"3","cmd":"task.create","label":"x","parent":"t999"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"4","cmd":"task.list"}
+{"id":"$id","ok":true,"result":{"tasks":"*"}}
+{"id":"5","cmd":"task.move","task":"$team","parent":"$child"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"6","cmd":"task.move","task":"$child","parent":""}
+{"id":"$id","ok":true,"result":{"task":"$child","parent":""}}
+{"id":"7","cmd":"task.close","task":"$team"}
+{"id":"$id","ok":true,"result":{"task":"$team","closed":true,"panes":[]}}
+{"id":"8","cmd":"task.close","task":"$team"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"9","cmd":"task.close","task":"$child"}
+{"id":"$id","ok":true,"result":{"task":"$child","closed":true,"panes":[]}}

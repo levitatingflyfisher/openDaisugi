@@ -1,6 +1,6 @@
 # Protect an agent you're already running
 
-*Learning-oriented — from nothing to a working shadow-mode gate over a live
+*Learning-oriented — from nothing to a working audit-mode gate over a live
 session in a few minutes, then, when you trust it, one flag to enforce.*
 
 You have an agent (Claude Code) running in a project and you want a runtime
@@ -34,7 +34,7 @@ shows the same four steps and changes nothing.
 
 ## Walk through what it did
 
-**1. It's already shadow mode.** Shadow mode watches every tool call and
+**1. It's already audit mode.** Audit mode watches every tool call and
 records what it *would* have denied — but never blocks. It is observation,
 not protection, and that is exactly what you want first. The hook is now in
 `.claude/settings.json`, so launching `claude` normally in this directory
@@ -58,13 +58,13 @@ Two things show up as **false-positive candidates**: compound shell commands
 (`a && b` — the gate denies these wholesale and suggests splitting them) and
 host tools it doesn't recognize. Edit the registered envelope (`daisugi
 start`'s "envelope" step prints its path) until the would-denies are *only*
-the calls you actually want stopped. This is the whole point of shadow mode:
+the calls you actually want stopped. This is the whole point of audit mode:
 tune against your real session before trusting it.
 
 **3. Flip to enforce.** Now an out-of-envelope call is denied before it runs,
 with the verifier's reason handed back to the model. A hook, once installed,
 isn't silently rewritten to a different mode — that could just as easily
-downgrade enforce to shadow as the reverse — so remove the gate hook line from
+downgrade enforce to audit as the reverse — so remove the gate hook line from
 `.claude/settings.json` and run `daisugi start --enforce` again:
 
 ```bash

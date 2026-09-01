@@ -1,0 +1,7 @@
+{
+  "id": "herdr-grid",
+  "kind": "view",
+  "title": "Grid",
+  "about": "A roster with the state word on each row, and a live picture of up to nine panes beside it.",
+  "page": "index.html"
+}

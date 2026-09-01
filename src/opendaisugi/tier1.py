@@ -15,8 +15,9 @@ a custom provider that returns ``None`` on the tasks it won't handle.
 
 Two adapters are shipped in this module:
 
-- :class:`LiteLLMTier1Provider` — OpenAI-compat endpoint via litellm (Ollama,
-  llamafile, llama.cpp server, Haiku, etc.)
+- :class:`HTTPTier1Provider` — any model our own client (``llm_client``)
+  reaches: an OpenAI-compatible endpoint (Ollama, llamafile, llama.cpp
+  server) or the Anthropic API (Haiku, etc.)
 - :class:`ClaudeCodeTier1Provider` — shells out to ``claude -p`` for users who
   already have Claude Code installed
 
@@ -64,8 +65,8 @@ _TIER1_PROMPT = (
 )
 
 
-class LiteLLMTier1Provider:
-    """Tier-1 adapter over any OpenAI-compatible endpoint via litellm.
+class HTTPTier1Provider:
+    """Tier-1 adapter over any OpenAI-compatible endpoint or the Anthropic API.
 
     Works with:
         - Ollama on localhost:11434 (model="ollama/llama3.2:3b")
@@ -87,9 +88,10 @@ class LiteLLMTier1Provider:
         timeout_s: float = 30.0,
         name: str | None = None,
     ) -> None:
-        # litellm routes by provider prefix. A local OpenAI-compatible endpoint
-        # (llamafile/llama.cpp/LM Studio) needs the ``openai/`` prefix — a bare
-        # model name raises "LLM Provider NOT provided" and never reaches base_url.
+        # The model client picks its wire by provider prefix. A local
+        # OpenAI-compatible endpoint (llamafile/llama.cpp/LM Studio) needs the
+        # ``openai/`` prefix: a bare model name has no wire and never reaches
+        # base_url.
         # Auto-prefix an unprefixed model when a base_url is set (mirrors
         # OllamaTier1Provider's ``ollama/`` auto-prefix); already-prefixed strings
         # (``openai/…``, ``ollama/…``, ``anthropic/…``) are left untouched.
@@ -102,7 +104,7 @@ class LiteLLMTier1Provider:
         # Default the provider name to the model string so cache keys isolate
         # per-model out of the box. Callers override when running multiple
         # configurations of the same model.
-        self.name = name or f"litellm:{model}"
+        self.name = name or f"http:{model}"
 
     async def generate_envelope(
         self,
@@ -122,7 +124,7 @@ class LiteLLMTier1Provider:
         if self.api_key is not None:
             extra["api_key"] = self.api_key
 
-        client = _llm.get_instructor_client(model=self.model)
+        client = _llm.get_model_client(model=self.model)
         try:
             return await asyncio.wait_for(
                 client.chat.completions.create(
@@ -139,20 +141,20 @@ class LiteLLMTier1Provider:
             )
         except asyncio.TimeoutError:
             _log.info(
-                "LiteLLMTier1Provider %r timed out after %.1fs — declining",
+                "HTTPTier1Provider %r timed out after %.1fs — declining",
                 self.name,
                 self.timeout_s,
             )
             return None
         except Exception as exc:  # adapter failure must never block generation
-            _log.info("LiteLLMTier1Provider %r failed: %s — declining", self.name, exc)
+            _log.info("HTTPTier1Provider %r failed: %s — declining", self.name, exc)
             return None
 
 
-class OllamaTier1Provider(LiteLLMTier1Provider):
+class OllamaTier1Provider(HTTPTier1Provider):
     """Tier-1 adapter for a locally-running Ollama server (v0.23+).
 
-    Convenience over ``LiteLLMTier1Provider`` with Ollama-shaped defaults:
+    Convenience over ``HTTPTier1Provider`` with Ollama-shaped defaults:
     no API key, ``base_url`` defaults to the canonical localhost endpoint,
     and the model name is auto-prefixed with ``ollama/`` so callers can pass
     a bare model name (``llama3.2:3b``) or the fully-qualified form

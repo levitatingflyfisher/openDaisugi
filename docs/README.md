@@ -14,6 +14,11 @@ guessing a filename.
 New here? Start with the [README quickstart](../README.md), then the
 [Tutorials](#tutorials), then [Explanation § concepts](../docs/concepts.md).
 
+Names the owner changed on 2026-09-28: **audit mode** was shadow mode (the flag
+is `--mode audit`), the **delegation tree** was the agent tree, and a
+**definition** was called an alias in prose (the `alias` field and op keep
+their name). Plans, research and ADRs dated before that day keep the old names.
+
 ---
 
 ## Tutorials
@@ -21,7 +26,7 @@ New here? Start with the [README quickstart](../README.md), then the
 
 This is the quadrant we're actively growing. Today the entry points are:
 - **[Protect an agent you're already running](tutorials/protect-your-existing-session.md)**
-  — one command to a working shadow-mode gate over a live session, then one flag
+  — one command to a working audit-mode gate over a live session, then one flag
   to enforce.
 - The **[README quickstart](../README.md)** — install, then verify an LLM's plan and
   watch an out-of-envelope action refused (no API key).
@@ -39,7 +44,10 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Deployment](deployment.md)** — run it in the modes it supports.
 - **[Integrations](integrations.md)** — wire it into a harness (per-harness adapters).
 - **[Hook integration](hook-integration.md)** — the passive-hook path.
-- **[Gate a live session](how-to/gate.md)** — the call-time gate: shadow → report → enforce → disarm.
+- **[Gate a live session](how-to/gate.md)** — the call-time gate: audit → report → enforce → disarm.
+- **[Use the phone](how-to/phone.md)**: the PWA coppice serves, both certificate paths, the token QR, and ntfy push.
+- **[Record anywhere, land it in a pane](how-to/voice.md)**: `daisugi voice serve|ptt|arm|disarm`, previewed by default, direct send only when a pane is armed.
+- **[Hand model choice to NeMo Switchyard](how-to/router-switchyard.md)**: `daisugi gateway --router switchyard` runs Switchyard behind the gateway, and the gateway meters each turn by the target that served it.
 - **[Let `a && b` through](how-to/compound-shell.md)** — the compound-shell opt-in: what it admits, what stays rejected, what it recovers.
 - **[π0 / VLA integration](pi-vla-integration.md)** — the robotics integration path.
 - Agent-guidance for working *in* this repo: **[AGENTS.md](../AGENTS.md)**.
@@ -52,12 +60,20 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Feature status](feature-status.md)** — what's shipped, per version.
 - **[Formal specification (yellow paper)](spec/yellow-paper.md)** — the rigorous
   verification semantics (envelope algebra, subsumption soundness, fail-closed law).
+- **[Concepts across fields](correspondence.md)**: each openDaisugi term mapped to its name in
+  functional programming, formal methods, compilers, control theory and machine learning, with
+  a glossary, the gaps, and rename candidates.
 - **[Conformance protocol](spec/conformance.md)** — the language-neutral corpus,
   wire protocol, and differential runner that independent verifier clients
   (Rust, Go, Lean4, TypeScript) are checked against.
 - The public API is the `opendaisugi` package surface (`Daisugi`, `verify`,
   `generate_envelope`, `orchestrate`) — see the docstrings and the
   [architecture module map](architecture/OVERVIEW.md#module-map-where-to-look).
+- **[coppice](../harness/coppice/README.md)**, the Go floor daemon: panes, harness
+  processes and merged pane state over a uid-checked unix socket. Its own
+  [PINS.md](../harness/coppice/PINS.md) names what it depends on and why.
+- **[Harness research](harness/)** — the comparison, design and synthesis notes
+  from choosing coppice's and sprig's own shape.
 
 ## Explanation
 *Understanding-oriented — help me understand the ideas and the why.*

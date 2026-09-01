@@ -187,7 +187,7 @@ See [feature-status.md](feature-status.md) for the full matrix. Summary:
 - **Z3 solver.** Required. `uv add opendaisugi` pulls `z3-solver`
   automatically but the solver is a native dependency.
 - **LLM API for envelope generation.** `generate_envelope` calls out
-  via `litellm` / `instructor`. Set `ANTHROPIC_API_KEY` (or equivalent),
+  through our own model client (the `api` backend). Set `ANTHROPIC_API_KEY` (or equivalent),
   use a low-stakes permissive envelope if you don't want network
   calls, or set `OPENDAISUGI_LLM_BACKEND=claude-code` (v0.12.0+) to
   route through an existing Claude Code install instead of an API key.

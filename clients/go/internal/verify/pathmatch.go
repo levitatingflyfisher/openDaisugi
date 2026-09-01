@@ -63,19 +63,47 @@ func posixNormpath(p string) string {
 // translation of the oracle's `_match_glob` — see verify.py for the
 // canonical source (read-only reference, never edited).
 func matchGlob(norm, glob string) bool {
+	_, ok := matchGlobSteps(norm, glob, GlobMatchStepLimit)
+	return ok
+}
+
+// GlobMatchStepLimit is verify.GLOB_MATCH_STEP_LIMIT. The matcher is
+// exponential in the number of ** segments, so it stops after this many
+// steps (calls of its inner matchFrom), the same count as the oracle's on
+// every box, and panics with GlobTooComplex.
+const GlobMatchStepLimit = 100_000
+
+// GlobTooComplex is the panic value of verify.GlobTooComplex. Its text is
+// "file glob <repr(Glob)> is too complex to match: more than <Limit>
+// steps"; the caller writes the repr.
+type GlobTooComplex struct {
+	Glob  string
+	Limit int
+}
+
+// GlobMatchSteps is verify.glob_match_steps: the steps a match takes,
+// with no limit.
+func GlobMatchSteps(norm, glob string) int {
+	steps, _ := matchGlobSteps(norm, glob, -1)
+	return steps
+}
+
+// matchGlobSteps runs the match with a step limit (negative: none) and
+// returns the steps taken and the answer.
+func matchGlobSteps(norm, glob string, limit int) (steps int, matched bool) {
 	if strings.HasSuffix(glob, "/**") {
 		raw := glob[:len(glob)-3]
 		if raw == "" {
 			// "/**" — the root: any absolute path.
-			return strings.HasPrefix(norm, "/")
+			return 0, strings.HasPrefix(norm, "/")
 		}
 		prefix := posixNormpath(raw)
 		if prefix == "." {
 			// "./**" — any relative path (never an absolute one, and not
 			// a path that climbs above the starting directory).
-			return !strings.HasPrefix(norm, "/") && norm != ".." && !strings.HasPrefix(norm, "../")
+			return 0, !strings.HasPrefix(norm, "/") && norm != ".." && !strings.HasPrefix(norm, "../")
 		}
-		return norm == prefix || strings.HasPrefix(norm, prefix+"/")
+		return 0, norm == prefix || strings.HasPrefix(norm, prefix+"/")
 	}
 
 	// Plain split — do NOT filter empty components: an absolute path/
@@ -87,6 +115,10 @@ func matchGlob(norm, glob string) bool {
 
 	var matchFrom func(pi, ti int) bool
 	matchFrom = func(pi, ti int) bool {
+		steps++
+		if limit >= 0 && steps > limit {
+			panic(GlobTooComplex{Glob: glob, Limit: limit})
+		}
 		if pi == len(patSegs) {
 			return ti == len(pathSegs)
 		}
@@ -106,11 +138,12 @@ func matchGlob(norm, glob string) bool {
 		}
 		return false
 	}
-	return matchFrom(0, 0)
+	matched = matchFrom(0, 0)
+	return steps, matched
 }
 
 // PathMatchesAny is verify._path_matches_any: normalize the path once, then
-// try every glob.
+// try every glob. A glob past the step limit panics with GlobTooComplex.
 func PathMatchesAny(path string, globs []string) bool {
 	normalized := posixNormpath(path)
 	for _, g := range globs {

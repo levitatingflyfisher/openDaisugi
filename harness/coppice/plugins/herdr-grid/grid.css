@@ -1,0 +1,16 @@
+:root { color-scheme: dark; --bg: #12181a; --fg: #e8eae7; --muted: #98a3a0; --line: #26312f; }
+html, body { margin: 0; height: 100%; }
+body { padding: .6rem .8rem; box-sizing: border-box; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; display: flex; flex-direction: column; }
+#grid-status { color: var(--muted); min-height: 1.2em; margin: 0 0 .4rem; }
+#grid-main { flex: 1; display: grid; grid-template-columns: 14rem 1fr; gap: .6rem; min-height: 0; }
+@media (max-width: 600px) { #grid-main { grid-template-columns: 1fr; } }
+#grid-roster { list-style: none; margin: 0; padding: 0; overflow: auto; }
+#grid-roster li { display: flex; gap: .5rem; cursor: pointer; padding: 0 .2rem; }
+#grid-roster li.sel { outline: 1px solid var(--fg); }
+#grid-roster .word { margin-left: auto; }
+#grid-tiles { display: grid; gap: .4rem; min-height: 0; }
+.slot { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 4px; min-height: 0; cursor: pointer; }
+.slot .head { color: var(--muted); padding: 0 .3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slot canvas { flex: 1; width: 100%; min-height: 3rem; }
+.slot p { color: var(--muted); margin: .3rem; }

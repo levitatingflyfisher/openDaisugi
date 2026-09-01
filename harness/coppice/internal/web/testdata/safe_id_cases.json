@@ -1,0 +1,17 @@
+{
+  "_comment": "Inputs and the exact file stem ask.py's _safe() produces for each. Go's web.SafeID and Python's opendaisugi.ask._safe both read this file. They must agree byte for byte or the phone writes an answer the gate never reads.",
+  "cases": [
+    {"in": "toolu_01ABCdef", "out": "toolu_01ABCdef"},
+    {"in": "call/with/slashes", "out": "call_with_slashes"},
+    {"in": "../../etc/passwd", "out": "_.._etc_passwd"},
+    {"in": "...", "out": "none"},
+    {"in": "", "out": "none"},
+    {"in": ".hidden.", "out": "hidden"},
+    {"in": "a b\tc", "out": "a_b_c"},
+    {"in": "id-with.dots_and-dashes", "out": "id-with.dots_and-dashes"},
+    {"in": "unicode-éè", "out": "unicode-__"},
+    {"in": "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789ABCDEF", "out": "01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567"},
+    {"in": "....aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "out": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbb", "out": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa."}
+  ]
+}

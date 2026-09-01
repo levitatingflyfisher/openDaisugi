@@ -1,0 +1,4 @@
+{"type":"session.created","session_id":"cx-8f21"}
+{"type":"item.completed","item":{"type":"assistant_message","text":"Checking the tests."}}
+{"type":"item.completed","item":{"type":"command_execution","command":"go test ./...","exit_code":0}}
+{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":40}}

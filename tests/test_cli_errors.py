@@ -30,13 +30,27 @@ def test_fail_prints_three_lines_and_exits(capsys):
 
 
 def test_main_renders_opendaisugi_errors_without_a_traceback(tmp_path):
-    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
-    env["OPENDAISUGI_LLM_BACKEND"] = "litellm"
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+    }
+    env["OPENDAISUGI_LLM_BACKEND"] = "api"
     env["HOME"] = str(tmp_path)
     proc = subprocess.run(
-        [sys.executable, "-m", "opendaisugi.cli", "orchestrate", "list three things",
-         "--data-dir", str(tmp_path / "d")],
-        capture_output=True, text=True, env=env, timeout=120,
+        [
+            sys.executable,
+            "-m",
+            "opendaisugi.cli",
+            "orchestrate",
+            "list three things",
+            "--data-dir",
+            str(tmp_path / "d"),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
     )
     assert proc.returncode == 1, proc.stderr
     assert "Traceback" not in proc.stderr
@@ -46,12 +60,26 @@ def test_main_renders_opendaisugi_errors_without_a_traceback(tmp_path):
 
 
 def test_debug_env_shows_the_traceback(tmp_path):
-    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
-    env.update({"OPENDAISUGI_LLM_BACKEND": "litellm", "HOME": str(tmp_path), "DAISUGI_DEBUG": "1"})
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+    }
+    env.update({"OPENDAISUGI_LLM_BACKEND": "api", "HOME": str(tmp_path), "DAISUGI_DEBUG": "1"})
     proc = subprocess.run(
-        [sys.executable, "-m", "opendaisugi.cli", "orchestrate", "list three things",
-         "--data-dir", str(tmp_path / "d")],
-        capture_output=True, text=True, env=env, timeout=120,
+        [
+            sys.executable,
+            "-m",
+            "opendaisugi.cli",
+            "orchestrate",
+            "list three things",
+            "--data-dir",
+            str(tmp_path / "d"),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
     )
     assert proc.returncode != 0
     assert "Traceback" in proc.stderr
@@ -112,7 +140,7 @@ def test_orchestrate_malformed_envelope_teaches(tmp_path):
             "--envelope",
             str(bad_env),
             "--llm",
-            "litellm",
+            "api",
             "--data-dir",
             str(tmp_path),
         ],
@@ -133,3 +161,20 @@ def test_generate_envelope_usage_error_has_no_resolved_echo():
     res = runner.invoke(app, ["generate-envelope", "task", "--stakes", "bogus"])
     assert res.exit_code == 2, res.output
     assert "backend:" not in res.output
+
+
+def test_old_backend_name_in_env_is_one_line(tmp_path):
+    from opendaisugi.llm import RENAMED_BACKEND_TEXT
+
+    env = dict(os.environ)
+    env.update({"OPENDAISUGI_LLM_BACKEND": "litellm", "HOME": str(tmp_path)})
+    env.pop("DAISUGI_DEBUG", None)
+    proc = subprocess.run(
+        [sys.executable, "-m", "opendaisugi.cli", "orchestrate", "t", "--data-dir", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 1, proc.stderr
+    assert proc.stderr.strip() == RENAMED_BACKEND_TEXT

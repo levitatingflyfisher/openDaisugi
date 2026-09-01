@@ -64,7 +64,7 @@ class HaltHandler:
 
 def _get_recompute_client(model: str):
     """Thin wrapper so tests can patch the client injection point."""
-    return _llm.get_instructor_client(model=model)
+    return _llm.get_model_client(model=model)
 
 
 class RecomputeHandler:

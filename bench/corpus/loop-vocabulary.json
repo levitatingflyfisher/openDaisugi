@@ -1,0 +1,24 @@
+{
+  "claude-code": {
+    "names": {"write": "Write", "edit": "Edit", "bash": "Bash", "read": "Read", "unknown": "Teleport"},
+    "keys": {"path": "file_path", "content": "content", "command": "command"},
+    "note": "Claude's native names are the envelope's vocabulary as-is"
+  },
+  "sprig": {
+    "names": {"write": "Write", "edit": "Edit", "bash": "Bash", "read": "Read", "unknown": "Teleport"},
+    "keys": {"path": "file_path", "content": "content", "command": "command"},
+    "note": "names translated by sprig's DaisugiGate before they reach us. See docs/harness/harness-comparison.md"
+  },
+  "codex": {
+    "names": {"write": "apply_patch", "edit": "apply_patch", "bash": "shell", "read": null, "unknown": "Teleport"},
+    "keys": {"path": "path", "content": "content", "command": "command"},
+    "note": "codex reads through shell. apply_patch is its only write tool. See src/opendaisugi/parsers/codex.py"
+  },
+  "pi": {
+    "names": {"write": "write", "edit": "edit", "bash": "bash", "read": "read", "unknown": "teleport"},
+    "keys": {"path": "path", "content": "content", "command": "command"},
+    "fmt": "pi",
+    "note": "pi's built-in names are lowercase and its file tools take path. The extension sends them as tool_name and tool_input with --format pi. See src/opendaisugi/harness_pi/extension/PINS.md and _PI_TOOL_TYPE_MAP in src/opendaisugi/hook.py"
+  },
+  "opencode": {"names": null, "keys": null, "note": "vocabulary not pinned in this corpus"}
+}

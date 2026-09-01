@@ -9,9 +9,20 @@
 //! Z3-backed in the oracle either (pure f64 numerics/sampling) — ported
 //! here verbatim, including the exact 8-sample interpolation loop.
 
+use crate::gate::py::text::{repr, repr_list};
+use crate::gate::pyjson::py_float_repr;
 use crate::models::{ActionPlan, Envelope, StepKind};
 use crate::violation::Violation;
 use std::collections::{HashMap, HashSet};
+
+/// Python's `repr()` of a tuple of floats.
+fn tuple3(t: (f64, f64, f64)) -> String {
+    format!("({}, {}, {})", py_float_repr(t.0), py_float_repr(t.1), py_float_repr(t.2))
+}
+
+fn arr3(a: [f64; 3]) -> String {
+    tuple3((a[0], a[1], a[2]))
+}
 
 pub const RECOGNIZED_OPAQUE_TYPES: &[&str] =
     &["end_effector_in_workspace", "joint_limits_respected", "velocity_bounded", "no_obstacle_penetration"];
@@ -37,7 +48,11 @@ pub fn check_envelope_self_consistency(env: &Envelope) -> Vec<Violation> {
         unsat = true;
     }
 
-    if unsat { vec![Violation::plan("z3")] } else { vec![] }
+    if unsat {
+        vec![Violation::plan("z3").msg("Envelope is internally inconsistent")]
+    } else {
+        vec![]
+    }
 }
 
 /// `check_plan_against_envelope` — same native-boolean argument.
@@ -53,7 +68,11 @@ pub fn check_plan_against_envelope(plan: &ActionPlan, env: &Envelope) -> Vec<Vio
         unsat = true;
     }
 
-    if unsat { vec![Violation::plan("z3")] } else { vec![] }
+    if unsat {
+        vec![Violation::plan("z3").msg("Plan requirements contradict envelope permissions")]
+    } else {
+        vec![]
+    }
 }
 
 fn check_workspace_containment(plan: &ActionPlan, env: &Envelope) -> Vec<Violation> {
@@ -72,7 +91,13 @@ fn check_workspace_containment(plan: &ActionPlan, env: &Envelope) -> Vec<Violati
         if let Some((x, y, z)) = target {
             let inside = min[0] <= x && x <= max[0] && min[1] <= y && y <= max[1] && min[2] <= z && z <= max[2];
             if !inside {
-                out.push(Violation::step("z3", step.id.clone()));
+                out.push(Violation::step("z3", step.id.clone()).msg(format!(
+                    "Step '{}' target {} outside workspace bounds ({}, {})",
+                    step.id,
+                    tuple3((x, y, z)),
+                    arr3(min),
+                    arr3(max)
+                )));
             }
         }
     }
@@ -88,11 +113,26 @@ fn check_joint_limits(plan: &ActionPlan, env: &Envelope) -> Vec<Violation> {
     for step in &plan.steps {
         if let StepKind::JointMove { joint_targets, .. } = &step.kind {
             for (joint, target) in joint_targets {
-                match limits.get(joint) {
-                    None => out.push(Violation::step("z3", step.id.clone())),
+                match env.permissions.joint_limit(joint) {
+                    None => {
+                        let names: Vec<String> = limits.iter().map(|(k, _)| k.clone()).collect();
+                        out.push(Violation::step("z3", step.id.clone()).msg(format!(
+                            "Step '{}' joint {} not declared in envelope joint_limits {}",
+                            step.id,
+                            repr(joint),
+                            repr_list(&names)
+                        )))
+                    }
                     Some((lo, hi)) => {
-                        if !(*lo <= *target && *target <= *hi) {
-                            out.push(Violation::step("z3", step.id.clone()));
+                        if !(lo <= *target && *target <= hi) {
+                            out.push(Violation::step("z3", step.id.clone()).msg(format!(
+                                "Step '{}' joint {} target {} outside [{}, {}]",
+                                step.id,
+                                repr(joint),
+                                py_float_repr(*target),
+                                py_float_repr(lo),
+                                py_float_repr(hi)
+                            )));
                         }
                     }
                 }
@@ -116,7 +156,12 @@ fn check_velocity_bounds(plan: &ActionPlan, env: &Envelope) -> Vec<Violation> {
                 let prev = *state.get(joint).unwrap_or(&0.0);
                 let peak = (target - prev).abs() / duration * velocity_scale;
                 if peak > limit {
-                    out.push(Violation::step("z3", step.id.clone()));
+                    out.push(Violation::step("z3", step.id.clone()).msg(format!(
+                        "Step '{}' joint {} peak velocity {peak:.3} rad/s > limit {}",
+                        step.id,
+                        repr(joint),
+                        py_float_repr(limit)
+                    )));
                 }
                 state.insert(joint.clone(), *target);
             }
@@ -167,7 +212,9 @@ fn check_obstacle_avoidance(plan: &ActionPlan, env: &Envelope) -> Vec<Violation>
             }
             let inside = min[0] <= *x && *x <= max[0] && min[1] <= *y && *y <= max[1] && min[2] <= *z && *z <= max[2];
             if inside {
-                out.push(Violation::step("z3", step_id.clone()));
+                out.push(Violation::step("z3", step_id.clone()).msg(format!(
+                    "Step '{step_id}' trajectory sample ({x:.3}, {y:.3}, {z:.3}) inside obstacle #{idx}"
+                )));
                 flagged.insert((step_id.clone(), idx));
             }
         }

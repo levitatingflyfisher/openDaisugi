@@ -63,7 +63,7 @@ class BudgetReport:
     by_model: dict[str, int]
     approx_cost_usd: float = 0.0  # rough $ estimate — see APPROX_USD_PER_MTOK
     # Exact $ summed from backends that report it (claude -p --output-format json).
-    # None when no step reported a measured cost (e.g. litellm-only → use approx).
+    # None when no step reported a measured cost (e.g. API-backend only → use approx).
     measured_cost_usd: float | None = None
 
 

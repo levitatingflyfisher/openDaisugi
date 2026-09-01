@@ -72,6 +72,9 @@ class GatewayTurnRecord:
     counterfactual_dollars: float
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    # The turn's time in the proxy, from the request to the end of the
+    # answer, in milliseconds. None for a turn recorded outside the proxy.
+    elapsed_ms: float | None = None
 
     @property
     def dollars_saved(self) -> float:
@@ -85,6 +88,7 @@ def record_turn(
     task: str,
     ask: str | None = None,
     created_at: str | None = None,
+    elapsed_ms: float | None = None,
 ) -> GatewayTurnRecord:
     """Build a turn record from a routing decision and its measured saving.
 
@@ -117,6 +121,7 @@ def record_turn(
         counterfactual_dollars=saving.counterfactual.dollars,
         cache_read_tokens=saving.actual.cache_read_tokens,
         cache_creation_tokens=saving.actual.cache_creation_tokens,
+        elapsed_ms=elapsed_ms,
     )
 
 

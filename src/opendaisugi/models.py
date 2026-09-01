@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
+import math
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 
 def compute_evidence_hash(evidence: dict[str, Any]) -> str:
@@ -227,6 +229,16 @@ class Envelope(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _numbers_are_finite(self) -> "Envelope":
+        # A NaN limit dumps as null, which reads as "no limit": see
+        # non_finite_error. Nested in another model, pydantic gives these
+        # errors that model's title and puts its place in front.
+        bad = non_finite_error(self, "Envelope")
+        if bad is not None:
+            raise bad
+        return self
+
 
 class StepBase(BaseModel):
     id: str
@@ -306,6 +318,62 @@ def get_step_type_registry() -> "dict[str, type[StepBase]]":
     return dict(STEP_TYPE_REGISTRY)
 
 
+def non_finite_error(reply: BaseModel, title: str) -> ValidationError | None:
+    """The schema error for a model value that holds NaN, Infinity or -Infinity.
+
+    Envelope and ActionPlan raise it from their own validation, so no reader
+    of an envelope or plan (a file, a store row, a bundle, a model reply)
+    takes such a number. The LLM clients run it on every other reply model.
+
+    Pydantic's float fields accept NaN and the infinities, and a stored NaN
+    dumps as null, which reads as "no limit". So a model reply with a number
+    that is not finite is schema-invalid: one ``finite_number`` error per such
+    number, at its place in the validated reply's ``model_dump()``, in
+    document order. The dump covers Any-typed data and steps decoded from
+    text too. None when every number is finite.
+    """
+    errors: list[dict[str, Any]] = []
+    stack: list[tuple[tuple[Any, ...], Any]] = [((), reply.model_dump())]
+    while stack:
+        loc, value = stack.pop()
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                errors.append({"type": "finite_number", "loc": loc, "input": value})
+        elif isinstance(value, dict):
+            items = [(k if isinstance(k, (str, int)) else str(k), v) for k, v in value.items()]
+            stack.extend(((*loc, k), v) for k, v in reversed(items))
+        elif isinstance(value, (list, tuple)):
+            stack.extend(((*loc, i), v) for i, v in reversed(list(enumerate(value))))
+    if not errors:
+        return None
+    return ValidationError.from_exception_data(title, errors)
+
+
+_DICT_TEXT_MAX = 65_536
+
+
+def decode_dict_text(text: str) -> dict | None:
+    """Decode text that holds one dict, as JSON or as a Python literal.
+
+    Returns None for anything else: text longer than the cap, text that is
+    not a dict, text nested too deep, or text that is not a literal at all.
+    ``ast.literal_eval`` reads literals only and never runs code.
+    """
+    if len(text) > _DICT_TEXT_MAX:
+        return None
+    body = text.strip()
+    if not body.startswith("{"):
+        return None
+    for parse in (json.loads, ast.literal_eval):
+        try:
+            value = parse(body)
+        except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
+
+
 def coerce_step(v):
     """Hand-dispatch a step-shaped input to the right ``StepBase`` subclass.
 
@@ -316,6 +384,13 @@ def coerce_step(v):
     """
     if v is None or isinstance(v, StepBase):
         return v
+    if isinstance(v, str):
+        # A model can send a step as a string that holds the step's dict,
+        # as JSON or as a Python literal. Decode it once. The decoded dict
+        # still goes through the step type's own validation.
+        decoded = decode_dict_text(v)
+        if decoded is not None and decoded.get("type") in STEP_TYPE_REGISTRY:
+            v = decoded
     if isinstance(v, dict) and "type" in v:
         subclass = STEP_TYPE_REGISTRY.get(v["type"])
         if subclass is not None:
@@ -543,6 +618,22 @@ class ActionPlan(BaseModel):
     # tripping, breaking ShellStep.command / FileReadStep.path access.
     steps: list[Any]
 
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        # ``list[Any]`` alone gives the model an empty item schema, and a
+        # model then sends steps in any shape, often as strings. Name every
+        # registered step type so the model sees what a step is.
+        schema = handler(core_schema)
+        target = handler.resolve_ref_schema(schema)
+        steps = target.get("properties", {}).get("steps")
+        if steps is not None and STEP_TYPE_REGISTRY:
+            steps["items"] = {
+                "anyOf": [
+                    handler(sub.__pydantic_core_schema__) for sub in STEP_TYPE_REGISTRY.values()
+                ]
+            }
+        return schema
+
     @field_validator("steps", mode="before")
     @classmethod
     def _dispatch_steps(cls, v):
@@ -565,6 +656,15 @@ class ActionPlan(BaseModel):
                     f"@opendaisugi.step_type."
                 )
         return v
+
+    @model_validator(mode="after")
+    def _numbers_are_finite(self) -> "ActionPlan":
+        # As Envelope._numbers_are_finite: every number in the plan, its
+        # steps' metadata and other Any-typed data included, is finite.
+        bad = non_finite_error(self, "ActionPlan")
+        if bad is not None:
+            raise bad
+        return self
 
 
 class Violation(BaseModel):
@@ -592,6 +692,23 @@ class VerificationResult(BaseModel):
     envelope_id: str
     plan_id: str
     duration_ms: float
+    client: str = Field(
+        default="python",
+        description="Which verifier client was dispatched beside the oracle. "
+        "python means no client was dispatched and the oracle decided alone.",
+    )
+    fallback: str | None = Field(
+        default=None,
+        description="Set to 'python' when the dispatched client failed and the "
+        "oracle's verdict stands alone. None means the client answered.",
+    )
+    client_verdict: bool | None = Field(
+        default=None,
+        description="What the dispatched client alone said, kept for attribution. "
+        "The verdict in `ok` is the conjunction of this and the oracle's: a client "
+        "may tighten an allow into a deny, never the reverse. None when the client "
+        "failed or none was dispatched.",
+    )
 
 
 class ReversalHandle(BaseModel):

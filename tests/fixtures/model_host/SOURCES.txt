@@ -1,0 +1,40 @@
+Pinned upstream API shapes for opendaisugi.model_host.
+Fetched 2026-09-08.
+
+ollama_tags.json         https://raw.githubusercontent.com/ollama/ollama/main/docs/api.md
+                         Section "List Local Models", GET /api/tags. Verbatim example
+                         response.
+
+ollama_show.json         https://raw.githubusercontent.com/ollama/ollama/main/docs/api.md
+                         Section "Show Model Information", POST /api/show. Verbatim
+                         example response for:
+                           curl http://localhost:11434/api/show -d '{"model": "llava"}'
+                         CORRECTION: the request body key is "model", not "name". The
+                         earlier prose form {"name": m} is stale against the current
+                         docs. model_host.py sends {"model": m}.
+                         NOTE: num_ctx appears here inside "modelfile", as a
+                         "PARAMETER num_ctx 4096" line, and not inside "parameters".
+                         The Ollama docs are not consistent about which field carries
+                         it. It depends on the model. _ollama_num_ctx() checks both.
+
+openai_models.json       Standard OpenAI /v1/models shape: object, data, id, object,
+                         created, owned_by. Partly confirmed for the Ollama OpenAI
+                         compatible surface at https://docs.ollama.com/openai, where
+                         created is the last modified time and owned_by defaults to
+                         "library". That page publishes no full example body. This
+                         fixture is the well known OpenAI schema, not a byte for byte
+                         copy of a fetched example. Context window extraction from a
+                         /v1/models entry is best effort. See model_host._probe_openai.
+                         It is not verified against a real llama.cpp or vLLM server.
+
+anthropic_message.json   https://docs.ollama.com/api/anthropic-compatibility
+                         Constructed from the page's "Supported response fields" list:
+                         id, type, role, model, content, stop_reason, and usage with
+                         input_tokens and output_tokens. The page publishes no full
+                         example response body. The page confirms: the endpoint is
+                         /v1/messages; base_url is documented WITHOUT /v1 because the
+                         SDK appends it, for example ANTHROPIC_BASE_URL=http://host:11434;
+                         ANTHROPIC_AUTH_TOKEN=ollama is the documented literal token;
+                         the api key is "accepted but not validated"; and
+                         /v1/messages/count_tokens is listed as NOT supported. That last
+                         fact is the premise of the count-tokens shim in gateway_asgi.py.

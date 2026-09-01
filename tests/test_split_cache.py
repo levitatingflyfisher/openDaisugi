@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
+from opendaisugi.llm_client import Reply
 from opendaisugi.parsers.claude_code import ClaudeCodeParser
 from opendaisugi.split_cache import SplitCache
 
@@ -53,10 +54,7 @@ def test_split_cache_evicts_on_prompt_version_change(tmp_path):
 def _fake_completion_factory(counter):
     def fake(*a, **k):
         counter["n"] += 1
-        content = '{"subtasks":[{"start_index":0,"end_index":5,"task":"all"}]}'
-        r = MagicMock()
-        r.choices = [MagicMock(message=MagicMock(content=content))]
-        return r
+        return Reply('{"subtasks":[{"start_index":0,"end_index":5,"task":"all"}]}')
 
     return fake
 
@@ -68,9 +66,7 @@ def test_second_parse_hits_cache_across_instances(tmp_path):
     counter = {"n": 0}
     db = tmp_path / "split.db"
 
-    with patch("opendaisugi.parsers.claude_code.litellm") as ml:
-        ml.completion.side_effect = _fake_completion_factory(counter)
-
+    with patch("opendaisugi.llm_client.complete", side_effect=_fake_completion_factory(counter)):
         cache1 = SplitCache(db, prompt_version="v1")
         ClaudeCodeParser(min_tools=1, max_tools=2, split_cache=cache1).parse(t)
         assert counter["n"] == 1  # first run calls the splitter
@@ -83,8 +79,7 @@ def test_second_parse_hits_cache_across_instances(tmp_path):
 def test_no_cache_means_every_parse_calls_the_splitter(tmp_path):
     t = _big_episode_transcript(tmp_path)
     counter = {"n": 0}
-    with patch("opendaisugi.parsers.claude_code.litellm") as ml:
-        ml.completion.side_effect = _fake_completion_factory(counter)
+    with patch("opendaisugi.llm_client.complete", side_effect=_fake_completion_factory(counter)):
         ClaudeCodeParser(min_tools=1, max_tools=2).parse(t)
         ClaudeCodeParser(min_tools=1, max_tools=2).parse(t)
     assert counter["n"] == 2  # no cache -> both parses call the splitter

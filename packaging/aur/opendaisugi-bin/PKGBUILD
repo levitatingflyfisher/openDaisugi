@@ -1,0 +1,29 @@
+# Installs the three openDaisugi binaries from the release tarball that
+# scripts/release.sh builds. Not published: this file waits for a release.
+#
+# To update for a release: set pkgver, then run `updpkgsums` (it writes the
+# sha256 from the published tarball, which must match the release's
+# SHA256SUMS), then `makepkg --printsrcinfo > .SRCINFO`.
+
+pkgname=opendaisugi-bin
+pkgver=0.43.0
+pkgrel=1
+pkgdesc='Agent floor (coppice), loop (sprig) and tool-call gate (daisugi) for AI coding agents'
+arch=('x86_64')
+url='https://github.com/levitatingflyfisher/openDaisugi'
+license=('MIT')
+depends=('glibc')
+provides=('opendaisugi' 'coppice' 'sprig')
+conflicts=('opendaisugi')
+options=('!strip' '!debug')
+source=("https://github.com/levitatingflyfisher/openDaisugi/releases/download/v${pkgver}/opendaisugi-${pkgver}-linux-x86_64.tar.gz")
+# Fails closed until updpkgsums fills it in from the published tarball.
+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+
+package() {
+  cd "opendaisugi-${pkgver}-linux-x86_64"
+  install -Dm755 coppice sprig daisugi -t "${pkgdir}/usr/bin/"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 NOTICE-coppice NOTICE-sprig NOTICE-daisugi -t "${pkgdir}/usr/share/licenses/${pkgname}/"
+  install -Dm644 README "${pkgdir}/usr/share/doc/${pkgname}/README"
+}

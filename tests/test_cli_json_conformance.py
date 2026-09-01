@@ -23,12 +23,24 @@ from opendaisugi.cli import app
 runner = CliRunner()
 
 READ_COMMANDS = [
-    ["status"], ["config"], ["modules"], ["dashboard"], ["models"],
-    ["gate", "status"], ["gate", "report"], ["gate", "audit"],
+    ["status"],
+    ["config"],
+    ["modules"],
+    ["dashboard"],
+    ["models"],
+    ["gate", "status"],
+    ["gate", "report"],
+    ["gate", "audit"],
     ["hook", "list"],
-    ["pathways", "list"], ["pathways", "show"], ["pathways", "stats"],
-    ["journal", "stats"], ["journal", "search"],
-    ["tiers", "stats"], ["gardener", "status"], ["registry", "status"],
+    ["pathways", "list"],
+    ["pathways", "show"],
+    ["pathways", "stats"],
+    ["journal", "stats"],
+    ["journal", "search"],
+    ["tiers", "stats"],
+    ["gardener", "status"],
+    ["registry", "status"],
+    ["coppice", "backends"],
 ]
 
 
@@ -53,7 +65,7 @@ def test_gate_status_json_has_mode(tmp_path):
     assert res.exit_code == 0, res.output
     body = json.loads(res.output)
     assert body["armed"] is True
-    assert body["mode"] in ("shadow", "enforce")
+    assert body["mode"] in ("audit", "enforce")
     assert body["envelopes"] == []
 
 
@@ -70,19 +82,35 @@ def test_gate_status_human_shows_mode(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     res = runner.invoke(app, ["gate", "status", "--root", str(tmp_path / "gate")])
     assert res.exit_code == 0
-    assert "mode: shadow" in res.output
+    assert "mode: audit" in res.output
 
 
 def test_gate_status_reports_a_cwd_only_enforce_hook(tmp_path, monkeypatch):
     """`gate status` is THE command for "is the gate armed and in what mode" —
-    it must not show shadow/config while a daisugi start --enforce hook (no
+    it must not show audit/config while a daisugi start --enforce hook (no
     global hook installed) is actually denying calls in this directory."""
     home = tmp_path / "home"
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / ".claude").mkdir()
-    (proj / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
-        {"type": "command", "command": "py -m opendaisugi.gate_client --mode enforce --root /r"}]}]}}))
+    (proj / ".claude" / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "py -m opendaisugi.gate_client --mode enforce --root /r",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
     monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.chdir(proj)
     res = runner.invoke(app, ["gate", "status", "--root", str(tmp_path / "gate"), "--json"])
@@ -105,5 +133,7 @@ def test_pathways_list_json_empty(tmp_path):
 
 
 def test_gate_check_rejects_unknown_mode(tmp_path):
-    res = runner.invoke(app, ["gate", "check", "--mode", "bogus", "--root", str(tmp_path)], input="{}")
+    res = runner.invoke(
+        app, ["gate", "check", "--mode", "bogus", "--root", str(tmp_path)], input="{}"
+    )
     assert res.exit_code != 0

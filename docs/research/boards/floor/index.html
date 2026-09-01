@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coppice Floor Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..700&family=Instrument+Sans:ital,wght@0,400..700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../_shell/style.css">
+</head>
+<body>
+<div class="wrap">
+<!-- title: Coppice Floor Board -->
+
+<header>
+  <div class="kicker">openDaisugi · coppice · design time · 2026-09-12</div>
+  <h1>A floor you can <b>talk to.</b></h1>
+  <p class="lede">coppice runs the panes. The gate decides what is allowed. You say what you want in plain words. The floor tells you when it needs you, and stays quiet the rest of the time.</p>
+  <div class="frame">
+    <div><div class="kicker">layer</div><strong>The gate</strong><span>An envelope the model cannot argue with. It proposes. The verifier decides. Fail closed.</span></div>
+    <div><div class="kicker">floor</div><strong>coppice</strong><span>One Go server that owns every pane, its state, and one socket. Every screen is a client.</span></div>
+    <div><div class="kicker">loop</div><strong>Any harness</strong><span>claude, codex, pi, sprig, OpenCode. A command and its args in one config line.</span></div>
+  </div>
+</header>
+
+<section id="field">
+  <div class="sechead">
+    <div><div class="kicker">part one</div><h2>What the field built</h2></div>
+    <p>Real screens from the tools in the landscape report. Tags say what the report concluded: steal the idea, avoid it, or treat it as unverified. Click a tag to filter.</p>
+  </div>
+  <div class="chips" id="chips">
+    <button class="chip" aria-pressed="true" data-f="all">all</button>
+    <button class="chip" aria-pressed="false" data-f="vendor">vendors</button>
+    <button class="chip" aria-pressed="false" data-f="oss">open source</button>
+    <button class="chip" aria-pressed="false" data-f="protocol">protocols</button>
+    <button class="chip" aria-pressed="false" data-f="inspiration">inspiration</button>
+    <button class="chip" aria-pressed="false" data-f="steal">steal</button>
+    <button class="chip" aria-pressed="false" data-f="avoid">avoid</button>
+  </div>
+  <div class="board" id="board"></div>
+  <p class="empty" id="boardEmpty" hidden>No images matched. The image hunt missed this group; the report carries the notes.</p>
+</section>
+
+<section id="keep">
+  <div class="sechead">
+    <div><div class="kicker">part two</div><h2>What the survivors share</h2></div>
+    <p>Five patterns that came through three-vote verification. They are the brief for every mockup below.</p>
+  </div>
+  <div class="patterns">
+    <div class="pattern"><strong>One roster, sorted by whether you are needed.</strong><span>Needs you on top. Working under it. Done at the bottom. The row shows the question, not the log.</span></div>
+    <div class="pattern"><strong>The unit of work sits above the pane.</strong><span>A task has a label, a worktree, and one or more panes. Panes come and go. The task stays.</span></div>
+    <div class="pattern"><strong>Counts and jumps, never interrupts.</strong><span>A number in the tab title. One key to the next thing that needs you. No modal ever steals the screen.</span></div>
+    <div class="pattern"><strong>New work starts in plain words.</strong><span>An input line is the front door. Say what you want. The floor spawns, waits, and reports.</span></div>
+    <div class="pattern"><strong>Three to five in hand. Any number live.</strong><span>People steer a few at a time and let the rest run. Blast off sixteen, focus on two, move on. The floor is what makes the other fourteen safe to ignore.</span></div>
+  </div>
+</section>
+
+<section id="keys">
+  <div class="sechead">
+    <div><div class="kicker">the whole vocabulary</div><h2>Six keys. Three you already know.</h2></div>
+    <p>No prefix. No chords to learn. Everything else you type is words to the floor. The mouse works too, on every row, tab, and tile.</p>
+  </div>
+  <div class="keys">
+    <div class="key"><kbd>ctrl</kbd> <kbd>t</kbd><div>Talk. Brings the floor and its prompt from anywhere. New work starts here.</div></div>
+    <div class="key"><kbd>shift</kbd> <kbd>tab</kbd><div>Next one that needs you. Cycles in attention order, not screen order.</div></div>
+    <div class="key"><kbd>ctrl</kbd> <kbd>w</kbd><div>Close what you are looking at. The task keeps its worktree.</div></div>
+    <div class="key"><kbd>space</kbd><div>Peek. Shows the last lines and the ask without leaving the roster.</div></div>
+    <div class="key"><kbd>enter</kbd><div>Go in. Attach to the pane. Your keys belong to the harness now.</div></div>
+    <div class="key"><kbd>esc</kbd><div>Zoom out. Peek closes. Roster returns to the line.</div></div>
+  </div>
+</section>
+
+<section id="coppice">
+  <div class="sechead">
+    <div><div class="kicker">part three</div><h2>What coppice should be</h2></div>
+    <p>Twelve views of one floor. Same socket, same verbs, different porcelain. Each note says what the view does and what it refuses to do.</p>
+  </div>
+  <div class="walk" id="walk">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b><span id="wTitle"></span><span class="right" id="wRight"></span></div>
+      <div id="wPre"></div>
+      <div class="foot" id="wFoot"></div>
+    </div>
+    <div class="ctl">
+      <button id="wPrev">back</button><button id="wPlay">pause</button><button id="wNext">next</button>
+      <div class="dots" id="wDots"></div>
+      <div class="cap" id="wCap"></div>
+    </div>
+  </div>
+  <div class="toc">
+    <a href="#m-cold">cold start</a><a href="#m-roster">roster</a><a href="#m-peek">peek</a><a href="#m-attached">attached</a><a href="#m-foreman">the foreman</a><a href="#m-alt">zoom</a><a href="#m-laptop">laptop floor</a><a href="#m-phone">phone</a><a href="#m-tiers">three tiers of allow</a><a href="#m-task">tasks and trees</a><a href="#m-wire">one socket</a><a href="#m-plugins">plugins</a>
+  </div>
+
+  <!-- 1 cold start -->
+  <div class="mock" id="m-cold">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b></div>
+      <pre><span class="t-dim">$</span> coppice
+<span class="t-dim">Nothing is running. Say what you want.</span>
+
+<span class="t-done">›</span> <span class="t-ink">open claude on the gate refactor, pi on the self-hosted llama for the docs,
+  and codex on the flaky socket test</span>
+
+<span class="t-dim">Three tasks. One worktree each.</span>
+  <span class="t-work">●</span> gate-refactor   claude    wt/gate-refactor    <span class="t-dim">starting</span>
+  <span class="t-work">●</span> docs            pi        wt/docs             <span class="t-dim">starting · llama on the gpu-box</span>
+  <span class="t-work">●</span> flaky-socket    codex     wt/flaky-socket     <span class="t-dim">starting</span>
+<span class="t-dim">I will say when one needs you. shift-tab jumps there.</span></pre>
+      <div class="prompt"><span>›</span><em>say what you want</em><i></i></div>
+    </div>
+    <div class="note">
+      <div class="kicker">command line · cold start</div>
+      <h3>Type the name. Then talk.</h3>
+      <p>The first screen is a sentence and a prompt. No dashboard, no config, no empty grid. One line per task after you speak, with the harness and the worktree, because those are the two facts you will need next.</p>
+      <ul>
+        <li>Works before it is configured. Harnesses found on PATH are the harnesses.</li>
+        <li>Output is plain text on stdout. Pipe it and it stays readable.</li>
+        <li>The floor never asks a question here that it can answer itself.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 2 roster -->
+  <div class="mock flip" id="m-roster">
+    <div class="note">
+      <div class="kicker">tui · the roster</div>
+      <h3>Sorted by whether you are needed.</h3>
+      <p>This is the attention queue. It is also the only list. Rows carry the question, not the last log line. The tab title and every footer carry the count, so you can leave and still know.</p>
+      <ul>
+        <li>The <em>unknown</em> state is not allowed to exist on this screen. If the floor cannot tell, it says <em>quiet</em> and shows how long.</li>
+        <li>Sixteen live panes is fine. When more than a few need you at once, the header says so in words, and the queue is the order to take them in.</li>
+        <li>The prompt line never leaves the bottom.</li>
+        <li>In a wide terminal the selected pane shows live on the right, the lazygit shape. Rows are clickable. The keys are the fast path, not the only path.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b><span class="right">2 need you</span></div>
+      <pre><span class="t-dim">NEEDS YOU</span>
+<span class="t-hl">  <span class="t-need">●</span> gate-refactor   claude   <span class="t-ink">wants</span> git push --force origin master   <span class="t-deny">outside envelope</span>   2m</span>
+  <span class="t-need">●</span> docs            pi       <span class="t-ink">asks</span> which page should the tutorial link to?                 6m
+
+<span class="t-dim">WORKING</span>
+  <span class="t-work">●</span> flaky-socket    codex    running go test -p 1 ./internal/server/...                 41s
+  <span class="t-work">●</span> review          claude   reading the diff for gate-refactor                          3m
+  <span class="t-idle">●</span> scratch         sprig    quiet for 14m
+
+<span class="t-dim">DONE</span>
+  <span class="t-done">●</span> changelog       pi       branch pushed, PR #412 open                                 18m</pre>
+      <div class="foot"><b>space</b> peek <b>enter</b> go in <b>shift-tab</b> next that needs you <b>ctrl-t</b> talk <b>ctrl-w</b> close</div>
+      <div class="prompt"><span>›</span><em>say what you want</em><i></i></div>
+    </div>
+  </div>
+
+  <!-- 3 peek -->
+  <div class="mock" id="m-peek">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b> · gate-refactor · peek<span class="right">2 need you</span></div>
+      <pre><span class="t-dim">last 8 lines · wt/gate-refactor · claude · 14 commits ahead of master</span>
+<span class="t-box">┌──────────────────────────────────────────────────────────────────────┐</span>
+<span class="t-box">│</span> ✓ 41 tests pass                                                      <span class="t-box">│</span>
+<span class="t-box">│</span> The branch has diverged from origin. I will force push to fix it.    <span class="t-box">│</span>
+<span class="t-box">│</span>                                                                      <span class="t-box">│</span>
+<span class="t-box">│</span> <span class="t-dim">$</span> git push --force origin master                                    <span class="t-box">│</span>
+<span class="t-box">└──────────────────────────────────────────────────────────────────────┘</span>
+
+<span class="t-need">■ The gate says no.</span>  <span class="t-dim">envelope rule 3: nothing pushes to master, nothing force pushes</span>
+<span class="t-dim">Deny is the default. Allowing this needs the pane name typed, because it cannot be undone.</span>
+
+  <span class="t-ink">n</span> deny and tell it why      <span class="t-ink">r</span> reply in words      <span class="t-ink">enter</span> go in      <span class="t-ink">esc</span> back</pre>
+      <div class="prompt"><span>›</span><span class="t-ink">no. open a PR from the branch instead and wait for green</span><i></i></div>
+    </div>
+    <div class="note">
+      <div class="kicker">tui · peek</div>
+      <h3>Look without going in.</h3>
+      <p>Space opens the last lines and the ask. The gate's verdict is its own line, in its own colour, with the rule that fired. You answer in words or with one key. The pane never sees your keystrokes.</p>
+      <ul>
+        <li>The verdict comes from the envelope, not from the model. The model only proposed.</li>
+        <li>Deny is one key. Allow is graded by blast radius. See three tiers below.</li>
+        <li>Esc returns you exactly where you were in the roster.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 4 attached -->
+  <div class="mock flip" id="m-attached">
+    <div class="note">
+      <div class="kicker">tui · attached</div>
+      <h3>One thin line of chrome.</h3>
+      <p>Inside a pane the harness owns the screen. coppice keeps one footer line: where you are, how many need you, and the one key that leaves. Nothing else. The count is the same number that sits in the tab title.</p>
+      <ul>
+        <li>No status bar with clocks, load, or battery. Your terminal already has one.</li>
+        <li>The footer turns amber when someone new needs you. It does not pop anything.</li>
+        <li>shift-tab leaves for the next one that needs you. ctrl-t leaves for the prompt.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b> · flaky-socket<span class="right">2 need you</span></div>
+      <pre><span class="t-dim">codex · wt/flaky-socket</span>
+
+I ran the test 20 times with -p 1 and it failed 3 times, always on
+the second accept. The listener is closed before the client's second
+dial. Fix: wait on the accept goroutine before returning from Close.
+
+<span class="t-dim">Editing internal/server/listen.go</span>
+  <span class="t-deny">-</span>  return l.ln.Close()
+  <span class="t-done">+</span>  err := l.ln.Close()
+  <span class="t-done">+</span>  l.wg.Wait()
+  <span class="t-done">+</span>  return err
+
+<span class="t-dim">Running</span> go test -p 1 -count=20 ./internal/server/...
+<span class="t-done">ok</span>   internal/server   38.2s</pre>
+      <div class="foot"><span class="t-need"><b>2 need you</b></span> · gate-refactor waits on a push · <b>shift-tab</b> go there · <b>ctrl-t</b> talk</div>
+    </div>
+  </div>
+
+  <!-- 5 foreman -->
+  <div class="mock" id="m-foreman">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b> · talk<span class="right">1 needs you</span></div>
+      <pre><span class="t-done">›</span> <span class="t-ink">when flaky-socket is green, have review look at it too, then merge both if review is happy</span>
+
+<span class="t-dim">  floor.wait        flaky-socket  until done</span>
+<span class="t-dim">  floor.prompt      review        "read wt/flaky-socket; say ship or fix"</span>
+<span class="t-dim">  floor.wait        review        until done</span>
+
+Waiting on flaky-socket. Review already has gate-refactor; I queued
+the second read behind it. Merging needs the gate to allow a push to
+master, and rule 3 says it will not. I can open two PRs instead and
+merge them when checks pass. Shall I?
+
+<span class="t-done">›</span> <span class="t-ink">yes</span>
+
+<span class="t-dim">  floor.spawn       merge-both    sprig   wt/merge-both</span>
+Opened merge-both. It will open the PRs and watch the checks.
+I will only come back if a check fails or the gate asks.</pre>
+      <div class="prompt"><span>›</span><em>say what you want</em><i></i></div>
+    </div>
+    <div class="note">
+      <div class="kicker">tui · the foreman</div>
+      <h3>A normal pane, promoted.</h3>
+      <p>The thing you talk to is a frontier model in your harness of choice. It is promoted by one page: the coppice commands it already has in its shell, no tool schema. It spawns, waits, prompts, and reads. It cannot allow. The gate is outside it.</p>
+      <ul>
+        <li>Every tool call it makes is printed in dim, one line each. No hidden hands.</li>
+        <li>It plans in words and asks once when the plan needs a person.</li>
+        <li>Not a small local model. Judging when to escalate is the whole job.</li>
+        <li>Many hands: every allow and deny names who gave it, and a row says who else is looking. A name gives no right.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 6 altitudes -->
+  <div class="mock flip" id="m-alt">
+    <div class="note">
+      <div class="kicker">tui · three zoom levels</div>
+      <h3>The line, the roster, the pane.</h3>
+      <p>Zoom in with Enter, zoom out with Esc. The same count travels through all three levels, so you always know what you are not looking at.</p>
+      <ul>
+        <li>The line is what the tab title, the shell prompt, and the phone banner show.</li>
+        <li>Nothing lives between these three. No dashboards of dashboards.</li>
+      </ul>
+    </div>
+    <div class="alt">
+      <div class="lvl"><div class="kicker">high · the line</div><div class="term"><pre><span class="t-need">2 need you</span> · 3 working · 1 done · 6 panes · <span class="t-dim">quiet 41s</span></pre></div></div>
+      <div class="hop">enter goes down · esc goes up</div>
+      <div class="lvl"><div class="kicker">medium · the roster</div><div class="term"><pre><span class="t-need">●</span> gate-refactor  wants git push --force   <span class="t-deny">outside envelope</span>
+<span class="t-need">●</span> docs           asks which page to link
+<span class="t-work">●</span> flaky-socket   running go test -p 1
+<span class="t-done">●</span> changelog      PR #412 open</pre></div></div>
+      <div class="hop">enter goes down · esc goes up</div>
+      <div class="lvl"><div class="kicker">low · the pane</div><div class="term"><pre>I ran the test 20 times with -p 1 and it failed 3 times,
+always on the second accept.
+<span class="t-dim">Running</span> go test -p 1 -count=20 ./internal/server/...</pre><div class="foot"><span class="t-need"><b>2 need you</b></span> · <b>shift-tab</b> next · <b>ctrl-t</b> talk</div></div></div>
+    </div>
+  </div>
+
+  <!-- 7 laptop floor -->
+  <div class="mock" id="m-laptop" style="grid-template-columns:1fr">
+    <div class="laptop">
+      <div class="top"><span class="tab"><b>2</b> · coppice</span><span>localhost:7070/floor</span></div>
+      <div class="floor">
+        <div class="rail">
+          <div class="grp">needs you</div>
+          <div class="it on"><i class="dot need"></i>gate-refactor<small>2m</small></div>
+          <div class="it"><i class="dot need"></i>docs<small>6m</small></div>
+          <div class="grp">working</div>
+          <div class="it on"><i class="dot work"></i>flaky-socket<small>41s</small></div>
+          <div class="it on"><i class="dot work"></i>review<small>3m</small></div>
+          <div class="it"><i class="dot"></i>scratch<small>14m</small></div>
+          <div class="grp">done</div>
+          <div class="it"><i class="dot done"></i>changelog<small>18m</small></div>
+          <div class="grp" style="margin-top:auto">tree</div>
+          <svg viewBox="0 0 160 70" style="width:100%;height:auto" aria-label="Minimap of the task tree with one dot per node coloured by state">
+            <path d="M14 35 H40 M40 35 V12 H66 M40 35 V58 H66 M40 35 H66 M66 12 H92 M92 12 V4 H118 M92 12 V20 H118 M66 35 H118 M66 58 H118" fill="none" stroke="var(--line2)" stroke-width="1.2"/>
+            <circle cx="14" cy="35" r="4" fill="var(--idle)"/>
+            <circle cx="66" cy="12" r="4" fill="var(--need)"/><circle cx="118" cy="4" r="3.5" fill="var(--need)"/><circle cx="118" cy="20" r="3.5" fill="var(--work)"/>
+            <circle cx="66" cy="35" r="4" fill="var(--need)"/><circle cx="118" cy="35" r="3.5" fill="var(--need)"/>
+            <circle cx="66" cy="58" r="4" fill="var(--work)"/><circle cx="118" cy="58" r="3.5" fill="var(--work)"/>
+            <circle cx="140" cy="58" r="3.5" fill="var(--done)"/><path d="M118 58 H140" fill="none" stroke="var(--line2)" stroke-width="1.2"/>
+          </svg>
+        <div>
+          <div class="tiles">
+            <div class="tile">
+              <div class="th"><i class="dot need"></i><b>gate-refactor</b> claude · wt/gate-refactor</div>
+              <pre>✓ 41 tests pass
+The branch has diverged from origin. I will force push to fix it.
+
+$ git push --force origin master</pre>
+              <div class="askbar"><b>Gate says no.</b> rule 3, nothing pushes to master <span class="k">n deny</span><span class="k">r reply</span></div>
+            </div>
+            <div class="tile">
+              <div class="th"><i class="dot work"></i><b>flaky-socket</b> codex · wt/flaky-socket</div>
+              <pre>Fix: wait on the accept goroutine before returning from Close.
+
+-  return l.ln.Close()
++  err := l.ln.Close()
++  l.wg.Wait()
++  return err
+
+Running go test -p 1 -count=20 ./internal/server/...</pre>
+            </div>
+            <div class="tile">
+              <div class="th"><i class="dot work"></i><b>review</b> claude · reading gate-refactor</div>
+              <pre>Reading 14 commits.
+
+The envelope generator moved into its own package. Good. The verifier still imports floor.state. That breaks the layer-alone rule. I will flag it as fix, not ship.</pre>
+            </div>
+          </div>
+          <div class="say2"><span>›</span>say what you want<span style="margin-left:auto;color:var(--dim);font-family:var(--sans)">three in hand. the rail holds the rest. click a row to swap one in.</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="note" style="max-width:66ch">
+      <div class="kicker">laptop · the floor page</div>
+      <h3>Three tiles, one rail, one prompt.</h3>
+      <p>The web view is the same shape as the terminal: the roster, plus as many live panes as the width allows. Here that is three. A minimap of the tree sits at the bottom of the rail, one dot per node, colour is state, click to jump. Three tiles are the ones in your hands. The rail holds the other thirteen, sorted by who needs you, so the count of live panes never has to be small. Swapping a tile in is a click on the rail. The ask sits in an amber bar on the tile, never in a dialog.</p>
+    </div>
+  </div>
+
+  <!-- 8 phone -->
+  <div class="mock" id="m-phone" style="grid-template-columns:1fr">
+    <div class="phones">
+      <div class="phone">
+        <div class="status"><span>9:41</span><span>tailnet</span></div>
+        <div class="screen">
+          <h4>2 need you</h4>
+          <div class="sub">3 working · 1 done</div>
+          <div class="ask">
+            <div class="who"><i class="dot need"></i>gate-refactor · claude · 2m</div>
+            <div class="q">Wants to run <code>git push --force origin master</code></div>
+            <div class="why">Gate says no. Rule 3: nothing pushes to master. Allowing needs the pane name typed.</div>
+            <div class="btns"><div class="btn deny">Deny</div><div class="btn quiet">Look</div><div class="btn quiet">Reply</div></div>
+          </div>
+          <div class="ask">
+            <div class="who"><i class="dot need"></i>docs · pi · 6m</div>
+            <div class="q">Which page should the tutorial link to?</div>
+            <div class="btns"><div class="btn">Reply</div><div class="btn quiet">Look</div></div>
+          </div>
+          <div class="rows">
+            <div class="row2"><i class="dot work"></i><span class="name">flaky-socket</span><span class="what">go test -p 1 -count=20</span></div>
+            <div class="row2"><i class="dot work"></i><span class="name">review</span><span class="what">reading gate-refactor</span></div>
+            <div class="row2"><i class="dot done"></i><span class="name">changelog</span><span class="what">PR #412 open</span></div>
+          </div>
+          <div class="say">Tell the floor<b>●</b></div>
+        </div>
+      </div>
+      <div class="phone">
+        <div class="status"><span>9:58</span><span>tailnet</span></div>
+        <div class="screen">
+          <div class="quiet">
+            <i class="dot done" style="width:14px;height:14px"></i>
+            <h4>Nothing needs you.</h4>
+            <p>3 working. I will ping when one asks.</p>
+            <p style="font-family:var(--mono);font-size:12px">last ask 17 min ago</p>
+          </div>
+          <div class="say">Tell the floor<b>●</b></div>
+        </div>
+      </div>
+      <div class="lock">
+        <div class="time">10:14</div>
+        <div class="date">Saturday 12 September</div>
+        <div class="notif">
+          <div class="app"><span>coppice</span><span>now</span></div>
+          <div><b>gate-refactor needs you.</b> Wants to run <code style="font-family:var(--mono);font-size:12px">git push --force origin master</code>. Gate says no.</div>
+          <div class="btns"><div class="btn">Deny</div><div class="btn">Look</div></div>
+        </div>
+        <div class="notif" style="opacity:.7">
+          <div class="app"><span>coppice</span><span>17m</span></div>
+          <div>changelog is done. PR #412 open.</div>
+        </div>
+      </div>
+    </div>
+    <div class="note" style="max-width:66ch">
+      <div class="kicker">phone · the attention queue, the quiet screen, the lock screen</div>
+      <h3>Thumb sized. Deny is the big one.</h3>
+      <p>The phone shows the same queue with two facts per ask: what it wants and what the gate said. Deny is always one tap. The quiet screen is a real screen, not an empty list, because most of the time the honest answer is that nothing needs you. The lock screen card carries the same two facts and the same two buttons.</p>
+    </div>
+  </div>
+
+  <!-- 9 tiers -->
+  <div class="mock flip" id="m-tiers">
+    <div class="note">
+      <div class="kicker">every surface · three tiers of allow</div>
+      <h3>The guard matches the blast radius.</h3>
+      <p>Confirmation boxes wear out. A person answers the same box the same way after the fifth time. So coppice does not use one box. It uses three tiers, and each looks different.</p>
+      <ul>
+        <li><strong>Inside the envelope.</strong> Nothing is asked. It runs. The roster shows a dim line so you can see it happened.</li>
+        <li><strong>Outside, but undoable.</strong> One key or one tap. The rule that fired is on the same line.</li>
+        <li><strong>Outside and permanent.</strong> Type the pane's name. Deny is still one key.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b> · three asks, three shapes</div>
+      <pre><span class="t-dim">inside the envelope · not asked · logged</span>
+  <span class="t-done">·</span> docs           ran   uv run --no-sync pytest tests/docs   <span class="t-dim">allowed by rule 1</span>
+
+<span class="t-dim">outside, undoable · one key</span>
+  <span class="t-need">●</span> flaky-socket   wants to write .github/workflows/ci.yml   <span class="t-dim">rule 5: workflows are yours</span>
+                 <span class="t-ink">y</span> allow once   <span class="t-ink">t</span> allow for this task   <span class="t-ink">n</span> deny
+
+<span class="t-dim">outside, permanent · type the name</span>
+  <span class="t-need">●</span> gate-refactor  wants git push --force origin master         <span class="t-deny">rule 3: never</span>
+                 <span class="t-ink">n</span> deny   <span class="t-dim">to allow, type</span> <span class="t-ink">gate-refactor</span> <span class="t-dim">and enter</span>
+                 <span class="t-dim">allow: </span><span class="t-ink">gate-ref</span><i style="display:inline-block;width:8px;height:14px;background:#D6DAD1;vertical-align:-2px"></i></pre>
+    </div>
+  </div>
+
+  <!-- 10 tasks and trees -->
+  <div class="mock" id="m-task">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b> · tasks</div>
+      <pre><span class="t-dim">master</span> <span class="t-box">──┬──</span> <span class="t-ink">gate-refactor</span>   wt/gate-refactor   <span class="t-need">● needs you</span>   14 ahead
+       <span class="t-box">│</span>     <span class="t-box">├─</span> claude    working the refactor        <span class="t-need">● wants a push</span>
+       <span class="t-box">│</span>     <span class="t-box">└─</span> review    reading the diff            <span class="t-work">● working</span>
+       <span class="t-box">│</span>
+       <span class="t-box">├──</span> <span class="t-ink">docs</span>            wt/docs            <span class="t-need">● needs you</span>    3 ahead
+       <span class="t-box">│</span>     <span class="t-box">└─</span> pi        llama on the gpu-box           <span class="t-need">● asks a question</span>
+       <span class="t-box">│</span>
+       <span class="t-box">├──</span> <span class="t-ink">flaky-socket</span>    wt/flaky-socket    <span class="t-work">● working</span>     1 ahead
+       <span class="t-box">│</span>     <span class="t-box">└─</span> codex     go test -p 1 -count=20      <span class="t-work">● working</span>
+       <span class="t-box">│</span>
+       <span class="t-box">└──</span> <span class="t-ink">changelog</span>       wt/changelog       <span class="t-done">● done</span>        PR #412 · checks green
+             <span class="t-box">└─</span> <span class="t-dim">pi        closed 18m ago · worktree kept</span></pre>
+      <div class="foot"><b>enter</b> open the task's roster <b>ctrl-w</b> close a pane, keep the tree <b>space</b> peek</div>
+    </div>
+    <div class="note">
+      <div class="kicker">tui · tasks and trees</div>
+      <h3>The task is the unit. The pane is a hand.</h3>
+      <p>A task has a name, a worktree, and however many panes it needs. Closing a pane does not lose the branch. This is the git tree view the roster folds away by default, one key from the roster.</p>
+      <ul>
+        <li>Ahead and behind counts come from git, not from the model's memory.</li>
+        <li>A task's state is the worst state of its panes. Needs you beats working.</li>
+        <li>Worktrees live beside the repo on real disk, never in a RAM tmp.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 11 one socket -->
+  <div class="mock" id="m-wire" style="grid-template-columns:1fr">
+    <div class="diagram">
+      <svg viewBox="0 0 1040 340" role="img" aria-label="Harnesses on the left, the coppice server in the middle with the gate under it, and porcelains on the right, all joined by one socket.">
+        <text x="20" y="24" class="lab">LOOPS · any harness · a command and its args</text>
+        <rect x="20" y="40" width="190" height="34" rx="8" class="b"/><text x="34" y="62">claude</text>
+        <rect x="20" y="84" width="190" height="34" rx="8" class="b"/><text x="34" y="106">codex</text>
+        <rect x="20" y="128" width="190" height="34" rx="8" class="b"/><text x="34" y="150">pi · llama on the gpu-box</text>
+        <rect x="20" y="172" width="190" height="34" rx="8" class="b"/><text x="34" y="194">sprig</text>
+        <rect x="20" y="216" width="190" height="34" rx="8" class="b"/><text x="34" y="238">opencode</text>
+        <path d="M210 57 H250 M210 101 H250 M210 145 H250 M210 189 H250 M210 233 H250" class="wire"/>
+        <text x="20" y="286" class="lab">pty or headless · state from hooks when installed</text>
+        <text x="20" y="302" class="lab">otherwise quiet, never unknown</text>
+
+        <rect x="250" y="40" width="310" height="210" rx="12" class="b core"/>
+        <text x="268" y="66" style="font-weight:600">coppice server</text>
+        <text x="268" y="90" class="lab">owns every pane and its grid</text>
+        <text x="268" y="108" class="lab">one state per pane · never unknown</text>
+        <text x="268" y="126" class="lab">tasks above panes · one worktree each</text>
+        <text x="268" y="144" class="lab">verbs: spawn list read prompt wait</text>
+        <text x="268" y="162" class="lab">       allow deny close attach</text>
+        <text x="268" y="196" style="font-weight:500">one socket · uid checked · 0600</text>
+        <text x="268" y="214" class="lab">newline JSON-RPC · async notify stream</text>
+        <text x="268" y="232" class="lab">stable opaque ids · per-pane flow control</text>
+
+        <path d="M405 250 V270" class="wire"/>
+        <rect x="250" y="270" width="310" height="52" rx="12" class="b gate"/>
+        <text x="268" y="291" style="font-weight:600">the gate · outside every porcelain</text>
+        <text x="268" y="309" class="lab">the model proposes · the envelope decides</text>
+
+        <path d="M560 80 H620 M560 124 H620 M560 168 H620 M560 212 H620 M560 145 H590 V300 H620" class="wire core"/>
+        <text x="620" y="24" class="lab">PORCELAINS · every screen is a client · swap any</text>
+        <rect x="620" y="62" width="400" height="34" rx="8" class="b"/><text x="634" y="84">coppice tui · roster, peek, attach, talk</text>
+        <rect x="620" y="106" width="400" height="34" rx="8" class="b"/><text x="634" y="128">floor page · three tiles and a rail</text>
+        <rect x="620" y="150" width="400" height="34" rx="8" class="b"/><text x="634" y="172">phone · queue, quiet screen, ntfy on the tailnet</text>
+        <rect x="620" y="194" width="400" height="34" rx="8" class="b"/><text x="634" y="216">the foreman · a frontier pane with the verbs</text>
+        <rect x="620" y="282" width="400" height="34" rx="8" class="b"/><text x="634" y="304">yours · a plugin, a script, an ACP client, tmux</text>
+      </svg>
+    </div>
+    <div class="two">
+      <pre class="code"><span class="c"># plumbing stays scriptable. this is the same roster, for machines.</span>
+$ coppice list --json | jq '.panes[] | select(.state=="needs_you") | .name'
+<span class="s">"gate-refactor"</span>
+<span class="s">"docs"</span>
+
+$ coppice read docs --lines 3
+which page should the tutorial link to?
+
+$ coppice prompt docs <span class="s">"link docs/tutorials/first-gate.md"</span>
+<span class="c">ok · docs is working</span></pre>
+      <pre class="code"><span class="c"># one line on the wire. any language can speak it.</span>
+{<span class="k">"jsonrpc"</span>:<span class="s">"2.0"</span>,<span class="k">"id"</span>:<span class="n">7</span>,<span class="k">"method"</span>:<span class="s">"floor.wait"</span>,
+ <span class="k">"params"</span>:{<span class="k">"pane"</span>:<span class="s">"p_9f2c"</span>,<span class="k">"until"</span>:<span class="s">"done"</span>}}
+
+<span class="c"># notifications arrive on their own, in order, per pane.</span>
+{<span class="k">"jsonrpc"</span>:<span class="s">"2.0"</span>,<span class="k">"method"</span>:<span class="s">"floor.state"</span>,
+ <span class="k">"params"</span>:{<span class="k">"pane"</span>:<span class="s">"p_9f2c"</span>,<span class="k">"state"</span>:<span class="s">"needs_you"</span>,
+           <span class="k">"source"</span>:<span class="s">"hook"</span>,<span class="k">"ask"</span>:<span class="s">"git push --force origin master"</span>,
+           <span class="k">"gate"</span>:{<span class="k">"verdict"</span>:<span class="s">"deny"</span>,<span class="k">"rule"</span>:<span class="n">3</span>,<span class="k">"tier"</span>:<span class="s">"permanent"</span>}}}</pre>
+    </div>
+    <div class="note" style="max-width:66ch;margin-top:18px">
+      <div class="kicker">plumbing · one socket, many faces</div>
+      <h3>Every screen above is a client. So is yours.</h3>
+      <p>The server does not know which porcelain is looking. The TUI, the floor page, the phone, and the foreman all speak the same nine verbs over the same socket and listen to the same notification stream. The gate sits beside the server, not inside any client, so no porcelain can talk its way past it.</p>
+    </div>
+  </div>
+
+  <!-- 12 plugins -->
+  <div class="mock" id="m-plugins" style="grid-template-columns:1fr">
+    <div class="two">
+      <pre class="code"><span class="c"># ~/.config/coppice/coppice.toml · the whole config</span>
+[harness.claude]
+command = <span class="s">"claude"</span>
+state   = <span class="s">"hooks"</span>          <span class="c"># authoritative</span>
+
+[harness.pi-llama]
+command = <span class="s">"pi"</span>
+args    = [<span class="s">"--model"</span>, <span class="s">"llama-3.3-70b"</span>, <span class="s">"--base-url"</span>, <span class="s">"http://gpu-box:11434/v1"</span>]
+
+[harness.sprig]
+command = <span class="s">"sprig"</span>
+
+<span class="c"># no plugins key: every shipped view, and notify-ntfy</span>
+plugins = [<span class="s">"tree"</span>, <span class="s">"minimap"</span>, <span class="s">"kanban"</span>, <span class="s">"colony"</span>, <span class="s">"shift-log"</span>,
+           <span class="s">"herdr-grid"</span>, <span class="s">"inbox"</span>, <span class="s">"notify-ntfy"</span>, <span class="s">"merge-on-green"</span>]</pre>
+      <pre class="code"><span class="c"># ~/.config/coppice/plugins/merge-on-green/manifest.json</span>
+{
+  <span class="k">"id"</span>: <span class="s">"merge-on-green"</span>,
+  <span class="k">"kind"</span>: <span class="s">"policy"</span>,
+  <span class="k">"listens"</span>: [<span class="s">"state"</span>],
+  <span class="k">"needs"</span>: [<span class="s">"task.list"</span>, <span class="s">"agent.prompt"</span>, <span class="s">"floor.note"</span>],
+  <span class="k">"run"</span>: <span class="s">"merge-on-green.py"</span>
+}
+
+<span class="c"># a view plugin is the same shape with "kind": "view"
+# and a "page": "index.html" served at /plugins/kanban/.
+# a view runs sandboxed and holds no token. the floor page posts it the data.
+# it may post back three things: open a pane, set the selection, watch nine panes.
+# the coppice. namespace is reserved. everything else is yours.
+# a policy can prompt and wait. it can never allow.
+# every view ships on. one rule: every mark means a state the socket reports.</span></pre>
+    </div>
+    <p style="margin-top:16px">Seven views ship, and each one is on by default. Each opens on the floor page at <code>#/view/&lt;id&gt;</code>, and the rail carries a button for each. The source of each is one directory:
+      <a href="../../../../harness/coppice/plugins/tree/"><code>tree</code></a> the task tree as text and as a graph ·
+      <a href="../../../../harness/coppice/plugins/minimap/"><code>minimap</code></a> the tree shrunk to dots at the foot of the rail ·
+      <a href="../../../../harness/coppice/plugins/kanban/"><code>kanban</code></a> ·
+      <a href="../../../../harness/coppice/plugins/colony/"><code>colony</code></a> ·
+      <a href="../../../../harness/coppice/plugins/shift-log/"><code>shift-log</code></a> ·
+      <a href="../../../../harness/coppice/plugins/herdr-grid/"><code>herdr-grid</code></a> a roster and a live picture of up to nine panes ·
+      <a href="../../../../harness/coppice/plugins/inbox/"><code>inbox</code></a> the tasks with a worktree, the ones that need you first, <code>!</code> to jump.</p>
+    <div class="gallery" style="margin-top:16px">
+      <div class="gitem">
+        <div class="kanban">
+          <div class="col"><h5>inbox</h5><div class="kc"><i class="dot"></i>int8 matcher</div><div class="kc"><i class="dot"></i>voice cleanup</div></div>
+          <div class="col"><h5>working</h5><div class="kc"><i class="dot work"></i>flaky-socket</div><div class="kc"><i class="dot work"></i>review</div></div>
+          <div class="col"><h5>needs you</h5><div class="kc"><i class="dot need"></i>gate-refactor</div><div class="kc"><i class="dot need"></i>docs</div></div>
+          <div class="col"><h5>done</h5><div class="kc"><i class="dot done"></i>changelog</div></div>
+        </div>
+        <div class="cap"><b><a href="../../../../harness/coppice/plugins/kanban/">kanban</a> · a view plugin, on by default</b>Some people think in columns. The columns are the same four states. The kanban layer is the part of Vibe Kanban that died, so this one never owns a task, it only shows them. A card has no drag. The line under the columns says so: columns are states. prompt the pane to move it.</div>
+      </div>
+      <div class="gitem">
+        <div class="peons">
+          <div class="peon work" style="left:14%;top:22%"><i></i>flaky-socket<div class="bar"><s style="width:70%"></s></div></div>
+          <div class="peon need sel" style="left:44%;top:14%"><i></i>gate-refactor<div class="bar"><s style="width:20%"></s></div></div>
+          <div class="peon need sel" style="left:70%;top:30%"><i></i>docs<div class="bar"><s style="width:40%"></s></div></div>
+          <div class="peon work" style="left:28%;top:56%"><i></i>review<div class="bar"><s style="width:55%"></s></div></div>
+          <div class="peon done" style="left:60%;top:60%"><i></i>changelog<div class="bar"><s style="width:100%"></s></div></div>
+          <div class="peon" style="left:82%;top:66%"><i></i>scratch<div class="bar"><s style="width:5%"></s></div></div>
+          <div class="cmd">2 selected</div>
+        </div>
+        <div class="cap"><b><a href="../../../../harness/coppice/plugins/colony/">colony</a> · a view plugin, on by default</b>Workers on a field, foragers out on tasks. Drag a box to select a few. The selection goes back to the floor page, and the floor acts on it. The colony has no prompt line of its own and no drop: moving work is the tree's job. The bar is time since the last state, because that is a fact. Distance means nothing and the view does not pretend it does.</div>
+      </div>
+      <div class="gitem">
+        <div class="heat">
+          <table>
+            <tr><th></th><td class="l1"></td><td class="l2"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="ask"></td><td></td><td></td><td class="l1"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l1"></td><td class="deny"></td><td></td><td></td></tr>
+            <tr><th>gate-refactor</th><td class="l1"></td><td class="l2"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="ask"></td><td></td><td></td><td class="l1"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l1"></td><td class="deny"></td><td></td><td></td></tr>
+            <tr><th>docs</th><td class="l2"></td><td class="l2"></td><td class="l1"></td><td></td><td class="l1"></td><td class="l2"></td><td class="l3"></td><td class="l2"></td><td class="l1"></td><td class="ask"></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><th>flaky-socket</th><td></td><td></td><td class="l1"></td><td class="l3"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l3"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l3"></td><td class="l3"></td></tr>
+            <tr><th>review</th><td></td><td></td><td></td><td></td><td></td><td></td><td class="l1"></td><td class="l2"></td><td class="l2"></td><td class="l2"></td><td class="l1"></td><td class="l2"></td><td class="l2"></td><td class="l1"></td><td class="l2"></td><td class="l2"></td></tr>
+            <tr><th>changelog</th><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l3"></td><td class="l2"></td><td class="l1"></td><td class="ask"></td><td class="l2"></td><td class="l3"></td><td class="l1"></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><th>scratch</th><td class="l1"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+          </table>
+          <div class="leg"><span><i class="l3" style="background:#5F9C6B"></i>working</span><span><i style="background:var(--need)"></i>asked you</span><span><i style="background:var(--deny)"></i>gate denied</span><span>one cell is five minutes · last 80 minutes</span></div>
+        </div>
+        <div class="cap"><b><a href="../../../../harness/coppice/plugins/shift-log/">shift-log</a> · a view plugin, on by default</b>Rows are panes, cells are five minutes, colour is work. Amber is an ask, red is a deny. It answers one question honestly: where did the hour go. The web server keeps the last two hours of state events, so a reload keeps them. A span the server did not see, while its subscription was down or before it started, draws as unknown and never as a quiet one.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Screens in part one belong to their makers and are here for study. Part three is original work for openDaisugi. Every claim about the field traces to docs/research/multi-agent-management-landscape-2026-09-12.md. The refuted list in that report is what none of this draws from. Two screens are missing: the Codex app sits behind a bot wall, and VibeCraft publishes no picture of its product.</p>
+</footer>
+
+<script>
+
+  const FRAMES = [
+    { t:' · first run', r:'', cap:'First run. It looks at PATH and asks one question, only because it found two.',
+      pre:`<span class="t-dim">$</span> coppice
+<span class="t-dim">Found claude and pi. Which opens when you press Enter?</span>
+  <span class="t-ink">1</span> claude
+  <span class="t-ink">2</span> pi
+<span class="t-done">›</span> <span class="t-ink">1</span>
+
+<span class="t-dim">claude is your default. Enter opens it here.
+space peeks. shift-tab goes to whoever needs you. Type words to talk.</span>`, foot:'<b>enter</b> open claude here' },
+    { t:'', r:'', cap:'Every run after that. Nothing running, one key to a working agent.',
+      pre:`<span class="t-dim">Nothing running. Enter opens claude here.</span>`, foot:'<b>enter</b> open claude here <b>ctrl-t</b> talk' },
+    { t:' · gate-refactor', r:'0 need you', cap:'Attached. The harness owns the screen. coppice keeps one footer line and steals one key to leave.',
+      pre:`<span class="t-dim">claude · wt/gate-refactor</span>
+
+<span class="t-done">›</span> move the envelope generator into its own package and keep the tests green
+
+Reading internal/gate/... 12 files.
+I will move generator.go and its tests to internal/envelope and fix the
+imports. Running go test -p 1 ./... after each step.`, foot:'<span class="t-dim"><b>0 need you</b></span> · <b>ctrl-]</b> leave' },
+    { t:' · talk', r:'0 need you', cap:'ctrl-t and a sentence. No foreman yet, so the floor asks once whether claude may run it.',
+      pre:`<span class="t-done">›</span> <span class="t-ink">open pi on the docs and codex on the flaky socket test, and tell me when either needs me</span>
+
+<span class="t-dim">No foreman yet. Let claude run the floor?</span>  <span class="t-ink">y</span> yes  <span class="t-ink">n</span> not now
+<span class="t-done">›</span> <span class="t-ink">y</span>
+
+<span class="t-dim">  floor.spawn      docs           pi      wt/docs
+  floor.spawn      flaky-socket   codex   wt/flaky-socket
+  floor.wait       docs, flaky-socket   until needs_you</span>
+Opened two. I will say when either needs you.`, foot:'<b>esc</b> roster' },
+    { t:'', r:'0 need you', cap:'The roster on the left, the selected pane live on the right. Three working, nobody asking. Go make tea.',
+      pre:`<span class="t-dim">WORKING</span>
+<span class="t-hl"> <span class="t-work">●</span> gate-refactor  claude
+   moving generator.go             2m</span>
+ <span class="t-work">●</span> docs           pi
+   reading docs/tutorials         40s
+ <span class="t-work">●</span> flaky-socket   codex
+   go test -p 1 -count=20         38s`,
+      side:`<span class="t-dim">gate-refactor · claude · wt/gate-refactor</span>
+
+Moved generator.go and generator_test.go to
+internal/envelope. Fixing 6 imports.
+
+<span class="t-dim">Running</span> go test -p 1 ./internal/...
+<span class="t-done">ok</span>   internal/envelope   1.8s
+<span class="t-done">ok</span>   internal/gate       4.1s`, foot:'<b>space</b> peek <b>enter</b> go in <b>shift-tab</b> next that needs you <b>ctrl-t</b> talk' },
+    { t:'', r:'2 need you', cap:'Twelve minutes later. Two asks move to the top, and the selected pane shows the one that asked.',
+      pre:`<span class="t-dim">NEEDS YOU</span>
+<span class="t-hl"> <span class="t-need">●</span> gate-refactor  claude
+   <span class="t-ink">wants</span> git push --force        1m
+   <span class="t-deny">outside envelope</span></span>
+ <span class="t-need">●</span> docs           pi
+   <span class="t-ink">asks</span> which page to link       3m
+
+<span class="t-dim">WORKING</span>
+ <span class="t-work">●</span> flaky-socket   codex
+   go test -p 1 -count=20         12m`,
+      side:`<span class="t-dim">gate-refactor · claude · wt/gate-refactor</span>
+
+✓ 41 tests pass. The branch diverged from
+origin. I will force push to fix it.
+
+<span class="t-dim">$</span> git push --force origin master
+
+<span class="t-need">■ The gate says no.</span> <span class="t-dim">rule 3</span>
+<span class="t-dim">space to answer</span>`, foot:'<b>space</b> peek <b>enter</b> go in <b>shift-tab</b> next that needs you' },
+    { t:' · gate-refactor · peek', r:'2 need you', cap:'Space. The gate already said no. One key to deny, and you tell it why in words.',
+      pre:`<span class="t-box">│</span> ✓ 41 tests pass. The branch diverged from origin, I will force push.
+<span class="t-box">│</span> <span class="t-dim">$</span> git push --force origin master
+
+<span class="t-need">■ The gate says no.</span>  <span class="t-dim">rule 3: nothing pushes to master, nothing force pushes</span>
+
+  <span class="t-ink">n</span> deny and tell it why    <span class="t-ink">r</span> reply    <span class="t-ink">enter</span> go in    <span class="t-ink">esc</span> back
+<span class="t-done">›</span> <span class="t-ink">no. open a PR from the branch and wait for green</span>`, foot:'<b>esc</b> back' },
+    { t:' · docs · peek', r:'1 needs you', cap:'shift-tab jumps to the next one. A question, answered in a line.',
+      pre:`<span class="t-box">│</span> The tutorial needs a first link. Which page should it point to?
+
+  <span class="t-ink">r</span> reply    <span class="t-ink">enter</span> go in    <span class="t-ink">esc</span> back
+<span class="t-done">›</span> <span class="t-ink">docs/tutorials/first-gate.md</span>`, foot:'<b>esc</b> back' },
+    { t:'', r:'0 need you', cap:'Back to quiet. The count in the title is the same one on your phone.',
+      pre:`<span class="t-dim">WORKING</span>
+<span class="t-hl"> <span class="t-work">●</span> gate-refactor  claude
+   opening PR                     20s</span>
+ <span class="t-work">●</span> docs           pi
+   writing the tutorial link       8s
+ <span class="t-work">●</span> flaky-socket   codex
+   go test -p 1 -count=20         14m
+
+<span class="t-dim">Nothing needs you.</span>`,
+      side:`<span class="t-dim">gate-refactor · claude · wt/gate-refactor</span>
+
+Understood. Opening a PR from the branch
+and waiting for checks.
+
+<span class="t-dim">$</span> gh pr create --fill --base master
+<span class="t-done">https://github.com/.../pull/413</span>
+Waiting for checks.`, foot:'<b>space</b> peek <b>enter</b> go in <b>ctrl-t</b> talk' },
+  ];
+  let wi = 0, playing = !matchMedia('(prefers-reduced-motion: reduce)').matches, timer = null;
+  const wPre = document.getElementById('wPre'), wCap = document.getElementById('wCap'), wFoot = document.getElementById('wFoot');
+  const wTitle = document.getElementById('wTitle'), wRight = document.getElementById('wRight'), wDots = document.getElementById('wDots');
+  wDots.innerHTML = FRAMES.map((_, i) => `<i data-i="${i}"></i>`).join('');
+  function show(i){
+    wi = (i + FRAMES.length) % FRAMES.length; const f = FRAMES[wi];
+    wPre.innerHTML = f.side ? `<div class="split"><pre>${f.pre}</pre><pre>${f.side}</pre></div>` : `<pre>${f.pre}</pre>`; wCap.textContent = f.cap; wFoot.innerHTML = f.foot; wTitle.textContent = f.t; wRight.textContent = f.r;
+    wDots.querySelectorAll('i').forEach((d, j) => d.classList.toggle('on', j === wi));
+  }
+  function tick(){ if (playing) show(wi + 1); }
+  function setPlay(p){ playing = p; document.getElementById('wPlay').textContent = p ? 'pause' : 'play'; clearInterval(timer); if (p) timer = setInterval(tick, 4200); }
+  document.getElementById('wPrev').onclick = () => { setPlay(false); show(wi - 1); };
+  document.getElementById('wNext').onclick = () => { setPlay(false); show(wi + 1); };
+  document.getElementById('wPlay').onclick = () => setPlay(!playing);
+  wDots.onclick = e => { if (e.target.dataset.i) { setPlay(false); show(+e.target.dataset.i); } };
+  show(0); setPlay(playing);
+</script>
+</div>
+<script>window.ITEMS = [{"slug": "claude-agent-view-1", "file": "img/claude-agent-view-1.jpg", "title": "Claude Code", "group": "vendor", "source_page": "https://code.claude.com/docs/en/agent-view", "image_url": "https://mintcdn.com/claude-code/1B48Qz2Z9hac4SLG/images/agent-view-light.png", "caption": "Claude Code's agent view (light theme) lists sessions grouped under Needs input, Working, and Completed, each with a short status line and elapsed time.", "width": 1772, "height": 780, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "Roster grouped by whether you are needed. Space peeks, Enter attaches, the count sits in the tab title."}, {"slug": "claude-agent-view-2", "file": "img/claude-agent-view-2.jpg", "title": "Claude Code", "group": "vendor", "source_page": "https://code.claude.com/docs/en/agent-view", "image_url": "https://mintcdn.com/claude-code/1B48Qz2Z9hac4SLG/images/agent-view-dark.png", "caption": "Claude Code's agent view (dark theme) with the same grouped roster, shown as an empty-ish state with one session in each column.", "width": 1772, "height": 780, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "Roster grouped by whether you are needed. Space peeks, Enter attaches, the count sits in the tab title."}, {"slug": "claude-agent-view-3", "file": "img/claude-agent-view-3.png", "title": "Claude Code", "group": "vendor", "source_page": "https://claude.com/blog/agent-view-in-claude-code", "image_url": "https://cdn.prod.website-files.com/68a44d4040f98a4adf2207b6/6a02147d18cd3a9a9fe18c4f_aef149a9.png", "caption": "Claude Code's agent view populated with 13 sessions across Needs input, Working, and Completed columns, each row showing a one-line status summary and age.", "width": 1673, "height": 665, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "Roster grouped by whether you are needed. Space peeks, Enter attaches, the count sits in the tab title."}, {"slug": "cursor-agents-window-1", "file": "img/cursor-agents-window-1.png", "title": "Cursor", "group": "vendor", "source_page": "https://cursor.com/blog/cursor-3", "image_url": "https://ptht05hbb1ssoooe.public.blob.vercel-storage.com/assets/changelog/agent-tabs", "caption": "Cursor 3's Agents Window with two parallel agent tabs open, each running its own task with its own plan and diff, alongside a normal code editor pane.", "width": 1833, "height": 1179, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Agents window and inbox. Field note only."}, {"slug": "devin-command-center-1", "file": "img/devin-command-center-1.png", "title": "Devin Desktop", "group": "vendor", "source_page": "https://docs.devin.ai/desktop/agent-command-center", "image_url": "https://exafunction.github.io/public/images/blog/windsurf-2-0/agent-editor-open.mp4", "caption": "A frame from Devin Desktop's demo video showing the Agent Command Center Kanban board, with sessions grouped into Running, Blocked, and Ready columns under named Spaces in the sidebar.", "width": 1864, "height": 1080, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "The unit of work sits above the pane. One worktree per unit."}, {"slug": "devin-spaces-1", "file": "img/devin-spaces-1.png", "title": "Devin Desktop", "group": "vendor", "source_page": "https://docs.devin.ai/desktop/spaces", "image_url": "https://exafunction.github.io/public/images/blog/windsurf-2-0/user-switching-between-spaces.mp4", "caption": "A frame from Devin Desktop's demo video showing a Space with multiple agent session tabs open side by side next to a Devin Cloud chat panel.", "width": 1864, "height": 1080, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "The unit of work sits above the pane. One worktree per unit."}, {"slug": "antigravity-agent-panel-1", "file": "img/antigravity-agent-panel-1.png", "title": "Google Antigravity", "group": "vendor", "source_page": "https://antigravity.google/docs/ide/agent-side-panel/", "image_url": "https://antigravity.google/assets/image/docs/editor/editor_agent_panel.png", "caption": "The Antigravity editor with its Agent side panel open on one session, and an 'Open Agent Manager' link in the title bar that switches to the multi-agent Kanban view.", "width": 3306, "height": 1824, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Inbox and agent manager. The manager surface claim was refuted."}, {"slug": "antigravity-teamwork-diagram-1", "file": "img/antigravity-teamwork-diagram-1.svg", "title": "Google Antigravity", "group": "vendor", "source_page": "https://antigravity.google/blog/teamwork-when-ai-becomes-a-research-partner", "image_url": "https://antigravity.google/assets/image/blog/teamwork-multi-agent-architecture.svg", "caption": "A diagram of Antigravity's multi-agent workflow architecture with four stages (Scoping, Coordination, Execution, Verification), showing parallel execution tracks with file locks feeding into multi-angle verification.", "width": 988, "height": 188, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Inbox and agent manager. The manager surface claim was refuted."}, {"slug": "jetbrains-acp-registry-1", "file": "img/jetbrains-acp-registry-1.png", "title": "JetBrains ACP Agent Registry", "group": "vendor", "source_page": "https://blog.jetbrains.com/ai/2026/01/acp-agent-registry/", "image_url": "https://blog.jetbrains.com/wp-content/uploads/2026/01/JB-social-BlogSocialShare-1280x720-1-4.png", "caption": "JetBrains' ACP Agent Registry panel listing installable AI coding agents (Factory Droid, Gemini CLI, Mistral Vibe, OpenCode, Auggie CLI, Codex CLI, GitHub Copilot) each with a version, publisher, and Install/Uninstall button.", "width": 1280, "height": 720, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference", "note": "A registry of agents that speak the protocol."}, {"slug": "symphony-demo-poster-1", "file": "img/symphony-demo-poster-1.jpg", "title": "OpenAI Symphony", "group": "vendor", "source_page": "https://github.com/openai/symphony", "image_url": "https://raw.githubusercontent.com/openai/symphony/HEAD/.github/media/symphony-demo-poster.jpg", "caption": "A Linear project board used as Symphony's control plane, with agent-worked issues moving through Backlog, Todo, In Progress, and Human Review columns.", "width": 1920, "height": 1080, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "Linear issues as the control plane. Exists because three to five live sessions is the human ceiling."}, {"slug": "symphony-screenshot-1", "file": "img/symphony-screenshot-1.png", "title": "OpenAI Symphony", "group": "vendor", "source_page": "https://github.com/openai/symphony", "image_url": "https://raw.githubusercontent.com/openai/symphony/HEAD/.github/media/elixir-screenshot.png", "caption": "Symphony's terminal status view listing 19 of 50 running Codex agents by ID, stage (Todo/In Progress/Rework), PID, age, token counts, and the last event each agent emitted.", "width": 1824, "height": 1016, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "Linear issues as the control plane. Exists because three to five live sessions is the human ceiling."}, {"slug": "zed-agent-panel-1", "file": "img/zed-agent-panel-1.png", "title": "Zed", "group": "vendor", "source_page": "https://zed.dev/agentic", "image_url": "https://zed.dev/img/agentic/posters/explore-poster.webp", "caption": "The Zed editor with its built-in Agent panel open on a chat thread, next to open code tabs, with a list of past agent interactions below the composer.", "width": 2048, "height": 1447, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "JSON-RPC over stdio. An agent is a command and its args. The only multi-vendor swappable-frontend protocol."}, {"slug": "acp-architecture-1", "file": "img/acp-architecture-1.svg", "title": "Agent Client Protocol", "group": "protocol", "source_page": "https://agentclientprotocol.com/get-started/architecture", "image_url": "https://mintcdn.com/zed-685ed6d6/ZwvtxaoaZwBJrK5s/images/server-client.svg", "caption": "A diagram of the Agent Client Protocol's client/server setup, showing the code editor spawning an agent sub-process and communicating over stdin/stdout, with one connection supporting several concurrent sessions.", "width": 579, "height": 455, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "JSON-RPC over stdio. An agent is a command and its args. The only multi-vendor swappable-frontend protocol."}, {"slug": "acp-architecture-2", "file": "img/acp-architecture-2.svg", "title": "Agent Client Protocol", "group": "protocol", "source_page": "https://agentclientprotocol.com/get-started/architecture", "image_url": "https://mintcdn.com/zed-685ed6d6/ZwvtxaoaZwBJrK5s/images/mcp.svg", "caption": "A diagram of how a code editor forwards its user-configured MCP server settings to an ACP agent so the agent can connect to those MCP servers directly.", "width": 689, "height": 440, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "JSON-RPC over stdio. An agent is a command and its args. The only multi-vendor swappable-frontend protocol."}, {"slug": "ccmanager-tui-1", "file": "img/ccmanager-tui-1.png", "title": "CCManager", "group": "oss", "source_page": "https://github.com/kbwo/ccmanager", "image_url": "https://github.com/user-attachments/assets/47d62483-ce81-4340-8687-8afcae93d5db", "caption": "CCManager's terminal UI configuration screen for setting the command and arguments used to launch a Claude Code session; the README's other demo is a video that this environment's ffmpeg build could not decode.", "width": 947, "height": 437, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Field note only. Nothing survived verification."}, {"slug": "claudesquad-tui-1", "file": "img/claudesquad-tui-1.png", "title": "Claude Squad", "group": "oss", "source_page": "https://github.com/smtg-ai/claude-squad", "image_url": "https://raw.githubusercontent.com/smtg-ai/claude-squad/HEAD/assets/screenshot.png", "caption": "Claude Squad's README screenshot of its terminal UI, listing multiple named agent sessions (each isolated in its own git worktree and tmux session) alongside a live preview pane.", "width": 2700, "height": 1974, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Field note only. Nothing survived verification."}, {"slug": "nimbalyst-kanban-1", "file": "img/nimbalyst-kanban-1.webp", "title": "Crystal / Nimbalyst", "group": "oss", "source_page": "https://nimbalyst.com/", "image_url": "https://nimbalyst.com/_astro/feature-session-kanban.CPa-_1cP_Z1PEj87.webp", "caption": "Nimbalyst's Kanban board of AI agent sessions grouped into Backlog, Planning, Implementing, Validating, and Complete columns; Nimbalyst is the February 2026 replacement for the deprecated Crystal multi-session Claude Code manager.", "width": 1920, "height": 1080, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Field note only. Nothing survived verification."}, {"slug": "nimbalyst-session-history-1", "file": "img/nimbalyst-session-history-1.webp", "title": "Crystal / Nimbalyst", "group": "oss", "source_page": "https://nimbalyst.com/", "image_url": "https://nimbalyst.com/_astro/ai-session-history.BGRqWm8x_7dE6N.webp", "caption": "Nimbalyst's session view showing a running agent's file diff, a generated chart, and the per-file changed-lines list in the git worktree it was assigned.", "width": 1920, "height": 1080, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Field note only. Nothing survived verification."}, {"slug": "gastown-maggie-cover-1", "file": "img/gastown-maggie-cover-1.webp", "title": "Gas Town", "group": "oss", "source_page": "https://maggieappleton.com/gastown", "image_url": "https://maggieappleton.com/_astro/gastown-cover.MQ123FFP.webp", "caption": "Maggie Appleton's illustrated cover for her Gas Town essay: a steampunk town with a Mayor's Tower, an activity feed signboard, and ferret-like polecat workers carrying glowing beads of work.", "width": 1400, "height": 764, "fetched": "2026-09-12", "verdict": "avoid", "verdict_label": "avoid", "note": "A vocabulary to learn, orphaned processes, and skip-permissions required. Its one durable idea is a single agent you talk to."}, {"slug": "gastown-maggie-roles-1", "file": "img/gastown-maggie-roles-1.jpg", "title": "Gas Town", "group": "oss", "source_page": "https://maggieappleton.com/gastown", "image_url": "https://maggieappleton.com/_astro/gastown-roles.BBVKcT2U_1zf9It.jpg", "caption": "Maggie Appleton's 'Cognition Engine' diagram for Gas Town, a labeled steam locomotive mapping each Gas Town role (Mayor, Deacon, Refinery, Convoys, Polecats, Crew, Beads, Witnesses, Overseer) onto a train part.", "width": 800, "height": 437, "fetched": "2026-09-12", "verdict": "avoid", "verdict_label": "avoid", "note": "A vocabulary to learn, orphaned processes, and skip-permissions required. Its one durable idea is a single agent you talk to."}, {"slug": "gastown-maggie-stages-1", "file": "img/gastown-maggie-stages-1.jpg", "title": "Gas Town", "group": "oss", "source_page": "https://maggieappleton.com/gastown", "image_url": "https://maggieappleton.com/_astro/stages.DsV9pnrr_Z1RcwPm.jpg", "caption": "Maggie Appleton's diagram of the stages of multi-agent coding UIs, from a single chat window through YOLO mode to a full orchestrator tree of parallel Claude Code instances.", "width": 800, "height": 436, "fetched": "2026-09-12", "verdict": "avoid", "verdict_label": "avoid", "note": "A vocabulary to learn, orphaned processes, and skip-permissions required. Its one durable idea is a single agent you talk to."}, {"slug": "herdr-roster-1", "file": "img/herdr-roster-1.png", "title": "Herdr", "group": "oss", "source_page": "https://github.com/herdrdev/herdr", "image_url": "https://github.com/user-attachments/assets/043ec09f-4bdd-41d5-aee0-8fda6b83e267", "caption": "Frame from Herdr's README demo video showing the left-hand agent roster (security-droid working, security-codex idle, perf-claude done) beside two terminal panes running coding agents.", "width": 1280, "height": 720, "fetched": "2026-09-12", "verdict": "watch", "verdict_label": "competitor", "note": "The one to match. Rust, ratatui, real PTYs, hooks for state, a phone client. coppice reaches parity, then goes quieter."}, {"slug": "herdr-roster-2", "file": "img/herdr-roster-2.png", "title": "Herdr", "group": "oss", "source_page": "https://github.com/herdrdev/herdr", "image_url": "https://github.com/user-attachments/assets/043ec09f-4bdd-41d5-aee0-8fda6b83e267", "caption": "Frame from Herdr's README demo video showing the agent roster sidebar with per-agent status labels blocked, idle, and working.", "width": 1280, "height": 720, "fetched": "2026-09-12", "verdict": "watch", "verdict_label": "competitor", "note": "The one to match. Rust, ratatui, real PTYs, hooks for state, a phone client. coppice reaches parity, then goes quieter."}, {"slug": "multica-board-1", "file": "img/multica-board-1.webp", "title": "Multica", "group": "oss", "source_page": "https://github.com/multica-ai/multica", "image_url": "https://raw.githubusercontent.com/multica-ai/multica/HEAD/apps/docs/public/images/docs/workspace-overview.webp", "caption": "Multica's Linear-style issue board where cards are assigned to a mix of human teammates and named AI agents (Claude, Codex, Cursor, OpenClaw, Hermes, Kimi) moving across Backlog/Todo/In Progress/In Review/Done/Blocked columns.", "width": 1600, "height": 900, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Field note only. Nothing survived verification."}, {"slug": "paperclip-issue-1", "file": "img/paperclip-issue-1.png", "title": "Paperclip", "group": "oss", "source_page": "https://github.com/paperclipai/paperclip", "image_url": "https://github.com/user-attachments/assets/773bdfb2-6d1e-4e30-8c5f-3487d5b70c8f", "caption": "Frame from Paperclip's README demo video showing an issue detail view with a live agent run panel, assigned to an agent named CMO.", "width": 1280, "height": 800, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Field note only. Nothing survived verification."}, {"slug": "paperclip-orgchart-1", "file": "img/paperclip-orgchart-1.png", "title": "Paperclip", "group": "oss", "source_page": "https://github.com/paperclipai/paperclip", "image_url": "https://github.com/user-attachments/assets/773bdfb2-6d1e-4e30-8c5f-3487d5b70c8f", "caption": "Frame from Paperclip's README demo video showing its org-chart view of AI agents as company roles (CEO, CMO, CTO, ClaudeCoder, CodexCoder) in a reporting hierarchy.", "width": 1280, "height": 800, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Field note only. Nothing survived verification."}, {"slug": "plait-worktops", "file": "img/plait-worktops.jpg", "title": "Plait", "group": "oss", "source_page": "https://tybug.dev/plait/", "image_url": "https://raw.githubusercontent.com/Liam-DeVoe/plait/HEAD/images/homepage.png", "caption": "Plait's worktops page: worktrees grouped by repository, one row each with its branch, PR, CI state and tend state, and a red edge on a failing row. A daemon keeps each branch merged with main and opens a session when CI fails or a conflict appears.", "width": 1600, "height": 1075, "fetched": "2026-09-23", "verdict": "steal", "verdict_label": "steal", "note": "Local files follow the worktree, a watcher that fixes conflicts and red CI, auto-named work, review a PR locally. See docs/research/plait-2026-09-23.md."}, {"slug": "vibekanban-overview-1", "file": "img/vibekanban-overview-1.png", "title": "Vibe Kanban", "group": "oss", "source_page": "https://github.com/BloopAI/vibe-kanban", "image_url": "https://raw.githubusercontent.com/BloopAI/vibe-kanban/HEAD/packages/public/vibe-kanban-screenshot-overview.png", "caption": "Vibe Kanban's project overview screen, a Kanban board of coding-agent tasks in columns such as To Do, In Progress, In Review, and Done.", "width": 3044, "height": 2160, "fetched": "2026-09-12", "verdict": "avoid", "verdict_label": "avoid", "note": "Shut down 2026-04-10 with about thirty thousand monthly users. The kanban layer is the part that died."}, {"slug": "vibekanban-workspace-1", "file": "img/vibekanban-workspace-1.png", "title": "Vibe Kanban", "group": "oss", "source_page": "https://github.com/BloopAI/vibe-kanban", "image_url": "https://raw.githubusercontent.com/BloopAI/vibe-kanban/HEAD/packages/public/vibe-kanban-screenshot-workspace.png", "caption": "Vibe Kanban's task workspace view, showing an individual task's agent conversation and diff alongside the board.", "width": 3430, "height": 1348, "fetched": "2026-09-12", "verdict": "avoid", "verdict_label": "avoid", "note": "Shut down 2026-04-10 with about thirty thousand monthly users. The kanban layer is the part that died."}, {"slug": "cmux-iphone-1", "file": "img/cmux-iphone-1.png", "title": "cmux", "group": "oss", "source_page": "https://cmux.com", "image_url": "https://cmux.com", "caption": "cmux's iPhone app mirroring the desktop sessions.", "width": 1318, "height": 2717, "fetched": "2026-09-12", "verdict": "watch", "verdict_label": "competitor", "note": "Ghostty inside, vertical tabs per branch, a ring that lights when an agent needs you, a phone mirror. The closest shape to coppice on a Mac."}, {"slug": "cmux-landing-1", "file": "img/cmux-landing-1.png", "title": "cmux", "group": "oss", "source_page": "https://cmux.com", "image_url": "https://cmux.com", "caption": "cmux's main screen: vertical tabs in a sidebar showing branches and working directories, split panes, and notification rings that light when an agent needs attention.", "width": 3840, "height": 2224, "fetched": "2026-09-12", "verdict": "watch", "verdict_label": "competitor", "note": "Ghostty inside, vertical tabs per branch, a ring that lights when an agent needs you, a phone mirror. The closest shape to coppice on a Mac."}, {"slug": "cmux-og-1", "file": "img/cmux-og-1.png", "title": "cmux", "group": "oss", "source_page": "https://cmux.com", "image_url": "https://cmux.com", "caption": "cmux's social image, a native macOS terminal built on Ghostty for many agent sessions.", "width": 2400, "height": 1260, "fetched": "2026-09-12", "verdict": "watch", "verdict_label": "competitor", "note": "Ghostty inside, vertical tabs per branch, a ring that lights when an agent needs you, a phone mirror. The closest shape to coppice on a Mac."}, {"slug": "herdr-web-phone-1", "file": "img/herdr-web-phone-1.png", "title": "herdr-web (phone/mobile client)", "group": "oss", "source_page": "https://github.com/eyalev/herdr-web", "image_url": "https://github.com/user-attachments/assets/7062da6d-f65e-45e7-a695-1d6bbe116a03", "caption": "Frame from herdr-web's README demo video showing Herdr's own docs page describing its mobile-first responsive switcher, with an inset iPhone screenshot of Herdr running on a phone lock screen.", "width": 1280, "height": 800, "fetched": "2026-09-12", "verdict": "watch", "verdict_label": "competitor", "note": "The one to match. Rust, ratatui, real PTYs, hooks for state, a phone client. coppice reaches parity, then goes quieter."}, {"slug": "herdr-web-split-1", "file": "img/herdr-web-split-1.png", "title": "herdr-web (phone/mobile client)", "group": "oss", "source_page": "https://github.com/eyalev/herdr-web", "image_url": "https://github.com/user-attachments/assets/7062da6d-f65e-45e7-a695-1d6bbe116a03", "caption": "Frame from herdr-web's README demo video showing its split view: the Herdr terminal agent on the left and the real running app rendered live in an iframe on the right.", "width": 1280, "height": 800, "fetched": "2026-09-12", "verdict": "watch", "verdict_label": "competitor", "note": "The one to match. Rust, ratatui, real PTYs, hooks for state, a phone client. coppice reaches parity, then goes quieter."}, {"slug": "lazybox-inbox-1", "file": "img/lazybox-inbox-1.gif", "title": "lazybox", "group": "oss", "source_page": "https://github.com/AntoineToussaint/lazybox", "image_url": "https://raw.githubusercontent.com/AntoineToussaint/lazybox/HEAD/demo/lazybox.gif", "caption": "lazybox's animated demo: a lazygit-style inbox on the left listing live PRs and issues with model-tier and agent-state badges, and an opened workspace on the right streaming a live agent terminal.", "width": 2560, "height": 1440, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "lazygit shape. A worktree and a PTY per row. One key jumps to the one waiting on you."}, {"slug": "lazybox-inbox-2", "file": "img/lazybox-inbox-2.png", "title": "lazybox", "group": "oss", "source_page": "https://github.com/AntoineToussaint/lazybox", "image_url": "https://raw.githubusercontent.com/AntoineToussaint/lazybox/HEAD/demo/lazybox.png", "caption": "lazybox's static screenshot of the same inbox-plus-workspace layout, generated from code rather than a screen recording.", "width": 2560, "height": 1440, "fetched": "2026-09-12", "verdict": "steal", "verdict_label": "steal", "note": "lazygit shape. A worktree and a PTY per row. One key jumps to the one waiting on you."}, {"slug": "0ad-units-1", "file": "img/0ad-units-1.jpg", "title": "0 A.D. Spartan town", "group": "inspiration", "source_page": "https://commons.wikimedia.org/wiki/File:0_A.D._alpha_25_-_playing_as_Spartans.jpg", "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/0_A.D._alpha_25_-_playing_as_Spartans.jpg?width=1600", "caption": "Gameplay screenshot from the open-source RTS 0 A.D. showing a Spartan town with the unit-selection panel and minimap.", "license": "CC BY-SA 3.0 (Wikimedia Commons)", "width": 1920, "height": 1080, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "atc-radar-1", "file": "img/atc-radar-1.jpg", "title": "Air traffic control radar scope", "group": "inspiration", "source_page": "https://commons.wikimedia.org/wiki/File:Radar_monitoring_current_Dulles_air_traffic_(11139815845).jpg", "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Radar%20monitoring%20current%20Dulles%20air%20traffic%20(11139815845).jpg?width=1600", "caption": "A close-up of an air traffic controller's radar display console showing live aircraft tracks near Dulles.", "license": "CC BY 2.0", "width": 1920, "height": 1421, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "apollo-mocr-1", "file": "img/apollo-mocr-1.jpg", "title": "Apollo 11 Mission Operations Control Room", "group": "inspiration", "source_page": "https://commons.wikimedia.org/wiki/File:Mission_Operations_Control_Room_at_the_conclusion_of_Apollo_11.jpg", "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Mission%20Operations%20Control%20Room%20at%20the%20conclusion%20of%20Apollo%2011.jpg?width=1600", "caption": "Wide view of NASA's Mission Operations Control Room in Houston, rows of consoles facing the big screens, at the conclusion of Apollo 11.", "license": "public domain (NASA)", "width": 1920, "height": 1272, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "bloomberg-keyboard-1", "file": "img/bloomberg-keyboard-1.jpg", "title": "Bloomberg Terminal keyboard", "group": "inspiration", "source_page": "https://commons.wikimedia.org/wiki/File:Bloomberg_terminal_keyboard.jpg", "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Bloomberg%20terminal%20keyboard.jpg?width=1600", "caption": "A Bloomberg Terminal keyboard with its color-coded function keys on a desk in front of dual monitors.", "license": "CC BY-SA (Wikimedia Commons)", "width": 1600, "height": 1200, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "braun-sk4-1", "file": "img/braun-sk4-1.jpg", "title": "Braun SK4 phonograph", "group": "inspiration", "source_page": "https://commons.wikimedia.org/wiki/File:Braun_SK_4.1.jpg", "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Braun%20SK%204.1.jpg?width=1600", "caption": "The Braun SK4 record player and radio, designed by Dieter Rams and Hans Gugelot, known as Snow White's Coffin.", "license": "CC BY-SA (Wikimedia Commons)", "width": 1920, "height": 1440, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "factorio-production-1", "file": "img/factorio-production-1.jpg", "title": "Factorio rocket silo complex", "group": "inspiration", "source_page": "https://www.factorio.com/press-kit", "image_url": "https://www.factorio.com/static/img/screenshots/screenshot-1.jpg", "caption": "A dense Factorio production base of belts, pipes and assemblers surrounding an active rocket silo.", "license": "press kit", "width": 1920, "height": 1080, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "signalbox-diagram-1", "file": "img/signalbox-diagram-1.jpg", "title": "Illuminated railway track diagram panel", "group": "inspiration", "source_page": "https://commons.wikimedia.org/wiki/File:I12_449_Bf_Naunhof_Stw_1,_Gleisbildpult.jpg", "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/I12%20449%20Bf%20Naunhof%20Stw%201,%20Gleisbildpult.jpg?width=1600", "caption": "An illuminated track-diagram control desk (Gleisbildpult) inside a German railway signal box at Naunhof.", "license": "CC BY-SA (Wikimedia Commons)", "width": 1920, "height": 1280, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "neovide-ui-1", "file": "img/neovide-ui-1.png", "title": "Neovide GUI", "group": "inspiration", "source_page": "https://github.com/neovide/neovide", "image_url": "https://raw.githubusercontent.com/neovide/neovide/HEAD/website/docs/assets/BasicScreenCap.png", "caption": "Neovide, a GPU-rendered GUI front end for Neovim, editing a Rust source file.", "license": "MIT (neovide repo)", "width": 1273, "height": 801, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "omarchy-desktop-1", "file": "img/omarchy-desktop-1.webp", "title": "Omarchy tiled desktop", "group": "inspiration", "source_page": "https://github.com/basecamp/omarchy/blob/master/manual/04-navigation.md", "image_url": "https://raw.githubusercontent.com/basecamp/omarchy/HEAD/manual/images/navigation-fourway-tiling.webp", "caption": "Omarchy's Hyprland desktop tiled four ways: a browser, terminal, system monitor, and file manager.", "license": "MIT (omarchy repo manual)", "width": 1600, "height": 900, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "rimworld-colonist-1", "file": "img/rimworld-colonist-1.jpg", "title": "RimWorld character overview", "group": "inspiration", "source_page": "https://rimworldgame.com", "image_url": "https://rimworldgame.com/images/screens/rimworld-colonist.jpg", "caption": "RimWorld's character-creation screen showing a colonist's skills, traits, health and possessions.", "license": "official site screenshot (press use)", "width": 1920, "height": 1080, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "rimworld-colony-1", "file": "img/rimworld-colony-1.jpg", "title": "RimWorld colony overview", "group": "inspiration", "source_page": "https://rimworldgame.com", "image_url": "https://rimworldgame.com/images/screens/rimworld-colony.jpg", "caption": "Top-down RimWorld colony view with individually named colonists working rooms, fields and solar panels.", "license": "official site screenshot (press use)", "width": 1920, "height": 1080, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "btop-monitor-1", "file": "img/btop-monitor-1.png", "title": "btop system monitor", "group": "inspiration", "source_page": "https://github.com/aristocratos/btop", "image_url": "https://raw.githubusercontent.com/aristocratos/btop/HEAD/Img/normal.png", "caption": "The btop terminal system monitor showing CPU, memory, disk, network and process panels.", "license": "Apache-2.0 (btop repo)", "width": 1045, "height": 658, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "k9s-tui-1", "file": "img/k9s-tui-1.png", "title": "k9s pod list view", "group": "inspiration", "source_page": "https://github.com/derailed/k9s", "image_url": "https://raw.githubusercontent.com/derailed/k9s/HEAD/assets/screen_po.png", "caption": "The k9s terminal UI listing Kubernetes pods with live resource stats.", "license": "Apache-2.0 (k9s repo)", "width": 1138, "height": 542, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "lazygit-tui-1", "file": "img/lazygit-tui-1.gif", "title": "lazygit interactive rebase", "group": "inspiration", "source_page": "https://github.com/jesseduffield/lazygit", "image_url": "https://raw.githubusercontent.com/jesseduffield/lazygit/assets/demo/interactive_rebase-compressed.gif", "caption": "The lazygit terminal UI demonstrating an interactive git rebase.", "license": "MIT (lazygit repo)", "width": 1140, "height": 828, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "tmux-panes-1", "file": "img/tmux-panes-1.png", "title": "tmux session with powerline status bar", "group": "inspiration", "source_page": "https://commons.wikimedia.org/wiki/File:Tmux-powerline.png", "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Tmux-powerline.png?width=1600", "caption": "A tmux session split into three panes (fortune, ipython, a git status shell) with a powerline-styled status bar listing windows.", "license": "CC BY-SA (Wikimedia Commons)", "width": 1158, "height": 739, "fetched": "2026-09-12", "verdict": "reference", "verdict_label": "reference"}, {"slug": "agentcraft-demo-1", "file": "img/agentcraft-demo-1.png", "title": "AgentCraft", "group": "startup", "source_page": "https://www.getagentcraft.com/", "image_url": "https://pub-4e483d8b5bc94bb1858805d3be414039.r2.dev/demo.png", "caption": "AgentCraft's RTS-style interface: named hero units represent running coding agents on a Warcraft-style map, with an agent roster list, activity feed, and chat panel.", "width": 1912, "height": 1080, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unproven", "note": "An RTS canvas shipped. No adoption evidence either way."}, {"slug": "agentcraft-og-1", "file": "img/agentcraft-og-1.png", "title": "AgentCraft", "group": "startup", "source_page": "https://www.getagentcraft.com/", "image_url": "https://getagentcraft.com/opengraph-image.png", "caption": "AgentCraft's marketing hero image over its in-game RTS background, reading 'The agent orchestrator you've trained for.'", "width": 1200, "height": 630, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unproven", "note": "An RTS canvas shipped. No adoption evidence either way."}, {"slug": "conductor-hero-dark-1", "file": "img/conductor-hero-dark-1.webp", "title": "Conductor", "group": "startup", "source_page": "https://conductor.build/", "image_url": "https://www.conductor.build/conductor-app-hero-dark.webp", "caption": "Conductor's macOS app (dark theme): a workspace list of parallel agent conversations on the left, an agent chat transcript in the center, and a file-change review panel with a Merge button on the right.", "width": 3022, "height": 1954, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Field note only. Nothing survived verification."}, {"slug": "superset-og-1", "file": "img/superset-og-1.png", "title": "Superset", "group": "startup", "source_page": "https://superset.sh", "image_url": "https://superset.sh/og-image.png", "caption": "Superset's marketing screenshot, 'Bring Any Agent, Orchestrate Them All,' showing tabs for Claude, Codex, OpenCode and a CLI, plus a workspace file-diff and changes panel.", "width": 2400, "height": 1260, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Field note only. Nothing survived verification."}, {"slug": "terragon-dashboard-1", "file": "img/terragon-dashboard-1.png", "title": "Terragon", "group": "startup", "source_page": "https://github.com/terragon-labs/terragon-oss", "image_url": "https://cdn.terragonlabs.com/dashboard-beRp.png", "caption": "Terragon's dashboard (screenshot preserved in its open-sourced code after the January 2026 shutdown): a task list grouped by day next to a new-task composer with model and repo pickers.", "width": 2690, "height": 1974, "fetched": "2026-09-12", "verdict": "unverified", "verdict_label": "unverified", "note": "Field note only. Nothing survived verification."}];</script>
+<script src="../_shell/board.js"></script>
+</body>
+</html>

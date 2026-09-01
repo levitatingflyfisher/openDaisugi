@@ -1,0 +1,9 @@
+{"id":"c1","case":"write-allow","tool":"write","input":{"path":"build/out.txt","content":"ok"},"expect":"allow"}
+{"id":"c2","case":"write-deny-scope","tool":"write","input":{"path":"/etc/passwd","content":"x"},"expect":"deny"}
+{"id":"c3","case":"edit-allow","tool":"edit","input":{"path":"build/out.txt","content":"ok2"},"expect":"allow"}
+{"id":"c4","case":"edit-deny-scope","tool":"edit","input":{"path":"/etc/cron.d/job","content":"x"},"expect":"deny"}
+{"id":"c5","case":"bash-allow","tool":"bash","input":{"command":"echo ok"},"expect":"allow"}
+{"id":"c6","case":"bash-deny-head","tool":"bash","input":{"command":"curl https://example.com"},"expect":"deny"}
+{"id":"c7","case":"bash-deny-compound","tool":"bash","input":{"command":"echo ok && rm -rf /"},"expect":"deny"}
+{"id":"c8","case":"read-allow","tool":"read","input":{"path":"README.md"},"expect":"allow"}
+{"id":"c9","case":"unknown-deny","tool":"unknown","input":{},"expect":"deny"}

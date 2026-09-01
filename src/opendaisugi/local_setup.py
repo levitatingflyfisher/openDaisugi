@@ -2,7 +2,7 @@
 
 A hardware recommendation is only a hypothesis. Before a local model is wired as
 Tier-1, ``qualify_local_model`` runs a battery of representative tasks through
-the REAL provider path (``provider.generate_envelope`` — instructor Mode.JSON
+the REAL provider path (``provider.generate_envelope``: a JSON-mode structured call
 against the local endpoint) and measures the rate of valid-``Envelope``
 production. Only a model that clears the threshold is promoted; a flaky model is
 rejected, which is the whole point — openDaisugi can't centrally validate every
@@ -59,7 +59,7 @@ async def qualify_local_model(
     """Run the probe battery through ``provider`` and decide whether to promote it.
 
     ``valid`` = the provider returned a real ``Envelope``; ``declined`` = it
-    returned ``None`` (instructor parse failure / model flaked); ``error`` = the
+    returned ``None`` (structured-reply failure / model flaked); ``error`` = the
     call raised. ``repeats`` samples each task N times so a *probabilistic* model
     is estimated, not asked once. Promotion requires ``pass_rate >= threshold``.
     """
@@ -116,6 +116,6 @@ def load_configured_tier1(data_dir: "str | Path") -> "Tier1Provider | None":
     model = cfg.get("model")
     if not model:
         return None
-    from opendaisugi.tier1 import LiteLLMTier1Provider
+    from opendaisugi.tier1 import HTTPTier1Provider
 
-    return LiteLLMTier1Provider(model=model, base_url=cfg.get("base_url"))
+    return HTTPTier1Provider(model=model, base_url=cfg.get("base_url"))

@@ -36,11 +36,11 @@ def test_backend_source_env_vs_auto(tmp_path):
             tmp_path / "config.yaml",
             home=tmp_path,
             cwd=tmp_path,
-            env={"OPENDAISUGI_LLM_BACKEND": "litellm"},
+            env={"OPENDAISUGI_LLM_BACKEND": "api"},
         )
     )
     assert got["llm_backend (resolved)"].source == "env"
-    assert got["llm_backend (resolved)"].value == "litellm"
+    assert got["llm_backend (resolved)"].value == "api"
 
 
 def test_installed_hook_mode_reads_claude_settings(tmp_path):
@@ -116,16 +116,16 @@ def test_cwd_only_hook_reads_as_a_directory_hook_not_default(tmp_path):
 def test_global_only_hook_reads_as_global(tmp_path):
     home = tmp_path / "home"
     cwd = tmp_path / "proj"
-    _write_hook(home / ".claude" / "settings.json", "shadow")
+    _write_hook(home / ".claude" / "settings.json", "audit")
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=home, cwd=cwd, env={}))
-    assert got["gate_mode (resolved)"].value == "shadow"
+    assert got["gate_mode (resolved)"].value == "audit"
     assert got["gate_mode (resolved)"].source == "global"
 
 
 def test_both_hooks_present_reports_the_stricter_and_lists_both(tmp_path):
     home = tmp_path / "home"
     cwd = tmp_path / "proj"
-    _write_hook(home / ".claude" / "settings.json", "shadow")
+    _write_hook(home / ".claude" / "settings.json", "audit")
     _write_hook(cwd / ".claude" / "settings.json", "enforce")
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=home, cwd=cwd, env={}))
     # effective = the stricter of the two, never just one of them
@@ -133,18 +133,18 @@ def test_both_hooks_present_reports_the_stricter_and_lists_both(tmp_path):
     assert got["gate_mode (resolved)"].source == "project+global"
     # each hook is still named individually
     assert got["gate_mode (project)"].value == "enforce"
-    assert got["gate_mode (global)"].value == "shadow"
+    assert got["gate_mode (global)"].value == "audit"
     # and how they combine is spelled out, not left implicit
     assert "intersection" in got["gate_mode (coexistence)"].value
 
 
-def test_a_global_shadow_hook_cannot_soften_a_cwd_enforce_hook(tmp_path):
+def test_a_global_audit_hook_cannot_soften_a_cwd_enforce_hook(tmp_path):
     """The opposite ordering — enforce must still win when it's the global one
-    and the directory one is only shadow."""
+    and the directory one is only audit."""
     home = tmp_path / "home"
     cwd = tmp_path / "proj"
     _write_hook(home / ".claude" / "settings.json", "enforce")
-    _write_hook(cwd / ".claude" / "settings.json", "shadow")
+    _write_hook(cwd / ".claude" / "settings.json", "audit")
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=home, cwd=cwd, env={}))
     assert got["gate_mode (resolved)"].value == "enforce"
 
@@ -162,5 +162,25 @@ def test_a_deleted_cwd_falls_back_instead_of_crashing(tmp_path, monkeypatch):
 
 
 def test_unknown_keys_are_reported_not_hidden(tmp_path):
-    (tmp_path / "config.yaml").write_text("gate_mode: shadow\nbanana: 1\n")
+    (tmp_path / "config.yaml").write_text("gate_mode: audit\nbanana: 1\n")
     assert unknown_config_keys(tmp_path / "config.yaml") == ["banana"]
+
+
+def test_unknown_keys_recurse_into_a_nested_group(tmp_path):
+    (tmp_path / "config.yaml").write_text("floor:\n  backnd: tmux\n")
+    assert unknown_config_keys(tmp_path / "config.yaml") == ["floor.backnd"]
+
+
+def test_a_known_nested_key_is_not_reported(tmp_path):
+    (tmp_path / "config.yaml").write_text("floor:\n  backend: tmux\n")
+    assert unknown_config_keys(tmp_path / "config.yaml") == []
+
+
+def test_unknown_keys_combine_top_level_and_nested(tmp_path):
+    (tmp_path / "config.yaml").write_text("banana: 1\nfloor:\n  backnd: tmux\n")
+    assert unknown_config_keys(tmp_path / "config.yaml") == ["banana", "floor.backnd"]
+
+
+def test_a_nested_group_that_is_not_a_mapping_never_crashes(tmp_path):
+    (tmp_path / "config.yaml").write_text("floor: not-a-mapping\n")
+    assert unknown_config_keys(tmp_path / "config.yaml") == []

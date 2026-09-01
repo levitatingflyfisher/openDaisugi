@@ -5,6 +5,8 @@ that a skeptical reader can verify against the code. If you want to USE the
 library, start with the README quickstart. If you want to EVALUATE it for
 adoption, read this first.
 
+For how each term here maps to functional programming, formal methods, compilers, control theory and machine learning, see [Concepts across fields](correspondence.md).
+
 ## The problem
 
 An LLM proposes an action plan. You want to run it. How do you know the plan

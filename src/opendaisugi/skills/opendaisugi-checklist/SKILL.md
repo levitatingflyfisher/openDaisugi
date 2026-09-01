@@ -65,6 +65,7 @@ description: Use when a task's failure mode is silent omission (agent forgets a 
 - [Postconditions](references/postconditions.md) — per-step verify() shapes, evidence content
 - [Contract orchestration](references/contract-orchestration.md) — Z3-backed contracts between sub-agents
 - [Cheap-model delegation](references/delegation.md) — `preferred_model`, `llm_check`, model_id selection signal (v0.19+)
+- [When to delegate a read](references/when-to-delegate.md) — the `delegate` MCP tool: a worker reads a large file and returns checked quotes
 - [Using openDaisugi via MCP](references/mcp-usage.md) — calling the same machinery as MCP tools (v0.20+)
 - [Passive capture](references/passive-capture.md) — the hook for fueling distillation from external agent runtimes (v0.21+)
 - [Git-backed shared registry](references/git-registry.md) — multiple opendaisugi instances share pathways through a git repo (v0.25+)

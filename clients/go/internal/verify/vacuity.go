@@ -10,9 +10,9 @@ import (
 type VacuityVerdict string
 
 const (
-	Tautology    VacuityVerdict = "tautology"
+	Tautology     VacuityVerdict = "tautology"
 	Contradiction VacuityVerdict = "contradiction"
-	NonTrivial   VacuityVerdict = "non_trivial"
+	NonTrivial    VacuityVerdict = "non_trivial"
 )
 
 // smtCompiler emits SMT-LIB2 text for a predicate Expression compiled over
@@ -24,12 +24,13 @@ type smtCompiler struct {
 	prefix     string
 	stringVars map[string]string
 	realVars   map[string]string
+	boolVars   map[string]bool
 	decls      []string
 	soft       []string
 }
 
 func newSMTCompiler(prefix string) *smtCompiler {
-	return &smtCompiler{prefix: prefix, stringVars: map[string]string{}, realVars: map[string]string{}}
+	return &smtCompiler{prefix: prefix, stringVars: map[string]string{}, realVars: map[string]string{}, boolVars: map[string]bool{}}
 }
 
 func (c *smtCompiler) varName(path, suffix string) string {
@@ -37,21 +38,21 @@ func (c *smtCompiler) varName(path, suffix string) string {
 }
 
 func (c *smtCompiler) stringVar(path string) string {
-	if v, ok := c.stringVars[path]; ok {
+	name := c.varName(path, "")
+	if v, ok := c.stringVars[name]; ok {
 		return v
 	}
-	name := c.varName(path, "")
-	c.stringVars[path] = name
+	c.stringVars[name] = name
 	c.decls = append(c.decls, fmt.Sprintf("(declare-const %s String)", name))
 	return name
 }
 
 func (c *smtCompiler) realVar(path string) string {
-	if v, ok := c.realVars[path]; ok {
+	name := c.varName(path, "__real")
+	if v, ok := c.realVars[name]; ok {
 		return v
 	}
-	name := c.varName(path, "__real")
-	c.realVars[path] = name
+	c.realVars[name] = name
 	c.decls = append(c.decls, fmt.Sprintf("(declare-const %s Real)", name))
 	return name
 }
@@ -241,6 +242,23 @@ func (c *smtCompiler) compileScalar(expr Expression) (string, error) {
 		return fmt.Sprintf("(=> %s %s)", a, b), nil
 	case LLMCheck:
 		return c.softBool("llm_check"), nil
+	case ForallWrites:
+		// predicate_z3._compile_forall_writes on a symbolic step: one free
+		// write path under the prefix <prefix>__w, and a free Bool that
+		// says the step writes at all.
+		outer := c.prefix
+		c.prefix = outer + "__w"
+		inner, err := c.compileScalar(e.Pred)
+		c.prefix = outer
+		if err != nil {
+			return "", err
+		}
+		nonempty := outer + "__writes_nonempty"
+		if !c.boolVars[nonempty] {
+			c.boolVars[nonempty] = true
+			c.decls = append(c.decls, fmt.Sprintf("(declare-const %s Bool)", nonempty))
+		}
+		return fmt.Sprintf("(=> %s %s)", nonempty, inner), nil
 	case AliasRef:
 		return "", fmt.Errorf("unresolved alias reference %q; resolve aliases before compilation", e.Name)
 	default:

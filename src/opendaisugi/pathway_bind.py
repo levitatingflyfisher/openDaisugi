@@ -77,10 +77,10 @@ async def bind_parameters(
         return template
 
     if client is None:
-        from opendaisugi.llm import get_instructor_client
+        from opendaisugi.llm import get_model_client
 
         try:
-            client = get_instructor_client(model=model, backend=backend)
+            client = get_model_client(model=model, backend=backend)
         except Exception as exc:  # noqa: BLE001 — no client ⇒ frozen fallback
             _log.info("bind.no_client", extra={"error": str(exc)})
             return template

@@ -180,6 +180,9 @@ def test_the_flag_is_documented_on_every_envelope_producing_command(argv):
 
 def test_install_writes_the_opt_in_to_config(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    # Claude Code's own directory: without it the runtime fails and install
+    # exits 1 (it names the failed runtime, never "already configured").
+    (tmp_path / ".claude").mkdir()
     res = runner.invoke(app, ["install", "--yes", "--runtime", "claude", _FLAG])
     assert res.exit_code == 0, res.output
     assert load_config(tmp_path / ".opendaisugi" / "config.yaml").shell_allow_decomposition

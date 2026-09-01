@@ -11,7 +11,7 @@ const CONFORMANCE_VERSION: u64 = 1;
 
 #[allow(clippy::large_enum_variant)] // one value per stdin line; not a hot allocation path
 pub enum CaseBody {
-    Verify { plan: ActionPlan, envelope: Envelope, strict: Option<bool> },
+    Verify { plan: ActionPlan, envelope: Envelope, strict: Option<bool>, pin: Option<String>, base: Option<String> },
     Decompose { command: String },
 }
 
@@ -29,7 +29,9 @@ fn parse_case(v: &Value) -> Result<(String, CaseBody), String> {
             let envelope_v = v.get("envelope").ok_or("verify case missing 'envelope'")?.clone();
             let envelope: Envelope = serde_json::from_value(envelope_v).map_err(|e| format!("envelope: {e}"))?;
             let strict = v.get("options").and_then(|o| o.get("strict")).and_then(|s| s.as_bool());
-            Ok((id, CaseBody::Verify { plan, envelope, strict }))
+            let pin = v.get("options").and_then(|o| o.get("dialect_pin")).and_then(|s| s.as_str()).map(String::from);
+            let base = v.get("options").and_then(|o| o.get("dialect_base")).and_then(|s| s.as_str()).map(String::from);
+            Ok((id, CaseBody::Verify { plan, envelope, strict, pin, base }))
         }
         "decompose" => {
             let command = v.get("command").and_then(|x| x.as_str()).ok_or("decompose case missing 'command'")?.to_string();
@@ -63,14 +65,14 @@ pub fn handle_line(line: &str, shell_parser: &mut ShellParser) -> Value {
                     json!({"id": id, "ok": false})
                 }
             }
-            CaseBody::Verify { plan, envelope, strict } => match verify::verify(&plan, &envelope, strict, shell_parser) {
+            CaseBody::Verify { plan, envelope, strict, pin, base } => match verify::verify_pin(&plan, &envelope, strict, pin.as_deref(), base.as_deref(), shell_parser) {
                 Ok(outcome) => {
                     let violations: Vec<Value> = outcome
                         .violations
                         .iter()
                         .map(|v| json!({"stage": v.stage, "step": v.step}))
                         .collect();
-                    json!({"id": id, "ok": outcome.ok, "violations": violations})
+                    json!({"id": id, "ok": outcome.ok, "violations": violations, "word_audit": outcome.word_audit})
                 }
                 Err(e) => json!({"id": id, "error": e}),
             },

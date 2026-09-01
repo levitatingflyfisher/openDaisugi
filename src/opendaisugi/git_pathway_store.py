@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -41,15 +42,34 @@ from opendaisugi.pathway_store import PathwayStore
 _log = logging.getLogger("opendaisugi.git_pathway_store")
 
 
+def git_env() -> dict[str, str]:
+    """This process's environment without any ``GIT_*`` variable.
+
+    An inherited ``GIT_DIR``, ``GIT_WORK_TREE``, ``GIT_INDEX_FILE``,
+    ``GIT_CONFIG_*`` or ``GIT_SSH_COMMAND`` would point git at another
+    repository or change what it runs, so the registry never passes one
+    on. Config files (system, user, the clone's own) still apply.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
     """Run a git subcommand in ``repo``. Raises CalledProcessError on
     non-zero exit when ``check=True`` (the default).
+
+    git runs with ``git_env()``, and ``GIT_CEILING_DIRECTORIES`` set to the
+    directory above ``repo``, so git finds a repository only in ``repo``
+    itself: a clone that lost its ``.git`` inside another repository is
+    not a registry, and git must not change the repository above it.
     """
+    env = git_env()
+    env["GIT_CEILING_DIRECTORIES"] = str(Path(repo).resolve().parent)
     return subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
         text=True,
         check=check,
+        env=env,
     )
 
 
@@ -231,11 +251,6 @@ class GitPathwayStore(PathwayStore):
             raise ValueError(
                 "GitPathwayStore.publish requires private_key_b64 at "
                 "construction; the bundle must be signed."
-            )
-        if not getattr(pathway, "publishable", True):
-            raise ValueError(
-                f"pathway {pathway.id} is not marked publishable; run "
-                f"`daisugi pathways mark-publishable {pathway.id}` first"
             )
         bundle = pathway_to_bundle(
             pathway,

@@ -7,11 +7,11 @@ postcondition-evidence JSON, and must not be forced into JSON response mode.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from opendaisugi.budget import BudgetTracker
 from opendaisugi.delegating_executor import DelegatingExecutor
+from opendaisugi.llm_client import Reply
 from opendaisugi.models import TaskStep
 from opendaisugi.orchestrator import BudgetAwareDelegatingExecutor
 
@@ -20,16 +20,13 @@ def test_json_mode_false_omits_response_format():
     exe = DelegatingExecutor(default_model="haiku", json_mode=False)
     captured = {}
 
-    def fake_completion(**kwargs):
+    def fake_completion(model, messages, **kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="a plain answer"))],
-            usage=SimpleNamespace(total_tokens=10),
-        )
+        return Reply("a plain answer", tokens=10)
 
-    with patch("litellm.completion", fake_completion):
+    with patch("opendaisugi.llm_client.complete", fake_completion):
         r = exe.run(TaskStep(id="t1", prompt="write a haiku"), timeout_s=5, max_output_bytes=1024)
-    assert "response_format" not in captured
+    assert captured.get("json_object") is False
     assert r.stdout == "a plain answer"
 
 
@@ -37,16 +34,13 @@ def test_json_mode_true_still_forces_json():
     exe = DelegatingExecutor(default_model="haiku", json_mode=True)
     captured = {}
 
-    def fake_completion(**kwargs):
+    def fake_completion(model, messages, **kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
-            usage=SimpleNamespace(total_tokens=5),
-        )
+        return Reply("{}", tokens=5)
 
-    with patch("litellm.completion", fake_completion):
+    with patch("opendaisugi.llm_client.complete", fake_completion):
         exe.run(TaskStep(id="t1", prompt="x"), timeout_s=5, max_output_bytes=1024)
-    assert captured.get("response_format") == {"type": "json_object"}
+    assert captured.get("json_object") is True
 
 
 def test_orchestrator_task_executor_prompts_with_the_subtask():

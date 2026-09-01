@@ -98,18 +98,39 @@ def _hide_embedder(monkeypatch):
     )
 
 
-def test_onboard_refuses_real_run_without_embedder(tmp_path, monkeypatch):
-    """Pathway clustering needs sentence-transformers; without it a real onboard
+def _matcher(monkeypatch, key):
+    from opendaisugi import _search
+    from opendaisugi.config import Config
+
+    monkeypatch.setattr(_search, "_active_config", lambda: Config(matcher_model=key))
+
+
+def test_onboard_refuses_real_run_with_an_unbuilt_matcher(tmp_path, monkeypatch):
+    """Pathway clustering needs a built embedder; with none a real onboard
     spends model tokens and distils ZERO token-saving pathways. Fail fast."""
-    _hide_embedder(monkeypatch)
+    _matcher(monkeypatch, "nope")
     res = runner.invoke(app, ["onboard", "--data-dir", str(tmp_path / "data")])
     assert res.exit_code == 2, res.output
-    assert "opendaisugi[search]" in res.output
+    assert "matcher_model 'nope' is not a built embedder" in res.output
+    assert "--allow-no-embedder" in res.output
+    assert not (tmp_path / "data").exists()
+
+
+def test_onboard_runs_on_the_lexical_fallback(tmp_path, monkeypatch):
+    """The default matcher with sentence-transformers absent falls back to
+    lexical (ADR-0019), which distils pathways: the check reads the matcher
+    in effect, not the package, as `status` does."""
+    _matcher(monkeypatch, "all-MiniLM-L6-v2")
+    _hide_embedder(monkeypatch)
+    monkeypatch.setenv("OPENDAISUGI_TRANSCRIPT_ROOTS", f"claude-code={tmp_path / 'empty'}")
+    res = runner.invoke(app, ["onboard", "--data-dir", str(tmp_path / "data")])
+    assert res.exit_code == 0, res.output
+    assert "not a built embedder" not in res.output
 
 
 def test_onboard_allow_no_embedder_flag_bypasses_guard(tmp_path, monkeypatch):
     # Empty root -> no LLM work; proves --allow-no-embedder gets past the guard.
-    _hide_embedder(monkeypatch)
+    _matcher(monkeypatch, "nope")
     monkeypatch.setenv("OPENDAISUGI_TRANSCRIPT_ROOTS", f"claude-code={tmp_path / 'empty'}")
     res = runner.invoke(
         app, ["onboard", "--allow-no-embedder", "--data-dir", str(tmp_path / "data")]
@@ -118,12 +139,27 @@ def test_onboard_allow_no_embedder_flag_bypasses_guard(tmp_path, monkeypatch):
     assert "no transcripts" in res.output.lower()
 
 
-def test_onboard_dry_run_notes_missing_embedder_but_proceeds(tmp_path, monkeypatch):
-    _hide_embedder(monkeypatch)
+def test_onboard_dry_run_notes_an_unbuilt_matcher_but_proceeds(tmp_path, monkeypatch):
+    _matcher(monkeypatch, "nope")
     monkeypatch.setenv("OPENDAISUGI_TRANSCRIPT_ROOTS", f"claude-code={tmp_path / 'empty'}")
     res = runner.invoke(app, ["onboard", "--dry-run", "--data-dir", str(tmp_path / "data")])
     assert res.exit_code == 0, res.output
-    assert "sentence-transformers" in res.output or "opendaisugi[search]" in res.output
+    assert "note: matcher_model 'nope' is not a built embedder" in res.output
+
+
+def test_onboard_dry_run_json_note_goes_to_stderr(tmp_path, monkeypatch):
+    """With --json, stdout is the report alone: the unbuilt-matcher note is
+    written to stderr, so the report still parses."""
+    import json
+
+    _matcher(monkeypatch, "nope")
+    monkeypatch.setenv("OPENDAISUGI_TRANSCRIPT_ROOTS", f"claude-code={tmp_path / 'empty'}")
+    res = runner.invoke(
+        app, ["onboard", "--dry-run", "--json", "--data-dir", str(tmp_path / "data")]
+    )
+    assert res.exit_code == 0, res.output
+    json.loads(res.stdout)
+    assert "note: matcher_model 'nope' is not a built embedder" in res.stderr
 
 
 def test_onboard_no_transcripts_is_clean_exit(tmp_path, monkeypatch):

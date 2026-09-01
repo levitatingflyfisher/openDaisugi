@@ -104,6 +104,18 @@ type ForallOutputs struct{ Pred Expression }
 
 func (ForallOutputs) Op() string { return "forall_outputs" }
 
+// ForallWrites is predicate.ForallWrites: pred holds for every write path
+// of one step (write_paths.step_write_paths), each seen as the field path.
+type ForallWrites struct {
+	Pred Expression
+	// Base is the directory relative write paths resolve against. Only an
+	// unfolded word sets it (UnfoldWord, from the call's cwd); it is never
+	// parsed.
+	Base string
+}
+
+func (ForallWrites) Op() string { return "forall_writes" }
+
 type DependsOn struct{ StepIDA, StepIDB string }
 
 func (DependsOn) Op() string { return "depends_on" }
@@ -126,23 +138,23 @@ func (LLMCheck) Op() string { return "llm_check" }
 // exprJSON is the union of every field any Expression variant might carry —
 // parsed once, then dispatched on Op.
 type exprJSON struct {
-	Op        string            `json:"op"`
-	Path      *string           `json:"path"`
-	Value     json.RawMessage   `json:"value"`
-	Values    []json.RawMessage `json:"values"`
-	Regex     *string           `json:"regex"`
-	Min       *float64          `json:"min"`
-	Max       *float64          `json:"max"`
-	Children  []json.RawMessage `json:"children"`
-	Child     json.RawMessage   `json:"child"`
-	A         json.RawMessage   `json:"a"`
-	B         json.RawMessage   `json:"b"`
-	Pred      json.RawMessage   `json:"pred"`
-	StepIDA   *string           `json:"step_id_a"`
-	StepIDB   *string           `json:"step_id_b"`
-	Name      *string           `json:"name"`
-	Args      map[string]interface{} `json:"args"`
-	Rule      *string           `json:"rule"`
+	Op       string                 `json:"op"`
+	Path     *string                `json:"path"`
+	Value    json.RawMessage        `json:"value"`
+	Values   []json.RawMessage      `json:"values"`
+	Regex    *string                `json:"regex"`
+	Min      *float64               `json:"min"`
+	Max      *float64               `json:"max"`
+	Children []json.RawMessage      `json:"children"`
+	Child    json.RawMessage        `json:"child"`
+	A        json.RawMessage        `json:"a"`
+	B        json.RawMessage        `json:"b"`
+	Pred     json.RawMessage        `json:"pred"`
+	StepIDA  *string                `json:"step_id_a"`
+	StepIDB  *string                `json:"step_id_b"`
+	Name     *string                `json:"name"`
+	Args     map[string]interface{} `json:"args"`
+	Rule     *string                `json:"rule"`
 }
 
 func str(p *string) string {
@@ -228,6 +240,9 @@ func ParseExpression(raw json.RawMessage) (Expression, error) {
 	case "forall_outputs":
 		pred, err := ParseExpression(e.Pred)
 		return ForallOutputs{Pred: pred}, err
+	case "forall_writes":
+		pred, err := ParseExpression(e.Pred)
+		return ForallWrites{Pred: pred}, err
 	case "depends_on":
 		return DependsOn{StepIDA: str(e.StepIDA), StepIDB: str(e.StepIDB)}, nil
 	case "before":

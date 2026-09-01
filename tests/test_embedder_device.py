@@ -26,7 +26,7 @@ def test_gpu_when_capability_is_supported(monkeypatch):
 
 
 def test_cpu_when_gpu_capability_unsupported(monkeypatch):
-    # The GTX 1060 on this box: sm_61 is not in the torch build's arch list, so
+    # A Pascal GPU (sm_61) is not in every torch build's arch list, so
     # running a kernel on it crashes. Fall back to CPU instead of forcing it globally.
     torch = pytest.importorskip("torch")
     from opendaisugi._search import _embedder_device
@@ -60,5 +60,5 @@ def test_quiet_model_load_swallows_load_time_warnings():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         with _quiet_model_load():
-            warnings.warn("sm_61 is not compatible", UserWarning)
+            warnings.warn("sm_61 is not compatible", UserWarning, stacklevel=2)
     assert caught == []

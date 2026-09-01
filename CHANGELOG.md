@@ -2,6 +2,116 @@
 
 ## Unreleased
 
+- **Shadow mode is now audit mode.** `--mode audit|enforce` and
+  `install --enforce/--audit`, in the Python CLI, the Go and Rust binaries
+  and coppice. `--mode shadow` and `install --shadow` are refused with one
+  line that names the new word. The log is `~/.opendaisugi/gate/audit/`;
+  `gate report` also reads the old `gate/shadow/`. A gate hook installed
+  before the change still passes `--mode shadow` and so now denies every
+  call: `gate status` says so. Run `daisugi install --gate --uninstall`, then
+  `daisugi install --gate`.
+
+- **The default pathway matcher is lexical.** No model and no download.
+  `daisugi tiers setup --matcher potion` opts into potion in one step. A
+  config that names `all-MiniLM-L6-v2` keeps meaning MiniLM.
+
+- **The dialect's words see more writes.** `keep_unchanged` and its
+  synonyms now see the files `cp`, `mv`, `tee`, `sed -i`, `dd of=`, `rm`,
+  `rsync` and the other known writers change through their operands. At
+  the gate a relative target (`src/**`) is placed from the call's cwd. The
+  dialect hash is now `108a89a256798dfc`: a config that pinned the old one
+  denies every word use until it names the new one (`daisugi gate status`
+  shows it). An agent's tool call can no longer write or name daisugi's own
+  `config.yaml`. `daisugi status` counts the plans and calls a word would
+  deny.
+
+- **grove is retired.** coppice replaced it; `cmd/grove` and the sprig
+  fleet package are deleted.
+
+- **The API backend is named `api`.** litellm is gone, so its name is too:
+  `--llm api`, `OPENDAISUGI_LLM_BACKEND=api` and `llm_backend: api` select
+  our own model client, and auto-detection picks `api`. The old value
+  `litellm` is refused with one line that names `api`, in the Python CLI
+  and in the Go and Rust binaries alike.
+
+- **The Go verifier links Z3.** `conform` and every Go command that
+  verifies send their SMT-LIB2 text to the Z3 the binary links, not to a
+  `z3 -in` program, so nothing needs a `z3` on `PATH` and CI no longer
+  installs one.
+
+- **The Go `journal parse` splits over the `api` backend.** A large episode
+  is split through our own model client with the oracle's request bytes,
+  where the binary used to refuse. As in Python, any failure of that call
+  fails the parse.
+
+- **File-scope globs stop after a fixed number of steps.** The glob
+  matcher is exponential in `**` segments and used to run until the gate's
+  wall-clock verify budget ran out, so whether a glob with three or more
+  `**` denied depended on the speed of the box. `verify._match_glob` now
+  raises `GlobTooComplex` past `GLOB_MATCH_STEP_LIMIT` (100,000 calls of its
+  inner matcher), the same count in the Go gate, and the gate denies with
+  `file glob '...' is too complex to match: more than 100000 steps`.
+
+- **The gate caps what it reads.** A hook payload over 16 MiB and a shell
+  command over 262,144 characters are denied with a reason that names the
+  cap, in the Python gate and the Go gate alike, so neither size nor time
+  decides such a call.
+
+- **The gate finds a verifier client by variable or PATH.** With
+  `verifier_client` set to a compiled client, the gate runs the file named
+  by `OPENDAISUGI_<NAME>_CLIENT`, or `daisugi-conform-<name>` on PATH. It
+  no longer looks in the source checkout, so an installed gate and a gate
+  run from a checkout decide alike. The bench still finds clients in the
+  checkout.
+
+- **The gate prints no regex warnings, and no litellm banner.** A
+  predicate regex with a nested set made `re` print a FutureWarning with
+  the install path on stderr; the gate now filters those. A failed
+  `llm_check` call made litellm print a banner on stdout, which broke the
+  hermes and openclaw reply bodies; `llm_check` now turns it off.
+
+- **The floor is the coppice binary.** `coppice` with no arguments opens the
+  roster, peek, and attach from the Go binary. `daisugi coppice floor` execs
+  it. The Textual floor screen is gone.
+
+- **The voice bridge: `daisugi voice serve`, `ptt`, `arm`, and `disarm`.** A
+  recording from a phone or a laptop becomes text in a chosen pane,
+  transcribed on this box by faster-whisper, CPU by default, CUDA only when
+  it is opted in and actually visible, or, opt-in, Parakeet through
+  sherpa-onnx. `daisugi voice serve` answers GET /health, POST /transcribe,
+  and POST /deliver. Delivered text always previews in the pane first. A
+  pane only takes text directly once `daisugi voice arm PANE --for 30m`
+  grants it a time-boxed window; `daisugi voice disarm PANE` revokes it
+  early. `daisugi voice ptt PANE` is the laptop client: tap space to start
+  recording, tap it again to stop and send. An optional cleanup pass fixes
+  punctuation on one fixed-prompt model call and never changes what was
+  said, and never loses the raw words if that call fails. See
+  `docs/how-to/voice.md`.
+
+- **The phone: a PWA coppice-server serves, and ntfy push.** `coppice web serve`
+  puts the floor on a phone over a tailnet or a LAN. One websocket per browser
+  is one unix-socket connection to coppice-server, so the phone speaks exactly
+  the protocol the terminal speaks. A bearer token guards `/ws` and `/api`, and
+  three bad tokens from one address buy that address a minute of silence. TLS
+  comes from `tailscale cert`, from a local CA the box generates and a QR
+  installs on the phone, or from explicit files. Push goes through a
+  self-hosted ntfy on each merged transition to `blocked`, with one pane
+  quiet for five seconds after it buzzes. Web Push is not built; `--web-push`
+  says so and names ntfy. See `docs/how-to/phone.md`.
+
+- **The `lexical` matcher: a zero-model, zero-download pathway embedder**
+  ([ADR-0019](docs/adr/0019-lexical-matcher-zero-model-floor.md)). ADR-0018's
+  `potion` backend is torch-free but still downloads a ~30MB model on first
+  use — a fresh, extras-free `pip install opendaisugi` on an offline machine
+  still distilled zero pathways. `lexical` closes that gap: signed feature
+  hashing over unigrams, pure stdlib + numpy, never touches the network.
+  Threshold 0.25, FPR-matched to MiniLM@0.55 (0.70 paraphrase recall on the
+  measured labeled set). It is also now the honest fallback when the
+  configured `all-MiniLM-L6-v2`/`potion` package is not installed (warned
+  once per process) — identity, threshold, and the loaded model always
+  agree, and a potion model that merely fails to *load* still refuses rather
+  than silently falling back.
+
 - **Codex compatibility, all three pillars.** (1) *Onboarding*: a Codex rollout
   parser (`parsers/codex.py`) translates `~/.codex/sessions` rollout JSONL —
   `function_call` shell items (JSON-string arguments, `bash -lc` unwrapped),

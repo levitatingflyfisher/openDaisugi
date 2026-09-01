@@ -137,7 +137,7 @@ func TestAgentReportsBlockedOnRefusal(t *testing.T) {
 
 func TestLoopNudgesOnceOnEmptyReplyThenFinishes(t *testing.T) {
 	model := &scriptModel{turns: []Message{
-		{Role: "assistant", Text: ""},              // empty = unclear
+		{Role: "assistant", Text: ""},                // empty = unclear
 		{Role: "assistant", Text: "the real answer"}, // recovers after the nudge
 	}}
 	agent := &Agent{Model: model, Exec: NewExecutor(DefaultTools(), AllowAll{}), MaxTurns: 5}

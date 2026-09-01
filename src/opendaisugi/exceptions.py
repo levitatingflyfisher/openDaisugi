@@ -26,6 +26,31 @@ class LLMNotConfigured(OpenDaisugiError):
     """
 
 
+class MatcherNotAvailable(OpenDaisugiError):
+    """The configured ``matcher_model`` names an embedder that is not built, or
+    names ``potion`` with its package present but its model unable to load.
+
+    No placeholder is left in the swap menu today: ADR-0019 shipped
+    ``lexical`` and ADR-0021 shipped ``int8``. A future placeholder must still
+    refuse here rather than silently fall back to MiniLM and stamp the wrong
+    provenance on distilled pathways. Also raised when ``model2vec`` is
+    installed but the potion model itself fails to load, offline and not
+    cached, and when ``onnxruntime`` is installed but int8 has no build for
+    this CPU or cannot fetch its pinned files. Neither is a fallback, since
+    the operator chose that backend. A missing package degrades to
+    ``lexical`` instead; see ``opendaisugi._search.effective_matcher``.
+    Deterministic: a retry cannot help any of these cases.
+    """
+
+
+class FloorNotAvailable(OpenDaisugiError):
+    """No pane backend is reachable, or the named one is not.
+
+    The floor is optional. A missing backend is a fact to teach, never a reason
+    to run somewhere the operator did not choose.
+    """
+
+
 class DecompositionError(OpenDaisugiError):
     """The decomposer could not produce a valid plan.
 
@@ -91,3 +116,15 @@ class ModelLadderExhausted(EnvelopeGenerationError):
 
 class StakesInheritanceWarning(UserWarning):
     """Emitted when stakes='low' is passed together with parent=; parent is ignored."""
+
+
+class ModelHostUnknownError(OpenDaisugiError):
+    """``daisugi tiers setup --remote`` could not identify the wire a host speaks.
+
+    Raised by ``opendaisugi.model_host.record``. It refuses to persist a host
+    as ollama, openai, or anthropic when the probe came back ``kind="unknown"``.
+    A guessed kind would misroute every later reader of ``llm_host_kind``:
+    the gateway's count-tokens shim, ``daisugi modules``, and the harness env
+    lines. Unmarked provenance is the same fault the matcher backends guard
+    against, applied to the model host.
+    """

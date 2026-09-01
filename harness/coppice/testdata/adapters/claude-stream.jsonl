@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"11111111-2222-3333-4444-555555555555","tools":["Bash"]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I will list the files."}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"a.txt"}]}}
+{"type":"result","subtype":"success","session_id":"11111111-2222-3333-4444-555555555555","result":"Listed one file."}

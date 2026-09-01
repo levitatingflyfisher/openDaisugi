@@ -39,13 +39,13 @@ from opendaisugi.integrations import hermes
 
 envelope = hermes.envelope_from_yaml("./robin.envelope.yaml")
 violations = hermes.verify_step(completed_step, envelope)  # Stage 2
-result = hermes.verify_plan(proposed_plan, envelope)       # Stage 1
+result = hermes.verify_plan(proposed_plan, envelope)  # Stage 1
 registry = hermes.load_household_aliases("./household_aliases.yaml")
 ```
 
 Four functions cover the lifecycle — load envelope from disk, Stage 1
 structural verify, Stage 2 post-execution verify, household-tier
-alias overrides.
+definition overrides.
 
 **When to use:** any Python agent that runs in the same process as
 openDaisugi.
@@ -82,6 +82,7 @@ The dataset side ships in `opendaisugi.lora.dataset`:
 
 ```python
 from opendaisugi.lora import emit_jsonl
+
 stats = emit_jsonl(journal, Path("train.jsonl"), format="alpaca")
 ```
 

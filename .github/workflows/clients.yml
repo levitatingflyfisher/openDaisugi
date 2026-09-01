@@ -1,0 +1,329 @@
+name: clients
+
+# The Go and Rust daisugi: build them against the native prefix, run their
+# own tests, then run each golden compare against the oracle's committed
+# fixtures. No model, no claude and no real upstream: the compares that
+# need a model skip it (HF_HUB_OFFLINE with an empty HF_HOME), and the
+# gateway compare answers from its own fake upstream.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: clients-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26.8"
+  RUST_VERSION: "1.98.0"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # The native prefix is the slow part: Z3 alone takes a long time to
+  # compile. This job builds it once per stamp and saves it; every other job
+  # restores it and fails at once on a miss, so a cold cache is built once.
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/native-prefix
+        with:
+          save: "true"
+
+  # The generated Go and Rust files hold texts taken from the oracle: tool
+  # schemas, prompts, model schemas and the potion tokenizer tables. Each
+  # generator's --check fails when the file on disk is not what the oracle
+  # would write now, so a change to the oracle cannot drift past CI.
+  generators:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Install Rust ${{ env.RUST_VERSION }} with rustfmt
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt
+          rustup default "$RUST_VERSION"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: "true"
+      - name: Install the oracle
+        run: uv sync --locked --extra dev
+      - name: Check every generated file against the oracle
+        run: |
+          uv run --no-sync python clients/go/internal/envgen/gen_prompts.py --check
+          uv run --no-sync python clients/go/internal/llm/gen_schemas.py --check
+          uv run --no-sync python clients/go/internal/mcpwire/gen_tools.py --check
+          uv run --no-sync python clients/go/internal/pystr/gen_stream.py --check
+          uv run --no-sync python clients/rust/tools/gen_envgen_prompts.py --check
+          uv run --no-sync python clients/rust/tools/gen_llm_schemas.py --check
+          uv run --no-sync python clients/rust/tools/gen_mcp_tools.py --check
+          uv run --no-sync python clients/rust/tools/gen_potion_tables.py --check
+          uv run --no-sync python clients/gen_dialect.py --check
+
+  go:
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: clients/go/go.sum
+      - uses: ./.github/actions/native-prefix
+
+      - name: Build daisugi, daisugi-gate and conform
+        run: clients/go/scripts/build.sh
+
+      - name: Build the test instruments
+        working-directory: clients/go
+        run: |
+          export CGO_CFLAGS="-O2 -g -DOPENDAISUGI_NATIVE=$(scripts/native.sh --print-key)"
+          mkdir -p "$RUNNER_TEMP/bin"
+          cp daisugi daisugi-gate conform "$RUNNER_TEMP/bin/"
+          for p in pathway-probe gateway-probe recall-probe fake-upstream l-probe; do
+            go build -trimpath -o "$RUNNER_TEMP/bin/$p" "./cmd/$p"
+          done
+
+      - name: Test
+        working-directory: clients/go
+        run: |
+          export CGO_CFLAGS="-O2 -g -DOPENDAISUGI_NATIVE=$(scripts/native.sh --print-key)"
+          go test ./... -count=1
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bin-go
+          path: ${{ runner.temp }}/bin
+          retention-days: 3
+          if-no-files-found: error
+
+  rust:
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: "4"
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/native-prefix
+        id: native
+
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+
+      # z3-sys compiles Z3 from source through zig c++. That is most of a
+      # cold build, so the dependency build is cached. The cache key covers
+      # Cargo.lock, rustc and the build variables z3-build-env.sh sets.
+      - name: Set the Z3 build environment
+        run: |
+          . clients/rust/tools/z3-build-env.sh
+          for v in CXX CXXSTDLIB DAISUGI_LIBCXX_DIR CFLAGS RUSTFLAGS; do
+            echo "$v=${!v}" >> "$GITHUB_ENV"
+          done
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: clients/rust -> target
+          key: native-${{ steps.native.outputs.stamp }}
+
+      # rust-cache restores target/ after the step above ran, and that can
+      # remove the libc++ copy the script put in target/zig-cxx. Run the
+      # script again so the copy is there when cargo links.
+      - name: Build
+        working-directory: clients/rust
+        run: |
+          . tools/z3-build-env.sh
+          cargo build --release --locked
+
+      - name: Test
+        working-directory: clients/rust
+        run: cargo test --release --locked
+
+      # rust-cache keeps the dependencies' build-script output, z3-sys's
+      # libz3 included, so a cached run does not compile Z3. Z3's cmake
+      # build tree beside it (about 1.4 GB) is needed by nothing after the
+      # link, so it is left out of the cache.
+      - name: Drop Z3's cmake build tree before the cache is saved
+        run: rm -rf clients/rust/target/release/build/z3-sys-*/out/build
+
+      - name: Check the binaries name no build path
+        run: clients/rust/tools/check-paths.sh clients/rust/target/release/daisugi-gate clients/rust/target/release/daisugi
+
+      - name: Collect the binaries
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          for b in daisugi daisugi-gate conform pathway-probe gateway-probe recall-probe l-probe; do
+            cp "clients/rust/target/release/$b" "$RUNNER_TEMP/bin/"
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bin-rust
+          path: ${{ runner.temp }}/bin
+          retention-days: 3
+          if-no-files-found: error
+
+  # Each golden compare runs the binary over the oracle's committed cases
+  # and fails on any disagreement or stale fixture. One job per compare and
+  # language, so they run side by side.
+  compare:
+    needs: [go, rust]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [go, rust]
+        suite: [gate, cli, pathway, garden, gateway, gate_server, k2, k3, k4, l, f, weave, rank]
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - name: Skip when the ${{ matrix.lang }} build failed
+        if: needs[matrix.lang].result != 'success'
+        run: |
+          echo "the ${{ matrix.lang }} build did not succeed"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: "true"
+      # The oracle, from the hash-pinned lock, as the Python job installs it.
+      - name: Install the oracle
+        run: uv sync --locked --extra dev
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bin-${{ matrix.lang }}
+          path: ${{ runner.temp }}/bin
+      - name: Compare ${{ matrix.suite }}
+        env:
+          B: ${{ runner.temp }}/bin
+          S: ${{ runner.temp }}/runs
+          HF_HOME: ${{ runner.temp }}/hf-empty
+          DAISUGI_GATE_SCRATCH: ${{ runner.temp }}/runs/gate
+          DAISUGI_CLI_SCRATCH: ${{ runner.temp }}/runs/cli
+          DAISUGI_PATHWAY_SCRATCH: ${{ runner.temp }}/runs/pathway
+          DAISUGI_GARDEN_SCRATCH: ${{ runner.temp }}/runs/garden
+          DAISUGI_GATEWAY_SCRATCH: ${{ runner.temp }}/runs/gateway
+          DAISUGI_GATE_SERVER_SCRATCH: ${{ runner.temp }}/runs/server
+          DAISUGI_K2_SCRATCH: ${{ runner.temp }}/runs/k2
+          DAISUGI_K3_SCRATCH: ${{ runner.temp }}/runs/k3
+          DAISUGI_K4_SCRATCH: ${{ runner.temp }}/runs/k4
+          DAISUGI_L_SCRATCH: ${{ runner.temp }}/runs/l
+          DAISUGI_F_SCRATCH: ${{ runner.temp }}/runs/f
+          DAISUGI_WEAVE_SCRATCH: ${{ runner.temp }}/runs/weave
+          DAISUGI_RANK_SCRATCH: ${{ runner.temp }}/runs/rank
+          # Both carry K3; each refuses the same 4 cases, as ruled (K3-9,
+          # K3-13).
+          K3_MAX_REFUSED: "4"
+          # Both carry K4 and hook record; each refuses the same 5 cases,
+          # as ruled (K4-3, K4-4).
+          K4_MAX_REFUSED: "5"
+          # Go and Rust carry stage L and refuse none of its cases.
+          L_ARGS: --probe ${{ runner.temp }}/bin/l-probe --max-refused 0
+          # Go and Rust carry stage F; each refuses the same 1 case, as
+          # ruled (F-4).
+          F_MAX_REFUSED: "1"
+          DAISUGI_RECALL_PROBE: ${{ runner.temp }}/bin/recall-probe
+        run: |
+          chmod +x "$B"/*
+          mkdir -p "$HF_HOME"
+          if command -v claude >/dev/null; then echo "claude is on PATH; refusing to run"; exit 1; fi
+          case "${{ matrix.suite }}" in
+            gate)    uv run --no-sync python clients/gate_compare.py --binary "$B/daisugi-gate" ;;
+            cli)     uv run --no-sync python clients/cli_compare.py --binary "$B/daisugi" ;;
+            pathway) uv run --no-sync python clients/pathway_compare.py --binary "$B/daisugi" --probe "$B/pathway-probe" ;;
+            garden)  uv run --no-sync python clients/garden_compare.py --binary "$B/daisugi" ;;
+            gateway) uv run --no-sync python clients/gateway_compare.py --binary "$B/daisugi" ;;
+            gate_server) uv run --no-sync python clients/gate_server_compare.py --binary "$B/daisugi" --port "${{ matrix.lang }}" ;;
+            k2)      uv run --no-sync python clients/k2_compare.py --binary "$B/daisugi" --max-refused 7 ;;
+            k3)      uv run --no-sync python clients/k3_compare.py --binary "$B/daisugi" --max-refused "$K3_MAX_REFUSED" ;;
+            k4)      uv run --no-sync python clients/k4_compare.py --binary "$B/daisugi" --max-refused "$K4_MAX_REFUSED" ;;
+            # L_ARGS is a flag list: split on purpose.
+            # shellcheck disable=SC2086
+            l)       uv run --no-sync python clients/l_compare.py --binary "$B/daisugi" $L_ARGS ;;
+            f)       uv run --no-sync python clients/f_compare.py --binary "$B/daisugi" --max-refused "$F_MAX_REFUSED" ;;
+            # Both refuse the agentic case and --max-parallel 2 (WV-R-10).
+            weave)   uv run --no-sync python clients/weave_compare.py --binary "$B/daisugi" --max-refused 2 ;;
+            # Go and Rust carry rank and refuse none of its cases.
+            rank)    uv run --no-sync python clients/rank_compare.py --binary "$B/daisugi" --max-refused 0 ;;
+          esac
+
+  # The release tarball and the coppice end-to-end suite. release.sh builds
+  # coppice, sprig and daisugi as a release does; smoke-tarball.sh unpacks
+  # that tarball into a scratch HOME and runs it to the first gate decision;
+  # harness/coppice/e2e drives the tarball's coppice: the web floor in
+  # headless chromium and the TUI in coppice's own virtual terminal.
+  e2e:
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            harness/coppice/go.sum
+            harness/sprig/go.sum
+            clients/go/go.sum
+      - uses: ./.github/actions/native-prefix
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: harness/coppice/e2e/package-lock.json
+
+      - name: Build the release tarball
+        run: scripts/release.sh 0.0.0-ci
+
+      - name: Smoke the tarball in a scratch HOME
+        run: scripts/smoke-tarball.sh dist/opendaisugi-0.0.0-ci-linux-x86_64.tar.gz "$RUNNER_TEMP/smoke"
+
+      - name: Install playwright and chromium
+        working-directory: harness/coppice/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: End-to-end
+        working-directory: harness/coppice/e2e
+        env:
+          E2E_DIR: ${{ runner.temp }}/e2e
+        run: |
+          mkdir -p "$RUNNER_TEMP/rel"
+          tar -xzf ../../../dist/opendaisugi-0.0.0-ci-linux-x86_64.tar.gz --strip-components=1 -C "$RUNNER_TEMP/rel"
+          COPPICE_BIN="$RUNNER_TEMP/rel/coppice" ./run.sh
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e
+          path: |
+            ${{ runner.temp }}/e2e/shots
+            ${{ runner.temp }}/e2e/*.log
+            ${{ runner.temp }}/smoke/*.out
+            ${{ runner.temp }}/smoke/*.err
+          retention-days: 7
+          if-no-files-found: ignore

@@ -124,3 +124,67 @@ def build_report(
         combined_frontier_tokens_saved=combined_frontier_tokens_saved,
         combined_multiplier=combined_multiplier,
     )
+
+
+# The tier every external-mode turn is journaled under. It matches
+# opendaisugi.gateway_pipeline.EXTERNAL_TIER.
+_EXTERNAL_TIER = "tier-switchyard"
+
+
+@dataclass(frozen=True)
+class TargetShare:
+    """One target's share of the external-mode turns, measured from the journal.
+
+    There is no pass-rate column. No turn-level outcome is recorded, so a pass
+    rate would be a made-up number.
+    """
+
+    model: str
+    turns: int
+    share: float  # turns / all external-mode turns, in [0, 1]
+    input_tokens: int
+    output_tokens: int
+    frontier_tokens_saved: int
+
+
+def build_target_share_table(records: Iterable[GatewayTurnRecord]) -> list[TargetShare]:
+    """Group external-mode turns by the target that served them.
+
+    Rows run from most turns to fewest. A turn whose target was not clear is
+    journaled as ``unknown`` and keeps its own row. Empty when no external
+    turns exist.
+    """
+    external = [r for r in records if r.tier == _EXTERNAL_TIER]
+    total = len(external)
+    if total == 0:
+        return []
+    by_model: dict[str, list[GatewayTurnRecord]] = {}
+    for r in external:
+        by_model.setdefault(r.model, []).append(r)
+    rows = [
+        TargetShare(
+            model=model,
+            turns=len(rows),
+            share=len(rows) / total,
+            input_tokens=sum(r.input_tokens for r in rows),
+            output_tokens=sum(r.output_tokens for r in rows),
+            frontier_tokens_saved=sum(r.frontier_tokens_saved for r in rows),
+        )
+        for model, rows in by_model.items()
+    ]
+    return sorted(rows, key=lambda row: (-row.turns, row.model))
+
+
+def format_target_share_table(table: list[TargetShare]) -> list[str]:
+    """The share table as plain text lines, for the CLI."""
+    width = max([len("target")] + [len(row.model) for row in table])
+    lines = [
+        f"  {'target':<{width}}  {'turns':>6}  {'share':>6}  {'input':>10}  {'output':>9}  "
+        f"{'saved':>10}"
+    ]
+    for row in table:
+        lines.append(
+            f"  {row.model:<{width}}  {row.turns:>6}  {row.share:>6.1%}  "
+            f"{row.input_tokens:>10,}  {row.output_tokens:>9,}  {row.frontier_tokens_saved:>10,}"
+        )
+    return lines

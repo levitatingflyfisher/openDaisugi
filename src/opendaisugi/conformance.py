@@ -69,6 +69,13 @@ def _normative_violations(result: "VerificationResult") -> list[dict]:
     return [{"stage": v.stage, "step": v.detail.get("step")} for v in result.violations]
 
 
+def _word_audit(result: "VerificationResult") -> list[str]:
+    """The dialect audit warnings of a result: each word's would-deny."""
+    from opendaisugi.dialect import AUDIT_PREFIX
+
+    return [w for w in result.warnings if w.startswith(AUDIT_PREFIX)]
+
+
 def make_verify_case(
     plan: "ActionPlan",
     envelope: "Envelope",
@@ -82,13 +89,20 @@ def make_verify_case(
     # logical cases content-address identically and dedupe is real.
     plan_body["id"] = "plan_case"
     envelope_body["id"] = "env_case"
+    expect: dict[str, Any] = {"ok": result.ok, "violations": _normative_violations(result)}
+    # Only a result with a word's would-deny carries the key, so every
+    # other case keeps its body and its id. A case with the key compares
+    # it exactly (compare_verdict).
+    audit = _word_audit(result)
+    if audit:
+        expect["word_audit"] = audit
     body = {
         "kind": "verify",
         "v": CONFORMANCE_VERSION,
         "plan": plan_body,
         "envelope": envelope_body,
         "options": options,
-        "expect": {"ok": result.ok, "violations": _normative_violations(result)},
+        "expect": expect,
     }
     body["id"] = case_id(body)
     return body
@@ -221,7 +235,15 @@ def compare_verdict(case: dict, verdict: dict) -> Mismatch | None:
     if "ok" not in verdict:  # error verdicts and garbage are mismatches, not crashes
         return Mismatch(case["id"], case["kind"], expected=case["expect"], got=verdict)
     normal = _normal_verify if case["kind"] == "verify" else _normal_decompose
-    if normal(case["expect"]) == normal(verdict):
+    # A case without the word_audit key (recorded before the dialect audit,
+    # or with no word that would deny) does not compare it; a case with the
+    # key compares it exactly, an empty list included.
+    audit_ok = (
+        case["kind"] != "verify"
+        or "word_audit" not in case["expect"]
+        or case["expect"]["word_audit"] == verdict.get("word_audit", [])
+    )
+    if audit_ok and normal(case["expect"]) == normal(verdict):
         return None
     return Mismatch(case["id"], case["kind"], expected=case["expect"], got=verdict)
 
@@ -265,9 +287,16 @@ def _serve_one(case: dict) -> str:
             Envelope.model_validate(case["envelope"]),
             z3_timeout_ms=opts.get("z3_timeout_ms", 500),
             strict=opts.get("strict"),
+            dialect_pin=opts.get("dialect_pin"),
+            dialect_base=opts.get("dialect_base"),
         )
         return canonical_json(
-            {"id": case["id"], "ok": result.ok, "violations": _normative_violations(result)}
+            {
+                "id": case["id"],
+                "ok": result.ok,
+                "violations": _normative_violations(result),
+                "word_audit": _word_audit(result),
+            }
         )
     if case["kind"] == "decompose":
         from opendaisugi.shell_decompose import decompose_command

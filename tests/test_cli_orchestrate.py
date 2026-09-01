@@ -241,7 +241,7 @@ def test_no_steps_is_a_plain_answer_not_a_crash(monkeypatch):
     from opendaisugi import Daisugi
 
     monkeypatch.setattr(Daisugi, "orchestrate", _no_steps)
-    res = runner.invoke(app, ["orchestrate", "Hello how are you doing?", "--llm", "litellm"])
+    res = runner.invoke(app, ["orchestrate", "Hello how are you doing?", "--llm", "api"])
     assert res.exit_code == 0, res.output
     assert "no steps" in res.output.lower()
     assert "NoStepsError" not in res.output
@@ -255,7 +255,7 @@ def test_no_steps_json_shape(monkeypatch):
     from opendaisugi import Daisugi
 
     monkeypatch.setattr(Daisugi, "orchestrate", _no_steps)
-    res = runner.invoke(app, ["orchestrate", "hi", "--llm", "litellm", "--json"])
+    res = runner.invoke(app, ["orchestrate", "hi", "--llm", "api", "--json"])
     assert res.exit_code == 0, res.output
     import json
 
@@ -275,7 +275,7 @@ def test_non_no_steps_decomposition_error_teaches_three_lines(monkeypatch, tmp_p
 
     monkeypatch.setattr(Daisugi, "orchestrate", _bad_decomposition)
     res = runner.invoke(
-        app, ["orchestrate", "do something", "--llm", "litellm", "--data-dir", str(tmp_path)]
+        app, ["orchestrate", "do something", "--llm", "api", "--data-dir", str(tmp_path)]
     )
     assert res.exit_code == 1, res.output
     lines = [ln for ln in res.output.strip().splitlines() if ln.strip()]

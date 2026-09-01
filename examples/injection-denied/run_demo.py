@@ -27,7 +27,7 @@ import tempfile
 from pathlib import Path
 
 from opendaisugi.agentic_executor import AgenticExecutor
-from opendaisugi.gate import shadow_report
+from opendaisugi.gate import audit_report
 from opendaisugi.models import AgenticStep, Envelope, Permission
 
 # A neutral-looking config value: the demo is about the gate denying a read
@@ -86,7 +86,7 @@ def main() -> int:
         print(result.stdout.strip())
 
         print("\n--- what the gate did ---")
-        report = shadow_report(root=executor.last_gate_root)
+        report = audit_report(root=executor.last_gate_root)
         for record in report["denied"]:
             print(f"DENIED {record['tool_name']} {record['detail']!r}")
             print(f"  reason: {record['reason']}")

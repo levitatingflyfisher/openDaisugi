@@ -1,0 +1,76 @@
+name: native prefix
+description: >
+  Put zig 0.16.0 on PATH, restore the native prefix that
+  clients/go/scripts/native.sh builds (static Z3, tree-sitter,
+  tree-sitter-bash, zig's libc++ and libghostty-vt), build it on a miss,
+  and link clients/go/.native at it.
+
+inputs:
+  save:
+    description: "true in the one job that may build the prefix and save it to the cache"
+    default: "false"
+
+outputs:
+  prefix:
+    description: the native prefix directory
+    value: ${{ steps.key.outputs.prefix }}
+  stamp:
+    description: the prefix's stamp id, the last part of its path
+    value: ${{ steps.key.outputs.stamp }}
+
+runs:
+  using: composite
+  steps:
+    # The version and the sha256 are the ones harness/coppice/scripts/toolchain.sh
+    # pins for x86_64-linux. native.sh stops unless `zig version` says 0.16.0.
+    - name: Install zig 0.16.0
+      shell: bash
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TOOL_CACHE/zig-0.16.0"
+        if [ ! -x "$dir/zig" ]; then
+          url=https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          sum=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+          curl -fsSL "$url" -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "$sum  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
+          mkdir -p "$dir"
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$dir" --strip-components=1
+          rm -f "$RUNNER_TEMP/zig.tar.xz"
+        fi
+        echo "$dir" >> "$GITHUB_PATH"
+
+    # The stamp hashes the pinned sources, the flags, gcc's version, zig and
+    # the CPU architecture, so the cache key changes when any of them does.
+    - name: Compute the native stamp
+      id: key
+      shell: bash
+      run: |
+        set -euo pipefail
+        prefix="$(clients/go/scripts/native.sh --print-prefix)"
+        echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+        echo "stamp=$(basename "$prefix")" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the native prefix
+      if: inputs.save != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.prefix }}
+        key: native-${{ runner.os }}-${{ runner.arch }}-${{ steps.key.outputs.stamp }}
+        fail-on-cache-miss: true
+
+    - name: Restore or save the native prefix
+      if: inputs.save == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.prefix }}
+        key: native-${{ runner.os }}-${{ runner.arch }}-${{ steps.key.outputs.stamp }}
+
+    # On a hit this checks every file against the prefix's manifest and
+    # links clients/go/.native. On a miss it builds, which takes a long time
+    # the first time only.
+    - name: Build or check the native prefix
+      shell: bash
+      env:
+        DAISUGI_NATIVE_JOBS: "4"
+        DAISUGI_NATIVE_BUILD_DIR: ${{ runner.temp }}/native-build
+      run: clients/go/scripts/native.sh

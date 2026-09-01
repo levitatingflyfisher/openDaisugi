@@ -19,8 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
-
 if TYPE_CHECKING:
     from opendaisugi.ingest import IngestSummary
     from opendaisugi.parsers import ParseResult
@@ -124,6 +122,8 @@ class StatusReport:
     """Day-one readiness snapshot: are token savings live and is trust in place?"""
 
     data_dir: Path
+    # True when the matcher in effect is a built one; the name is kept
+    # for the JSON field `daisugi status --json` prints.
     search_extra_installed: bool
     pathway_count: int
     pathway_hits: int
@@ -133,6 +133,10 @@ class StatusReport:
     journal_failed: int
     shell_decomposition_enabled: bool = False
     shell_grammar_installed: bool = False
+    # What the dialect's words would deny in audit: plans in the journal
+    # (plan-time verification) and calls in the gate's audit log.
+    word_would_deny_plans: int = 0
+    word_would_deny_calls: int = 0
 
     @property
     def shell_decomposition_ready(self) -> bool:
@@ -154,15 +158,30 @@ class StatusReport:
         return self.journal_total > 0
 
 
-def gather_status(data_dir: Path, *, threshold: float = DEFAULT_PATHWAY_THRESHOLD) -> StatusReport:
+def gather_status(data_dir: Path, *, threshold: float | None = None) -> StatusReport:
     """Read pathway-store + journal state under ``data_dir`` into a StatusReport.
 
     Read-only and resilient: a missing store or journal reports zeros rather
     than raising, so ``daisugi status`` works before the first ``onboard``.
+    ``threshold=None`` displays the active backend's threshold (ADR-0018).
     """
-    import importlib.util
+    from opendaisugi._search import active_model_name
+    from opendaisugi.exceptions import MatcherNotAvailable
 
-    search_installed = importlib.util.find_spec("sentence_transformers") is not None
+    if threshold is None:
+        from opendaisugi._search import active_threshold
+
+        threshold = active_threshold()
+
+    # The matcher that will run, after the package-absence fallback to
+    # lexical (ADR-0019), not which extras happen to be installed. Only a
+    # matcher that is not built at all turns pathways off.
+    try:
+        active_model_name()
+    except MatcherNotAvailable:
+        search_installed = False
+    else:
+        search_installed = True
 
     pathway_count = 0
     pathway_hits = 0
@@ -177,20 +196,24 @@ def gather_status(data_dir: Path, *, threshold: float = DEFAULT_PATHWAY_THRESHOL
         except Exception as exc:  # corrupt/locked store shouldn't break status
             _log.warning("status: could not read pathway store: %s", exc)
 
+    # Read-only: a missing journal reads as empty and is not made.
     journal_total = journal_passed = journal_failed = 0
     try:
-        from opendaisugi.journal import Journal
+        from opendaisugi.journal import read_stats
 
-        jstats = Journal(data_dir=data_dir).stats()
-        journal_total, journal_passed, journal_failed = (
-            jstats.total,
-            jstats.passed,
-            jstats.failed,
-        )
+        jstats = read_stats(data_dir)
+        if jstats is not None:
+            journal_total, journal_passed, journal_failed = (
+                jstats.total,
+                jstats.passed,
+                jstats.failed,
+            )
     except Exception as exc:
         _log.warning("status: could not read journal: %s", exc)
 
     from opendaisugi.config import load_config
+    from opendaisugi.gate import word_would_deny as calls_would_deny
+    from opendaisugi.journal import word_would_deny as plans_would_deny
     from opendaisugi.shell_decompose import parser_available
 
     decomposition = load_config(data_dir / "config.yaml").shell_allow_decomposition
@@ -206,6 +229,8 @@ def gather_status(data_dir: Path, *, threshold: float = DEFAULT_PATHWAY_THRESHOL
         journal_failed=journal_failed,
         shell_decomposition_enabled=decomposition,
         shell_grammar_installed=parser_available(),
+        word_would_deny_plans=plans_would_deny(data_dir),
+        word_would_deny_calls=calls_would_deny(root=data_dir / "gate"),
     )
 
 

@@ -1,0 +1,421 @@
+:root {
+  color-scheme: dark;
+  --bg: #12181a; --fg: #e8eae7; --muted: #98a3a0; --line: #26312f;
+  --blocked: #d98b4a; --working: #8fb996; --idle: #7f8c8a; --done: #5d6a68; --unknown: #b06868;
+  --accent: #5fb3f0;
+  /* Health, and only health: working, degraded, failing, off or not known. */
+  --ok: #8fb996; --warn: #d98b4a; --bad: #e0605a; --off: #5d6a68;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#bar { display: flex; gap: .5rem; align-items: center; padding: .6rem .8rem;
+  border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); }
+#bar h1 { font-size: 1rem; margin: 0; flex: none; }
+button { min-height: 44px; min-width: 44px; padding: 0 .8rem; border: 1px solid var(--line);
+  background: #1b2422; color: var(--fg); border-radius: 6px; font: inherit; }
+button.ghost { background: transparent; }
+/* The status line, and a button for each fix its message carries. */
+#status-row { display: flex; flex-wrap: wrap; gap: .2rem .5rem; align-items: center; margin: .4rem .8rem; }
+#status { margin: 0; color: var(--muted); min-height: 1.2em; }
+#status:empty { display: none; }
+#status-fix { display: inline-flex; flex-wrap: wrap; gap: .4rem; }
+#status-fix[hidden] { display: none; }
+button.fix { min-height: 28px; padding: 0 .6rem; font-size: .85rem; border-color: var(--accent); color: var(--accent); }
+.askbar button.fix, .card button.fix { color: inherit; border-color: currentColor; }
+/* While the page cannot reach the box it keeps the last picture, dimmed. */
+body.offline #tiles, body.offline #roster { opacity: .45; }
+.cards { list-style: none; margin: 0; padding: .4rem .8rem; display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; }
+.card.row, .card .who { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+/* The attention queue: ask cards first, then compact rows, done last. */
+#queue-head { padding: .4rem .8rem 0; }
+#queue-head[hidden] { display: none; }
+#queue-head h2 { font-size: 1.1rem; margin: 0; color: var(--blocked); }
+#queue-head p { margin: .1rem 0 0; }
+.card.ask { border-color: var(--blocked); }
+.card.ask code.summary { display: block; margin: .3rem 0 0; color: var(--blocked); white-space: pre-wrap; word-break: break-word; }
+.card.ask .verdict { margin: .3rem 0 0; font-weight: bold; }
+.card.row { padding: .4rem .8rem; flex-wrap: nowrap; align-items: center; cursor: pointer; }
+/* A rail row is one line: dot, name, state, harness, window number, x.
+   The name gives way first. */
+.card.row .label, .card .who .label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card.row .state, .card.row .harness { font-size: .8rem; white-space: nowrap; }
+.card.row .state { color: var(--muted); flex: none; }
+.card.row .state-working { color: var(--working); }
+.card.row .harness { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.card.row .held { flex-basis: 100%; }
+.card.row .win, .card .who .win { margin-left: auto; }
+.card .dot { flex: none; }
+/* The x that stops an agent shows on hover, on focus and on the selected
+   row, and always where there is no hover. */
+button.kill { min-height: 0; min-width: 0; padding: 0 .35rem; border: 0; background: transparent; color: var(--muted);
+  font-size: 1rem; line-height: 1.4; flex: none; visibility: hidden; }
+.card.row button.kill, .card .who button.kill { margin-left: auto; }
+.card.row .win + button.kill, .card .who .win + button.kill { margin-left: 0; }
+button.kill:hover, button.kill:focus-visible { color: var(--blocked); }
+.card:hover button.kill, .card:focus-within button.kill, .card.selected button.kill,
+.tile .head:hover button.kill, .tile .head button.kill:focus-visible { visibility: visible; }
+@media (hover: none) { button.kill { visibility: visible; } }
+/* The one line a kill asks before it stops an agent. */
+.confirm { display: flex; flex-wrap: wrap; gap: .3rem .5rem; align-items: center; }
+.confirm .confirm-text { flex: 1 1 100%; color: var(--blocked); }
+.confirm button { min-height: 32px; padding: 0 .6rem; }
+.confirm button.stop { border-color: var(--blocked); color: var(--blocked); font-weight: bold; }
+.card.confirming { border-color: var(--blocked); }
+.tile > .confirm { padding: .3rem .4rem; margin-top: 4px; border: 1px solid var(--blocked); border-radius: 6px; }
+.tile > .confirm .confirm-text { flex: 0 1 auto; }
+/* A label renamed in place. */
+input.rename { font: inherit; width: 100%; min-width: 6rem; min-height: 0; margin: 0; padding: 0 .3rem;
+  background: #1b2422; color: var(--fg); border: 1px solid var(--accent); border-radius: 4px; }
+/* A group line in the rail: a task or a project, with its counts. */
+#roster .group { list-style: none; }
+.group button.fold { display: flex; gap: .4rem; align-items: center; width: 100%; min-height: 0; padding: .25rem .3rem;
+  border: 0; background: transparent; color: var(--muted); text-align: left; font-size: .85rem; }
+.group button.fold:hover { color: var(--fg); }
+.group .caret { flex: none; width: 1em; }
+.group .glabel { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-weight: bold; }
+.group .counts { margin-left: auto; display: flex; gap: .45rem; flex: none; font-size: .8rem; }
+.group .n { display: inline-flex; gap: .2rem; align-items: center; }
+.group .n .dot { width: .5em; height: .5em; }
+.group .n-blocked { color: var(--blocked); font-weight: bold; }
+.group .n-working { color: var(--working); }
+/* Recent: the ended agents, folded shut at the foot of the agent list. */
+#recent { margin: .2rem .8rem .4rem; border-top: 1px solid var(--line); padding-top: .3rem; }
+#recent[hidden] { display: none; }
+#recent summary { cursor: pointer; color: var(--muted); padding: .2rem 0; }
+#recent summary .count { border-radius: 999px; padding: 0 .45rem; background: #1b2422; font-size: .8rem; }
+#recent .recent-all { display: flex; gap: .4rem; margin: .3rem 0; }
+#recent button { min-height: 30px; padding: 0 .6rem; }
+#recent-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; }
+.recent-row { display: flex; flex-wrap: wrap; gap: .25rem .4rem; align-items: center; padding-bottom: .3rem;
+  border-bottom: 1px solid var(--line); }
+.recent-row:last-child { border-bottom: 0; }
+.recent-row .recent-text { flex: 1 1 100%; min-width: 0; display: flex; flex-direction: column; }
+.recent-row .recent-text > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-row .recent-text .muted { font-size: .8rem; }
+.recent-row.amber .label { color: var(--blocked); }
+/* New, and the menu of projects beside it. */
+#new-wrap { position: relative; display: inline-flex; }
+#new-wrap #go-new { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+#new-menu-btn { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0; min-width: 32px; padding: 0 .5rem; }
+#new-menu-btn[hidden], #go-new[hidden] { display: none; }
+#new-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 16rem; max-width: min(28rem, 90vw);
+  display: flex; flex-direction: column; gap: 2px; padding: 4px; background: #1b2422; border: 1px solid var(--line);
+  border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .5); }
+#new-menu[hidden] { display: none; }
+#new-menu .menu-item { display: flex; flex-direction: column; align-items: flex-start; min-height: 0; padding: .35rem .6rem;
+  border: 0; background: transparent; text-align: left; }
+#new-menu .menu-item:hover, #new-menu .menu-item:focus-visible { background: #26312f; }
+#new-menu .menu-item .sub { font-size: .75rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#new-menu .menu-note { margin: .3rem .6rem; font-size: .85rem; }
+/* The quiet screen: a real screen when nothing is blocked. */
+.quiet { padding: 1rem .8rem; text-align: center; }
+.quiet[hidden], #roster[hidden] { display: none; }
+.quiet p { margin: .2rem 0; }
+.quiet .quiet-title { font-size: 1.2rem; color: var(--working); }
+@media (max-width: 599px) {
+  .quiet { padding: 3rem .8rem 2rem; }
+}
+.chip { border-radius: 999px; padding: .1rem .5rem; font-size: .8rem; border: 1px solid currentColor; }
+.chip-blocked { color: var(--blocked); } .chip-working { color: var(--working); }
+.chip-idle { color: var(--idle); } .chip-done { color: var(--done); } .chip-unknown { color: var(--unknown); }
+.muted { color: var(--muted); }
+.empty { padding: 2rem .8rem; color: var(--muted); }
+/* The floor: under 600 px the rail is home above the dock. From 600 px the
+   rail sits above the tiles, and beside them from 900 px. */
+#screen-roster { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; }
+#screen-roster[hidden] { display: none; }
+#floor { padding: .4rem .8rem; min-width: 0; }
+#rail-foot { padding: .4rem .8rem; border-top: 1px solid var(--line); }
+#rail-foot[hidden] { display: none; }
+#rail-foot #floor-controls { margin: 0; }
+.tile .head[draggable="true"] { cursor: grab; }
+#tiles[data-locked="true"] .tile .head { cursor: default; }
+#floor-controls { display: flex; gap: .5rem; align-items: center; margin-bottom: .5rem; }
+#floor-controls label { margin: 0; color: var(--muted); }
+#floor-controls select { width: auto; margin: 0; }
+/* The windows. The floor sets the grid columns and rows for the number of
+   agents it shows. Each window's text never shrinks below the readable
+   size: a grid wider or taller than its window scrolls inside it. */
+#tiles { display: grid; gap: 8px; }
+.tile { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px 6px; }
+.tile.focused { border-color: var(--muted); }
+.tile.typing { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.tile .head { display: flex; gap: .5rem; align-items: center; min-height: 28px; white-space: nowrap;
+  overflow: hidden; font-size: .85rem; cursor: pointer; }
+.tile .head .label { flex: 0 1 auto; min-width: 4.5em; overflow: hidden; text-overflow: ellipsis; }
+.tile .head .num { flex: none; min-width: 1.4em; text-align: center; border-radius: 4px;
+  background: #1b2422; color: var(--muted); }
+.tile.typing .head .num { background: var(--accent); color: var(--bg); }
+.tile .head .state { color: var(--muted); }
+.tile .head .state-blocked { color: var(--blocked); } .tile .head .state-working { color: var(--working); }
+.tile .typing-words { margin-left: auto; flex: 0 1 auto; min-width: 7.5em; overflow: hidden; text-overflow: ellipsis; background: var(--accent); color: var(--bg);
+  padding: 0 .5rem; border-radius: 4px; font-weight: bold; }
+/* The x on a window header sits at its right end. */
+.tile .head button.kill { margin-left: auto; }
+.tile .head .typing-words + button.kill { margin-left: 0; }
+.tile .note { color: var(--muted); margin: .3rem 0 0; }
+.tile .note:empty { display: none; }
+.tile .note-fix { display: flex; gap: .4rem; margin: .2rem 0 0; }
+.tile .note-fix:empty { display: none; }
+.tile-body { flex: 1; min-height: 0; overflow: auto; background: #0b0f10; margin-top: 4px; cursor: text; }
+.tile canvas { display: block; }
+.tile.empty, .tile.ended { align-items: center; justify-content: center; color: var(--muted); text-align: center; }
+.tile.ended { cursor: pointer; }
+.tile.ended.amber { border-color: var(--blocked); color: var(--blocked); }
+.tile .ended-line { margin: 0; font-size: 1rem; }
+/* The rail row whose agent sits in a window shows that window's number.
+   The selected row has the accent border while the rail has the keys. */
+.card .win { flex: none; min-width: 1.4em; text-align: center; border-radius: 4px; background: #1b2422;
+  color: var(--muted); font-size: .8rem; }
+.card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--unknown); }
+.dot-blocked { background: var(--blocked); } .dot-working { background: var(--working); }
+.dot-idle { background: transparent; box-shadow: inset 0 0 0 1.5px var(--idle); } .dot-done { background: var(--done); } .dot-unknown { background: var(--unknown); }
+.askbar { background: var(--blocked); color: #12181a; padding: .5rem .6rem; border-radius: 6px; margin: .4rem 0 0; }
+.askbar p { margin: 0 0 .3rem; }
+.askbar .verdict { font-weight: bold; }
+.askbar button { margin-right: .4rem; }
+/* Three shapes of ask. Deny is first and the biggest target. Allow shows
+   only on an undoable ask. A permanent ask shows a field for the pane name. */
+.tier { margin: .3rem 0; }
+.askbar .tier { color: #12181a; }
+button.deny { border-color: var(--blocked); font-weight: bold; }
+button.deny.big { min-width: 6rem; min-height: 52px; }
+section input.ask-name, input.ask-name { width: auto; min-width: 12rem; max-width: 100%; margin: .3rem .4rem .3rem 0;
+  min-height: 44px; background: #1b2422; color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+  font: inherit; padding: 0 .5rem; }
+.queue { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .4rem 0 0; }
+.queue .tier { flex-basis: 100%; }
+.queue[hidden] { display: none; }
+/* From 900 px the floor is one screen: the rail scrolls on its own at the
+   left, and the windows fill the rest of the page height. */
+@media (min-width: 900px) {
+  body:has(#screen-roster:not([hidden])) { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  body:has(#screen-roster:not([hidden])) #status-row { margin: .2rem .8rem; }
+  #screen-roster { flex: 1; min-height: 0; grid-template-columns: 15rem minmax(0, 1fr); align-items: stretch; gap: 0; }
+  #rail { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; overflow-y: auto; font-size: .9rem;
+    border-right: 1px solid var(--line); }
+  #rail .cards { padding: .4rem .5rem; gap: .2rem; grid-template-columns: minmax(0, 1fr); }
+  #rail .card.row { padding: .1rem .4rem; }
+  #rail .card.row:not(.selected):not(.confirming) { border-color: transparent; }
+  #rail .card.row:hover { background: #172022; }
+  #floor { grid-column: 2; grid-row: 1; min-height: 0; display: flex; flex-direction: column; padding: .4rem .5rem .5rem; }
+  #tiles { flex: 1; min-height: 0; }
+}
+/* One agent: a phone's sheet, or a wider page's pane screen. The text
+   never draws below the readable size, so a wide terminal scrolls
+   sideways in its body. */
+#canvas-wrap { overflow: auto; touch-action: pan-x pan-y; overscroll-behavior: contain; background: #0b0f10; }
+canvas { display: block; }
+/* The bottom bar: Keys, the field, the mic and Enter. The keyboard's own
+   Enter only types; the Enter button presses Enter. */
+#compose { display: flex; gap: .4rem; align-items: center; padding: .4rem .5rem;
+  border-top: 1px solid var(--line); background: var(--bg); }
+section #compose input { flex: 1; min-width: 0; width: auto; margin: 0; }
+#compose button { flex: none; padding: 0 .6rem; }
+#compose #send-enter { border-color: var(--accent); color: var(--accent); font-weight: bold; }
+#keys-toggle[aria-expanded="true"] { background: #26312f; }
+#keys { display: flex; gap: .3rem; padding: .4rem .5rem 0; flex-wrap: wrap; border-top: 1px solid var(--line); }
+#keys button { flex: 1 0 auto; min-width: 44px; padding: 0 .4rem; }
+#ask { padding: .5rem .8rem; border-bottom: 1px solid var(--line); border-left: 4px solid var(--blocked); }
+#ask p { margin: 0 0 .3rem; }
+#trust { padding: .5rem .8rem; border-bottom: 1px solid var(--line); border-left: 4px solid var(--blocked); }
+#trust p { margin: 0 0 .3rem; color: var(--blocked); }
+#ask-summary { color: var(--blocked); white-space: pre-wrap; word-break: break-word; }
+/* The ask a lock-screen card landed on. */
+#ask.here { background: var(--blocked); color: var(--bg); }
+#ask.here #ask-summary, #ask.here .tier { color: var(--bg); }
+#pane-head { display: flex; gap: .5rem; align-items: center; padding: .3rem .6rem; min-width: 0; white-space: nowrap; }
+#pane-head #pane-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#pane-head .dot { flex: none; }
+#pane-head #pane-source { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: .8rem; }
+#pane-head #pane-chip { flex: none; }
+#sheet-back { flex: none; font-size: 1.5rem; line-height: 1; padding: 0 .5rem; }
+#pane-gate { display: inline-flex; align-items: center; flex: none; }
+#pane-gate button.gate { min-height: 32px; min-width: 32px; padding: 0 .3rem; border: 0; background: transparent; font-weight: bold; }
+#pane-gate .gate-tip { display: none; }
+#pane-stack { display: flex; gap: .5rem; align-items: center; min-height: 22px; padding: 0 .6rem .3rem; white-space: nowrap;
+  overflow: hidden; font-size: .74rem; }
+#pane-stack .stackbar .seg { min-height: 22px; line-height: 22px; }
+#pane-stack .cwd { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* On a phone the stack bar keeps each step's words whole and wraps; only
+   the model step gives way, and the directory takes the next line. */
+body.phone #pane-stack { flex-wrap: wrap; row-gap: .25rem; white-space: normal; }
+body.phone #pane-stack .stackbar { flex: 0 1 auto; max-width: 100%; }
+body.phone #pane-stack .stackbar .seg { flex: none; }
+body.phone #pane-stack .stackbar .seg-model { flex: 0 1 auto; min-width: 4em; }
+body.phone #pane-stack .cwd { white-space: nowrap; }
+#pane-details { margin: 0 .5rem .3rem; }
+#pane-details[hidden] { display: none; }
+#pane-details .stack-details { margin-top: 0; }
+section label { display: block; margin: .8rem .8rem .2rem; color: var(--muted); }
+section label[hidden], #keys[hidden] { display: none; }
+section input, section select { width: calc(100% - 1.6rem); margin: 0 .8rem; min-height: 44px;
+  background: #1b2422; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; font: inherit; padding: 0 .5rem; }
+section > button { margin: .8rem; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+/* The phone. Home is the overview; an agent's sheet slides in from the
+   right over most of the screen, and the overview stays in sight at the
+   left edge. A tap on that edge goes back. */
+body.phone { --edge: 44px; }
+body.phone #facts { display: none; }
+body.phone #needs { padding-top: .3rem; }
+#needs[hidden] { display: none; }
+body.phone .card.row.amber .label { color: var(--blocked); }
+body.phone #strip { margin: .4rem .8rem 0; height: 52px; }
+body.phone #pane-source { display: none; }
+/* A phone has no keys to route, so no rail row carries the selected border. */
+body.phone .card.selected { border-color: var(--line); box-shadow: none; }
+body.phone .card.ask.selected { border-color: var(--blocked); }
+body.phone #strip-unpin { display: none; }
+body.phone.sheet-open { overflow: hidden; }
+body.phone #screen-pane { position: fixed; top: 0; bottom: var(--kb, 0px); left: var(--edge); right: 0; z-index: 20;
+  display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--line);
+  box-shadow: -12px 0 28px rgba(0, 0, 0, .6); padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  overscroll-behavior: contain; animation: sheet-in .2s ease-out; transition: transform .18s ease-out; }
+body.phone #screen-pane[hidden] { display: none; }
+body.phone #screen-pane > * { flex: none; }
+body.phone #canvas-wrap { flex: 1 1 0; min-height: 0; }
+body.phone #screen-pane #status-row { margin: .2rem .6rem; }
+@keyframes sheet-in { from { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  body.phone #screen-pane { animation: none; transition: none; }
+}
+#sheet-edge { position: fixed; top: 0; bottom: 0; left: 0; width: var(--edge, 44px); z-index: 19; min-width: 0; padding: 0;
+  border: 0; border-radius: 0; background: rgba(0, 0, 0, .4); }
+#sheet-edge[hidden] { display: none; }
+/* Tell the floor: one line, the microphone, and Send. The microphone only
+   fills the line. */
+#tell { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: .4rem; padding: .4rem .8rem; align-items: center; }
+#tell label { grid-column: 1 / -1; margin: 0; }
+section #tell input { width: 100%; margin: 0; }
+/* Views: the rail lists them, and one opens in a frame under the bar. */
+.views { list-style: none; margin: 0; padding: .4rem .8rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+.views[hidden] { display: none; }
+/* A view or the journal opens as a panel over part of the windows. From
+   900 px it shares the windows' grid cell and leaves the first column of
+   windows in sight; below that it rises from the bottom. */
+#overlay { display: flex; flex-direction: column; min-height: 0; z-index: 10; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: -10px 0 28px rgba(0, 0, 0, .55); }
+#overlay[hidden] { display: none; }
+#overlay-head { display: flex; gap: .5rem; align-items: center; padding: .25rem .4rem .25rem .7rem; border-bottom: 1px solid var(--line); }
+#overlay-head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#overlay-head button { min-height: 32px; }
+#overlay-head button[hidden] { display: none; }
+#overlay-close { font-size: 1.2rem; min-width: 40px; }
+#view-frame { display: block; flex: 1; width: 100%; min-height: 0; border: 0; background: var(--bg); }
+#view-frame[hidden] { display: none; }
+@media (min-width: 900px) {
+  #overlay { grid-column: 2; grid-row: 1; justify-self: end; width: var(--overlay-w, 60%); max-width: calc(100% - 1rem);
+    margin: .4rem .5rem .5rem 0; }
+}
+@media (max-width: 899px) {
+  #overlay { position: fixed; left: 0; right: 0; bottom: 0; height: 65vh; z-index: 30; border-radius: 12px 12px 0 0; }
+}
+/* The journal: the gate verdicts, newest first. */
+#journal { flex: 1; min-height: 0; overflow: auto; padding: .4rem .7rem; font-size: .85rem; }
+#journal[hidden] { display: none; }
+#journal .journal-bar { display: flex; gap: .6rem; align-items: center; }
+#journal .journal-bar button { min-height: 28px; font-size: .8rem; }
+#journal .journal-source { font-size: .78rem; margin: .3rem 0 .5rem; }
+#journal .journal-error { color: var(--warn); }
+.journal-list { list-style: none; margin: 0; padding: 0; }
+.journal-row { display: grid; grid-template-columns: 5.2em 1.2em minmax(5em, 11em) minmax(0, 1fr); gap: .5rem;
+  padding: .15rem 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+.journal-row > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.journal-row .gate-mark { font-weight: bold; text-align: center; }
+/* The colony pinned as a strip above the windows. */
+#strip { display: flex; gap: .3rem; height: 45px; flex: none; margin-bottom: 8px; border: 1px solid var(--line);
+  border-radius: 6px; overflow: hidden; }
+#strip[hidden] { display: none; }
+#strip-frame { flex: 1; height: 100%; border: 0; background: var(--bg); }
+#strip-unpin { align-self: center; min-height: 28px; margin: 0 4px; font-size: .8rem; }
+#minimap-frame { display: block; width: 100%; height: 96px; border: 0; border-top: 1px solid var(--line); background: var(--bg); }
+#minimap-frame[hidden] { display: none; }
+
+/* Health colours. A segment, a fact or a mark sets --h from its health. */
+.h-ok { --h: var(--ok); } .h-warn { --h: var(--warn); } .h-bad { --h: var(--bad); } .h-off { --h: var(--off); }
+/* The header row: the floor-wide facts, on the bar's own line. */
+#facts { display: flex; gap: .35rem; list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0;
+  overflow: hidden; font-size: .78rem; align-items: center; }
+#facts[hidden] { display: none; }
+#facts .fact { flex: none; white-space: nowrap; padding: .05rem .55rem; border-radius: 999px;
+  border: 1px solid var(--h, var(--line)); color: var(--fg); }
+#facts .fact.h-off { color: var(--muted); }
+#facts .fact.h-plain { border-color: var(--line); color: var(--muted); }
+#facts .fact.h-bad, #facts .fact.h-warn { background: color-mix(in srgb, var(--h) 18%, transparent); }
+#facts .fact-fix { padding: 0 .4rem; margin-left: .25rem; font: inherit; }
+/* The install hint in the rail: shown where the header row is hidden, on a
+   phone and on a narrow screen. */
+#gate-hint { margin: .4rem .8rem 0; padding: .35rem .6rem; border-radius: 8px;
+  background: color-mix(in srgb, var(--blocked) 14%, transparent); }
+#gate-hint[hidden] { display: none; }
+@media (min-width: 600px) { body:not(.phone) #gate-hint { display: none; } }
+@media (max-width: 899px) { #facts .fact-tokens, #facts .fact-working { display: none; } }
+/* A phone's bar has no room for the facts; the attention queue below says
+   who needs you. */
+@media (max-width: 599px) { #facts { display: none; } }
+body.phone #status-row:has(#status:empty):has(#status-fix[hidden]) { display: none; }
+/* The stack bar: one bar per window header, in steps like an order
+   tracker. Each step is a button; the words are the choice, the colour is
+   its health, and the open step carries a light outline. */
+.stackbar { display: inline-flex; flex: 0 1 auto; min-width: 0; overflow: hidden; align-items: stretch; }
+.stackbar .seg { --notch: 6px; min-height: 18px; min-width: 3.4em; padding: 0 .55rem 0 calc(.35rem + var(--notch));
+  margin-left: calc(-1 * var(--notch) + 2px); border: 0; border-radius: 0; font-size: .74rem; line-height: 18px;
+  flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg);
+  background: color-mix(in srgb, var(--h) 30%, #12181a);
+  clip-path: polygon(0 0, calc(100% - var(--notch)) 0, 100% 50%, calc(100% - var(--notch)) 100%, 0 100%, var(--notch) 50%); }
+.stackbar .seg:first-child { margin-left: 0; padding-left: .5rem; border-radius: 4px 0 0 4px;
+  clip-path: polygon(0 0, calc(100% - var(--notch)) 0, 100% 50%, calc(100% - var(--notch)) 100%, 0 100%); }
+.stackbar .seg.h-off { color: var(--muted); background: #1b2422; }
+.stackbar .seg:hover { background: color-mix(in srgb, var(--h) 45%, #12181a); }
+.stackbar .seg.open { background: color-mix(in srgb, var(--h) 55%, #12181a); font-weight: bold;
+  box-shadow: inset 0 0 0 2px var(--fg); }
+.stackbar .seg:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+/* The light: where the current turn is, while the agent works or an ask
+   waits. */
+.stackbar .seg.lit { animation: seg-lit 1.6s ease-in-out infinite; }
+@keyframes seg-lit { 50% { background: color-mix(in srgb, var(--h) 62%, #12181a); } }
+@media (prefers-reduced-motion: reduce) {
+  .stackbar .seg.lit { animation: none; background: color-mix(in srgb, var(--h) 55%, #12181a); }
+}
+/* The gate mark: the last verdict. */
+.tile .head button.gate { flex: none; min-height: 0; min-width: 0; padding: 0 .3rem; border: 0; background: transparent;
+  font-weight: bold; line-height: 1.4; }
+.gate-allow { color: var(--ok); } .gate-deny { color: var(--bad); } .gate-ask { color: var(--warn); }
+.tile .head .gate-tip { display: none; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  font-size: .75rem; color: var(--fg); }
+.tile .head .gate:focus-visible + .gate-tip { display: inline; }
+.tile .head .dot { flex: none; }
+/* The header's second line: the stack bar, the state word and the
+   directory, 18 px tall. The bar keeps its words; the directory gives way
+   first. */
+.tile .head2 { display: flex; gap: .5rem; align-items: center; height: 18px; margin-top: 2px; white-space: nowrap;
+  overflow: hidden; font-size: .74rem; cursor: pointer; }
+.tile .head2 .stackbar { flex: 0 1 auto; }
+.tile .head2 .state { flex: none; color: var(--muted); }
+.tile .head2 .state-blocked { color: var(--blocked); } .tile .head2 .state-working { color: var(--working); }
+.tile .head2 .cwd { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* A segment's details, below the header, in place. */
+.stack-details { margin-top: 4px; padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 6px;
+  font-size: .8rem; background: #151d1f; }
+.stack-details .details-top { display: flex; gap: .5rem; align-items: center; }
+.stack-details .details-top strong { flex: 1; }
+.stack-details button { min-height: 26px; min-width: 0; padding: 0 .5rem; font-size: .8rem; }
+.stack-details dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .05rem .8rem; margin: .2rem 0; }
+.stack-details dt { color: var(--muted); }
+.stack-details dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stack-details .details-note { margin: .1rem 0 0; }
+/* A headless agent's window: no keys reach it; its line sends whole
+   messages. */
+.tile .prompt-line { flex: none; margin-top: 4px; }
+.tile .prompt-line .headless-note { margin: 0 0 .2rem; font-size: .78rem; }
+.tile .prompt-line input.prompt-input { width: 100%; min-height: 34px; margin: 0; padding: 0 .5rem; font: inherit;
+  background: #1b2422; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; }
+.tile.typing .prompt-line input.prompt-input { border-color: var(--accent); }
+#pane-note { margin: .2rem .6rem; font-size: .85rem; }
+#pane-note[hidden] { display: none; }
+.tile.ended .ended-fix { display: flex; gap: .4rem; justify-content: center; margin: .4rem 0 0; }

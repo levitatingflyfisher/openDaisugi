@@ -35,8 +35,7 @@ from opendaisugi.exceptions import (
     TaskTooLongError,
 )
 from opendaisugi.inheritance import EnvelopeInheritanceError, verify_inheritance
-from opendaisugi.models import Envelope
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
+from opendaisugi.models import Envelope, Violation
 from opendaisugi.thinking import ThinkingBudget, thinking_kwargs
 from opendaisugi.z3_checks import check_envelope_self_consistency
 
@@ -316,7 +315,7 @@ async def generate_envelope(
     summarize: bool = False,
     cache: EnvelopeCache | None = None,
     pathway_store: "PathwayStore | None" = None,
-    pathway_threshold: float = DEFAULT_PATHWAY_THRESHOLD,
+    pathway_threshold: float | None = None,
     journal: "Journal | None" = None,
     stakes: Literal["low", "medium", "high"] = "medium",
     low_stakes_envelope: Envelope | None = None,
@@ -326,11 +325,11 @@ async def generate_envelope(
     max_retries: int = 3,
     max_task_chars: int = 4000,
 ) -> Envelope:
-    """Generate a safety envelope for a task via LLM + instructor.
+    """Generate a safety envelope for a task via an LLM structured call.
 
     ``model`` may be a single model string or a list of models forming an
     escalation ladder. When a list is provided, each rung is tried in order;
-    escalation occurs on instructor parse exhaustion or Z3 self-consistency
+    escalation occurs on structured-reply exhaustion or Z3 self-consistency
     violation. ``TaskTooLongError`` always short-circuits the whole ladder.
 
     When ``summarize=True``, the user message includes a trailing instruction
@@ -458,8 +457,10 @@ async def generate_envelope(
         if tier1_env is not None:
             try:
                 t1_violations = check_envelope_self_consistency(tier1_env)
-            except Exception:
-                t1_violations = []
+            except Exception as exc:
+                # A check that did not finish (a Z3 timeout) is not a pass:
+                # the slot declines, as for an inconsistent envelope.
+                t1_violations = [Violation(stage="z3", message=str(exc))]
             if t1_violations:
                 _log.info(
                     "tier1 provider %r returned self-inconsistent envelope (%s) — falling through",
@@ -528,7 +529,7 @@ async def generate_envelope(
         hints_block = _refinement_hints_block(refinements)
         rung_user_content = user_content + hints_block
 
-        client = _llm.get_instructor_client(model=rung)
+        client = _llm.get_model_client(model=rung)
         extra = thinking_kwargs(rung, thinking_budget)
         try:
             env = await client.chat.completions.create(
@@ -549,12 +550,13 @@ async def generate_envelope(
             last_cause = e
             continue
 
-        # Z3 self-consistency check — treat any z3 exception (e.g. timeout) as
-        # "no violations" so a z3 outage doesn't block all envelope generation.
+        # Z3 self-consistency check. A check that did not finish (a Z3
+        # timeout or error) fails the rung: an envelope nobody checked is
+        # never accepted.
         try:
             violations = check_envelope_self_consistency(env)
-        except Exception:
-            violations = []
+        except Exception as exc:
+            violations = [Violation(stage="z3", message=str(exc))]
 
         if violations:
             last_error = EnvelopeGenerationError(

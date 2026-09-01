@@ -63,10 +63,13 @@ def _warn_search_extra_missing_once() -> None:
     if _search_extra_warned:
         return
     _search_extra_warned = True
+    from opendaisugi._search import selected_matcher
+
+    extra = "opendaisugi[potion]" if selected_matcher() == "potion" else "opendaisugi[search]"
     msg = (
-        "opendaisugi[search] is not installed; pathway lookup is disabled "
-        "and token savings via the pathway store will not work. "
-        "Install with: uv add 'opendaisugi[search]'  (or: pip install 'opendaisugi[search]')"
+        f"{extra} is not installed; pathway lookup is disabled "
+        f"and token savings via the pathway store will not work. "
+        f"Install with: pip install '{extra}'"
     )
     warnings.warn(msg, UserWarning, stacklevel=4)
     _log.warning(msg)
@@ -197,10 +200,80 @@ class PathwayStore:
                 ),
             )
 
-    def find(
-        self, task: str, *, threshold: float = DEFAULT_PATHWAY_THRESHOLD
-    ) -> PathwayMatch | None:
+    def reembed_stale(self, *, embed=None, model=None, version=None) -> int:
+        """Re-embed every row whose provenance is not the active identity.
+
+        Switching embedder changes the vector space, so ``find`` excludes rows
+        stamped with another identity. That is correct, but it orphans them
+        for good unless something re-embeds. ``tend`` calls this first, which
+        is the second half of making the matcher stage live: lookup follows
+        the config at once, and the store catches up on the next tend.
+
+        Legacy rows with no stamp at all are re-embedded too. They were
+        admitted as wildcards, which quietly risked comparing across widths;
+        a stamp makes them concretely current instead.
+
+        ``embed`` maps a list of task strings to one vector each; the default
+        is the active embedder over the distiller's normalized task text.
+        Returns the number of rows rewritten. An unavailable embedder returns
+        0 with a warning rather than raising: distillation degrades, it does
+        not crash.
+        """
+        from opendaisugi.exceptions import MatcherNotAvailable
+
+        if model is None or version is None:
+            from opendaisugi._search import active_model_name
+            from opendaisugi.distiller import _EMBEDDING_MODEL_VERSION
+
+            try:
+                model = model or active_model_name()
+            except MatcherNotAvailable as exc:
+                _log.warning("re-embed skipped: %s", exc)
+                return 0
+            version = version or _EMBEDDING_MODEL_VERSION
+        if embed is None:
+
+            def embed(texts):
+                from opendaisugi._search import _get_model
+                from opendaisugi.distiller import _normalize_task_for_embedding
+
+                normalized = [_normalize_task_for_embedding(t) for t in texts]
+                return _get_model().encode(normalized, convert_to_numpy=True)
+
+        rows = self._load_all_rows()
+        stale = [
+            r
+            for r in rows
+            if r["embedding_model"] != model or r["embedding_model_version"] != version
+        ]
+        if not stale:
+            return 0
+        try:
+            vectors = embed([r["task_description"] for r in stale])
+        except (ImportError, ModuleNotFoundError, MatcherNotAvailable) as exc:
+            _log.warning(
+                "re-embed skipped for %d stale pathways: %s. Run `daisugi tend` "
+                "again once the embedder is available.",
+                len(stale),
+                exc,
+            )
+            return 0
+        with self._connect() as con:
+            for row, vec in zip(stale, vectors, strict=True):
+                con.execute(
+                    "UPDATE pathways SET task_embedding_json = ?, embedding_model = ?, "
+                    "embedding_model_version = ? WHERE id = ?",
+                    (json.dumps([float(x) for x in vec]), model, version, row["id"]),
+                )
+        _log.info("re-embedded %d stale pathways under %s/%s", len(stale), model, version)
+        return len(stale)
+
+    def find(self, task: str, *, threshold: float | None = None) -> PathwayMatch | None:
         """Embed ``task`` and return the best matching pathway above threshold.
+
+        ``threshold=None`` (the default) resolves the active backend's threshold
+        (ADR-0018): 0.55 for MiniLM, 0.59 for potion. A caller may still pin an
+        explicit value.
 
         Returns None when the store is empty, the embedder is unavailable
         (the ``[search]`` extra is not installed), or the best match is
@@ -220,16 +293,28 @@ class PathwayStore:
         if not rows:
             return None
 
+        from opendaisugi.exceptions import MatcherNotAvailable
+
         try:
+            if threshold is None:
+                from opendaisugi._search import active_threshold
+
+                threshold = active_threshold()
             query_vec = self._embed_query(task)
         except ImportError:
             _warn_search_extra_missing_once()
             return None
+        except MatcherNotAvailable:
+            # matcher_model names an unbuilt embedder. Nothing can match, so
+            # degrade to no reuse. The swap menu refuses this value; a
+            # hand-edited config reaches here, and the threshold lookup raises
+            # the same way the embedder does.
+            return None
 
-        from opendaisugi._search import _MODEL_NAME
+        from opendaisugi._search import active_model_name
         from opendaisugi.distiller import _EMBEDDING_MODEL_VERSION
 
-        current_model = _MODEL_NAME
+        current_model = active_model_name()
         current_version = _EMBEDDING_MODEL_VERSION
 
         # Rows with empty embedding_model are pre-provenance-tracking
@@ -255,7 +340,21 @@ class PathwayStore:
 
         from opendaisugi._similarity import cosine_similarity_batch
 
-        task_vecs = np.array([json.loads(r["task_embedding_json"]) for r in compatible])
+        # Dimension guard: a legacy wildcard row admitted above may have been
+        # embedded at a different width than the active backend (e.g. a 384-dim
+        # MiniLM row under a 256-dim potion query). Comparing across widths raises
+        # in the cosine dot product, so keep only rows matching the query width.
+        qdim = len(query_vec)
+        vecs, keep = [], []
+        for r in compatible:
+            v = json.loads(r["task_embedding_json"])
+            if len(v) == qdim:
+                vecs.append(v)
+                keep.append(r)
+        if not keep:
+            return None
+
+        task_vecs = np.array(vecs)
         scores = cosine_similarity_batch(query_vec, task_vecs)
 
         best_idx = int(np.argmax(scores))
@@ -263,7 +362,7 @@ class PathwayStore:
         if best_score < threshold:
             return None
 
-        pathway = self._row_to_pathway(compatible[best_idx])
+        pathway = self._row_to_pathway(keep[best_idx])
         return PathwayMatch(pathway=pathway, similarity=best_score)
 
     def _embed_query(self, task: str):

@@ -75,6 +75,7 @@ def test_help_all_lists_every_command():
         "gardener",
         "gateway",
         "models",
+        "bench",
     ):
         assert name in res.output, name
 

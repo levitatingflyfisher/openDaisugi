@@ -98,9 +98,9 @@ git layer adds `pull()`, `publish()`, `status()`.
   onboarding flow.
 - **Tamper detection**: bundles are signed over their canonical-JSON
   body; any post-signature edit fails verification.
-- **Privacy**: `CompiledPathway.publishable: bool = False` (default).
-  `daisugi pathways mark-publishable` opts a specific pathway in
-  before it can be published.
+- **Privacy**: nothing is published unless you ask for it. Only
+  `daisugi registry publish <pathway-id>` publishes, one named pathway
+  at a time; pull, tend and distillation never publish.
 
 ## What git gives us for free
 

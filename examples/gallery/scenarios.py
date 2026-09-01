@@ -7,7 +7,6 @@ green=accepted, amber=out-of-bounds refused+fallback, red=hard hold/refusal.
 from typing import Literal
 
 from harness import AMBER, BLUE, GREEN, GREY, RED, Stage, play
-
 from opendaisugi import (
     ActionPlan,
     Envelope,

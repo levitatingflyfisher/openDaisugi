@@ -27,7 +27,7 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	jsonOut := fs.Bool("json", false, "emit the result as JSON (for scripts and jq)")
 	gateOn := fs.Bool("gate", false, "verify each tool call against the envelope, fail-closed")
 	maxTurns := fs.Int("max-turns", 20, "give up after this many model turns")
-	gateCmd := fs.String("gate-cmd", "python -m opendaisugi.gate --mode enforce",
+	gateCmd := fs.String("gate-cmd", DefaultGateCmd(),
 		"the out-of-process envelope gate to call when --gate is set")
 	sessionDir := fs.String("session-dir", "",
 		"write the session tree (JSONL) here — the same shape daisugi's gate writes on path D. Empty = off.")
@@ -117,6 +117,10 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 				return 1
 			}
 			seedHistory = HistoryFromEntries(entries)
+		}
+		if dg, ok := gate.(DaisugiGate); ok {
+			dg.SessionID = sid
+			gate = dg
 		}
 		fmt.Fprintf(stderr, "sprig: session %s at %s\n", sid, w.Path())
 	}

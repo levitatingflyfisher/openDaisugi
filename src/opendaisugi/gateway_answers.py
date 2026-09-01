@@ -37,7 +37,6 @@ from pathlib import Path
 from typing import Any
 
 from opendaisugi.gateway_journal import turn_signature
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
 
 EmbedFn = Callable[[list[str]], Any]
 
@@ -202,7 +201,7 @@ def recall_answer(
     *,
     now: float,
     embed: EmbedFn | None = None,
-    threshold: float = DEFAULT_PATHWAY_THRESHOLD,
+    threshold: float | None = None,
     max_age_seconds: float = DEFAULT_ANSWER_MAX_AGE_SECONDS,
     current_ground_hash: str | None = None,
 ) -> AnswerResult:
@@ -237,6 +236,11 @@ def recall_answer(
 
     if embed is None:
         embed = _lazy_embed
+
+    if threshold is None:
+        from opendaisugi._search import active_threshold
+
+        threshold = active_threshold()
 
     import numpy as np
 

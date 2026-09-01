@@ -8,10 +8,10 @@ is threaded so the call actually reaches the local server.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from opendaisugi.delegating_executor import DelegatingExecutor
+from opendaisugi.llm_client import Reply
 from opendaisugi.model_sizer import DEFAULT_LADDER, build_ladder, size_step
 from opendaisugi.models import TaskStep
 
@@ -49,16 +49,13 @@ def test_endpoint_override_threads_base_url_to_completion():
     )
     captured = {}
 
-    def fake_completion(**kwargs):
+    def fake_completion(model, messages, **kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="hi"))],
-            usage=SimpleNamespace(total_tokens=3),
-        )
+        return Reply("hi", tokens=3)
 
-    with patch("litellm.completion", fake_completion):
+    with patch("opendaisugi.llm_client.complete", fake_completion):
         exe.run(TaskStep(id="t1", prompt="x"), timeout_s=5, max_output_bytes=512)
-    assert captured.get("api_base") == "http://localhost:8080/v1"
+    assert captured.get("base_url") == "http://localhost:8080/v1"
     assert captured.get("api_key") == "x"
 
 
@@ -70,16 +67,13 @@ def test_endpoint_override_not_applied_to_other_models():
     )
     captured = {}
 
-    def fake_completion(**kwargs):
+    def fake_completion(model, messages, **kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="hi"))],
-            usage=SimpleNamespace(total_tokens=3),
-        )
+        return Reply("hi", tokens=3)
 
-    with patch("litellm.completion", fake_completion):
+    with patch("opendaisugi.llm_client.complete", fake_completion):
         exe.run(TaskStep(id="t1", prompt="x"), timeout_s=5, max_output_bytes=512)
-    assert "api_base" not in captured  # cloud model must not get the local endpoint
+    assert captured.get("base_url") is None  # cloud model must not get the local endpoint
 
 
 async def test_facade_threads_configured_local_model(monkeypatch):
@@ -87,7 +81,7 @@ async def test_facade_threads_configured_local_model(monkeypatch):
     ladder's local rung AND pass its endpoint to the executor."""
     import opendaisugi
     from opendaisugi import Daisugi, Envelope, Permission
-    from opendaisugi.tier1 import LiteLLMTier1Provider
+    from opendaisugi.tier1 import HTTPTier1Provider
 
     captured = {}
 
@@ -100,7 +94,7 @@ async def test_facade_threads_configured_local_model(monkeypatch):
 
     monkeypatch.setattr(opendaisugi.orchestrator, "Orchestrator", _FakeOrch)
 
-    tier1 = LiteLLMTier1Provider(model="qwen2.5-3b", base_url="http://localhost:8080/v1")
+    tier1 = HTTPTier1Provider(model="qwen2.5-3b", base_url="http://localhost:8080/v1")
     dai = Daisugi(tier1=tier1, pathway_store=False, cache=False)
     env = Envelope(generated_by="t", task="x", permissions=Permission())
     await dai.orchestrate("summarize", envelope=env)

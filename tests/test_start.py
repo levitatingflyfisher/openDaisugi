@@ -9,6 +9,7 @@ once `<root>/<SOCK_NAME>` actually appears.
 from __future__ import annotations
 
 import json
+import socket
 from pathlib import Path
 
 from opendaisugi.gate_server import SOCK_NAME
@@ -40,7 +41,7 @@ def test_plan_on_a_fresh_project_would_do_everything(tmp_path):
     steps = {s.key: s for s in plan_start(_opts(tmp_path))}
     assert set(steps) == {"harness", "hook", "envelope", "gate-server", "view"}
     assert steps["harness"].state == "done" and "claude" in steps["harness"].text
-    assert steps["hook"].state == "would" and "shadow" in steps["hook"].text
+    assert steps["hook"].state == "would" and "audit" in steps["hook"].text
     assert steps["envelope"].state == "would"
     assert steps["gate-server"].state == "would"
     assert steps["view"].state == "would"
@@ -62,7 +63,7 @@ def test_run_installs_hook_scoped_to_cwd_not_home(tmp_path):
     settings = json.loads(settings_path.read_text())
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "opendaisugi.gate_client" in cmd
-    assert "--mode shadow" in cmd
+    assert "--mode audit" in cmd
     assert f"--root {root}" in cmd
     assert steps["hook"].state == "done"
     assert str(opts.cwd) in steps["hook"].text
@@ -116,14 +117,30 @@ def test_gate_server_step_fails_when_the_socket_never_appears(tmp_path):
     assert "gate serve" in steps["gate-server"].text
 
 
+def _listen(path: Path) -> socket.socket:
+    """A socket that answers, as a running gate's does."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(str(path))
+    s.listen()
+    return s
+
+
 def test_second_run_skips_what_exists(tmp_path):
     root = tmp_path / "data" / "gate"
     opts = _opts(tmp_path, spawn=_touch_sock(root))
     run_start(opts)
-    steps = {s.key: s for s in run_start(opts)}
+    (root / SOCK_NAME).unlink()
+    live = _listen(root / SOCK_NAME)
+    try:
+        steps = {s.key: s for s in run_start(opts)}
+    finally:
+        live.close()
     assert steps["hook"].state == "skipped" and "already installed" in steps["hook"].text
     assert steps["envelope"].state == "skipped"
-    assert steps["gate-server"].state == "skipped" and "already running" in steps["gate-server"].text
+    assert (
+        steps["gate-server"].state == "skipped" and "already running" in steps["gate-server"].text
+    )
 
 
 def test_no_claude_is_a_failed_step_with_a_fix_and_short_circuits(tmp_path):
@@ -143,11 +160,11 @@ def test_no_claude_is_a_failed_step_with_a_fix_and_short_circuits(tmp_path):
 def test_second_run_asking_for_a_different_mode_says_how_to_switch(tmp_path):
     root = tmp_path / "data" / "gate"
     opts = _opts(tmp_path, spawn=_touch_sock(root))
-    run_start(opts)  # shadow, the default
+    run_start(opts)  # audit, the default
     enforce_opts = _opts(tmp_path, spawn=_touch_sock(root), enforce=True)
     steps = {s.key: s for s in run_start(enforce_opts)}
     assert steps["hook"].state == "skipped"
-    assert "shadow" in steps["hook"].text and "enforce" in steps["hook"].text
+    assert "audit" in steps["hook"].text and "enforce" in steps["hook"].text
     assert "remove the gate hook line" in steps["hook"].text
 
 
@@ -210,3 +227,60 @@ def test_session_key_is_stable_and_filename_safe(tmp_path):
     key = _session_key(proj)
     assert key == _session_key(proj)  # deterministic
     assert all(c.isalnum() or c in "._-" for c in key)
+
+
+def test_a_stale_socket_is_removed_and_a_gate_started(tmp_path):
+    """G2-9: a socket file nobody answers (a Ctrl-C'd or killed server) is
+    not a running gate."""
+    root = tmp_path / "data" / "gate"
+    root.mkdir(parents=True)
+    dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    dead.bind(str(root / SOCK_NAME))
+    dead.close()
+    spawned = []
+
+    def spawn(argv):
+        # The server only binds once the stale file is gone.
+        assert not (root / SOCK_NAME).exists()
+        spawned.append(argv)
+        _touch_sock(root)(argv)
+
+    steps = {s.key: s for s in run_start(_opts(tmp_path, spawn=spawn))}
+    assert spawned
+    assert steps["gate-server"].state == "done"
+
+
+def test_a_stale_regular_file_is_removed_and_a_gate_started(tmp_path):
+    root = tmp_path / "data" / "gate"
+    root.mkdir(parents=True)
+    (root / SOCK_NAME).write_text("")
+    spawned = []
+
+    def spawn(argv):
+        spawned.append(argv)
+        _touch_sock(root)(argv)
+
+    steps = {s.key: s for s in run_start(_opts(tmp_path, spawn=spawn))}
+    assert spawned and steps["gate-server"].state == "done"
+
+
+def test_a_live_gate_is_left_alone(tmp_path):
+    root = tmp_path / "data" / "gate"
+    live = _listen(root / SOCK_NAME)
+    spawned = []
+    try:
+        steps = {s.key: s for s in run_start(_opts(tmp_path, spawn=spawned.append))}
+    finally:
+        live.close()
+    assert not spawned
+    assert steps["gate-server"].state == "skipped"
+    assert "already running" in steps["gate-server"].text
+
+
+def test_a_dry_run_leaves_a_stale_socket_in_place(tmp_path):
+    root = tmp_path / "data" / "gate"
+    root.mkdir(parents=True)
+    (root / SOCK_NAME).write_text("")
+    steps = {s.key: s for s in plan_start(_opts(tmp_path))}
+    assert steps["gate-server"].state == "would"
+    assert (root / SOCK_NAME).exists()

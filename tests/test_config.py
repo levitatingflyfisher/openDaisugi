@@ -153,10 +153,10 @@ def test_config_ignores_retired_runtime_supervision_fields(tmp_path):
 
 def test_module_selection_knobs_have_current_behaviour_defaults():
     cfg = default_config()
-    assert cfg.gate_mode == "shadow"
+    assert cfg.gate_mode == "audit"
     assert cfg.verifier_client == "python"
-    assert cfg.matcher_model == "all-MiniLM-L6-v2"
-    assert cfg.llm_backend == "claude-code"
+    assert cfg.matcher_model == "lexical"
+    assert cfg.llm_backend is None, "None means auto-detect, so a saved default pins nothing"
     assert cfg.envelope_source == "evidence-inferred"
     assert cfg.pathway_store_backend == "sqlite"
 
@@ -172,4 +172,30 @@ def test_module_selection_knobs_round_trip_through_yaml(tmp_path):
     assert cfg.verifier_client == "go"
     assert cfg.pathway_store_backend == "git"
     # unspecified knobs keep defaults
-    assert cfg.matcher_model == "all-MiniLM-L6-v2"
+    assert cfg.matcher_model == "lexical"
+
+
+def test_voice_defaults_are_cpu_safe_and_cleanup_is_off():
+    config = default_config()
+    assert config.voice_engine == "faster-whisper"
+    assert config.voice_device == "cpu"
+    assert config.voice_cleanup is False
+    assert config.voice_cleanup_model is None
+    assert config.voice_server_url == "http://127.0.0.1:7477"
+
+
+def test_voice_model_default_matches_the_pinned_faster_whisper_test_model():
+    from opendaisugi.voice import pins
+
+    assert default_config().voice_model == pins.FASTER_WHISPER_TEST_MODEL
+
+
+def test_voice_config_roundtrips_through_yaml(tmp_path):
+    path = tmp_path / "config.yaml"
+    config = default_config().model_copy(
+        update={"voice_cleanup": True, "voice_cleanup_model": "ollama/llama3.2:3b"}
+    )
+    save_config(config, path)
+    loaded = load_config(path)
+    assert loaded.voice_cleanup is True
+    assert loaded.voice_cleanup_model == "ollama/llama3.2:3b"

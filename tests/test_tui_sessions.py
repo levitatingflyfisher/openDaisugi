@@ -71,8 +71,11 @@ def test_cell_updates_are_in_place_and_new_sessions_rebuild_once(tmp_path):
             # a new verdict on the same session: cells update, no rebuild
             tree = SessionTree.open(tmp_path / "sessions", "s1")
             c = tree.append("tool_call", {"toolUseId": "t9", "name": "Read", "detail": "x.py"})
-            tree.append("verdict", {"toolUseId": "t9", "decision": "deny", "clause": "files: no"},
-                        parent_id=c.id)
+            tree.append(
+                "verdict",
+                {"toolUseId": "t9", "decision": "deny", "clause": "files: no"},
+                parent_id=c.id,
+            )
             app.screen._poll()
             await pilot.pause()
             assert app.screen._table_generation == gen

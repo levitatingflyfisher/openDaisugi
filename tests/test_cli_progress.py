@@ -42,10 +42,12 @@ def test_orchestrate_prints_a_progress_note_on_a_tty(monkeypatch, tmp_path):
 
     monkeypatch.setattr(Daisugi, "orchestrate", _slow)
     err = _Tty()
-    monkeypatch.setattr(console, "set_mode", lambda mode, err_stream=None: None)  # keep our TTY mode
+    monkeypatch.setattr(
+        console, "set_mode", lambda mode, err_stream=None: None
+    )  # keep our TTY mode
     console._MODE = console.resolve_output(stream=_Tty(), env={})
     console._ERR = err
-    res = runner.invoke(app, ["orchestrate", "t", "--llm", "litellm", "--data-dir", str(tmp_path)])
+    res = runner.invoke(app, ["orchestrate", "t", "--llm", "api", "--data-dir", str(tmp_path)])
     assert res.exit_code == 0, res.output
     # _echo_resolved (Task 2) writes its own "backend: ..." note to the same
     # stream first, so this checks presence rather than a strict prefix —
@@ -102,7 +104,9 @@ def test_onboard_reports_progress_on_stderr_not_stdout(monkeypatch, tmp_path):
     monkeypatch.setattr(console, "set_mode", lambda mode, err_stream=None: None)
     console._MODE = console.resolve_output(stream=_Tty(), env={})
     console._ERR = err
-    res = runner.invoke(app, ["onboard", "--data-dir", str(tmp_path)])
+    # --allow-no-embedder: [dev] has no sentence-transformers, and this test
+    # is about where the progress goes, not about the embedder.
+    res = runner.invoke(app, ["onboard", "--data-dir", str(tmp_path), "--allow-no-embedder"])
     assert res.exit_code == 0, res.output
     # the live progress note (onboarding.py's own _say()) must be on stderr —
     # never mixed into the stdout report the command also writes.

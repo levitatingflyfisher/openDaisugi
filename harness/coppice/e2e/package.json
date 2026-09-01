@@ -1,0 +1,13 @@
+{
+  "name": "coppice-e2e",
+  "private": true,
+  "description": "coppice end-to-end checks: the web floor in headless chromium",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "./run.sh"
+  },
+  "dependencies": {
+    "playwright": "1.61.0"
+  }
+}

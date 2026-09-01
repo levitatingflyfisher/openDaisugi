@@ -76,7 +76,7 @@ async def test_thinking_budget_passes_thinking_kwarg_to_anthropic(sample_envelop
     fake_client = MagicMock()
     fake_client.chat.completions.create = AsyncMock(return_value=sample_envelope)
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake_client):
+    with patch("opendaisugi.envelope._llm.get_model_client", return_value=fake_client):
         await generate_envelope(
             task="do a thing",
             model="anthropic/claude-sonnet-4-20250514",
@@ -95,7 +95,7 @@ async def test_thinking_budget_standard_anthropic_no_kwarg(sample_envelope):
     fake_client = MagicMock()
     fake_client.chat.completions.create = AsyncMock(return_value=sample_envelope)
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake_client):
+    with patch("opendaisugi.envelope._llm.get_model_client", return_value=fake_client):
         await generate_envelope(
             task="do a thing",
             model="anthropic/claude-sonnet-4-20250514",

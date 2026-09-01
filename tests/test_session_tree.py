@@ -100,7 +100,12 @@ def test_open_missing_raises_and_open_or_create_creates(tmp_path: Path):
         SessionTree.open(tmp_path / "s", "nope")
     t = SessionTree.open_or_create(tmp_path / "s", session_id="s2", harness="x", cwd="/")
     assert t.meta()["id"] == "s2"
-    assert SessionTree.open_or_create(tmp_path / "s", session_id="s2", harness="y", cwd="/").meta()["harness"] == "x"
+    assert (
+        SessionTree.open_or_create(tmp_path / "s", session_id="s2", harness="y", cwd="/").meta()[
+            "harness"
+        ]
+        == "x"
+    )
 
 
 def test_open_or_create_falls_back_on_concurrent_create_race(tmp_path: Path, monkeypatch):
@@ -157,18 +162,59 @@ def test_cold_head_lookup_does_not_decode_the_whole_file(tmp_path: Path, monkeyp
 
 def test_entry_types_are_the_spec_set():
     assert ENTRY_TYPES == frozenset(
-        {"session", "prompt", "assistant", "tool_call", "verdict", "tool_result",
-         "checkpoint", "compaction", "branch_summary", "label", "note", "head"}
+        {
+            "session",
+            "prompt",
+            "assistant",
+            "tool_call",
+            "verdict",
+            "tool_result",
+            "checkpoint",
+            "compaction",
+            "branch_summary",
+            "label",
+            "note",
+            "head",
+            "state",
+        }
     )
-    assert Entry("prompt", "a1b2c3d4", None, 1.0, {"text": "x"}).to_json().startswith('{"type": "prompt"')
+    assert (
+        Entry("prompt", "a1b2c3d4", None, 1.0, {"text": "x"})
+        .to_json()
+        .startswith('{"type": "prompt"')
+    )
+
+
+def test_state_entries_do_not_move_the_head(tmp_path: Path):
+    """A 'state' entry must not become the tree's head (session_tree's
+    _NO_MOVE) — the NEXT tool call has to parent off the previous verdict,
+    not off a state node, or the tree screen and rewind logic (tui_tree.py)
+    mis-render a state entry as a checkpoint's or a call's parent."""
+    t = SessionTree.create(tmp_path / "s", session_id="s1", harness="x", cwd="/")
+    c = t.append("tool_call", {"name": "Bash"})
+    v = t.append("verdict", {"toolUseId": c.id, "decision": "allow"})
+    assert t.head() == v.id
+    s = t.append("state", {"state": "working", "source": "gate"})
+    assert t.head() == v.id
+    assert s.parent_id == v.id
 
 
 def test_to_json_data_cannot_shadow_the_meta_keys():
     """A data payload with id/type/parentId/ts keys must never overwrite the
     store's own invariant fields — the store guards its own shape."""
-    e = Entry("prompt", "a1b2c3d4", "parent99", 1.0, {
-        "id": "evil", "type": "evil", "parentId": "evil", "ts": 999.0, "text": "hi",
-    })
+    e = Entry(
+        "prompt",
+        "a1b2c3d4",
+        "parent99",
+        1.0,
+        {
+            "id": "evil",
+            "type": "evil",
+            "parentId": "evil",
+            "ts": 999.0,
+            "text": "hi",
+        },
+    )
     row = json.loads(e.to_json())
     assert row["id"] == "a1b2c3d4"
     assert row["type"] == "prompt"
@@ -178,7 +224,9 @@ def test_to_json_data_cannot_shadow_the_meta_keys():
 
 
 def test_fork_copies_the_path_and_names_its_parent(tmp_path: Path):
-    t = SessionTree.create(tmp_path / "s", session_id="s1", harness="sprig", cwd="/w", cache_key="k")
+    t = SessionTree.create(
+        tmp_path / "s", session_id="s1", harness="sprig", cwd="/w", cache_key="k"
+    )
     p = t.append("prompt", {"text": "one"})
     a = t.append("assistant", {"text": "a"})
     t.append("tool_call", {"name": "Bash"})  # not on the forked path
@@ -200,11 +248,18 @@ def test_fork_copies_the_path_and_names_its_parent(tmp_path: Path):
 
 def test_index_lists_sessions_newest_first(tmp_path: Path):
     d = tmp_path / "s"
-    old = SessionTree.create(d, session_id="old", harness="claude-code", cwd="/a", clock=lambda: 10.0)
+    old = SessionTree.create(
+        d, session_id="old", harness="claude-code", cwd="/a", clock=lambda: 10.0
+    )
     old.append("prompt", {"text": "x"}, clock=lambda: 11.0)
     new = SessionTree.create(d, session_id="new", harness="sprig", cwd="/b", clock=lambda: 20.0)
     c = new.append("tool_call", {"name": "Bash", "detail": "ls"}, clock=lambda: 21.0)
-    new.append("verdict", {"toolUseId": "t1", "decision": "deny", "clause": "shell: no"}, parent_id=c.id, clock=lambda: 22.0)
+    new.append(
+        "verdict",
+        {"toolUseId": "t1", "decision": "deny", "clause": "shell: no"},
+        parent_id=c.id,
+        clock=lambda: 22.0,
+    )
     rows = SessionIndex(d).list()
     assert [r.session_id for r in rows] == ["new", "old"]
     assert isinstance(rows[0], SessionSummary)
@@ -218,3 +273,18 @@ def test_index_lists_sessions_newest_first(tmp_path: Path):
 def test_index_on_missing_dir_is_empty(tmp_path: Path):
     assert SessionIndex(tmp_path / "none").list() == []
     assert SessionIndex(tmp_path / "none").mtime() == 0.0
+
+
+def test_session_index_ignores_state_entries_for_liveness(tmp_path: Path):
+    """A 'state' entry is bookkeeping, not activity: cockpit.py turns
+    last_ts into the WORKING/PARKED/DONE grouping, so a session that reports
+    idle/done via a hook must not look freshly WORKING just because a state
+    row landed after the real tool-call activity."""
+    d = tmp_path / "s"
+    t = SessionTree.create(d, session_id="s1", harness="claude-code", cwd="/w", clock=lambda: 10.0)
+    c = t.append("tool_call", {"name": "Bash"}, clock=lambda: 11.0)
+    t.append("verdict", {"toolUseId": c.id, "decision": "allow"}, clock=lambda: 12.0)
+    t.append("state", {"state": "idle", "source": "headless"}, clock=lambda: 1012.0)
+    row = SessionIndex(d).list()[0]
+    assert row.last_ts == 12.0
+    assert row.entry_count == 3  # header + tool_call + verdict; the state row doesn't count

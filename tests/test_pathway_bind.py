@@ -125,3 +125,15 @@ async def test_malformed_bind_response_falls_back_to_template():
         pw, "x", envelope=_env("grep"), model="m", z3_timeout_ms=500, client=_FakeClient(_Bad())
     )
     assert plan.steps[0].command == "grep -rn TODO src"  # frozen fallback
+
+
+async def test_a_binding_into_a_field_that_is_not_a_string_falls_back():
+    """A hole whose field holds a list is refused, not set unvalidated."""
+    pw = _typed_pathway()
+    pw.parameters[0] = pw.parameters[0].model_copy(update={"field": "depends_on"})
+    client = _FakeClient(Bindings(values={"s1.command": "grep -rn XXX src"}))
+    plan = await bind_parameters(
+        pw, "x", envelope=_env("grep"), model="m", z3_timeout_ms=500, client=client
+    )
+    assert plan.steps[0].depends_on == []
+    assert plan.steps[0].command == "grep -rn TODO src"

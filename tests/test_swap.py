@@ -55,16 +55,16 @@ def test_effect_is_three_valued_and_covers_every_stage(tmp_path):
     stage_keys = {s.key for s in detect_stages(tmp_path)}
     assert set(STAGE_EFFECT) == stage_keys, "STAGE_EFFECT must cover every stage exactly"
     assert set(STAGE_EFFECT.values()) <= {"live", "cfg", "planned"}
-    # shell/distill are live; verifier/matcher/stores are planned; gate is cfg.
-    assert is_live("shell") and is_live("distill")
-    assert effect_of("verifier") == "planned"
+    # shell, distill and verifier are live; stores is planned; gate is cfg.
+    assert is_live("shell") and is_live("distill") and is_live("verifier")
+    assert effect_of("stores") == "planned"
     assert effect_of("gate") == "cfg"
 
 
-def test_verifier_is_a_knob_but_not_live(tmp_path):
-    # You can record a verifier preference, but nothing runs it — python enforces.
+def test_verifier_is_a_knob_and_now_live(tmp_path):
+    # verifier_dispatch reads the choice per verify call, so no restart is needed.
     assert is_swappable("verifier")
-    assert not is_live("verifier")
+    assert is_live("verifier")
     cfg = apply_swap("verifier", "go (mvdan)", config_path=_cfg_path(tmp_path))
     assert cfg.verifier_client == "go"
 
@@ -114,3 +114,10 @@ def test_resolve_command_rejects_bad_input():
     for bad in ("gate", "nope enforce", "gate zzz"):
         with _pytest.raises(ValueError):
             resolve_command(bad)
+
+
+def test_floor_report_effect_is_cfg():
+    # The Stop/Notification hooks live in settings.json, which the harness
+    # owns and reloads — the same reason gate mode stays cfg, not live
+    # (master §5.9).
+    assert effect_of("floor_report") == "cfg"

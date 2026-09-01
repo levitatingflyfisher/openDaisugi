@@ -5,7 +5,7 @@ harness (tests/test_install.py). This file covers the two new opt-in
 layers added on top of that:
 
   - GATE: installs the ADR-0007 fail-closed verify hook (Claude Code only,
-    shadow-by-default, `--enforce` an explicit opt-in).
+    audit-by-default, `--enforce` an explicit opt-in).
   - BASE_URL: points the harness at the local token-saving gateway
     (Claude Code via env; OpenClaw via a registered provider block).
 
@@ -75,13 +75,13 @@ def test_install_layers_none_defaults_to_current_four(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_claude_gate_shadow_is_the_default(tmp_path):
+def test_claude_gate_audit_is_the_default(tmp_path):
     (tmp_path / ".claude").mkdir()
     install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=GATE_LAYERS)
     commands = _pre_commands(_settings(tmp_path))
     gate_cmds = [c for c in commands if "opendaisugi.gate" in c]
     assert len(gate_cmds) == 1
-    assert "--mode shadow" in gate_cmds[0]
+    assert "--mode audit" in gate_cmds[0]
     assert "|| exit 2" not in gate_cmds[0]
 
 
@@ -160,16 +160,19 @@ def test_claude_gate_upgrade_rewrites_old_module_to_resident_client(tmp_path):
     (tmp_path / ".claude").mkdir()
     from opendaisugi.gate import gate_settings_json
 
-    new_command = json.loads(gate_settings_json(mode="shadow"))["hooks"]["PreToolUse"][0]["hooks"][0][
-        "command"
-    ]
+    new_command = json.loads(gate_settings_json(mode="audit"))["hooks"]["PreToolUse"][0]["hooks"][
+        0
+    ]["command"]
     old_command = new_command.replace("opendaisugi.gate_client", "opendaisugi.gate", 1)
     assert old_command != new_command  # sanity: the fixture actually differs
 
     pre_existing = {
         "hooks": {
             "PreToolUse": [
-                {"matcher": "*", "hooks": [{"type": "command", "command": old_command, "timeout": 30}]}
+                {
+                    "matcher": "*",
+                    "hooks": [{"type": "command", "command": old_command, "timeout": 30}],
+                }
             ]
         }
     }
@@ -187,7 +190,7 @@ def test_claude_gate_upgrade_rewrites_old_module_to_resident_client(tmp_path):
 
 
 def test_claude_gate_mode_mismatch_warns_instead_of_silently_lying(tmp_path):
-    # Install shadow, then ask for enforce: idempotency means it does NOT
+    # Install audit, then ask for enforce: idempotency means it does NOT
     # silently rewrite (that could also silently escalate a user into
     # enforce). But it must not pretend nothing is wrong either.
     (tmp_path / ".claude").mkdir()
@@ -204,7 +207,7 @@ def test_claude_gate_mode_mismatch_warns_instead_of_silently_lying(tmp_path):
     commands = _pre_commands(_settings(tmp_path))
     gate_cmds = [c for c in commands if "opendaisugi.gate" in c]
     assert len(gate_cmds) == 1
-    assert "--mode shadow" in gate_cmds[0]  # unchanged — still shadow
+    assert "--mode audit" in gate_cmds[0]  # unchanged — still audit
     assert any("already installed" in str(w.message) for w in caught)
 
 
@@ -566,11 +569,49 @@ def test_cli_install_gate_yes_writes_hook(tmp_path, monkeypatch):
     assert result.exit_code == 0
     settings = _settings(tmp_path)
     commands = _pre_commands(settings)
-    assert any("opendaisugi.gate" in c and "--mode shadow" in c for c in commands)
+    assert any("opendaisugi.gate" in c and "--mode audit" in c for c in commands)
+
+
+def _register_default_envelope(home: Path) -> None:
+    d = home / ".opendaisugi" / "gate" / "envelopes"
+    d.mkdir(parents=True)
+    (d / "default.json").write_text("{}")
+
+
+def test_cli_install_enforce_with_no_envelope_refuses_and_writes_nothing(tmp_path, monkeypatch):
+    """An enforce hook with no envelope denies every call, so install refuses."""
+    from opendaisugi.cli import ENFORCE_NEEDS_POLICY
+
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--gate", "--enforce", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 1
+    assert ENFORCE_NEEDS_POLICY in result.output
+    assert "daisugi gate init --workspace DIR" in ENFORCE_NEEDS_POLICY
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+    assert not (tmp_path / ".opendaisugi").exists()
+
+
+def test_cli_install_enforce_with_an_envelope_installs(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    _register_default_envelope(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--gate", "--enforce", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 0
+    assert any("--mode enforce" in c for c in _pre_commands(_settings(tmp_path)))
+
+
+def test_cli_install_audit_with_no_envelope_still_installs(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--gate", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 0
+    assert "Enforce needs a policy" not in result.output
 
 
 def test_cli_install_ask_flag_reaches_the_installed_hook(tmp_path, monkeypatch):
     (tmp_path / ".claude").mkdir()
+    _register_default_envelope(tmp_path)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     result = runner.invoke(
         app,
@@ -583,7 +624,7 @@ def test_cli_install_ask_flag_reaches_the_installed_hook(tmp_path, monkeypatch):
 
 def test_cli_install_ask_without_enforce_is_inert_and_not_baked_in(tmp_path, monkeypatch):
     """Fix round 1, item 3: --ask without --enforce must not silently bake
-    --ask (and the widened 105s hook timeout) into a SHADOW install — the
+    --ask (and the widened 105s hook timeout) into a AUDIT install — the
     printed 'no operator ask will be wired' note must match what's written."""
     (tmp_path / ".claude").mkdir()
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -598,7 +639,7 @@ def test_cli_install_ask_without_enforce_is_inert_and_not_baked_in(tmp_path, mon
     gate_cmds = [c for c in commands if "opendaisugi.gate" in c]
     assert len(gate_cmds) == 1
     assert "--ask" not in gate_cmds[0]
-    assert "--mode shadow" in gate_cmds[0]
+    assert "--mode audit" in gate_cmds[0]
 
 
 def test_cli_install_codex_gate_plans_the_hook_with_the_fail_open_caveat(tmp_path, monkeypatch):

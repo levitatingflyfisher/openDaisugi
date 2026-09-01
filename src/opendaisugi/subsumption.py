@@ -36,7 +36,6 @@ import z3
 
 from opendaisugi import z3_checks
 from opendaisugi._invariant_types import RECOGNIZED_OPAQUE_TYPES
-from opendaisugi.exceptions import VerificationTimeout
 from opendaisugi.models import (
     SHELL_INTERPRETERS,
     ActionStep,
@@ -66,6 +65,9 @@ class SubsumptionResult:
     unverified_invariants: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
+    # True when Z3 could not finish the final check in time. The result
+    # then does not hold: an unfinished proof is never a pass.
+    timed_out: bool = False
 
 
 def _glob_to_z3(path_var: z3.ExprRef, glob: str) -> z3.BoolRef:
@@ -332,6 +334,39 @@ def _detect_interpreters(perms: Permission) -> list[str]:
     return sorted({name for name in perms.shell_allowlist if name in SHELL_INTERPRETERS})
 
 
+_STAKES_RANK = {"low": 0, "medium": 1, "high": 2, "physical": 3}
+
+
+def _budget_and_stakes_violation(outer: Envelope, inner: Envelope) -> str | None:
+    """None if inner's stakes, custom step types and budgets are within
+    outer's, else a reason.
+
+    Each of these grants authority the Z3 formula cannot see. Lower stakes
+    turn strict mode off (``verify.resolve_strict``). A custom step type
+    runs under strict mode only when ``custom_step_allowlist`` names it.
+    The budgets bound how long a step runs and how much it writes. A stakes
+    value this function does not rank counts as not proven.
+    """
+    o_rank = _STAKES_RANK.get(outer.stakes)
+    i_rank = _STAKES_RANK.get(inner.stakes)
+    if o_rank is None or i_rank is None or i_rank < o_rank:
+        return f"stakes: inner {inner.stakes!r} is lower than outer {outer.stakes!r}"
+    extra = sorted(
+        set(inner.permissions.custom_step_allowlist) - set(outer.permissions.custom_step_allowlist)
+    )
+    if extra:
+        return (
+            f"custom_step_allowlist: inner permits {extra} which outer does not "
+            f"({sorted(set(outer.permissions.custom_step_allowlist))})"
+        )
+    for name in ("max_execution_time_s", "max_output_size_mb"):
+        o_val = getattr(outer.permissions, name)
+        i_val = getattr(inner.permissions, name)
+        if i_val > o_val:
+            return f"{name}: inner {i_val} exceeds outer {o_val}"
+    return None
+
+
 def _robot_capability_violation(outer: Permission, inner: Permission) -> str | None:
     """Fail-closed comparison of declared robot capabilities (PLAN-LEVEL only).
 
@@ -423,6 +458,17 @@ def envelope_subsumes(
             holds=False,
             counterexample=None,
             reasons=[f"robot capability subsumption failed (fail-closed): {robot_violation}"],
+            duration_ms=(time.monotonic() - t0) * 1000,
+        )
+
+    # Stakes, custom step types and budgets: authority the Z3 formula below
+    # cannot see. Fail-closed.
+    field_violation = _budget_and_stakes_violation(outer, inner)
+    if field_violation is not None:
+        return SubsumptionResult(
+            holds=False,
+            counterexample=None,
+            reasons=[f"envelope field subsumption failed (fail-closed): {field_violation}"],
             duration_ms=(time.monotonic() - t0) * 1000,
         )
 
@@ -599,7 +645,16 @@ def envelope_subsumes(
         )
 
         if result == z3.unknown:
-            raise VerificationTimeout(f"Z3 subsumption check exceeded {timeout_ms}ms")
+            # An unfinished proof does not hold. It is a result, not a raise,
+            # so no caller can let it through by not catching it.
+            return SubsumptionResult(
+                holds=False,
+                counterexample=None,
+                unverified_invariants=unverified,
+                reasons=[f"Z3 subsumption check exceeded {timeout_ms}ms"],
+                duration_ms=duration_ms,
+                timed_out=True,
+            )
         if result == z3.unsat:
             return SubsumptionResult(
                 holds=True,

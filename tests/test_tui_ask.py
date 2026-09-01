@@ -24,18 +24,28 @@ def _seed_lowblast(tmp_path):
     is a harmless Read — S2 must classify off the ask, so this is low-blast."""
     now = time.time()
     _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1",
-                 question={"sessionId": "s1", "toolName": "Read", "toolInput": {"file_path": "x.py"}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={
+            "sessionId": "s1",
+            "toolName": "Read",
+            "toolInput": {"file_path": "x.py"},
+            "tier": "undoable",
+        },
+        deadline=now + 60,
+    )
 
 
 def _seed_destructive(tmp_path):
     now = time.time()
     _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1",
-                 question={"sessionId": "s1", "toolName": "Bash",
-                           "toolInput": {"command": "rm -rf build/"}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={"sessionId": "s1", "toolName": "Bash", "toolInput": {"command": "rm -rf build/"}},
+        deadline=now + 60,
+    )
 
 
 def _answer(tmp_path):
@@ -52,7 +62,8 @@ def test_allow_needs_a_then_enter(tmp_path):
             await pilot.press("j")
             await pilot.press("a")
             await pilot.pause()
-            assert "⏎ to confirm allow" in app.status_text
+            assert "press Enter to confirm allow" in app.status_text
+            assert "⏎" not in app.status_text
             assert not _answer(tmp_path).exists()
             await pilot.press("a")  # a repeated a still needs ⏎ — never a one-key allow
             await pilot.pause()
@@ -85,6 +96,7 @@ def test_destructive_allow_requires_a_typed_token(tmp_path):
             # a fixed a->Enter is NOT enough for a high-blast would-deny, and the
             # token VARIES per row (the session id 's1', not the constant 'Bash')
             assert "HIGH-BLAST" in app.status_text and "'s1'" in app.status_text
+            assert "⏎" not in app.status_text and "press Enter" in app.status_text
             assert "'Bash'" not in app.status_text  # the constant tool name is never the token
             box = app.screen.query_one("#cmd")
             box.value = "nope"
@@ -107,9 +119,12 @@ def test_destructive_allow_requires_a_typed_token(tmp_path):
 def _seed_shell(tmp_path, command):
     now = time.time()
     _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1",
-                 question={"sessionId": "s1", "toolName": "Bash", "toolInput": {"command": command}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={"sessionId": "s1", "toolName": "Bash", "toolInput": {"command": command}},
+        deadline=now + 60,
+    )
 
 
 def test_a_non_rm_destructive_shell_command_demands_the_token(tmp_path):
@@ -166,13 +181,29 @@ def test_confirm_rechecks_the_armed_id_against_the_selected_row(tmp_path):
     # re-check in action_confirm is removed.
     now = time.time()
     _claude_session(tmp_path, "sa", last_ts=now - 1, tool_use_id="ta", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="ta",
-                 question={"sessionId": "sa", "toolName": "Read", "toolInput": {"file_path": "a.py"}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="ta",
+        question={
+            "sessionId": "sa",
+            "toolName": "Read",
+            "toolInput": {"file_path": "a.py"},
+            "tier": "undoable",
+        },
+        deadline=now + 60,
+    )
     _claude_session(tmp_path, "sb", last_ts=now - 5, tool_use_id="tb", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="tb",
-                 question={"sessionId": "sb", "toolName": "Read", "toolInput": {"file_path": "b.py"}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="tb",
+        question={
+            "sessionId": "sb",
+            "toolName": "Read",
+            "toolInput": {"file_path": "b.py"},
+            "tier": "undoable",
+        },
+        deadline=now + 60,
+    )
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)
@@ -289,3 +320,85 @@ def test_presence_while_running_and_gone_after(tmp_path):
         assert not (tmp_path / "gate" / "operator.json").exists()
 
     _run(scenario)
+
+
+def _seed_tool(tmp_path, tool, tool_input, tier=None):
+    now = time.time()
+    _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
+    question = {"sessionId": "s1", "toolName": tool, "toolInput": tool_input}
+    if tier is not None:
+        question["tier"] = tier
+    ask.post_ask(tmp_path / "gate", tool_use_id="t1", question=question, deadline=now + 60)
+
+
+@pytest.mark.parametrize(
+    ("tool", "tool_input", "tier"),
+    [
+        ("Write", {"file_path": "/home/u/.bashrc", "content": "x"}, "permanent"),
+        ("Write", {"file_path": "/home/u/.bashrc", "content": "x"}, None),
+        ("mcp__mail__send", {"to": "a@b.c"}, "permanent"),
+        ("Read", {"file_path": "x.py"}, None),
+    ],
+)
+def test_a_permanent_or_untiered_ask_needs_the_typed_token(tmp_path, tool, tool_input, tier):
+    _seed_tool(tmp_path, tool, tool_input, tier)
+
+    async def scenario():
+        app = DaisugiApp(data_dir=tmp_path, interval=999)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("j")
+            await pilot.press("a")
+            await pilot.pause()
+            assert "this cannot be undone" in app.status_text
+            assert "'s1'" in app.status_text
+            await pilot.press("enter")
+            await pilot.pause()
+            assert not _answer(tmp_path).exists()
+
+    _run(scenario)
+
+
+def test_the_writer_rechecks_the_tier_in_the_ask_file(tmp_path):
+    """The row said undoable when a armed it. The ask file now says
+    permanent. Enter writes nothing."""
+    _seed_lowblast(tmp_path)
+
+    async def scenario():
+        app = DaisugiApp(data_dir=tmp_path, interval=999)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("j")
+            await pilot.press("a")
+            await pilot.pause()
+            path = tmp_path / "gate" / "asks" / "t1.json"
+            body = json.loads(path.read_text())
+            body["tier"] = "permanent"
+            path.write_text(json.dumps(body))
+            await pilot.press("enter")
+            await pilot.pause()
+            assert not _answer(tmp_path).exists()
+            assert "this cannot be undone" in app.status_text
+
+    _run(scenario)
+
+
+def test_check_allow_follows_the_go_rule(tmp_path):
+    root = tmp_path / "gate"
+    now = time.time()
+    ask.post_ask(root, tool_use_id="u", question={"tier": "undoable"}, deadline=now + 60)
+    ask.post_ask(root, tool_use_id="p", question={"tier": "permanent"}, deadline=now + 60)
+    ask.post_ask(root, tool_use_id="n", question={}, deadline=now + 60)
+    assert ask.check_allow(root, tool_use_id="u", name="s1", confirm=None) is None
+    assert ask.check_allow(root, tool_use_id="p", name="s1", confirm="s1") is None
+    assert ask.check_allow(root, tool_use_id="p", name="s1", confirm=" s1 ") is None
+    for tid, name, confirm in [
+        ("p", "s1", None),
+        ("p", "s1", "s2"),
+        ("n", "s1", ""),
+        ("p", "", ""),
+    ]:
+        assert ask.check_allow(root, tool_use_id=tid, name=name, confirm=confirm) == (
+            f"this cannot be undone. Type the session id to allow: {name}"
+        )
+    assert ask.check_allow(root, tool_use_id="gone", name="s1", confirm="s1") == "that ask is gone"

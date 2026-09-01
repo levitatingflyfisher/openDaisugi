@@ -1,0 +1,30 @@
+# A two-tier stage_router deployment in the switchyard-server 0.3.0 schema.
+# Key names come from docs/reference/toml_schema.md at NVIDIA-NeMo/Switchyard
+# tag v0.3.0, commit 336196f. The renderer tests compare their output to the
+# key shape of this file.
+schema_version = 1
+
+[llm_clients.capable]
+format = "anthropic_messages"
+base_url = "https://api.anthropic.com"
+forward_auth = true
+
+[llm_clients.efficient]
+format = "openai_chat"
+base_url = "http://127.0.0.1:11434/v1"
+
+[targets.capable]
+id = "claude-sonnet-5"
+llm_client = "capable"
+
+[targets.efficient]
+id = "qwen3-coder:30b"
+llm_client = "efficient"
+
+[routes.daisugi]
+id = "daisugi"
+type = "stage_router"
+capable_target = "capable"
+efficient_target = "efficient"
+picker = "efficient_first"
+confidence_threshold = 0.5

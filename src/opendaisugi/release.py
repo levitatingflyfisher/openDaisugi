@@ -41,6 +41,13 @@ def sha256_file(path: Path | str) -> str:
     return h.hexdigest()
 
 
+def duplicate_names(artifacts: list[Path | str]) -> list[str]:
+    """The file names more than one artifact has, sorted. A manifest names
+    each artifact by its file name, so two with one name can never verify."""
+    names = [Path(a).name for a in artifacts]
+    return sorted({n for n in names if names.count(n) > 1})
+
+
 def build_manifest(
     artifacts: list[Path | str],
     *,
@@ -52,6 +59,9 @@ def build_manifest(
     ``created_at`` is passed in (not read from the clock) so the manifest is
     reproducible and this function stays pure/testable.
     """
+    dup = duplicate_names(artifacts)
+    if dup:
+        raise ValueError(f"two artifacts share a name: {', '.join(dup)}")
     entries = []
     for a in artifacts:
         p = Path(a)

@@ -15,7 +15,7 @@ and neither wall alone is it:
   workspace* — supplied from outside anything the sub-agent can write.
 
 A failed sub-agent (``is_error``, spawn failure, missing workspace) surfaces
-as a failed step — never a swallowed one. The gate root's shadow log is the
+as a failed step — never a swallowed one. The gate root's audit log is the
 action transcript; with ``capture=True`` every tool call is also mirrored
 into passive-capture format, so a delegated run feeds the same
 captures → to-trace → journal pipeline distillation already reads.

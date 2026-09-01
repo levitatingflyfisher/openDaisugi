@@ -2,12 +2,12 @@
 
 import pytest
 
-from opendaisugi.tier1 import LiteLLMTier1Provider, OllamaTier1Provider
+from opendaisugi.tier1 import HTTPTier1Provider, OllamaTier1Provider
 
 
 def test_ollama_defaults_to_localhost_no_api_key():
     p = OllamaTier1Provider()
-    assert isinstance(p, LiteLLMTier1Provider)
+    assert isinstance(p, HTTPTier1Provider)
     assert p.model == "ollama/llama3.2:3b"
     assert p.base_url == "http://localhost:11434"
     assert p.api_key is None

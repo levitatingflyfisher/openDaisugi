@@ -25,21 +25,6 @@ if TYPE_CHECKING:
     from opendaisugi.split_cache import SplitCache
 
 
-def __getattr__(name: str):
-    """Lazily expose ``litellm`` as a module attribute (PEP 562).
-
-    This module is imported at package-init time (parser registration), but
-    litellm is a ~2s import only needed when LLM episode-splitting actually
-    runs. Keeping it behind ``__getattr__`` preserves ``claude_code.litellm``
-    as a patch target for tests while deferring the real import.
-    """
-    if name == "litellm":
-        import litellm
-
-        return litellm
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 _TOOL_TYPE_MAP: dict[str, str] = {
     "Edit": "file_write",
     "Write": "file_write",
@@ -569,7 +554,7 @@ class ClaudeCodeParser:
     def _call_split_llm(self, user_content: str) -> list[dict] | None:
         """One split call. Returns boundaries on success (possibly empty), or
         ``None`` on a failed call. Routes through ``claude -p`` when
-        ``OPENDAISUGI_LLM_BACKEND=claude-code``; default stays litellm.
+        ``OPENDAISUGI_LLM_BACKEND=claude-code``; otherwise our own model client.
         """
         from opendaisugi.llm import resolve_backend
 
@@ -584,19 +569,17 @@ class ClaudeCodeParser:
                 return None
             return body.get("subtasks", [])
 
-        from opendaisugi.parsers import (
-            claude_code as _self,  # resolves the (patchable) lazy litellm
-        )
+        from opendaisugi import llm_client
 
-        response = _self.litellm.completion(
-            model=self.model,
-            messages=[
+        reply = llm_client.complete(
+            self.model,
+            [
                 {"role": "system", "content": _SPLIT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
-            response_format={"type": "json_object"},
+            json_object=True,
         )
-        body = json.loads(response.choices[0].message.content)
+        body = json.loads(reply.text)
         return body.get("subtasks", [])
 
     def _finalize(self, episodes: list[_RawEpisode]) -> list[Episode]:

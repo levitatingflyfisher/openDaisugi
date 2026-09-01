@@ -1,0 +1,7 @@
+{
+  "id": "minimap",
+  "kind": "view",
+  "title": "Minimap",
+  "about": "The task tree shrunk to dots, one per task and pane, at the foot of the rail.",
+  "page": "index.html"
+}

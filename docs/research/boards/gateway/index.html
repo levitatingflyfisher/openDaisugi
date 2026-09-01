@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gateway Field Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..700&family=Instrument+Sans:ital,wght@0,400..700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../_shell/style.css">
+</head>
+<body>
+<div class="wrap">
+<!-- title: Gateway Field Board -->
+<header>
+  <div class="kicker">openDaisugi · the gateway · field board · 2026-09-12</div>
+  <h1>A meter, then <b>a chooser.</b></h1>
+  <p class="lede">A local proxy any harness points at through its base URL. It routes an easy turn to a cheap model, never a hard one, meters what that saved from real counters, and fails open so you lose savings, never the turn.</p>
+  <div class="frame">
+    <div><div class="kicker">gateway</div><strong>The meter</strong><span>Speaks the Anthropic wire and the OpenAI wire. Journals every turn's cache reads, cache writes, fresh and output tokens.</span></div>
+    <div><div class="kicker">switchyard</div><strong>The chooser</strong><span>NVIDIA's trained router, upstream of the meter. It picks the model. We count. Plan 09.</span></div>
+    <div><div class="kicker">tiers</div><strong>The ladder</strong><span>Tier 0 is a pathway hit. Tier 1 a local model the setup command sized to your box. Tier 2 the frontier. Plan 08 adds any box on the tailnet.</span></div>
+  </div>
+</header>
+
+<section id="field">
+  <div class="sechead">
+    <div><div class="kicker">part one</div><h2>What the field built</h2></div>
+    <p>Routers, proxies, meters, and the switchboards and meters they descend from.</p>
+  </div>
+  <div class="chips" id="chips">
+    <button class="chip" aria-pressed="true" data-f="all">all</button>
+    <button class="chip" aria-pressed="false" data-f="vendor">vendors</button>
+    <button class="chip" aria-pressed="false" data-f="oss">open source</button>
+    <button class="chip" aria-pressed="false" data-f="inspiration">inspiration</button>
+    <button class="chip" aria-pressed="false" data-f="steal">steal</button>
+  </div>
+  <div class="board" id="board"></div>
+  <p class="empty" id="boardEmpty" hidden>No images matched.</p>
+</section>
+
+<section id="keep">
+  <div class="sechead">
+    <div><div class="kicker">part two</div><h2>What holds</h2></div>
+    <p>From the token-saving landscape of August 2026 and the cockpit research.</p>
+  </div>
+  <div class="patterns">
+    <div class="pattern"><strong>Caching is the lever. Routing is second.</strong><span>Cache reads cost a tenth. Real coding-agent steps are about 96 percent cache reads. Keep the prefix byte-stable before you route anything.</span></div>
+    <div class="pattern"><strong>Meter from provider counters.</strong><span>Tokens saved is a fold over usage fields on every response. Never an estimate, never a vendor's peak claim.</span></div>
+    <div class="pattern"><strong>The honest ceiling is about three times.</strong><span>Blended, across a real session. Not a hundred. Say so on the status screen.</span></div>
+    <div class="pattern"><strong>The human pause is the cost cliff.</strong><span>Misses cluster after gaps over five minutes. A gate that parks an agent is that pause. Show time since last request and keep parked sessions warm.</span></div>
+    <div class="pattern"><strong>Fail open here, fail closed at the gate.</strong><span>A router that cannot route passes the turn through untouched. The two layers have opposite failure rules on purpose.</span></div>
+  </div>
+</section>
+
+<section id="ours">
+  <div class="sechead">
+    <div><div class="kicker">part three</div><h2>What ours is, and should be</h2></div>
+  </div>
+
+  <div class="mock">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>daisugi gateway</b> · today</div>
+      <pre><span class="t-dim">$</span> daisugi gateway
+<span class="t-dim">listening on 127.0.0.1:8787 · anthropic wire at / · openai wire at /v1</span>
+
+<span class="t-dim">$</span> ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
+<span class="t-dim">$</span> daisugi status
+  token savings   <span class="t-done">live</span>    gateway up, 3 harnesses pointed at it
+  actions verified <span class="t-done">live</span>    gate armed · enforce · 2 envelopes
+  pathway reuse    <span class="t-need">warming</span> 12 stored · threshold 0.59 (potion)</pre>
+    </div>
+    <div class="note">
+      <div class="kicker">command line · today</div>
+      <h3>Point a harness at it. That is the install.</h3>
+      <p>One environment variable for Claude Code, one line of config for Codex. The status screen answers the two day-one questions: are savings live, are actions verified.</p>
+    </div>
+  </div>
+
+  <div class="mock flip">
+    <div class="note">
+      <div class="kicker">should be</div>
+      <h3>The chooser upstream, the box on the tailnet, the cache on the row.</h3>
+      <ul>
+        <li><strong>Switchyard upstream.</strong> The gateway stays the meter. Switchyard chooses. One flag composes them. Plan 09.</li>
+        <li><strong>Any self-hosted box.</strong> One command probes a host on the tailnet, qualifies its model, and wires it in as a tier. Plan 08.</li>
+        <li><strong>Cache state on the roster.</strong> Time since last request and expected warm or cold, per pane, in the floor's row. A miss on a pane that should have hit is an alert.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>roster</b> · with the meter's column</div>
+      <pre>  <span class="t-work">●</span> flaky-socket   codex    running go test        <span class="t-dim">fresh 0.9k · cache 96k · warm</span>
+  <span class="t-work">●</span> review         claude   reading the diff       <span class="t-dim">fresh 2.1k · cache 118k · warm</span>
+  <span class="t-idle">●</span> scratch        sprig    quiet 14m              <span class="t-need">cache cold in 3m40s · keep-warm on</span>
+  <span class="t-done">●</span> changelog      pi       PR #412 open           <span class="t-dim">tier 1 · llama on the gpu-box</span></pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Screens in part one belong to their makers and are archived here for study. Part three is original work for openDaisugi. Claims trace to docs/research/token-saving-landscape-2026-08.md and ADR-0010, 0014, 0015.</p>
+</footer>
+
+</div>
+<script>window.ITEMS = [{"slug": "switchyard-1", "title": "NeMo Switchyard", "group": "vendor", "source_page": "https://github.com/NVIDIA-NeMo/Switchyard", "caption": "NVIDIA's Switchyard: a Rust proxy that answers the Anthropic wire and chooses the model with a trained router.", "file": "img/switchyard-1.png", "image_url": "https://opengraph.githubassets.com/0c071a150aede9dddfce0e5b38eef9d7450f7971f582301ea5763022ffd97a89/NVIDIA-NeMo/Switchyard", "fetched": "2026-09-12", "width": 1200, "height": 600, "verdict": "steal", "verdict_label": "steal", "note": "The chooser upstream of our meter. Plan 09."}, {"slug": "openrouter-1", "title": "OpenRouter", "group": "vendor", "source_page": "https://openrouter.ai/", "caption": "OpenRouter: one key, every model, with routing by price and uptime.", "file": "img/openrouter-1.png", "image_url": "https://openrouter.ai/dynamic-og?pathname=default&amp;title=OpenRouter&amp;description=The+unified+interface+for+every+model.+Find+the+best+models+%26+prices+for+your+prompts&amp;v=2", "fetched": "2026-09-12", "width": 1200, "height": 630, "verdict": "reference", "verdict_label": "reference", "note": "Routing by price across vendors. Outside the exposure freeze, so a reference only."}, {"slug": "helicone-1", "title": "Helicone", "group": "oss", "source_page": "https://github.com/Helicone/helicone", "caption": "Helicone's request dashboard: cost, latency, and cache hits per request.", "file": "img/helicone-1.png", "image_url": "https://marketing-assets-helicone.s3.us-west-2.amazonaws.com/Twitter_Cover_A1.png", "fetched": "2026-09-12", "width": 1600, "height": 533, "verdict": "steal", "verdict_label": "steal", "note": "Meter from real counters, per request. Never estimate."}, {"slug": "litellm-1", "title": "LiteLLM", "group": "oss", "source_page": "https://github.com/BerriAI/litellm", "caption": "LiteLLM's proxy: one OpenAI-shaped endpoint in front of a hundred providers, with spend tracking.", "file": "img/litellm-1.png", "image_url": "https://opengraph.githubassets.com/80a1499e4890d76416397452191ed21a5320092e5807556d9b1c67e59b3235ef/BerriAI/litellm", "fetched": "2026-09-12", "width": 1200, "height": 600, "verdict": "reference", "verdict_label": "reference", "note": "A proxy in front of many providers. The gateway is the same shape with the meter as the point."}, {"slug": "portkey-1", "title": "Portkey Gateway", "group": "oss", "source_page": "https://github.com/Portkey-AI/gateway", "caption": "Portkey's gateway with routing, retries, and caching as configuration.", "file": "img/portkey-1.gif", "image_url": "https://cfassets.portkey.ai/sdk.gif", "fetched": "2026-09-12", "width": 1920, "height": 1080, "verdict": "reference", "verdict_label": "reference", "note": "A proxy in front of many providers. The gateway is the same shape with the meter as the point."}, {"slug": "routellm-1", "title": "RouteLLM", "group": "oss", "source_page": "https://github.com/lm-sys/RouteLLM", "caption": "RouteLLM's cost versus quality curve: a trained router sends easy queries to the cheap model.", "file": "img/routellm-1.png", "image_url": "https://raw.githubusercontent.com/lm-sys/RouteLLM/HEAD/assets/router.png", "fetched": "2026-09-12", "width": 1172, "height": 1039, "verdict": "steal", "verdict_label": "steal", "note": "The reference open router. Its curve is the honest shape of routing gains."}, {"slug": "ccusage-1", "title": "ccusage", "group": "oss", "source_page": "https://github.com/ryoppippi/ccusage", "caption": "ccusage's daily table of Claude Code token use and cost, read from local logs.", "file": "img/ccusage-1.png", "image_url": "https://repository-images.githubusercontent.com/992755069/ece04cfd-4128-49de-be96-a7ad8a9dc034", "fetched": "2026-09-12", "width": 1600, "height": 951, "verdict": "steal", "verdict_label": "steal", "note": "Meter from real counters, per request. Never estimate."}, {"slug": "electricity-meter-1", "title": "Electricity meter", "group": "inspiration", "source_page": "https://en.wikipedia.org/wiki/Electricity_meter", "caption": "An electricity meter: it counts what passed, it never decides what may pass.", "file": "img/electricity-meter-1.jpg", "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/69/Yipwm_1b_%287691592010%29.jpg/1280px-Yipwm_1b_%287691592010%29.jpg?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=thumbnail", "fetched": "2026-09-12", "width": 1280, "height": 1343, "license": "Wikipedia lead image, see file page", "verdict": "reference", "verdict_label": "reference"}, {"slug": "railway-switch-1", "title": "Railway switch", "group": "inspiration", "source_page": "https://en.wikipedia.org/wiki/Railroad_switch", "caption": "A switchyard: the same train, a different track, chosen before it arrives.", "file": "img/railway-switch-1.jpg", "image_url": "https://upload.wikimedia.org/wikipedia/commons/d/da/Railway_turnout_-_Oulu_Finland.jpg?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=thumbnail_unscaled", "fetched": "2026-09-12", "width": 409, "height": 320, "license": "Wikipedia lead image, see file page", "verdict": "reference", "verdict_label": "reference"}, {"slug": "switchboard-1", "title": "Telephone switchboard", "group": "inspiration", "source_page": "https://en.wikipedia.org/wiki/Telephone_switchboard", "caption": "A manual switchboard: every call routed by a person who could see the whole board.", "file": "img/switchboard-1.jpg", "image_url": "https://upload.wikimedia.org/wikipedia/commons/d/dc/Jersey_Telecom_switchboard_and_operator.jpg?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=thumbnail_unscaled", "fetched": "2026-09-12", "width": 766, "height": 531, "license": "Wikipedia lead image, see file page", "verdict": "reference", "verdict_label": "reference"}];</script>
+<script src="../_shell/board.js"></script>
+</body>
+</html>

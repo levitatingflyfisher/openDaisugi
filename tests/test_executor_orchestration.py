@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from opendaisugi.delegating_executor import DelegatingExecutor
 from opendaisugi.executor import DryRunExecutor, ExecutorResult, FakeExecutor
+from opendaisugi.llm_client import Reply
 from opendaisugi.models import MCPStep, ShellStep, SkillStep, TaskStep
 
 
@@ -48,11 +48,8 @@ def test_fake_executor_keys_new_step_types():
 
 def test_delegating_executor_captures_usage_tokens():
     exe = DelegatingExecutor(default_model="haiku")
-    fake_result = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))],
-        usage=SimpleNamespace(total_tokens=137),
-    )
-    with patch("litellm.completion", return_value=fake_result):
+    fake_result = Reply('{"ok": true}', tokens=137)
+    with patch("opendaisugi.llm_client.complete", return_value=fake_result):
         r = exe.run(TaskStep(id="t1", prompt="x"), timeout_s=5, max_output_bytes=1024)
     assert r.rc == 0
     assert exe.last.tokens == 137

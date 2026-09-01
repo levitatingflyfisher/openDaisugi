@@ -7,9 +7,9 @@ import (
 
 // posixSplit ports Python's shlex.split(s, posix=True) EXACTLY for the
 // configuration opendaisugi.interpreter_parse actually uses:
-// whitespace_split=True (set by shlex.split itself), commenters='' (comments
+// whitespace_split=True (set by shlex.split itself), commenters=” (comments
 // argument defaults to False in shlex.split, so '#' is an ordinary
-// character), punctuation_chars='' (shlex default).
+// character), punctuation_chars=” (shlex default).
 //
 // Under that configuration cpython's read_token state machine collapses:
 // wordchars membership never matters (whitespace_split=True makes the
@@ -132,7 +132,7 @@ func posixSplit(s string) ([]string, error) {
 	}
 }
 
-// shlexQuote ports Python's shlex.quote exactly: empty string -> "''";
+// shlexQuote ports Python's shlex.quote exactly: empty string -> "”";
 // a string with no characters outside [A-Za-z0-9_@%+=:,./-] is returned
 // unquoted; otherwise it is single-quoted with embedded quotes escaped as
 // '"'"'.

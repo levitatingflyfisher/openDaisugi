@@ -1,0 +1,89 @@
+<!-- title: Gateway Field Board -->
+<header>
+  <div class="kicker">openDaisugi · the gateway · field board · 2026-09-12</div>
+  <h1>A meter, then <b>a chooser.</b></h1>
+  <p class="lede">A local proxy any harness points at through its base URL. It routes an easy turn to a cheap model, never a hard one, meters what that saved from real counters, and fails open so you lose savings, never the turn.</p>
+  <div class="frame">
+    <div><div class="kicker">gateway</div><strong>The meter</strong><span>Speaks the Anthropic wire and the OpenAI wire. Journals every turn's cache reads, cache writes, fresh and output tokens.</span></div>
+    <div><div class="kicker">switchyard</div><strong>The chooser</strong><span>NVIDIA's trained router, upstream of the meter. It picks the model. We count. Plan 09.</span></div>
+    <div><div class="kicker">tiers</div><strong>The ladder</strong><span>Tier 0 is a pathway hit. Tier 1 a local model the setup command sized to your box. Tier 2 the frontier. Plan 08 adds any box on the tailnet.</span></div>
+  </div>
+</header>
+
+<section id="field">
+  <div class="sechead">
+    <div><div class="kicker">part one</div><h2>What the field built</h2></div>
+    <p>Routers, proxies, meters, and the switchboards and meters they descend from.</p>
+  </div>
+  <div class="chips" id="chips">
+    <button class="chip" aria-pressed="true" data-f="all">all</button>
+    <button class="chip" aria-pressed="false" data-f="vendor">vendors</button>
+    <button class="chip" aria-pressed="false" data-f="oss">open source</button>
+    <button class="chip" aria-pressed="false" data-f="inspiration">inspiration</button>
+    <button class="chip" aria-pressed="false" data-f="steal">steal</button>
+  </div>
+  <div class="board" id="board"></div>
+  <p class="empty" id="boardEmpty" hidden>No images matched.</p>
+</section>
+
+<section id="keep">
+  <div class="sechead">
+    <div><div class="kicker">part two</div><h2>What holds</h2></div>
+    <p>From the token-saving landscape of August 2026 and the cockpit research.</p>
+  </div>
+  <div class="patterns">
+    <div class="pattern"><strong>Caching is the lever. Routing is second.</strong><span>Cache reads cost a tenth. Real coding-agent steps are about 96 percent cache reads. Keep the prefix byte-stable before you route anything.</span></div>
+    <div class="pattern"><strong>Meter from provider counters.</strong><span>Tokens saved is a fold over usage fields on every response. Never an estimate, never a vendor's peak claim.</span></div>
+    <div class="pattern"><strong>The honest ceiling is about three times.</strong><span>Blended, across a real session. Not a hundred. Say so on the status screen.</span></div>
+    <div class="pattern"><strong>The human pause is the cost cliff.</strong><span>Misses cluster after gaps over five minutes. A gate that parks an agent is that pause. Show time since last request and keep parked sessions warm.</span></div>
+    <div class="pattern"><strong>Fail open here, fail closed at the gate.</strong><span>A router that cannot route passes the turn through untouched. The two layers have opposite failure rules on purpose.</span></div>
+  </div>
+</section>
+
+<section id="ours">
+  <div class="sechead">
+    <div><div class="kicker">part three</div><h2>What ours is, and should be</h2></div>
+  </div>
+
+  <div class="mock">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>daisugi gateway</b> · today</div>
+      <pre><span class="t-dim">$</span> daisugi gateway
+<span class="t-dim">listening on 127.0.0.1:8787 · anthropic wire at / · openai wire at /v1</span>
+
+<span class="t-dim">$</span> ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
+<span class="t-dim">$</span> daisugi status
+  token savings   <span class="t-done">live</span>    gateway up, 3 harnesses pointed at it
+  actions verified <span class="t-done">live</span>    gate armed · enforce · 2 envelopes
+  pathway reuse    <span class="t-need">warming</span> 12 stored · threshold 0.59 (potion)</pre>
+    </div>
+    <div class="note">
+      <div class="kicker">command line · today</div>
+      <h3>Point a harness at it. That is the install.</h3>
+      <p>One environment variable for Claude Code, one line of config for Codex. The status screen answers the two day-one questions: are savings live, are actions verified.</p>
+    </div>
+  </div>
+
+  <div class="mock flip">
+    <div class="note">
+      <div class="kicker">should be</div>
+      <h3>The chooser upstream, the box on the tailnet, the cache on the row.</h3>
+      <ul>
+        <li><strong>Switchyard upstream.</strong> The gateway stays the meter. Switchyard chooses. One flag composes them. Plan 09.</li>
+        <li><strong>Any self-hosted box.</strong> One command probes a host on the tailnet, qualifies its model, and wires it in as a tier. Plan 08.</li>
+        <li><strong>Cache state on the roster.</strong> Time since last request and expected warm or cold, per pane, in the floor's row. A miss on a pane that should have hit is an alert.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>roster</b> · with the meter's column</div>
+      <pre>  <span class="t-work">●</span> flaky-socket   codex    running go test        <span class="t-dim">fresh 0.9k · cache 96k · warm</span>
+  <span class="t-work">●</span> review         claude   reading the diff       <span class="t-dim">fresh 2.1k · cache 118k · warm</span>
+  <span class="t-idle">●</span> scratch        sprig    quiet 14m              <span class="t-need">cache cold in 3m40s · keep-warm on</span>
+  <span class="t-done">●</span> changelog      pi       PR #412 open           <span class="t-dim">tier 1 · llama on the gpu-box</span></pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Screens in part one belong to their makers and are archived here for study. Part three is original work for openDaisugi. Claims trace to docs/research/token-saving-landscape-2026-08.md and ADR-0010, 0014, 0015.</p>
+</footer>

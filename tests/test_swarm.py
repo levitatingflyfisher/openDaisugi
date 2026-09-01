@@ -189,9 +189,17 @@ def test_inverted_box_is_not_certified_deconflicted():
 
 
 def test_non_finite_box_is_not_certified():
+    # An Envelope with NaN no longer validates (models.non_finite_error), so
+    # the check is on one built past validation: it still fails closed.
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="finite_number"):
+        _env(((0, 0, 0), (float("nan"), 10, 10)))
     total = _env(((0, 0, 0), (30, 10, 10)))
-    assignments = {"nan": _env(((0, 0, 0), (float("nan"), 10, 10)))}
-    assert not verify_swarm_tasking(total, assignments).ok
+    nan = _env(((0, 0, 0), (10, 10, 10)))
+    nan.permissions.workspace_bounds = ((0, 0, 0), (float("nan"), 10, 10))
+    assert not verify_swarm_tasking(total, {"nan": nan}).ok
 
 
 def test_inverted_total_fails_closed():

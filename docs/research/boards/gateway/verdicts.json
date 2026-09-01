@@ -1,0 +1,32 @@
+[
+ {
+  "match": "routellm",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "The reference open router. Its curve is the honest shape of routing gains."
+ },
+ {
+  "match": "litellm|portkey",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "A proxy in front of many providers. The gateway is the same shape with the meter as the point."
+ },
+ {
+  "match": "helicone|ccusage",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "Meter from real counters, per request. Never estimate."
+ },
+ {
+  "match": "openrouter",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "Routing by price across vendors. Outside the exposure freeze, so a reference only."
+ },
+ {
+  "match": "switchyard",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "The chooser upstream of our meter. Plan 09."
+ }
+]

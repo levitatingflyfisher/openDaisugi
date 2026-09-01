@@ -1,0 +1,9 @@
+#rule: live_prompt_box
+⏺ The trust rule keys on two phrases from the screen:
+  Quick safety check: Is this a project you created or one you trust?
+  ❯ 1. Yes, I trust this folder
+  Accessing workspace: and Yes, I trust this folder.
+────────────────────
+❯ 
+────────────────────
+  ? for shortcuts

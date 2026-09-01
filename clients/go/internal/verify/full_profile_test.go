@@ -2,19 +2,38 @@ package verify
 
 import (
 	"encoding/json"
+	"errors"
+	"math/big"
 	"testing"
 )
 
-// requireZ3 skips the test when z3 isn't on PATH — these tests exercise
-// the Full profile's real "z3 -in" subprocess (docs/spec/conformance.md:
-// emit SMT-LIB2 text, invoke a solver binary), not a mock.
+// requireZ3 is the shared client: these tests exercise the Full profile in
+// the Z3 this package links, not a mock. It never skips: no z3 program on
+// PATH is needed.
 func requireZ3(t *testing.T) *Z3Client {
 	t.Helper()
 	z3c, err := sharedZ3()
 	if err != nil {
-		t.Skipf("z3 not available: %v", err)
+		t.Fatalf("the linked Z3 is not available: %v", err)
 	}
 	return z3c
+}
+
+// A solver that fails is a violation: the check did not pass.
+func TestAFailingSolverFailsClosed(t *testing.T) {
+	requireZ3(t)
+	old := InProcessZ3
+	defer func() { InProcessZ3 = old }()
+	InProcessZ3 = nil
+	v, _ := CheckEnvelopeSelfConsistency(DefaultEnvelope(), 500)
+	if len(v) != 1 || v[0].Stage != "z3" || v[0].Message != "Z3 could not check the envelope: z3: no Z3 is linked" {
+		t.Fatalf("want one fail-closed z3 violation, got %+v", v)
+	}
+	InProcessZ3 = func(string) (string, error) { return "", errors.New("boom") }
+	v, _ = CheckPlanAgainstEnvelope(ActionPlan{}, DefaultEnvelope(), 500)
+	if len(v) != 1 || v[0].Message != "Z3 could not check the plan: z3: boom" {
+		t.Fatalf("want one fail-closed z3 violation, got %+v", v)
+	}
 }
 
 func TestCheckEnvelopeSelfConsistency(t *testing.T) {
@@ -22,7 +41,7 @@ func TestCheckEnvelopeSelfConsistency(t *testing.T) {
 	env := DefaultEnvelope()
 	env.Permissions.Shell = false
 	env.Permissions.ShellAllowlist = []string{"git"} // inconsistent: allowlist without shell
-	v := CheckEnvelopeSelfConsistency(env, 500)
+	v, _ := CheckEnvelopeSelfConsistency(env, 500)
 	if len(v) != 1 || v[0].Stage != "z3" || v[0].HasStep {
 		t.Fatalf("want one z3 violation with step=null, got %+v", v)
 	}
@@ -30,13 +49,13 @@ func TestCheckEnvelopeSelfConsistency(t *testing.T) {
 	env2 := DefaultEnvelope()
 	env2.Permissions.Shell = true
 	env2.Permissions.ShellAllowlist = []string{"git"}
-	if v := CheckEnvelopeSelfConsistency(env2, 500); len(v) != 0 {
+	if v, _ := CheckEnvelopeSelfConsistency(env2, 500); len(v) != 0 {
 		t.Fatalf("want zero violations for a consistent envelope, got %+v", v)
 	}
 
 	env3 := DefaultEnvelope()
-	env3.Permissions.MaxExecutionTimeS = 9999 // outside (0, 3600]
-	if v := CheckEnvelopeSelfConsistency(env3, 500); len(v) != 1 {
+	env3.Permissions.MaxExecutionTimeS = big.NewInt(9999) // outside (0, 3600]
+	if v, _ := CheckEnvelopeSelfConsistency(env3, 500); len(v) != 1 {
 		t.Fatalf("want one violation for max_execution_time_s out of range, got %+v", v)
 	}
 }
@@ -45,7 +64,7 @@ func TestCheckPlanAgainstEnvelope(t *testing.T) {
 	requireZ3(t)
 	env := DefaultEnvelope() // shell=false
 	plan := ActionPlan{Steps: []Step{stepRaw("s1", "shell", map[string]interface{}{"command": "ls"})}}
-	v := CheckPlanAgainstEnvelope(plan, env, 500)
+	v, _ := CheckPlanAgainstEnvelope(plan, env, 500)
 	if len(v) != 1 {
 		t.Fatalf("want one violation (plan needs shell, envelope forbids it), got %+v", v)
 	}
@@ -159,12 +178,12 @@ func TestCheckSkillDelegations_OpaqueSkillStrictRejects(t *testing.T) {
 	plan := ActionPlan{Steps: []Step{
 		stepRaw("k1", "skill", map[string]interface{}{"skill_id": "mystery", "skill_input": map[string]interface{}{}}),
 	}}
-	var warnings []string
-	v := CheckSkillDelegations(plan, env, true, 2000, &warnings)
+	var warnings, timeouts []string
+	v := CheckSkillDelegations(plan, env, true, 2000, &warnings, &timeouts, nil)
 	if len(v) != 1 || v[0].Stage != "delegation" || v[0].Step != "k1" {
 		t.Fatalf("strict mode: want one delegation violation for an opaque skill, got %+v", v)
 	}
-	v = CheckSkillDelegations(plan, env, false, 2000, &warnings)
+	v = CheckSkillDelegations(plan, env, false, 2000, &warnings, &timeouts, nil)
 	if len(v) != 0 {
 		t.Fatalf("non-strict mode: want zero violations for an opaque skill, got %+v", v)
 	}

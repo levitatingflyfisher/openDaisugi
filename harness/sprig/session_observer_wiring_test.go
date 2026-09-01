@@ -105,7 +105,7 @@ func TestExecutorReportsAnUnknownToolAsADeniedVerdict(t *testing.T) {
 
 func TestExecutorToleratesANilSessionObserver(t *testing.T) {
 	// The zero-value Executor (no SessionObserver assigned) must not panic —
-	// every real caller (fleet, mcp, hook) constructs one this way today.
+	// every real caller (mcp, hook) constructs one this way today.
 	ex := NewExecutor(map[string]Tool{"spy": &spyTool{out: "ok"}}, AllowAll{})
 	res := ex.Execute(ToolCall{Name: "spy"})
 	if !res.Allowed {

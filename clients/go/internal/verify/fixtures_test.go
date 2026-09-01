@@ -15,8 +15,8 @@ import (
 const fixturePath = "../../../fixtures/semantics.json"
 
 type semanticsFixture struct {
-	V            int `json:"v"`
-	HeadAllowed  []struct {
+	V           int `json:"v"`
+	HeadAllowed []struct {
 		Head      string   `json:"head"`
 		Allowlist []string `json:"allowlist"`
 		Allowed   bool     `json:"allowed"`

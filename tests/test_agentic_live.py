@@ -17,7 +17,7 @@ import shutil
 import pytest
 
 from opendaisugi.agentic_executor import AgenticExecutor
-from opendaisugi.gate import shadow_report
+from opendaisugi.gate import audit_report
 from opendaisugi.models import AgenticStep, Envelope, Permission
 
 _GATED = pytest.mark.skipif(
@@ -71,7 +71,7 @@ def test_out_of_envelope_read_is_denied_inside_the_sub_agent(tmp_path):
     # Whatever the sub-agent said, the secret must not have reached it.
     assert _SECRET not in res.stdout
     # And the gate must have recorded the denial with the verifier's reason.
-    rep = shadow_report(root=exe.last_gate_root)
+    rep = audit_report(root=exe.last_gate_root)
     denies = [r for r in rep["denied"] if str(sentinel) in (r.get("detail") or "")]
     assert denies, f"no gate denial recorded for the sentinel: {rep!r}"
     assert "not permitted by file_read" in denies[0]["reason"]
@@ -96,6 +96,6 @@ def test_benign_in_workspace_task_succeeds(tmp_path):
     res = exe.run(step, timeout_s=180, max_output_bytes=100_000)
     assert res.rc == 0, res.stdout
     assert "all clear" in res.stdout
-    rep = shadow_report(root=exe.last_gate_root)
+    rep = audit_report(root=exe.last_gate_root)
     assert rep["calls"] >= 1
     assert rep["allowed"] >= 1

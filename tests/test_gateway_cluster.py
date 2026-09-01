@@ -199,8 +199,15 @@ def test_clusters_sorted_by_count_descending() -> None:
 
 def test_real_embedder_clusters_obvious_paraphrases() -> None:
     pytest.importorskip("sentence_transformers")
-    # This box's GPU crashes the embedder; force CPU before the model loads.
+    # A Pascal GPU (sm_61) crashes the embedder; force CPU before the model loads.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    # The threshold below is MiniLM's; the default matcher is lexical.
+    import opendaisugi
+    from opendaisugi.config import Config, save_config
+
+    save_config(
+        Config(matcher_model="all-MiniLM-L6-v2"), opendaisugi.DEFAULT_DATA_DIR / "config.yaml"
+    )
 
     task_a = "summarize the authentication module"
     task_b = "give me a summary of the authentication code"

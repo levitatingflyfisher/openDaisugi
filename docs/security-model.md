@@ -64,8 +64,8 @@ false — satisfiable by nothing) blocks every plan and makes the envelope
 unusable. Both are bugs, but they were previously silent. v0.27.0 uses Z3 to
 detect them: `check_vacuity(expr)` returns `"tautology"`, `"contradiction"`,
 or `"non_trivial"`. Contradictions are hard errors at all stakes levels;
-tautologies are violations under strict mode and warnings otherwise. Alias
-registration also runs vacuity check — a tautological or contradictory alias
+tautologies are violations under strict mode and warnings otherwise. Definition
+registration also runs vacuity check — a tautological or contradictory definition
 raises `VacuousAliasError` at register time before it can propagate.
 
 **LLM-check fail-open.** Before v0.27.0, a network error or timeout in the
@@ -100,7 +100,8 @@ does not read the file itself.
 and `[search]` extras pull large third-party packages (torch, mujoco,
 sentence-transformers). These are not vendored; their security posture
 is whatever the upstream project's is. The core package's dependency
-surface is intentionally small (pydantic + z3-solver + litellm) — prefer
+surface is intentionally small (pydantic + z3-solver; httpx with the
+`[generate]` extra) — prefer
 running without extras in production-adjacent contexts.
 
 For a broader list of library limits, see `docs/limitations.md`.
@@ -208,7 +209,7 @@ Features that typically complicate compliance reviews:
 - Optional extras (torch, mujoco) pull large upstream trees; we do not
   audit them. If running in a regulated environment, omit the extras
   you do not use and audit what you do.
-- LLM calls through `litellm` or the Claude Code backend leave the
+- LLM calls through the `api` or the Claude Code backend leave the
   process. Envelope generation, distillation, and plan adaptation are
   all LLM-gated and require an allowed egress path. Runtime
   verification does not call out.

@@ -1,0 +1,12 @@
+:root { color-scheme: dark; --bg: #12181a; --fg: #e8eae7; --muted: #98a3a0; }
+html, body { margin: 0; height: 100%; }
+body { padding: .6rem .8rem; box-sizing: border-box; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; display: flex; flex-direction: column; }
+#colony-status, #colony-hint { color: var(--muted); min-height: 1.2em; margin: 0 0 .4rem; }
+#colony-field { flex: 1; width: 100%; min-height: 240px; cursor: crosshair; touch-action: none; }
+/* Pinned as a strip above the windows, the colony is the field alone. */
+@media (max-height: 160px) {
+  body { padding: .2rem .4rem; }
+  #colony-status, #colony-hint { display: none; }
+  #colony-field { min-height: 0; cursor: pointer; touch-action: pan-y; }
+}

@@ -238,3 +238,78 @@ def test_in_repo_trusted_signers_file_is_not_a_trust_anchor(tmp_path: Path):
     b_store = GitPathwayStore(repo_path=repo_b)
     b_store.pull()
     assert b_store.list_all() == []  # attacker's self-trusted bundle rejected
+
+
+def _head(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def test_git_ignores_an_inherited_git_environment(tmp_path: Path, monkeypatch):
+    """GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and config the caller's
+    environment carries must not point the registry's git at another repo."""
+    from opendaisugi.git_pathway_store import GitPathwayStore
+    from opendaisugi.signing import generate_keypair
+
+    priv, pub = generate_keypair()
+    bare = _bare_repo(tmp_path)
+    repo = tmp_path / "a"
+    _clone(bare, repo)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "a@test"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "a"], check=True)
+    _initial_commit(repo)
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    subprocess.run(["git", "init", "-q", str(decoy)], check=True)
+    subprocess.run(
+        ["git", "-C", str(decoy), "-c", "user.email=d@test", "-c", "user.name=d"]
+        + ["commit", "-q", "--allow-empty", "-m", "decoy"],
+        check=True,
+    )
+    decoy_head, repo_head = _head(decoy), _head(repo)
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    marker = tmp_path / "hook-ran"
+    (hooks / "pre-commit").write_text(f"#!/bin/sh\ntouch {marker}\n")
+    (hooks / "pre-commit").chmod(0o755)
+    monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(decoy))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "decoy-index"))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(hooks))
+
+    store = GitPathwayStore(repo_path=repo, private_key_b64=priv, public_key_b64=pub)
+    assert store.status()["head_commit"] == repo_head
+    store.publish(_pathway(), push=False)
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    assert _head(decoy) == decoy_head
+    assert _head(repo) != repo_head
+    assert not marker.exists()
+    assert not (tmp_path / "decoy-index").exists()
+
+
+def test_git_does_not_climb_into_a_parent_repo(tmp_path: Path):
+    """A repo_path with no .git of its own inside another repository is not
+    a registry: git must not find and change the repository above it."""
+    from opendaisugi.git_pathway_store import GitPathwayStore
+    from opendaisugi.signing import generate_keypair
+
+    priv, pub = generate_keypair()
+    bare = _bare_repo(tmp_path)
+    outer = tmp_path / "outer"
+    _clone(bare, outer)
+    subprocess.run(["git", "-C", str(outer), "config", "user.email", "a@test"], check=True)
+    subprocess.run(["git", "-C", str(outer), "config", "user.name", "a"], check=True)
+    _initial_commit(outer)
+    head = _head(outer)
+    inner = outer / "reg"
+    inner.mkdir()
+
+    store = GitPathwayStore(repo_path=inner, private_key_b64=priv, public_key_b64=pub)
+    assert store.status()["head_commit"] == ""
+    with pytest.raises(subprocess.CalledProcessError):
+        store.publish(_pathway(), push=False)
+    assert _head(outer) == head

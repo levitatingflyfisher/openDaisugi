@@ -5,6 +5,7 @@ import json as _json
 import pytest
 from pydantic import ValidationError
 
+from opendaisugi.llm_client import Reply
 from opendaisugi.models import ShellStep
 from opendaisugi.parsers import Episode, ParseResult, get_parser
 
@@ -329,7 +330,7 @@ def test_parse_parsed_at_is_iso_timestamp():
     assert result.parsed_at.endswith("Z")
 
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 
 def test_parse_splits_large_episode_with_llm():
@@ -339,8 +340,8 @@ def test_parse_splits_large_episode_with_llm():
     batch so no steps are silently dropped.
     """
 
-    def fake_completion(*args, **kwargs):
-        user_msg = kwargs["messages"][1]["content"]
+    def fake_completion(model, messages, **kwargs):
+        user_msg = messages[1]["content"]
         # "Tool calls (N total):" appears in the prompt; parse N
         n = int(user_msg.split("Tool calls (")[1].split(" total")[0])
         content = (
@@ -353,16 +354,13 @@ def test_parse_splits_large_episode_with_llm():
             + ', "task": "second half"}'
             "]}"
         )
-        fake_response = MagicMock()
-        fake_response.choices = [MagicMock(message=MagicMock(content=content))]
-        return fake_response
+        return Reply(content)
 
-    with patch("opendaisugi.parsers.claude_code.litellm") as mock_litellm:
-        mock_litellm.completion.side_effect = fake_completion
+    with patch("opendaisugi.llm_client.complete", side_effect=fake_completion) as mock_complete:
         parser = ClaudeCodeParser(min_tools=1, max_tools=2)
         result = parser.parse(FIXTURE)
 
-    assert mock_litellm.completion.called
+    assert mock_complete.called
     # All 11 tool calls must survive the split — no data loss.
     total_steps = sum(len(ep.steps) for ep in result.episodes)
     assert total_steps == 11
@@ -370,10 +368,7 @@ def test_parse_splits_large_episode_with_llm():
 
 def test_parse_keeps_episode_when_llm_returns_empty_subtasks():
     """If the LLM returns no subtasks, the original episode is kept intact."""
-    fake_response = MagicMock()
-    fake_response.choices = [MagicMock(message=MagicMock(content='{"subtasks": []}'))]
-    with patch("opendaisugi.parsers.claude_code.litellm") as mock_litellm:
-        mock_litellm.completion.return_value = fake_response
+    with patch("opendaisugi.llm_client.complete", return_value=Reply('{"subtasks": []}')):
         parser = ClaudeCodeParser(min_tools=1, max_tools=2)
         result = parser.parse(FIXTURE)
 
@@ -431,7 +426,7 @@ def test_validate_boundaries_rejects_missing_keys():
 def test_parse_falls_back_on_gapped_llm_boundaries():
     """LLM returns non-contiguous boundaries -> episode kept unsplit, no data loss."""
 
-    def fake_completion(*args, **kwargs):
+    def fake_completion(model, messages, **kwargs):
         content = _json.dumps(
             {
                 "subtasks": [
@@ -440,12 +435,9 @@ def test_parse_falls_back_on_gapped_llm_boundaries():
                 ]
             }
         )
-        fake_response = MagicMock()
-        fake_response.choices = [MagicMock(message=MagicMock(content=content))]
-        return fake_response
+        return Reply(content)
 
-    with patch("opendaisugi.parsers.claude_code.litellm") as mock_litellm:
-        mock_litellm.completion.side_effect = fake_completion
+    with patch("opendaisugi.llm_client.complete", side_effect=fake_completion) as mock_complete:
         parser = ClaudeCodeParser(min_tools=1, max_tools=2)
         result = parser.parse(FIXTURE)
 
@@ -456,8 +448,8 @@ def test_parse_falls_back_on_gapped_llm_boundaries():
 def test_split_sub_episodes_have_distinct_source_ranges():
     """After LLM split, each sub-episode carries step_start/step_end."""
 
-    def fake_completion(*args, **kwargs):
-        user_msg = kwargs["messages"][1]["content"]
+    def fake_completion(model, messages, **kwargs):
+        user_msg = messages[1]["content"]
         n = int(user_msg.split("Tool calls (")[1].split(" total")[0])
         mid = n // 2
         content = _json.dumps(
@@ -468,12 +460,9 @@ def test_split_sub_episodes_have_distinct_source_ranges():
                 ]
             }
         )
-        fake_response = MagicMock()
-        fake_response.choices = [MagicMock(message=MagicMock(content=content))]
-        return fake_response
+        return Reply(content)
 
-    with patch("opendaisugi.parsers.claude_code.litellm") as mock_litellm:
-        mock_litellm.completion.side_effect = fake_completion
+    with patch("opendaisugi.llm_client.complete", side_effect=fake_completion) as mock_complete:
         parser = ClaudeCodeParser(min_tools=1, max_tools=2)
         result = parser.parse(FIXTURE)
 

@@ -7,6 +7,44 @@ edition = "2021"
 name = "conform"
 path = "src/main.rs"
 
+[[bin]]
+name = "daisugi-gate"
+path = "src/bin/daisugi_gate.rs"
+
+[[bin]]
+name = "daisugi"
+path = "src/bin/daisugi.rs"
+
+# A test instrument for clients/pathway_compare.py: find on many queries
+# in one process. It is not shipped.
+[[bin]]
+name = "pathway-probe"
+path = "src/bin/pathway_probe.rs"
+
+# A test instrument for clients/gateway_compare.py --fuzz: turn sequences
+# through the gateway pipeline in one process. It is not shipped.
+[[bin]]
+name = "gateway-probe"
+path = "src/bin/gateway_probe.rs"
+
+# A test instrument for clients/gateway_compare.py: recall and
+# recall_answer on the oracle's cases. It is not shipped.
+[[bin]]
+name = "recall-probe"
+path = "src/bin/recall_probe.rs"
+
+# A test instrument for clients/k1_compare.py: one query of the envgen
+# library per run. It is not shipped.
+[[bin]]
+name = "envelope-probe"
+path = "src/bin/envelope_probe.rs"
+
+# A test instrument for clients/l_compare.py: one query of the stage-L
+# library parts no command reaches. It is not shipped.
+[[bin]]
+name = "l-probe"
+path = "src/bin/l_probe.rs"
+
 [lib]
 name = "daisugi_verify"
 path = "src/lib.rs"
@@ -18,6 +56,28 @@ tree-sitter = "0.25"
 tree-sitter-bash = "0.25.1"
 regex = "1"
 thiserror = "1"
+libc = "0.2"
+# pydantic-core's JSON parser, for the envelope file.
+jiter = { version = "=0.14.0", default-features = false, features = ["num-bigint"] }
+# Z3 5.1.0, built from the source the z3-src crate pins and linked statically.
+z3-sys = { version = "=0.13.1", features = ["vendored"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
+# SQLite for the pathway store, the public-domain amalgamation compiled in.
+rusqlite = { version = "=0.31.0", features = ["bundled"] }
+# Exact integers for the gateway's token counts, as Python's int. Already
+# in the tree through jiter.
+num-bigint = "0.4"
+num-traits = "0.2"
+# The gzip and deflate decoders the gateway applies to an upstream answer,
+# as httpx does. Pure Rust, no C.
+miniz_oxide = "0.8"
+# ed25519 signing and verifying for pathway bundles and release
+# manifests. Already in the tree through rustls.
+ring = "0.17"
 
 [profile.release]
 opt-level = 3
+
+[dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }

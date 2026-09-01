@@ -102,3 +102,22 @@ def test_rekey_bails_to_frozen_on_shape_mismatch():
     # Template's step at position 0 is a shell step, not file_read — can't bind there.
     template = ActionPlan(source="distilled", task="x", steps=[ShellStep(id="s", command="ls")])
     assert rekey_to_template(params, template) == []
+
+
+def test_apply_bindings_refuses_a_field_that_is_not_a_string():
+    import pytest
+
+    from opendaisugi.pathway import PathwayParameter
+    from opendaisugi.pathway_params import apply_bindings
+
+    plan = ActionPlan(source="s", task="t", steps=[FileReadStep(id="r1", path="/work/a")])
+    for field in ("depends_on", "metadata", "type", "bogus"):
+        p = PathwayParameter(
+            name="p", step_index=0, step_id="r1", field=field, head="/work", observed=["/work/a"]
+        )
+        with pytest.raises(ValueError, match="the file_read step has no string field"):
+            apply_bindings(plan, [p], {"p": "/work/b"})
+    ok = PathwayParameter(
+        name="p", step_index=0, step_id="r1", field="path", head="/work", observed=["/work/a"]
+    )
+    assert apply_bindings(plan, [ok], {"p": "/work/b"}).steps[0].path == "/work/b"

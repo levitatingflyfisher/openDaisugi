@@ -186,9 +186,7 @@ async def test_ingest_infers_envelope_from_observed_steps(journal):
         ],
         source_range={"first_message": 0, "last_message": 5},
     )
-    summary = await ingest_episodes(
-        _make_parse_result(ep), journal, allow_shell_decomposition=True
-    )
+    summary = await ingest_episodes(_make_parse_result(ep), journal, allow_shell_decomposition=True)
     assert summary.passed == 1, [e.error or e.status for e in summary.episodes]
     record = journal.load_trace(_trace_id_for("/tmp/test.jsonl", "ep_infer"))
     assert "infer" in record.envelope.generated_by
@@ -209,8 +207,6 @@ async def test_ingest_inference_stays_fail_closed_on_nonliteral(journal):
         steps=[ShellStep(id="s1", command="$CMD --do-things && ls")],
         source_range={"first_message": 0, "last_message": 5},
     )
-    summary = await ingest_episodes(
-        _make_parse_result(ep), journal, allow_shell_decomposition=True
-    )
+    summary = await ingest_episodes(_make_parse_result(ep), journal, allow_shell_decomposition=True)
     assert summary.failed == 1
     assert summary.passed == 0

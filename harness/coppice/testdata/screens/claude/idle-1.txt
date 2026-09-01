@@ -1,0 +1,7 @@
+#rule: live_prompt_box
+line one
+line two
+────────────────────
+❯ type here
+────────────────────
+  ? for shortcuts

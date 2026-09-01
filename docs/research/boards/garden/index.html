@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Garden Field Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..700&family=Instrument+Sans:ital,wght@0,400..700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../_shell/style.css">
+</head>
+<body>
+<div class="wrap">
+<!-- title: Garden Field Board -->
+<header>
+  <div class="kicker">openDaisugi · the garden · field board · 2026-09-12</div>
+  <h1>Paths worn in <b>by use.</b></h1>
+  <p class="lede">Every verified trace goes in the journal. The gardener clusters them into pathways. The next similar task finds a pathway and reuses it instead of planning again. Nothing is admitted without re-verification.</p>
+  <div class="frame">
+    <div><div class="kicker">journal</div><strong>The record</strong><span>Append-only SQLite on your disk. Every action, every verdict, every token count from provider counters.</span></div>
+    <div><div class="kicker">pathways</div><strong>The compiled routes</strong><span>Reusable procedures with provenance. Export to share. Import re-verifies before admitting.</span></div>
+    <div><div class="kicker">matcher</div><strong>The lookup</strong><span>Potion, torch-free, threshold derived by false-positive rate. Lexical when no model is present. Never a silent fallback.</span></div>
+  </div>
+</header>
+
+<section id="field">
+  <div class="sechead">
+    <div><div class="kicker">part one</div><h2>What the field built</h2></div>
+    <p>Skill libraries, memory layers, prompt compilers, and the older ideas they descend from.</p>
+  </div>
+  <div class="chips" id="chips">
+    <button class="chip" aria-pressed="true" data-f="all">all</button>
+    <button class="chip" aria-pressed="false" data-f="vendor">vendors</button>
+    <button class="chip" aria-pressed="false" data-f="oss">open source</button>
+    <button class="chip" aria-pressed="false" data-f="inspiration">inspiration</button>
+    <button class="chip" aria-pressed="false" data-f="steal">steal</button>
+  </div>
+  <div class="board" id="board"></div>
+  <p class="empty" id="boardEmpty" hidden>No images matched.</p>
+</section>
+
+<section id="keep">
+  <div class="sechead">
+    <div><div class="kicker">part two</div><h2>What holds</h2></div>
+    <p>From the pathway and matcher decisions in ADR-0018 and ADR-0019, and the cockpit research.</p>
+  </div>
+  <div class="patterns">
+    <div class="pattern"><strong>Store only what verified.</strong><span>Voyager's rule and ours. A pathway exists because a gate allowed every step of the trace it came from.</span></div>
+    <div class="pattern"><strong>Re-verify on import.</strong><span>A shared pathway is a claim, not a fact. The importer proves it again against the local envelope before admitting it.</span></div>
+    <div class="pattern"><strong>Thresholds come from error rates.</strong><span>Each matcher backend gets its own threshold, derived by matching a false-positive rate on a fixed corpus. Never a number someone liked.</span></div>
+    <div class="pattern"><strong>No model, no download, by default.</strong><span>The lexical matcher runs with nothing installed. Potion is small and torch-free. Anything bigger is a choice you make on purpose.</span></div>
+    <div class="pattern"><strong>Reuse is measured, never estimated.</strong><span>Hits, misses, and tokens saved are folds over the journal. The garden view shows that curve over time.</span></div>
+  </div>
+</section>
+
+<section id="ours">
+  <div class="sechead">
+    <div><div class="kicker">part three</div><h2>What ours is, and should be</h2></div>
+  </div>
+
+  <div class="mock">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>daisugi pathways</b> · today</div>
+      <pre><span class="t-dim">$</span> daisugi pathways --help
+  list    List all compiled pathways
+  show    Show a compiled pathway in detail
+  stats   Summarize stored pathways (count, total hits)
+  delete  Delete a compiled pathway
+  export  Export a compiled pathway for sharing or inspection
+  import  Import a pathway bundle, re-verify, and admit
+
+<span class="t-dim">$</span> daisugi tiers stats
+  tier 0  pathway hit      142 calls   ~0 fresh tokens
+  tier 1  local model       61 calls   ~48k tokens
+  tier 2  frontier          37 calls   ~310k tokens
+  <span class="t-dim">pathway hit rate 59%</span></pre>
+    </div>
+    <div class="note">
+      <div class="kicker">command line · today</div>
+      <h3>Six verbs and one honest table.</h3>
+      <p>The store, the gardener, the matcher, and the stats exist. The numbers above are the shape of the table, not a real run.</p>
+    </div>
+  </div>
+
+  <div class="mock flip">
+    <div class="note">
+      <div class="kicker">should be · the garden view</div>
+      <h3>A curve you can read at a glance.</h3>
+      <p>The cockpit research asked for three views over one store. This is the third: pathways growing, reuse per day, tokens saved as a fold over provider counters. It becomes a view plugin over the floor's socket, so it shows in the same rail as the roster.</p>
+      <ul>
+        <li>Stale numbers dim. Estimates carry a question mark. Nothing is dressed up.</li>
+        <li>Export to the Agent Skills folder shape, so a pathway travels to any harness that reads skills.</li>
+        <li>The int8 matcher, plan 10, and a bench per layer, plan 11, give the matcher its own honest comparison.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>garden</b> · a view plugin</div>
+      <pre><span class="t-dim">pathways over the last 30 days</span>
+  stored   ▁▂▂▃▃▄▄▅▅▅▆▆▆▇▇▇▇███████████████   <span class="t-ink">48</span>
+  reused   ▁▁▂▂▂▃▃▃▄▄▄▄▅▅▅▅▆▆▆▆▆▇▇▇▇▇▇▇██   <span class="t-ink">217 hits</span>
+  saved    <span class="t-done">1.9M tokens</span>  <span class="t-dim">fold over cache_read and fresh counters</span>
+
+<span class="t-dim">top pathways</span>
+  <span class="t-done">●</span> run-tests-fix-imports        31 hits   last 2h    <span class="t-dim">verified 31/31</span>
+  <span class="t-done">●</span> open-pr-wait-green           19 hits   last 40m   <span class="t-dim">verified 19/19</span>
+  <span class="t-need">●</span> migrate-schema               4 hits    last 3d    <span class="t-dim">1 re-verify failed</span></pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Screens in part one belong to their makers and are archived here for study. Part three is original work for openDaisugi. Claims trace to docs/adr/0018 and 0019 and docs/research/cockpit-gate-garden-research-2026-08-27.md.</p>
+</footer>
+
+</div>
+<script>window.ITEMS = [{"slug": "anthropic-skills-1", "title": "Agent Skills", "group": "vendor", "source_page": "https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills", "caption": "Anthropic's Agent Skills: folders of instructions and scripts a model loads on demand.", "file": "img/anthropic-skills-1.png", "image_url": "https://cdn.sanity.io/images/4zrzovbb/website/f10f90c11a484ad8bdf11ffcd9f6e08cfd9358b8-2400x1260.png", "fetched": "2026-09-12", "width": 1600, "height": 840, "verdict": "steal", "verdict_label": "steal", "note": "Folders a model loads on demand. Pathways should export to this shape."}, {"slug": "dspy-1", "title": "DSPy", "group": "oss", "source_page": "https://github.com/stanfordnlp/dspy", "caption": "DSPy: programs compiled from examples instead of hand-written prompts.", "file": "img/dspy-1.png", "image_url": "https://raw.githubusercontent.com/stanfordnlp/dspy/HEAD/docs/docs/static/img/dspy_logo.png", "fetched": "2026-09-12", "width": 609, "height": 196, "verdict": "reference", "verdict_label": "reference", "note": "Compiles prompts from examples. Distillation compiles pathways from verified traces."}, {"slug": "letta-1", "title": "Letta", "group": "oss", "source_page": "https://github.com/letta-ai/letta", "caption": "Letta, formerly MemGPT: agents that edit their own memory blocks.", "file": "img/letta-1.png", "image_url": "https://opengraph.githubassets.com/f46a627878aeaf0ef0e7d22c6019fbf8b83a6167fb0e6820b97470bf6f53bc61/letta-ai/letta", "fetched": "2026-09-12", "width": 1200, "height": 600, "verdict": "reference", "verdict_label": "reference", "note": "Memory of facts. The garden stores verified procedures, which is a different thing."}, {"slug": "voyager-1", "title": "Voyager", "group": "oss", "source_page": "https://github.com/MineDojo/Voyager", "caption": "Voyager's skill library: verified programs stored and retrieved by embedding, the closest published ancestor of pathways.", "file": "img/voyager-1.png", "image_url": "https://raw.githubusercontent.com/MineDojo/Voyager/HEAD/images/pull.png", "fetched": "2026-09-12", "width": 1600, "height": 672, "verdict": "steal", "verdict_label": "steal", "note": "Skills stored only after they verify, retrieved by embedding. Pathways are this, for a household's agents."}, {"slug": "mem0-1", "title": "mem0", "group": "oss", "source_page": "https://github.com/mem0ai/mem0", "caption": "mem0's memory layer: extract, store, and retrieve facts across sessions.", "file": "img/mem0-1.png", "image_url": "https://raw.githubusercontent.com/mem0ai/mem0/HEAD/docs/images/banner-sm.png", "fetched": "2026-09-12", "width": 1600, "height": 392, "verdict": "reference", "verdict_label": "reference", "note": "Memory of facts. The garden stores verified procedures, which is a different thing."}, {"slug": "coppicing-1", "title": "Coppicing", "group": "inspiration", "source_page": "https://en.wikipedia.org/wiki/Coppicing", "caption": "A coppiced stool sending up straight shoots. The floor's name, and the garden's method.", "file": "img/coppicing-1.jpg", "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/74/Coppice_stool.jpg/1280px-Coppice_stool.jpg?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=thumbnail", "fetched": "2026-09-12", "width": 1280, "height": 966, "license": "Wikipedia lead image, see file page", "verdict": "reference", "verdict_label": "reference"}, {"slug": "daisugi-1", "title": "Daisugi", "group": "inspiration", "source_page": "https://en.wikipedia.org/wiki/Daisugi", "caption": "Kitayama cedar grown by daisugi: one root, many straight trunks, each cut and reused.", "file": "img/daisugi-1.jpg", "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5d/New_breed_Dai_Sugi_02.jpg/1280px-New_breed_Dai_Sugi_02.jpg?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=thumbnail", "fetched": "2026-09-12", "width": 1280, "height": 960, "license": "Wikipedia lead image, see file page", "verdict": "reference", "verdict_label": "reference"}, {"slug": "desire-path-1", "title": "Desire path", "group": "inspiration", "source_page": "https://en.wikipedia.org/wiki/Desire_path", "caption": "A desire path: the route people actually take, worn in by use. A pathway is the same thing for an agent.", "file": "img/desire-path-1.jpg", "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2e/Desire_path_-_52849400711.jpg/1280px-Desire_path_-_52849400711.jpg?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=thumbnail", "fetched": "2026-09-12", "width": 1280, "height": 720, "license": "Wikipedia lead image, see file page", "verdict": "reference", "verdict_label": "reference"}, {"slug": "zettelkasten-1", "title": "Zettelkasten", "group": "inspiration", "source_page": "https://en.wikipedia.org/wiki/Zettelkasten", "caption": "Luhmann's slip box: small notes, linked, that grew into a system that answered back.", "file": "img/zettelkasten-1.jpg", "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/33/Zettelkasten_%28514941699%29.jpg/1280px-Zettelkasten_%28514941699%29.jpg?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=thumbnail", "fetched": "2026-09-12", "width": 1280, "height": 853, "license": "Wikipedia lead image, see file page", "verdict": "reference", "verdict_label": "reference"}];</script>
+<script src="../_shell/board.js"></script>
+</body>
+</html>

@@ -2,4 +2,7 @@ module daisugi-verify
 
 go 1.25.12
 
-require mvdan.cc/sh/v3 v3.13.1
+require (
+	github.com/mattn/go-sqlite3 v1.14.52
+	golang.org/x/text v0.30.0
+)

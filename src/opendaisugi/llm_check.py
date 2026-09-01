@@ -71,18 +71,18 @@ def _invoke_model(rule: str, payload: dict[str, Any]) -> tuple[bool, str]:
             return False, f"llm-check failed: {exc}"
         return bool(parsed.get("satisfied", False)), str(parsed.get("rationale", ""))
 
-    import litellm
+    from opendaisugi.llm_client import complete
 
-    response = litellm.completion(
-        model=model,
-        messages=[
+    reply = complete(
+        model,
+        [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         temperature=0,
         max_tokens=200,
     )
-    content = response.choices[0].message.content or ""
+    content = reply.text
     parsed = json.loads(content)
     return bool(parsed.get("satisfied", False)), str(parsed.get("rationale", ""))
 
@@ -111,7 +111,7 @@ def call_llm_check(rule: str, payload: dict[str, Any]) -> tuple[bool, str]:
     """Call a small LLM to evaluate a natural-language rule against a payload.
 
     Returns (satisfied, rationale). Defaults to a cheap Haiku-class option
-    via litellm; routes through ``claude -p`` when
+    through our own model client (``llm_client``); routes through ``claude -p`` when
     ``OPENDAISUGI_LLM_BACKEND=claude-code``.
 
     .. deprecated::

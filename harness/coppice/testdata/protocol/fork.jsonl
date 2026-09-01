@@ -1,0 +1,17 @@
+# pane.fork refusals. A pty pane cannot fork, and an unknown pane is
+# no_such_pane. A real fork needs a headless harness that can resume a
+# session, which no corpus run has. A pane.close removes the record at
+# once, so forking it afterward is no_such_pane too, the same as an
+# id that never existed.
+{"id":"1","cmd":"pane.create","cwd":"/","cmd_argv":["sh","-c","sleep 30"],"label":"fork","kind":"pty"}
+{"id":"$id","ok":true,"result":{"pane":"$p"}}
+{"id":"2","cmd":"pane.fork","pane":"$p"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"a pty pane cannot fork a session"}}
+{"id":"3","cmd":"pane.fork","pane":"w9:p9"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"*"}}
+{"id":"4","cmd":"pane.fork"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"5","cmd":"pane.close","pane":"$p"}
+{"id":"$id","ok":true,"result":{"pane":"*","closed":true}}
+{"id":"6","cmd":"pane.fork","pane":"$p"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"*"}}

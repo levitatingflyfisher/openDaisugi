@@ -201,7 +201,7 @@ async def test_generate_envelope_wraps_client_error(monkeypatch, sample_envelope
 
     from opendaisugi import llm
 
-    monkeypatch.setattr(llm, "get_instructor_client", lambda model: ExplodingClient())
+    monkeypatch.setattr(llm, "get_model_client", lambda model: ExplodingClient())
 
     with pytest.raises(EnvelopeGenerationError) as exc:
         await generate_envelope(task="ratelimited task")

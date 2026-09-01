@@ -52,7 +52,7 @@ async def test_declining_tier1_does_not_short_circuit_ladder() -> None:
     """Provider returning None declines — Tier-2 ladder must run."""
     decliner = _StaticTier1("decliner", None)
     produced = _mk_envelope(task="t")
-    with patch("opendaisugi.envelope._llm.get_instructor_client") as mock_client_factory:
+    with patch("opendaisugi.envelope._llm.get_model_client") as mock_client_factory:
         mock_client = mock_client_factory.return_value
         mock_client.chat.completions.create = AsyncMock(return_value=produced)
         result = await generate_envelope(task="t", tier1=decliner)
@@ -66,7 +66,7 @@ async def test_tier1_success_short_circuits_ladder() -> None:
     """When Tier-1 returns an envelope, Tier-2 must not be called."""
     t1_env = _mk_envelope(task="t", generated_by="will-be-overwritten")
     provider = _StaticTier1("mycheapmodel", t1_env)
-    with patch("opendaisugi.envelope._llm.get_instructor_client") as mock_factory:
+    with patch("opendaisugi.envelope._llm.get_model_client") as mock_factory:
         mock_client = mock_factory.return_value
         mock_client.chat.completions.create = AsyncMock()
         result = await generate_envelope(task="t", tier1=provider)
@@ -79,7 +79,7 @@ async def test_tier1_success_short_circuits_ladder() -> None:
 async def test_tier1_exception_falls_through_to_tier2() -> None:
     """An adapter exception must degrade gracefully to Tier-2."""
     produced = _mk_envelope(task="t")
-    with patch("opendaisugi.envelope._llm.get_instructor_client") as mock_factory:
+    with patch("opendaisugi.envelope._llm.get_model_client") as mock_factory:
         mock_client = mock_factory.return_value
         mock_client.chat.completions.create = AsyncMock(return_value=produced)
         result = await generate_envelope(task="t", tier1=_BoomTier1())
@@ -93,7 +93,7 @@ async def test_high_stakes_bypasses_tier1() -> None:
     t1_env = _mk_envelope(task="t")
     provider = _StaticTier1("shouldntrun", t1_env)
     produced = _mk_envelope(task="t")
-    with patch("opendaisugi.envelope._llm.get_instructor_client") as mock_factory:
+    with patch("opendaisugi.envelope._llm.get_model_client") as mock_factory:
         mock_factory.return_value.chat.completions.create = AsyncMock(return_value=produced)
         result = await generate_envelope(task="t", tier1=provider, stakes="high")
     assert provider.calls == 0
@@ -119,7 +119,7 @@ async def test_tier1_inconsistent_envelope_falls_through(tmp_path) -> None:
     )
     provider = _StaticTier1("shady", bad)
     produced = _mk_envelope(task="t")
-    with patch("opendaisugi.envelope._llm.get_instructor_client") as mock_factory:
+    with patch("opendaisugi.envelope._llm.get_model_client") as mock_factory:
         mock_factory.return_value.chat.completions.create = AsyncMock(return_value=produced)
         result = await generate_envelope(task="t", tier1=provider)
     assert mock_factory.return_value.chat.completions.create.await_count == 1
@@ -194,3 +194,26 @@ def test_make_cache_key_tier1_name_matters() -> None:
         tier1_provider_name="beta",
     )
     assert k_a != k_b
+
+
+@pytest.mark.asyncio
+async def test_tier1_envelope_whose_check_did_not_finish_is_a_decline() -> None:
+    """A Z3 unknown on the Tier-1 envelope declines; the ladder runs."""
+    from opendaisugi.exceptions import VerificationTimeout
+
+    t1 = _StaticTier1("local", _mk_envelope(task="t", generated_by="local"))
+    produced = _mk_envelope(task="t")
+
+    def selfcheck(env, timeout_ms=500):
+        if env.generated_by == "local":
+            raise VerificationTimeout("Z3 self-consistency check exceeded 500ms")
+        return []
+
+    with (
+        patch("opendaisugi.envelope._llm.get_model_client") as factory,
+        patch("opendaisugi.envelope.check_envelope_self_consistency", side_effect=selfcheck),
+    ):
+        factory.return_value.chat.completions.create = AsyncMock(return_value=produced)
+        result = await generate_envelope(task="t", tier1=t1)
+    assert t1.calls == 1
+    assert result.generated_by.startswith("anthropic/")

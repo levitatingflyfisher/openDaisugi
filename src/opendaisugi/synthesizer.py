@@ -129,7 +129,7 @@ async def synthesize(
 
     if client is None:
         try:
-            client = _llm.get_instructor_client(model=model, backend=backend)
+            client = _llm.get_model_client(model=model, backend=backend)
         except Exception as e:  # noqa: BLE001
             _log.info("synthesize.no_client", extra={"error": str(e)})
             return _fallback()

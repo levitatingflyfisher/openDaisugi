@@ -3,44 +3,20 @@ package verify
 import (
 	"bufio"
 	"fmt"
-	"io"
-	"os/exec"
 	"strings"
 	"sync"
 )
 
-// Z3Client is a single persistent "z3 -in" subprocess (docs/spec/
-// conformance.md: "emitting SMT-LIB2 text and invoking a solver binary...
-// never by binding a solver API"). One process for the whole run — not one
-// per query — is what keeps the Full-profile tail from dominating the
-// bench; each query is isolated with (push 1)/(pop 1) so declarations never
-// leak between logically-unrelated checks.
+// Z3Client runs the Full profile's SMT-LIB2 queries in the Z3 this binary
+// links (clients/go/internal/z3), through Z3's own command interpreter:
+// the same text `z3 -in` would read, with no second program. The
+// interpreter keeps its state for the whole run, and each query is
+// isolated with (push 1)/(pop 1), so declarations never leak between
+// logically unrelated checks.
 type Z3Client struct {
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	closed bool
-}
-
-// NewZ3Client starts "z3 -in". Returns an error if the z3 binary isn't on
-// PATH — callers treat that as "Full profile unavailable" (fail closed,
-// per PORTING-NOTES: an opted-in-but-unusable capability rejects rather
-// than silently passing).
-func NewZ3Client() (*Z3Client, error) {
-	cmd := exec.Command("z3", "-in")
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("starting z3 -in: %w", err)
-	}
-	return &Z3Client{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout)}, nil
+	// eval runs the commands and returns what they print.
+	eval func(string) (string, error)
+	mu   sync.Mutex
 }
 
 // z3QueryCounter gives every query a unique resync marker — see CheckSat.
@@ -48,24 +24,16 @@ var z3QueryCounter uint64
 
 // CheckSat sends `smt2` (declarations + assertions, no leading/trailing
 // check-sat) wrapped in a push/pop scope with the given timeout, then reads
-// z3's response to "(check-sat)": "sat", "unsat", or "unknown".
+// Z3's response to "(check-sat)": "sat", "unsat", or "unknown".
 //
-// z3 -in does NOT abort a session on a malformed command — e.g. two
+// Z3's interpreter does NOT stop on a malformed command: two
 // `declare-const`s of the same name in one scope print an `(error ...)`
-// line and then KEEP GOING, so a single buggy query can silently shift the
-// stdout read cursor by one line for the rest of the process's life,
-// corrupting every later, otherwise-correct query. Guard against that
-// class of bug structurally: emit a unique `(echo "...")` marker after
-// each query and read (and discard) any interleaved lines — including
-// `(error ...)` ones, surfaced as part of the returned error — until that
-// marker reappears, so the stream is always resynchronized before the next
-// query starts.
+// line and then KEEP GOING. So each query ends with a unique `(echo "...")`
+// marker, and every line before the marker other than the answer (an
+// `(error ...)` one included) is surfaced as part of the returned error.
 func (c *Z3Client) CheckSat(smt2 string, timeoutMs int) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
-		return "", fmt.Errorf("z3 client closed")
-	}
 	z3QueryCounter++
 	marker := fmt.Sprintf("DAISUGI-MARK-%d", z3QueryCounter)
 
@@ -74,14 +42,18 @@ func (c *Z3Client) CheckSat(smt2 string, timeoutMs int) (string, error) {
 	b.WriteString(smt2)
 	b.WriteString("\n(check-sat)\n")
 	fmt.Fprintf(&b, "(pop 1)\n(echo %q)\n", marker)
-	if _, err := io.WriteString(c.stdin, b.String()); err != nil {
-		return "", fmt.Errorf("writing to z3: %w", err)
+	out, err := c.eval(b.String())
+	if err != nil {
+		// A failed command can leave the scope pushed; start clean.
+		_, _ = c.eval("(reset)")
+		return "", fmt.Errorf("z3: %w", err)
 	}
+	stdout := bufio.NewReader(strings.NewReader(out))
 
 	var result string
 	var stray []string
 	for {
-		line, err := c.stdout.ReadString('\n')
+		line, err := stdout.ReadString('\n')
 		trimmed := strings.TrimSpace(line)
 		if trimmed == marker {
 			break
@@ -95,7 +67,7 @@ func (c *Z3Client) CheckSat(smt2 string, timeoutMs int) (string, error) {
 			stray = append(stray, trimmed)
 		}
 		if err != nil {
-			return "", fmt.Errorf("reading from z3 (stream desynced, never saw marker %s): %w", marker, err)
+			return "", fmt.Errorf("reading from z3 (never saw marker %s): %w", marker, err)
 		}
 	}
 	if result == "" {
@@ -105,17 +77,6 @@ func (c *Z3Client) CheckSat(smt2 string, timeoutMs int) (string, error) {
 		return "", fmt.Errorf("z3 emitted unexpected output alongside %q: %v", result, stray)
 	}
 	return result, nil
-}
-
-func (c *Z3Client) Close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return
-	}
-	c.closed = true
-	c.stdin.Close()
-	c.cmd.Wait()
 }
 
 // smtQuoteString escapes a Go string for SMT-LIB2 string-literal syntax:

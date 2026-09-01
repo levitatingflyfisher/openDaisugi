@@ -19,14 +19,13 @@ from textual.widgets import DataTable, Static
 from opendaisugi.cockpit import (
     GROUPS,
     PARKED_S,
-    SHELL_TOOL_NAMES,
     WORKING_S,
     Roster,
     SessionRow,
     build_roster,
-    is_destructive_action,
 )
 from opendaisugi.session_tree import SessionIndex, SessionTree
+from opendaisugi.tui_asks import AskActionsMixin
 from opendaisugi.tui_base import CockpitScreen
 
 _COLS = ("session", "action", "verdict", "clause", "steps", "↑fresh", "⟳read", "✎write", "age")
@@ -41,11 +40,22 @@ def _k(n: int) -> str:
 
 
 def _cells(r: SessionRow) -> list[str]:
-    return [f"  {r.session_id[:14]}", r.action[:36], r.verdict, r.clause[:30], str(r.steps),
-            _k(r.fresh), _k(r.cache_read), _k(r.cache_write), _age(r.age_s)]
+    return [
+        f"  {r.session_id[:14]}",
+        r.action[:36],
+        r.verdict,
+        r.clause[:30],
+        str(r.steps),
+        _k(r.fresh),
+        _k(r.cache_read),
+        _k(r.cache_write),
+        _age(r.age_s),
+    ]
 
 
-class SessionsScreen(CockpitScreen):
+class SessionsScreen(AskActionsMixin, CockpitScreen):
+    _ask_origin = "sessions view"
+
     BINDINGS = [
         Binding("down,j", "cursor_down", "▼", show=True),
         Binding("up,k", "cursor_up", "▲", show=True),
@@ -72,6 +82,7 @@ class SessionsScreen(CockpitScreen):
         #   ("allow_token", tid, token) — a on a destructive would-deny (S2)
         #   ("steer", session_id)       — s on a sprig session (S4)
         self._cmd_mode: tuple | None = None
+        self._poll_timer = None
 
     def compose_body(self) -> ComposeResult:
         with Vertical():
@@ -84,7 +95,30 @@ class SessionsScreen(CockpitScreen):
         table = self.query_one("#roster", DataTable)
         self._col_keys = list(table.add_columns(*_COLS))
         self.reload(force=True)
-        self.set_interval(1.0, self._poll)
+        self._start_poll_timer()
+
+    def on_screen_resume(self) -> None:
+        # on_mount runs once per instance, even across an unmount/remount
+        # cycle; a screen switched away and back needs the timer restarted
+        # here, since on_unmount stops it.
+        super().on_screen_resume()
+        self._start_poll_timer()
+
+    def on_unmount(self) -> None:
+        # Without this, the 1 Hz poll kept running after the screen was
+        # switched away from. An "installed" screen survives being popped
+        # off the stack, and could fire against a table that no longer
+        # exists once the screen's own widgets were torn down.
+        self._stop_poll_timer()
+
+    def _start_poll_timer(self) -> None:
+        if self._poll_timer is None:
+            self._poll_timer = self.set_interval(1.0, self._poll)
+
+    def _stop_poll_timer(self) -> None:
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = None
 
     def clear_prefill(self) -> None:
         # Cancelling the command line drops the pending intent AND any low-blast
@@ -149,8 +183,9 @@ class SessionsScreen(CockpitScreen):
             if r.session_id not in self._keys:
                 continue  # a _roster/_keys disagreement is a no-op, never a KeyError
             age = r.age_s + delta
-            crossed = ((r.group == "WORKING" and age >= WORKING_S)
-                       or (r.group == "PARKED" and age >= PARKED_S))
+            crossed = (r.group == "WORKING" and age >= WORKING_S) or (
+                r.group == "PARKED" and age >= PARKED_S
+            )
             if crossed and not r.pending_ask:
                 self.reload()  # a row changed group with no file change: regroup once
                 return
@@ -179,29 +214,38 @@ class SessionsScreen(CockpitScreen):
             peek.update("select a session row · j/k move")
             return
         v = row.last_verdict or {}
-        lines = [f"{row.session_id} · {row.agent} · {row.harness} · {row.cwd}",
-                 f"proposes {row.action or '(nothing yet)'}",
-                 f"verdict {row.verdict or '—'} · clause {row.clause or '—'} · "
-                 f"envelope {v.get('envelopeId') or '—'} · {v.get('latencyMs', '—')} ms"]
+        lines = [
+            f"{row.session_id} · {row.agent} · {row.harness} · {row.cwd}",
+            f"proposes {row.action or '(nothing yet)'}",
+            f"verdict {row.verdict or '—'} · clause {row.clause or '—'} · "
+            f"envelope {v.get('envelopeId') or '—'} · {v.get('latencyMs', '—')} ms",
+        ]
         if v.get("counterexample"):
             lines.append(f"counterexample: {v['counterexample']}")
         if row.pending_ask:
             left = int(float(row.pending_ask.get("deadline", 0)) - time.time())
-            lines.append(f"ASK pending · {max(left, 0)}s left · reason: {row.pending_ask.get('reason', '')}")
+            lines.append(
+                f"ASK pending · {max(left, 0)}s left · reason: {row.pending_ask.get('reason', '')}"
+            )
         # S4: steer is only bound+implemented on the sprig path; on Claude it is
         # marked, never dressed as live (tool-interface law 10). `e` edit bounces
         # back as a deny-with-reason (S3) — the narrowing is UNVERIFIED against
         # the harness, so it never becomes a silent allow of the original.
         steer = "s steer" if row.harness == "sprig" else "s steer (not on this path)"
-        lines.append("a allow (then ⏎)  d deny  e edit→deny&re-ask (narrowing unverified)  "
-                     f"r remember…  {steer}  t tree  ⏎ attach")
+        lines.append(
+            "a allow (then ⏎)  d deny  e edit→deny&re-ask (narrowing unverified)  "
+            f"r remember…  {steer}  t tree  ⏎ attach"
+        )
         peek.update("\n".join(lines))
 
     def _render_alerts(self) -> None:
         from opendaisugi.cockpit import alerts_for, load_alert_policy
 
-        alerts = (alerts_for(self._roster, policy=load_alert_policy(self.app.data_dir))
-                  if self._roster else [])
+        alerts = (
+            alerts_for(self._roster, policy=load_alert_policy(self.app.data_dir))
+            if self._roster
+            else []
+        )
         text = "   ".join(f"{a.count}× {a.klass} ({', '.join(a.sessions[:3])})" for a in alerts)
         self.query_one("#alerts", Static).update(f"ALERTS  {text}" if text else "ALERTS  none")
 
@@ -220,105 +264,15 @@ class SessionsScreen(CockpitScreen):
         self.app.switch_screen("tree")
 
     # --- answering an ask ---------------------------------------------------
-    def _pending(self) -> tuple[SessionRow, str] | None:
-        row = self.selected_row
-        if row is None or not row.pending_ask:
-            self.app.set_status("no pending ask on this row")
-            return None
-        return row, str(row.pending_ask["toolUseId"])
-
-    def _ask_action_text(self, row: SessionRow) -> str:
-        """S2: build the string we classify from the PENDING ask (toolName + the
-        values of toolInput), not from ``row.action`` — the latter is the last
-        *recorded* call and can lag the ask still awaiting an answer, so a
-        destructive pending call would otherwise get the low-effort two-step."""
-        a = row.pending_ask or {}
-        parts = [str(a.get("toolName") or "")]
-        ti = a.get("toolInput")
-        if isinstance(ti, dict):
-            parts += [str(v) for v in ti.values()]
-        return " ".join(p for p in parts if p).strip() or row.action
-
-    def _needs_strong_guard(self, row: SessionRow) -> bool:
-        """True when this allow must use the typed-token confirm, not a->Enter.
-
-        High-blast is decided at the point of use, not by chasing every command
-        string. It is high-blast when ANY of:
-        - the tool is a RAW SHELL tool (SHELL_TOOL_NAMES) — its blast radius is
-          "whatever the string does", so dd/mkfs/chmod -R/git clean/find -delete/
-          a truncating redirect/… all land here whether or not a pattern catches
-          them;
-        - ``toolInput`` is not a clean dict — we can't inspect the call, so we
-          can't call it low-blast (this also closes the minor fail-open where a
-          non-dict input was classified on ``toolName`` alone);
-        - ``is_destructive_action`` matches the ask's text (defence in depth, and
-          it covers a destructive command issued through a NON-shell tool)."""
-        a = row.pending_ask or {}
-        tool = str(a.get("toolName") or "").strip().casefold()
-        if tool in SHELL_TOOL_NAMES:
-            return True
-        if not isinstance(a.get("toolInput"), dict):
-            return True
-        return is_destructive_action(self._ask_action_text(row))
-
-    def action_arm_allow(self) -> None:
-        p = self._pending()
-        if not p:
-            return
-        row, tid = p
-        if self._needs_strong_guard(row):
-            # S2 (habituation-resistant): a fixed a->Enter would go invisible on a
-            # high-blast would-deny. Match the guard to the blast radius — require
-            # a token that VARIES per row (the session id, not the near-constant
-            # tool name "Bash") typed to confirm, so the operator's locus of
-            # attention lands on THIS specific action and the reflex can't allow.
-            token = row.session_id
-            self._armed = None
-            self._cmd_mode = ("allow_token", tid, token)
-            self.app.open_cmd(prefill="")
-            self.app.set_status(
-                f"HIGH-BLAST allow — type the session id '{token}' then ⏎ to confirm allow of {tid}"
-            )
-        else:
-            # Low-blast: the low-effort two-step. a arms, ⏎ confirms, any cursor
-            # move disarms (on_data_table_row_highlighted).
-            self._armed = tid
-            self._cmd_mode = None
-            self.app.set_status(f"allow {tid}? ⏎ to confirm allow · move the cursor to cancel")
-
     def on_data_table_row_selected(self, _event) -> None:
         # Enter on the focused roster (the table owns the enter key) → confirm an
         # armed allow, else attach.
         self.action_confirm()
 
     def action_confirm(self) -> None:
-        from opendaisugi import ask
-
-        row = self.selected_row
-        # S2 (misfire-safe): the armed id must still equal the CURRENTLY selected
-        # row's toolUseId — a poll re-sort can never misfire onto another row.
-        if (self._armed and row and row.pending_ask
-                and str(row.pending_ask["toolUseId"]) == self._armed):
-            ask.answer(self.app.data_dir / "gate", tool_use_id=self._armed, decision="allow",
-                       reason="operator allowed from the sessions view")
-            self.app.set_status(f"allowed {self._armed}")
-            self._armed = None
-            self.reload()
+        if self.action_confirm_allow():
             return
-        self._armed = None
         self.action_attach()
-
-    def action_deny(self) -> None:
-        p = self._pending()
-        if not p:
-            return
-        from opendaisugi import ask
-
-        _, tid = p
-        ask.answer(self.app.data_dir / "gate", tool_use_id=tid, decision="deny",
-                   reason="operator denied from the sessions view")
-        self.app.set_status(f"denied {tid}")
-        self.reload()
 
     def action_edit_input(self) -> None:
         p = self._pending()
@@ -347,11 +301,21 @@ class SessionsScreen(CockpitScreen):
             return
         from opendaisugi import ask
 
-        ask.propose(self.app.data_dir / "gate", kind="allow-pattern", scope=scope,
-                    expires_at=time.time() + 30 * 86400,
-                    body={"sessionId": row.session_id, "toolUseId": tid,
-                          "toolInput": (row.pending_ask or {}).get("toolInput"), "clause": row.clause})
-        self.app.set_status(f"proposal written (scope {scope}) · apply it with `daisugi gate proposals`")
+        ask.propose(
+            self.app.data_dir / "gate",
+            kind="allow-pattern",
+            scope=scope,
+            expires_at=time.time() + 30 * 86400,
+            body={
+                "sessionId": row.session_id,
+                "toolUseId": tid,
+                "toolInput": (row.pending_ask or {}).get("toolInput"),
+                "clause": row.clause,
+            },
+        )
+        self.app.set_status(
+            f"proposal written (scope {scope}) · apply it with `daisugi gate proposals`"
+        )
 
     def action_steer(self) -> None:
         # S4: only bound to a real effect on the sprig path; on Claude it says so
@@ -411,30 +375,26 @@ class SessionsScreen(CockpitScreen):
             # S3 (fail-closed): the harness's honoring of updatedInput is
             # UNVERIFIED (spec §10). Rather than a silent allow of the original,
             # deny with a reason that hands the narrower call back to the agent.
-            ask.answer(self.app.data_dir / "gate", tool_use_id=tid, decision="deny",
-                       reason=f"operator asks to narrow {key} to: {value!r} — re-issue it "
-                       "(daisugi cannot verify an in-place edit is honored on this harness)")
-            self.app.set_status(f"edit → DENIED {tid}; agent asked to re-issue as {value!r} "
-                                "(narrowing unverified)")
+            ask.answer(
+                self.app.data_dir / "gate",
+                tool_use_id=tid,
+                decision="deny",
+                reason=f"operator asks to narrow {key} to: {value!r} — re-issue it "
+                "(daisugi cannot verify an in-place edit is honored on this harness)",
+            )
+            self.app.set_status(
+                f"edit → DENIED {tid}; agent asked to re-issue as {value!r} (narrowing unverified)"
+            )
             self.reload()
             return True
         if kind == "allow_token":
-            _, tid, token = mode
-            row = self.selected_row
-            if (row is None or not row.pending_ask
-                    or str(row.pending_ask["toolUseId"]) != tid or value.strip() != token):
-                self.app.set_status(f"allow cancelled — token did not match '{token}'")
-                return True
-            ask.answer(self.app.data_dir / "gate", tool_use_id=tid, decision="allow",
-                       reason="operator allowed a destructive action (typed-token confirm)")
-            self.app.set_status(f"allowed {tid} (destructive · token confirmed)")
-            self.reload()
-            return True
+            return self.handle_allow_token(mode, value)
         if kind == "steer":
             _, sid = mode
             try:
                 SessionTree.open(self.app.data_dir / "sessions", sid).append(
-                    "note", {"from": "operator", "text": value})
+                    "note", {"from": "operator", "text": value}
+                )
                 self.app.set_status(f"steer note added to {sid}")
                 self.reload()
             except FileNotFoundError:
@@ -448,13 +408,19 @@ class RememberScope(ModalScreen[str]):
     two-step allow is only ever disarmed by cursor movement, never by a key
     handler firing from under the table."""
 
-    BINDINGS = [Binding("o", "pick('once')", "o once"), Binding("s", "pick('session')", "s session"),
-                Binding("p", "pick('project')", "p project"), Binding("g", "pick('global')", "g global"),
-                Binding("escape", "pick_none", "Esc cancel")]
+    BINDINGS = [
+        Binding("o", "pick('once')", "o once"),
+        Binding("s", "pick('session')", "s session"),
+        Binding("p", "pick('project')", "p project"),
+        Binding("g", "pick('global')", "g global"),
+        Binding("escape", "pick_none", "Esc cancel"),
+    ]
 
     def compose(self) -> ComposeResult:
-        yield Static("remember this allow for:  o once   s session   p project   g global   Esc cancel",
-                     id="scope")
+        yield Static(
+            "remember this allow for:  o once   s session   p project   g global   Esc cancel",
+            id="scope",
+        )
 
     def action_pick(self, scope: str) -> None:
         self.dismiss(scope)

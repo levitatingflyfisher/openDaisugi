@@ -102,7 +102,7 @@ failures together demonstrate most of this plan at once.
    next step.
 4. **Engine noise in the operator's face.** An HF-hub warning, a `BertModel LOAD REPORT`,
    and a full CUDA `sm_61` incompatibility lecture printed before anything useful. The
-   known fix on this box — `CUDA_VISIBLE_DEVICES=""` to run the embedder on CPU — is not
+   known fix — `CUDA_VISIBLE_DEVICES=""` to run the embedder on CPU — is not
    baked in.
 5. **A non-task is a crash, not a graceful answer.** "Hello how are you doing?" decomposed
    to zero steps and raised `DecompositionError: decomposition produced no steps`. The
@@ -138,8 +138,8 @@ cold gate, both silent. Relates to sprig's `--gate-timeout` work.
 Detect the available auth and pick the working backend automatically — no key plus a local
 `claude` means `claude-code`, not a dead Anthropic call — with an explicit `--llm` or a
 config value always winning. Choose the embedder's device *conditionally*: the GPU when it
-can actually run, CPU only when it cannot (this box's torch build lacks `sm_61`, so the GPU
-is genuinely unusable here) — a real check against `torch.cuda.get_arch_list()`, never a
+can actually run, CPU only when it cannot (a Pascal GPU's torch build lacks `sm_61`, so the GPU
+is genuinely unusable there) — a real check against `torch.cuda.get_arch_list()`, never a
 blanket force to CPU. The model is already cached (`~/.cache/huggingface`); the repeated
 `BertModel LOAD REPORT` and the HF-hub warning are verbose logging, not a re-download —
 quiet them (offline after first fetch, transformers log level), do not "cache better."

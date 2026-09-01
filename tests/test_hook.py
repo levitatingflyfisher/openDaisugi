@@ -176,18 +176,120 @@ def test_journal_tracks_session_conversion(tmp_path: Path):
 
 def test_record_keeps_the_join_keys(tmp_path: Path):
     payload = {
-        "session_id": "sess1", "tool_name": "Bash", "tool_input": {"command": "ls"},
-        "tool_use_id": "toolu_01", "agent_id": "ag1", "agent_type": "Explore",
-        "cwd": "/w", "transcript_path": "/t/sess1.jsonl", "hook_event_name": "PreToolUse",
+        "session_id": "sess1",
+        "tool_name": "Bash",
+        "tool_input": {"command": "ls"},
+        "tool_use_id": "toolu_01",
+        "agent_id": "ag1",
+        "agent_type": "Explore",
+        "cwd": "/w",
+        "transcript_path": "/t/sess1.jsonl",
+        "hook_event_name": "PreToolUse",
         "permission_mode": "default",
     }
     p = record_call(payload, root=tmp_path)
     rec = json.loads(p.read_text().splitlines()[0])
-    for k in ("tool_use_id", "agent_id", "agent_type", "cwd", "transcript_path", "hook_event_name", "permission_mode"):
+    for k in (
+        "tool_use_id",
+        "agent_id",
+        "agent_type",
+        "cwd",
+        "transcript_path",
+        "hook_event_name",
+        "permission_mode",
+    ):
         assert rec[k] == payload[k]
 
 
 def test_missing_join_keys_are_absent_not_null(tmp_path: Path):
-    p = record_call({"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}}, root=tmp_path)
+    p = record_call(
+        {"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}}, root=tmp_path
+    )
     rec = json.loads(p.read_text().splitlines()[0])
     assert "tool_use_id" not in rec
+
+
+# ------------------------------------------------ subagents as child rows
+
+
+def _subagent(event: str, **extra) -> bytes:
+    body = {"session_id": "s1", "hook_event_name": event, "agent_type": "Explore", **extra}
+    return json.dumps(body).encode()
+
+
+@pytest.mark.parametrize(
+    ("event", "hook", "state"),
+    [("subagent_start", "SubagentStart", "working"), ("subagent_stop", "SubagentStop", "done")],
+)
+def test_a_subagent_hook_reports_a_child(monkeypatch, tmp_path, event, hook, state):
+    from opendaisugi.hook import record_lifecycle_event
+
+    seen: list[tuple] = []
+    monkeypatch.setattr(
+        "opendaisugi._state_report.report_child",
+        lambda *a, **k: seen.append(a) or "coppice",
+    )
+    out = record_lifecycle_event(
+        _subagent(hook, agent_id="a1"), event=event, sessions_root=tmp_path / "sessions"
+    )
+    assert seen == [("a1", state, "Explore")]
+    assert out == "" or "block" not in out.lower()
+
+
+def test_a_subagent_hook_with_no_agent_id_reports_nothing(monkeypatch, tmp_path):
+    from opendaisugi.hook import record_lifecycle_event
+
+    seen: list[tuple] = []
+    monkeypatch.setattr(
+        "opendaisugi._state_report.report_child", lambda *a, **k: seen.append(a) or "none"
+    )
+    record_lifecycle_event(
+        _subagent("SubagentStart"), event="subagent_start", sessions_root=tmp_path / "sessions"
+    )
+    assert seen == []
+
+
+def test_report_child_sends_one_line_to_the_pane_host(tmp_path):
+    import socket
+    import threading
+
+    from opendaisugi._state_report import report_child
+
+    sock_path = tmp_path / "s.sock"
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(sock_path))
+    srv.listen(1)
+    got: list[bytes] = []
+
+    def serve():
+        conn, _ = srv.accept()
+        with conn:
+            data = b""
+            while not data.endswith(b"\n"):
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            got.append(data)
+            conn.sendall(b'{"id":"c","ok":true,"result":{}}\n')
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    env = {"COPPICE_SOCK": str(sock_path), "COPPICE_PANE": "w1:p1"}
+    assert report_child("a1", "working", "Explore", env=env, budget_s=2.0) == "coppice"
+    t.join(2)
+    srv.close()
+    line = json.loads(got[0])
+    assert line["cmd"] == "pane.report_child"
+    assert (line["pane"], line["child"], line["state"], line["label"]) == (
+        "w1:p1",
+        "a1",
+        "working",
+        "Explore",
+    )
+
+
+def test_report_child_outside_a_pane_goes_nowhere():
+    from opendaisugi._state_report import report_child
+
+    assert report_child("a1", "working", "Explore", env={}) == "none"

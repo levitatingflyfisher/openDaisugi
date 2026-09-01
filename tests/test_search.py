@@ -105,9 +105,9 @@ def test_semantic_search_orders_by_cosine_similarity(tmp_path, monkeypatch):
                     vectors.append([0.33, 0.33, 0.33])
             return np.array(vectors)
 
-    # Bypass the lazy sentence_transformers import by preloading the model
-    # cache with a fake encoder; _get_model() short-circuits on non-None.
-    monkeypatch.setattr(search_module, "_model", FakeEncoder(None))
+    # Bypass the lazy sentence_transformers import by preloading the embedder
+    # cache (keyed by identity) with a fake encoder; _get_model() returns it.
+    monkeypatch.setitem(search_module._embedder_cache, search_module._MODEL_NAME, FakeEncoder(None))
     results = search_module.semantic_search(j, "csv", limit=2)
     assert len(results) == 2
     # First result should be the "read csv data" trace.

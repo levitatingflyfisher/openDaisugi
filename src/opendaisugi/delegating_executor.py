@@ -6,7 +6,7 @@ differ in cost if some steps execute against a cheap model. This executor
 makes that real.
 
 Design constraints:
-- Reuses ``opendaisugi.llm.get_instructor_client`` so the same backend
+- Reuses ``opendaisugi.llm.get_model_client`` so the same backend
   switch (``OPENDAISUGI_LLM_BACKEND``) governs delegation as governs
   envelope generation.
 - Honors ``step.preferred_model`` over the executor's ``default_model``,
@@ -38,28 +38,14 @@ class _LastInvocation:
     model: str | None = None
     attempts: int = 0
     # v0.32: total tokens reported by the backend for the last call, when it
-    # exposes usage (litellm ``result.usage.total_tokens`` or claude-code
+    # exposes usage (the HTTP reply's token counts or claude-code
     # ``--output-format json`` usage). None when unavailable or mocked.
     # The budget-aware executor reads this to record actual spend.
     tokens: int | None = None
     # v0.33.2: measured dollar cost, exact, from the claude-code backend's
     # ``total_cost_usd`` (Claude Code's own accounting; works on a subscription).
-    # None on backends that don't report a cost (litellm → estimated elsewhere).
+    # None on backends that don't report a cost (the HTTP API → estimated elsewhere).
     cost_usd: float | None = None
-
-
-def _extract_total_tokens(result: object) -> int | None:
-    """Pull ``usage.total_tokens`` off a litellm result, tolerant of shape."""
-    usage = getattr(result, "usage", None)
-    if usage is None:
-        return None
-    total = getattr(usage, "total_tokens", None)
-    if total is None and isinstance(usage, dict):
-        total = usage.get("total_tokens")
-    try:
-        return int(total) if total is not None else None
-    except (TypeError, ValueError):
-        return None
 
 
 class DelegatingExecutor:
@@ -101,7 +87,7 @@ class DelegatingExecutor:
         self.response_schema = response_schema
         self.max_retries = max_retries
         self.backend = backend
-        # v0.32: per-model litellm kwargs (api_base/api_key) so a local rung's
+        # v0.32: per-model endpoint settings (api_base/api_key) so a local rung's
         # model actually reaches its endpoint. Applied only to the matching model
         # id, so cloud rungs in the same executor are untouched.
         self.endpoint_overrides = dict(endpoint_overrides or {})
@@ -152,7 +138,7 @@ class DelegatingExecutor:
     def _resolve_model(self, step: StepBase) -> str:
         return getattr(step, "preferred_model", None) or self.default_model
 
-    def _call_litellm_sync(
+    def _call_http_sync(
         self,
         model: str,
         prompt: str,
@@ -160,24 +146,24 @@ class DelegatingExecutor:
         timeout_s: int,
         max_tokens: int,
     ) -> str:
-        """Synchronous wrapper around the async litellm call. Honors timeout
-        and a max-tokens cap derived from the supervisor's max_output_bytes.
+        """One call through our own model client. Honors the timeout and a
+        max-tokens cap derived from the supervisor's max_output_bytes.
+        response_schema validation runs in the retry loop in ``run``.
         """
-        from litellm import completion
+        from opendaisugi.llm_client import complete
 
-        # Direct litellm call (not instructor) — we want the raw text content;
-        # response_schema validation runs in our retry loop, not via instructor.
-        extra = {"response_format": {"type": "json_object"}} if self.json_mode else {}
-        extra.update(self.endpoint_overrides.get(model, {}))
-        result = completion(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            timeout=timeout_s,
+        override = self.endpoint_overrides.get(model, {})
+        reply = complete(
+            model,
+            [{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
-            **extra,
+            json_object=self.json_mode,
+            base_url=override.get("api_base") or override.get("base_url"),
+            api_key=override.get("api_key"),
+            timeout=timeout_s,
         )
-        self._last_usage = _extract_total_tokens(result)
-        return result.choices[0].message.content or ""
+        self._last_usage = reply.tokens
+        return reply.text
 
     def _call_claude_code_sync(
         self,
@@ -220,7 +206,7 @@ class DelegatingExecutor:
 
         if resolve_backend(self.backend) == "claude-code":
             return self._call_claude_code_sync(model, prompt, timeout_s=timeout_s)
-        return self._call_litellm_sync(
+        return self._call_http_sync(
             model,
             prompt,
             timeout_s=timeout_s,

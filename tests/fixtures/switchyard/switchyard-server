@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""A stand-in for switchyard-server 0.3.0 that tests start as a real child.
+
+It takes the same flags the gateway passes: --config, --host, --port, and
+--routing-log-file. It serves GET /health on loopback. On POST /v1/messages
+it answers as the real server does for a routed turn: the body `model` and
+the x-model-router-selected-model header name the served target id. It
+serves the target named by FAKE_SWITCHYARD_SERVE, "efficient" by default,
+from the route in the config file. It reaches no network.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import tomllib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+def _served_id(config_path: str) -> str:
+    doc = tomllib.loads(open(config_path, encoding="utf-8").read())
+    route = next(iter(doc["routes"].values()))
+    tier = os.environ.get("FAKE_SWITCHYARD_SERVE", "efficient")
+    return doc["targets"][route[f"{tier}_target"]]["id"]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=4000)
+    parser.add_argument("--routing-log-file")
+    parser.add_argument("--version", action="store_true")
+    args = parser.parse_args()
+    served = _served_id(args.config)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(200 if self.path == "/health" else 404)
+            self.end_headers()
+
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("content-length", "0"))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            payload = {
+                "id": "msg_fake",
+                "type": "message",
+                "role": "assistant",
+                "model": served,
+                "content": [{"type": "text", "text": f"route {body.get('model')}"}],
+                "usage": {"input_tokens": 100, "output_tokens": 20},
+            }
+            data = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("x-model-router-selected-model", served)
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *a):
+            pass
+
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

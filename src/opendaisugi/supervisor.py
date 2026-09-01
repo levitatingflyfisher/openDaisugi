@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Any, Protocol
 from uuid import uuid4
 
 from opendaisugi.aliases import AliasRegistry
@@ -34,6 +35,31 @@ _log = logging.getLogger("opendaisugi.supervisor")
 # reversal verdict from the executor is positively "none" (nothing to undo).
 # Every other side-effecting kind without a handle is classified "irreversible".
 _READ_ONLY_KINDS = frozenset({"file_read", "network"})
+
+
+class StepHook(Protocol):
+    """A runner's hook into each step of a supervised run (weave).
+
+    ``prepare`` gets each step before its per-step verify and returns the
+    step to verify and run (it may be a filled copy), a ``StepOutcome`` to
+    record in its place (a skipped step), or ``(outcome, status)`` to stop
+    the run there. ``checked`` gets each step that passed its per-step
+    verify and may stop the run there. ``prefetchable`` keeps a step out of
+    parallel prefetch.
+    ``started`` is called just before a step's executor runs; a reason it
+    returns stops the run there, and the step does not run. ``finish``
+    gets each executed step's outcome and returns the outcome to record.
+    """
+
+    def prepare(self, step: Any) -> "Any | StepOutcome | tuple[StepOutcome, RunStatus]": ...
+
+    def prefetchable(self, step: Any) -> bool: ...
+
+    def checked(self, step: Any) -> "tuple[StepOutcome, RunStatus] | None": ...
+
+    def started(self, step: Any, run_id: str) -> str | None: ...
+
+    def finish(self, step: Any, outcome: StepOutcome) -> StepOutcome: ...
 
 
 def _now_iso() -> str:
@@ -56,6 +82,7 @@ class Supervisor:
         aliases: AliasRegistry | None = None,
         strict: bool | None = None,
         max_parallel: int = 1,
+        hook: "StepHook | None" = None,
     ) -> None:
         self._executors: dict[str, StepExecutor] = executors or default_executors()
         self._approval: ApprovalStrategy = approval or default_strategy()
@@ -75,6 +102,9 @@ class Supervisor:
         # (shell/file/network) within a dependency level. Default 1 = the exact
         # sequential behaviour; nothing is prefetched, no path changes.
         self._max_parallel = max(1, int(max_parallel))
+        # A runner's per-step hook (weave): it may fill a step, skip it,
+        # stop the run before it, and check its output. None changes nothing.
+        self._hook = hook
 
     def _resolve_fallback(self, envelope: Envelope) -> FallbackHandler:
         """Determine fallback handler from envelope if none was injected."""
@@ -139,6 +169,7 @@ class Supervisor:
             return session
 
         session.status = RunStatus.RUNNING
+        self._prefetch_run_id = run_id
         # Default (max_parallel=1): the exact sequential topological order, no
         # prefetch. Parallel mode groups steps by dependency level (still a valid
         # topological order when flattened) so each level's independent
@@ -188,6 +219,17 @@ class Supervisor:
                     # ``verify()`` above already proved envelope self-
                     # consistency and plan-vs-envelope structural checks.
                     # Strip depends_on so singleton-plan DAG check passes.
+                    if self._hook is not None and step.id not in _prefetched:
+                        got = self._hook.prepare(step)
+                        if isinstance(got, tuple):
+                            stop_outcome, stop_status = got
+                            session.steps.append(stop_outcome)
+                            session.status = stop_status
+                            break
+                        if isinstance(got, StepOutcome):
+                            session.steps.append(got)
+                            continue
+                        step = got
                     if step.id in _prefetched:
                         # Already verified (and approved) during prefetch, and its
                         # side effect has already happened. Do NOT re-verify: a z3
@@ -289,6 +331,13 @@ class Supervisor:
                                 session.status = RunStatus.HALTED_BY_SIMPLEX
                                 break
 
+                    if self._hook is not None and step.id not in _prefetched:
+                        stop = self._hook.checked(step)
+                        if stop is not None:
+                            stop_outcome, stop_status = stop
+                            session.steps.append(stop_outcome)
+                            session.status = stop_status
+                            break
                     try:
                         decision = self._approval.decide(step, envelope)
                     except Exception as exc:
@@ -341,6 +390,25 @@ class Supervisor:
                         )
                         session.status = RunStatus.ABORTED
                         break
+                    if self._hook is not None and step.id not in _prefetched:
+                        why = self._hook.started(step, session.id)
+                        if why:
+                            # The runner could not record that the step
+                            # starts, so the step does not run.
+                            session.steps.append(
+                                StepOutcome(
+                                    step_id=step.id,
+                                    status="aborted",
+                                    approved_by=decision.approved_by,
+                                    rc=None,
+                                    stdout="",
+                                    duration_ms=0.0,
+                                    started_at=step_started,
+                                    error=why,
+                                )
+                            )
+                            session.status = RunStatus.ABORTED
+                            break
                     exec_outcome = self._execute_one(
                         step, step_started, decision, _prefetched.get(step.id)
                     )
@@ -372,6 +440,8 @@ class Supervisor:
                                 status="failed",
                                 error=f"stage2 rejection: {stage2_violations[0].message}",
                             )
+                    if self._hook is not None:
+                        exec_outcome = self._hook.finish(step, exec_outcome)
                     session.steps.append(exec_outcome)
                     self._write_step_receipt(step, exec_outcome, session.id)
                     if session.steps[-1].status == "failed":
@@ -434,6 +504,8 @@ class Supervisor:
     _PARALLEL_SAFE_TYPES = frozenset({"shell", "file_read", "file_write", "network"})
 
     def _parallel_safe(self, step) -> bool:
+        if self._hook is not None and not self._hook.prefetchable(step):
+            return False
         if step.type in self._PARALLEL_SAFE_TYPES:
             return True
         executor = self._executors.get(step.type)
@@ -474,6 +546,12 @@ class Supervisor:
         if len(candidates) < 2:
             return {}, {}  # nothing to gain from concurrency for 0 or 1 step
 
+        if self._hook is not None:
+            # A step whose start mark fails is left to the main loop, which
+            # stops the run before it.
+            candidates = [s for s in candidates if not self._hook.started(s, self._prefetch_run_id)]
+            if len(candidates) < 2:
+                return {}, {}
         sem = asyncio.Semaphore(self._max_parallel)
 
         async def _run(step):
@@ -628,6 +706,8 @@ class Supervisor:
             session.integrity_passed = None
             return
         receipted = {r.step_id for r in receipts}
+        # A step a runner skipped on its earlier receipt ran in another run.
+        skipped = {o.step_id for o in session.steps if o.status == "skipped"}
         if session.status == RunStatus.SUCCEEDED:
             expected = {s.id for s in plan.steps}
         elif session.status == RunStatus.FAILED and session.failed_step_id is not None:
@@ -653,7 +733,7 @@ class Supervisor:
             expected = {o.step_id for o in session.steps if o.status in ("succeeded", "failed")}
         else:
             expected = set()
-        session.integrity_passed = receipted >= expected
+        session.integrity_passed = receipted >= (expected - skipped)
 
     def _write_step_receipt(self, step, outcome, run_id: str) -> None:
         """Append a Receipt for an executed step (v0.18).

@@ -28,7 +28,6 @@ from typing import Any
 
 from opendaisugi.gateway_cluster import EmbedFn, RepeatCluster, cluster_repeats
 from opendaisugi.gateway_journal import GatewayTurnRecord
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
 
 
 @dataclass(frozen=True)
@@ -59,7 +58,7 @@ def _already_reusable(pathway_store: Any, task: str) -> bool:
 def rank_reuse_candidates(
     records: Iterable[GatewayTurnRecord],
     *,
-    threshold: float = DEFAULT_PATHWAY_THRESHOLD,
+    threshold: float | None = None,
     embed: EmbedFn | None = None,
     pathway_store: Any = None,
 ) -> list[ReuseCandidate]:

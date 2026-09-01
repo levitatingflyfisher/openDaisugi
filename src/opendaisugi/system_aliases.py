@@ -2,8 +2,8 @@
 
 Loaded into an AliasRegistry at startup. These aliases are the baseline
 vocabulary all envelopes can reference without further registration.
-Household and envelope tiers can override by re-registering under the
-same name at a higher precedence tier.
+Their names are taken: no household or envelope alias may share one, so
+no lower tier can redefine a system word to mean less.
 
 Alias bodies are stored as raw dicts (not parsed Expression models) so
 that typed-field placeholders like ``$max_scale`` can survive until

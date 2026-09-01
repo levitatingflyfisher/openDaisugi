@@ -1,0 +1,6 @@
+#rule: generic_permission_prompt
+────────────────────
+Do you want to proceed?
+❯ 1. Yes
+2. No
+esc to cancel

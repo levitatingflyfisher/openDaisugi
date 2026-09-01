@@ -1,0 +1,10 @@
+{
+  "id": "notify-voice",
+  "kind": "policy",
+  "title": "Speak asks",
+  "about": "When a pane becomes blocked, it speaks the label and the ask through the speak URL you set.",
+  "run": "notify-voice.py",
+  "listens": ["state"],
+  "needs": ["pane.list", "floor.note"],
+  "config": {"speak_url": ""}
+}

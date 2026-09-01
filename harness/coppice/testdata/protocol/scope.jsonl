@@ -1,0 +1,19 @@
+# A scope lists one subtree and the labels that lead to it. task.set_foreman names a foreman or clears it. The replay has no git repo, so every task here is plain.
+{"id":"1","cmd":"task.create","label":"review-team"}
+{"id":"$id","ok":true,"result":{"task":"$team","worktree":""}}
+{"id":"2","cmd":"task.create","label":"docs","parent":"$team","cwd":"/"}
+{"id":"$id","ok":true,"result":{"task":"$docs","worktree":""}}
+{"id":"3","cmd":"task.list","scope":"$docs"}
+{"id":"$id","ok":true,"result":{"path":["floor","review-team","docs"],"tasks":"*"}}
+{"id":"4","cmd":"pane.list","scope":"$team"}
+{"id":"$id","ok":true,"result":{"path":["floor","review-team"],"panes":[]}}
+{"id":"5","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"path":["floor"],"panes":"*"}}
+{"id":"6","cmd":"pane.list","scope":"t999"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"7","cmd":"task.set_foreman","task":"$team","pane":"w9:p9"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"*"}}
+{"id":"8","cmd":"task.set_foreman","task":"$team","pane":""}
+{"id":"$id","ok":true,"result":{"task":"$team","foreman":""}}
+{"id":"9","cmd":"task.close","task":"$team"}
+{"id":"$id","ok":true,"result":{"task":"$team","closed":true,"panes":[]}}

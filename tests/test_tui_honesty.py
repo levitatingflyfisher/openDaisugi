@@ -32,8 +32,24 @@ def test_header_shows_enforce_from_the_installed_hook(tmp_path, monkeypatch):
     cwd = tmp_path / "cwd"  # no hook here — this is the machine-global-only case
     cwd.mkdir()
     (home / ".claude").mkdir(parents=True)
-    (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
-        {"type": "command", "command": "py -m opendaisugi.gate_client --mode enforce"}]}]}}))
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "py -m opendaisugi.gate_client --mode enforce",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
     monkeypatch.setattr("pathlib.Path.home", lambda: home)
     monkeypatch.chdir(cwd)
 
@@ -56,8 +72,24 @@ def test_header_shows_enforce_from_a_cwd_scoped_start_hook(tmp_path, monkeypatch
     home = tmp_path / "home"
     cwd = tmp_path / "cwd"
     (cwd / ".claude").mkdir(parents=True)
-    (cwd / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
-        {"type": "command", "command": "py -m opendaisugi.gate_client --mode enforce"}]}]}}))
+    (cwd / ".claude" / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "py -m opendaisugi.gate_client --mode enforce",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
     monkeypatch.setattr("pathlib.Path.home", lambda: home)
     monkeypatch.chdir(cwd)
 
@@ -89,11 +121,22 @@ def test_header_marks_a_gateway_cache_rate_as_an_estimate(tmp_path):
     from opendaisugi.gateway_journal import GatewayJournal, GatewayTurnRecord
 
     rec = GatewayTurnRecord(
-        created_at="2026-08-27T00:00:00Z", signature="", task="x", tier="tier1-cloud",
-        requested_model="claude-sonnet-4", model="claude-sonnet-4", difficulty=0.1,
-        downgraded=False, estimated=False, input_tokens=100, output_tokens=10,
-        frontier_tokens_saved=0, actual_dollars=0.01, counterfactual_dollars=0.02,
-        cache_read_tokens=900, cache_creation_tokens=0,
+        created_at="2026-08-27T00:00:00Z",
+        signature="",
+        task="x",
+        tier="tier1-cloud",
+        requested_model="claude-sonnet-4",
+        model="claude-sonnet-4",
+        difficulty=0.1,
+        downgraded=False,
+        estimated=False,
+        input_tokens=100,
+        output_tokens=10,
+        frontier_tokens_saved=0,
+        actual_dollars=0.01,
+        counterfactual_dollars=0.02,
+        cache_read_tokens=900,
+        cache_creation_tokens=0,
     )
     GatewayJournal(path=tmp_path / "gateway" / "turns.jsonl").append(rec)
 
@@ -108,7 +151,9 @@ def test_header_marks_a_gateway_cache_rate_as_an_estimate(tmp_path):
 
 
 def test_attach_on_claude_path_shows_the_resume_command(tmp_path):
-    _claude_session(tmp_path, "abc-123", last_ts=time.time() - 1, tool_use_id="t1", decision="allow")
+    _claude_session(
+        tmp_path, "abc-123", last_ts=time.time() - 1, tool_use_id="t1", decision="allow"
+    )
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)
@@ -128,10 +173,19 @@ def test_attach_uses_the_real_uuid_under_a_start_pin_not_the_pin_key(tmp_path):
     # Attach must resume by the uuid. Red against the pre-fix code (used session_id).
     pin = "myproj-ab12cd34"
     uuid = "9f3c1e77-real-claude-uuid"
-    tree = SessionTree.create(tmp_path / "sessions", session_id=pin, harness="claude-code",
-                              cwd="/proj", harness_session_id=uuid, clock=lambda: time.time() - 2)
-    tree.append("tool_call", {"toolUseId": "tt", "name": "Read", "detail": "x.py"},
-                clock=lambda: time.time() - 1)
+    tree = SessionTree.create(
+        tmp_path / "sessions",
+        session_id=pin,
+        harness="claude-code",
+        cwd="/proj",
+        harness_session_id=uuid,
+        clock=lambda: time.time() - 2,
+    )
+    tree.append(
+        "tool_call",
+        {"toolUseId": "tt", "name": "Read", "detail": "x.py"},
+        clock=lambda: time.time() - 1,
+    )
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)
@@ -186,8 +240,11 @@ def test_steer_is_inert_on_claude_but_writes_a_note_on_sprig(tmp_path):
             app.screen.query_one("#cmd").value = "try the other file"
             await pilot.press("enter")
             await pilot.pause()
-            notes = [e for e in SessionTree.open(tmp_path / "sessions", "e1").entries()
-                     if e.type == "note"]
+            notes = [
+                e
+                for e in SessionTree.open(tmp_path / "sessions", "e1").entries()
+                if e.type == "note"
+            ]
             assert notes and notes[-1].data == {"from": "operator", "text": "try the other file"}
 
     _run(scenario)
@@ -200,6 +257,8 @@ def test_wiring_keeps_its_effect_tags(tmp_path):
             await pilot.pause()
             app.switch_screen("wiring")
             await pilot.pause()
-            assert app.screen.query("#effnote-verifier"), "planned stages must still say so"
+            assert app.screen.query("#effnote-gate"), (
+                "cfg stages must still say why they are not live"
+            )
 
     _run(scenario)

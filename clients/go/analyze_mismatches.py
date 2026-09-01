@@ -56,15 +56,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kind", choices=["decompose", "verify"], default=None)
     ap.add_argument("--limit-per-bucket", type=int, default=3)
-    ap.add_argument(
-        "--corpus", default=str(ROOT / ".opendaisugi/conformance/corpus.jsonl")
-    )
+    ap.add_argument("--corpus", default=str(ROOT / ".opendaisugi/conformance/corpus.jsonl"))
     ap.add_argument("--client", default=str(ROOT / "clients/go/conform"))
     args = ap.parse_args()
 
-    lines = [
-        l for l in Path(args.corpus).read_text(encoding="utf-8").splitlines() if l.strip()
-    ]
+    lines = [l for l in Path(args.corpus).read_text(encoding="utf-8").splitlines() if l.strip()]
     cases = [json.loads(l) for l in lines]
 
     proc = subprocess.run(

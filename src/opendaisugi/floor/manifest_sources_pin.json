@@ -1,0 +1,27 @@
+{
+  "manifest_sha256": {
+    "amp.toml": "5e1cc29ac86770cc86c4e0bf25754579561b70a4709c9920bbb9c3b572a89974",
+    "antigravity.toml": "71a42098e58910aec564266bfdc4ee3c9dcaa6f47e880223978e5eea49e57aac",
+    "claude.toml": "a25fcc01933a3c68826d9461deb446fa361501eb9082b0688ee9776c3701be03",
+    "cline.toml": "a7455c85f983a234bf73bdcb6f4f4977e29b66cf4e22775deb7c6875bba35fe9",
+    "codex.toml": "be0718cde8f41cf0d5670da3ebce78d7b37c03d479d2f84735cb0c761056250b",
+    "cursor.toml": "86a232ca6ac28dd26872dca6bd02caf8344c3a286085bf2fc6edca310e365870",
+    "devin.toml": "3c862076939782e469bf1ead1d3eed9a4eeeabf711b0fe184db29396dd39d60c",
+    "droid.toml": "dc25bbe950b318fed2137751b7db2722ba0b4d182adfada6a93ce0952b9d8251",
+    "gemini.toml": "9e17a42c32b9b66884ab5d55fd7fea10a16d2aed6b3db59c614fc8e82274d671",
+    "github-copilot.toml": "71a1fe063a90212570df3c74d3c8c472dfb4cbc9bd40029fa5942433f368a6fc",
+    "grok.toml": "c2dba69376d7107af33bc78194f675298111eaf9552d4acb394ab22f65d9e4a4",
+    "hermes.toml": "f640a71906273646ecc6fbabe05d139dc1f89878bb3673ee1b02d9bb0b6283c1",
+    "kilo.toml": "ea3f6392934ac16a6a27332089ada0a2565f04e8bf775251070eb9faaf7d15ea",
+    "kimi.toml": "63c4d90c6a4ae6e19b29beede7960a1b54992319842da11f8af75a03926964b9",
+    "kiro.toml": "8a6fda1832f3765fa146358f3e0585b8fd154a9c900a9e107f4814ece8626c75",
+    "maki.toml": "9225b268cd1b7290a9555cf1e517365da587e2d05e519a2e3ee543c1bdd33e13",
+    "muse.toml": "2f7c8d9241ced3666b5e44e33a713ef1a29b36724763c8022bf24eb905aa4125",
+    "opencode.toml": "a854c84349d43c785415073b3c262024c7471c0e239f7f798ac7b10772ecc544",
+    "pi.toml": "c47e37d8716bb6234d7e5073be1a550ded018494e7a40caaa2d1b04f965d6d9a",
+    "qodercli.toml": "e1365d4e824444101a54eaaed0ec1726f560e9f0a3e5387d8d28bb5a4bcbbc5c",
+    "qwen.toml": "b9ef5c2a2d0edbd7ff750807519574d813c3b8deff01379c22ada710bd1df95a"
+  },
+  "readme_sha256": "840a71ddbfd6ca3fadf4829f51837817c6ed44c3f4d94c679ef680c7395fac01",
+  "recorded_at": "2026-09-10"
+}

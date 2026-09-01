@@ -140,3 +140,30 @@ def test_run_live_tty_bounded_iterations(tmp_path):
     assert s.getvalue().count("legend:") == 3
     # sleeps only *between* frames, never after the last
     assert len(slept) == 2
+
+
+def test_the_map_and_the_floor_make_no_journal(tmp_path):
+    # detect_stages reads the journal through gather_status: looking
+    # must not make journal/index.db.
+    dashboard_json(tmp_path)
+    render_dashboard(tmp_path, plain=True)
+    assert not (tmp_path / "journal").exists()
+
+
+def test_read_raw_reads_an_old_journal_and_writes_nothing(tmp_path):
+    import sqlite3
+
+    from opendaisugi.dashboard import read_raw
+
+    (tmp_path / "journal").mkdir()
+    db = tmp_path / "journal" / "index.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE traces (id TEXT, ok INTEGER, duration_ms REAL)")
+    con.executemany("INSERT INTO traces VALUES (?, ?, ?)", [("a", 1, 1.0), ("b", 0, 2.0)])
+    con.commit()
+    con.close()
+    before = db.read_bytes()
+    raw = read_raw(tmp_path)
+    assert (raw.journal_total, raw.journal_passed, raw.journal_failed) == (2, 1, 1)
+    assert db.read_bytes() == before
+    assert sorted(p.name for p in (tmp_path / "journal").iterdir()) == ["index.db"]

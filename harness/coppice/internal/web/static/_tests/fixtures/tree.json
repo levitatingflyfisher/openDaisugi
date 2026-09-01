@@ -1,0 +1,21 @@
+{
+  "cols": 200,
+  "tasks": [
+    {"id": "t1", "label": "auth", "worktree": "/w/repo-auth", "ahead": 2, "state": "blocked", "panes": ["w1:p1", "w1:p2"]},
+    {"id": "t2", "label": "db", "parent": "t1", "state": "working", "panes": ["w2:p1"]},
+    {"id": "t3", "label": "docs", "state": "", "panes": []}
+  ],
+  "panes": [
+    {"id": "w1:p1", "label": "claude", "state": "blocked"},
+    {"id": "w1:p2", "label": "", "state": "idle"},
+    {"id": "w2:p1", "label": "codex", "state": "working"}
+  ],
+  "lines": [
+    "├─ auth  repo-auth  +2  ● needs you",
+    "│  ├─ claude  ● needs you",
+    "│  ├─ w1:p2  ○ idle",
+    "│  └─ db  ● working",
+    "│     └─ codex  ● working",
+    "└─ docs"
+  ]
+}

@@ -156,6 +156,83 @@ _V2_MIGRATION_COLUMNS = (
 _V3_REFINEMENT_COLUMNS = (("cache_key", "TEXT"),)
 
 
+def _stats_of(con: sqlite3.Connection) -> JournalStats:
+    cur = con.execute(
+        "SELECT COUNT(*), "
+        "SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END), "
+        "AVG(duration_ms) "
+        "FROM traces"
+    )
+    total, passed, failed, avg = cur.fetchone()
+    return JournalStats(
+        total=total or 0,
+        passed=passed or 0,
+        failed=failed or 0,
+        avg_duration_ms=float(avg) if avg is not None else 0.0,
+    )
+
+
+def read_stats(data_dir: Path) -> JournalStats | None:
+    """The journal's stats, read without making or migrating anything.
+
+    ``None`` when there is no index. The index is opened read-only, so a
+    reader such as ``daisugi status`` or ``daisugi modules`` never makes
+    the journal or runs a migration. An index with no traces table reads
+    as empty, as it would once migrated. Raises what sqlite3 raises on an
+    index it cannot read.
+    """
+    db = Path(data_dir) / "journal" / "index.db"
+    if not db.exists():
+        return None
+    con = sqlite3.connect(db.absolute().as_uri() + "?mode=ro", uri=True)
+    try:
+        has_traces = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'traces'"
+        ).fetchone()
+        if has_traces is None:
+            return JournalStats(total=0, passed=0, failed=0, avg_duration_ms=0.0)
+        return _stats_of(con)
+    finally:
+        con.close()
+
+
+def word_would_deny(data_dir: Path) -> int:
+    """The plans in the journal that a word of the system dialect would deny:
+    traces whose verification result holds a warning that starts with
+    ``dialect.AUDIT_PREFIX``.
+
+    Read-only, and it never raises: a missing journal counts 0, and a trace
+    file it cannot read, that is not UTF-8, that YAML cannot load, or whose
+    ``result.warnings`` is not a list is skipped. A trace whose text does
+    not hold the word ``dialect`` is not loaded at all.
+    """
+    from opendaisugi.dialect import AUDIT_PREFIX
+
+    traces = Path(data_dir) / "journal" / "traces"
+    if not traces.is_dir():
+        return 0
+    count = 0
+    for f in sorted(traces.glob("*.yaml")):
+        try:
+            text = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if "dialect" not in text:
+            continue
+        try:
+            raw = yaml.safe_load(text)
+        except (yaml.YAMLError, RecursionError):
+            continue
+        result = raw.get("result") if isinstance(raw, dict) else None
+        warnings = result.get("warnings") if isinstance(result, dict) else None
+        if not isinstance(warnings, list):
+            continue
+        if any(isinstance(w, str) and w.startswith(AUDIT_PREFIX) for w in warnings):
+            count += 1
+    return count
+
+
 class Journal:
     """Append-only trace store backed by YAML files + a SQLite index.
 
@@ -446,7 +523,9 @@ class Journal:
             iso = datetime.fromtimestamp(since, tz=timezone.utc).isoformat().replace("+00:00", "Z")
             sql += " AND created_at >= ?"
             params = (iso,)
-        sql += " ORDER BY created_at DESC"
+        # rowid breaks a tie: created_at has one-second steps, and the later
+        # insert is the newer trace.
+        sql += " ORDER BY created_at DESC, rowid DESC"
 
         con = self._con
         rows = con.execute(sql, params).fetchall()
@@ -467,21 +546,7 @@ class Journal:
 
     def stats(self) -> JournalStats:
         """Aggregate stats from the SQLite index."""
-        con = self._con
-        cur = con.execute(
-            "SELECT COUNT(*), "
-            "SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END), "
-            "AVG(duration_ms) "
-            "FROM traces"
-        )
-        total, passed, failed, avg = cur.fetchone()
-        return JournalStats(
-            total=total or 0,
-            passed=passed or 0,
-            failed=failed or 0,
-            avg_duration_ms=float(avg) if avg is not None else 0.0,
-        )
+        return _stats_of(self._con)
 
     def replay(self, trace_id: str) -> ReplayResult:
         """Re-run verify() on a stored trace and report drift."""

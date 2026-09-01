@@ -135,12 +135,20 @@ def load_household_aliases(path: str | Path) -> AliasRegistry:
     load_system_aliases(registry)
     data = yaml.safe_load(Path(path).read_text())
     for alias_data in data.get("aliases", []):
+        tier = alias_data.get("tier", "household")
+        if tier not in ("household", "envelope"):
+            # Only the shipped aliases are system aliases. A file that could
+            # claim the tier could stand in for one.
+            raise ValueError(
+                f"alias {alias_data.get('name')!r} in {path}: tier {tier!r} is not allowed "
+                "in a household file; use household or envelope"
+            )
         registry.register(
             Alias(
                 name=alias_data["name"],
                 params=alias_data.get("params", []),
                 expr=alias_data["expr"],
-                tier=alias_data.get("tier", "household"),
+                tier=tier,
                 description=alias_data.get("description", ""),
             )
         )

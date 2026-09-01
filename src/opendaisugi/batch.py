@@ -155,13 +155,17 @@ def classify_declaration(decl: BatchDeclaration) -> BatchClassification:
 # 2. static footprint proof
 # --------------------------------------------------------------------------- #
 def resolve_items(decl: BatchDeclaration) -> tuple[list[ActionPlan | None], list[int]]:
-    """Resolve each item into a concrete plan; a binding that fails (unbound hole or
-    a value that would change a capability head) resolves to None with its index
-    recorded — fail-closed, never a silently-dropped write."""
+    """Resolve each item into a concrete plan; a binding that fails (unbound hole,
+    a value that would change a capability head, or a hole in a field that does
+    not hold a string) resolves to None with its index recorded — fail-closed,
+    never a silently-dropped write."""
     resolved: list[ActionPlan | None] = []
     bad: list[int] = []
     for i, values in enumerate(decl.items):
-        plan = apply_bindings(decl.program, decl.parameters, values)
+        try:
+            plan = apply_bindings(decl.program, decl.parameters, values)
+        except ValueError:
+            plan = None
         if plan is None:
             bad.append(i)
         resolved.append(plan)

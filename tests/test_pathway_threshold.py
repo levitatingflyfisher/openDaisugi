@@ -11,11 +11,14 @@ import asyncio
 import time
 
 import numpy as np
+import pytest
 
 from opendaisugi import Daisugi
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 from opendaisugi.pathway import CompiledPathway
 from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD, PathwayStore
+
+pytestmark = pytest.mark.usefixtures("minilm_matcher")
 
 
 def _pathway(embedding) -> CompiledPathway:
@@ -56,6 +59,7 @@ def test_default_threshold_constant_is_calibrated():
     assert DEFAULT_PATHWAY_THRESHOLD >= 0.4
 
 
+@pytest.mark.usefixtures("sentence_transformers_installed")
 def test_default_threshold_retrieves_paraphrase_band_match(tmp_path):
     store = _store_with_paraphrase_band_match(tmp_path)
     match = store.find("a paraphrase of the stored task")  # no explicit threshold
@@ -69,6 +73,7 @@ def test_old_default_would_have_missed_it(tmp_path):
     assert store.find("q", threshold=0.85) is None
 
 
+@pytest.mark.usefixtures("sentence_transformers_installed")
 def test_daisugi_find_pathway_uses_constructor_threshold(tmp_path):
     store = _store_with_paraphrase_band_match(tmp_path)
     # Default-threshold Daisugi retrieves the band match.
@@ -79,6 +84,7 @@ def test_daisugi_find_pathway_uses_constructor_threshold(tmp_path):
     assert asyncio.run(dai_strict.find_pathway("q")) is None
 
 
+@pytest.mark.usefixtures("sentence_transformers_installed")
 def test_daisugi_find_pathway_explicit_override_wins(tmp_path):
     store = _store_with_paraphrase_band_match(tmp_path)
     dai = Daisugi(pathway_store=store, pathway_threshold=0.85)  # would reject

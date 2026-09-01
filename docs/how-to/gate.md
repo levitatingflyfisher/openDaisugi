@@ -1,7 +1,7 @@
 # Gate a live session's tool calls
 
 *How to put the call-time gate (ADR-0007) in front of an agent you are
-already running: shadow first, tune with the report, then flip one flag to
+already running: audit first, tune with the report, then flip one flag to
 enforce. And how to turn it off in one command if it over-denies.*
 
 The gate takes each intercepted tool call, synthesizes it into a one-step
@@ -25,7 +25,7 @@ never relaxes it.
   settings are also typically subject to a one-time folder-trust approval
   that inline `--settings` is not. Confirm the hook actually fired before
   relying on it: `daisugi gate report` after a session shows calls once it
-  has, and shadow mode never blocks, so there is nothing to lose by checking
+  has, and audit mode never blocks, so there is nothing to lose by checking
   first.
 - **Hermes / OpenClaw: unverified.** The block shapes are emitted
   belt-and-braces (Hermes gets both `decision` and `action` keys), but no
@@ -44,8 +44,8 @@ never relaxes it.
   gate's own error handling never runs — to a deny. **If you hand-write an
   enforce hook command, keep that suffix.** Without it the gate fails open
   exactly when it is most broken; this is live-verified in
-  `tests/test_hook_gate_contract.py`. (Shadow mode deliberately omits the
-  suffix: shadow must never block the host, so a crashed shadow gate stays
+  `tests/test_hook_gate_contract.py`. (Audit mode deliberately omits the
+  suffix: audit must never block the host, so a crashed audit gate stays
   non-blocking.)
 
 ## Just want it working? One command
@@ -87,14 +87,22 @@ for you to review; you can also generate one from a captured session
 (`daisugi hook to-trace` infers one), write one by hand, or start from an
 example in `examples/`.
 
-## 2. Shadow mode — observe before you trust
+## 2. Audit mode — observe before you trust
 
 ```bash
 claude --settings "$(daisugi gate settings)"
 ```
 
-Shadow mode evaluates every call and logs what enforce *would* have denied,
-but always allows. **Shadow mode is observation, not protection.**
+Audit mode evaluates every call and logs what enforce *would* have denied,
+but always allows. **Audit mode is observation, not protection.**
+
+Audit mode was called shadow mode before 2026-09-28. The old word is gone:
+`--mode shadow` and `install --shadow` are refused with one line that names
+the new one. A hook installed before the rename still passes `--mode shadow`,
+so the gate refuses every call it sees; `daisugi gate status` warns about it.
+Run `daisugi install --gate --uninstall`, then `daisugi install --gate`. The log is
+in `~/.opendaisugi/gate/audit/`; the report also reads the old
+`~/.opendaisugi/gate/shadow/`, so the history is kept.
 
 Review the verdicts:
 
@@ -201,7 +209,7 @@ of the allow path.
 
 ## Failure-policy summary
 
-| Situation | Shadow | Enforce |
+| Situation | Audit | Enforce |
 |---|---|---|
 | Call verifies in envelope | allow | allow |
 | Verification fails | allow, logged `would_deny` | **deny** (exit 2) |

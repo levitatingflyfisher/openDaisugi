@@ -424,7 +424,9 @@ def test_restore_from_a_subdir_does_not_destroy_a_namespace_shifted_gitignored_f
     is never touched."""
     sub = repo / "sub"
     sub.mkdir()
-    (sub / "gone.txt").write_text("g\n")  # keeps `sub` non-empty so the checkpoint has a wanted path
+    (sub / "gone.txt").write_text(
+        "g\n"
+    )  # keeps `sub` non-empty so the checkpoint has a wanted path
     cp = snapshot(sub, session_id="s1", entry_id="e1")
 
     # Now shift the world: ignore sub/sub, drop the wanted path from disk, and
@@ -455,3 +457,109 @@ def test_snapshot_from_a_subdir_covers_the_whole_repo_not_just_the_subtree(repo:
     cp = snapshot(sub, session_id="s1", entry_id="e1")
     assert "a.txt" in cp.covers  # the toplevel sibling, captured despite the subdir cwd
     assert "sub/inside.txt" in cp.covers  # named toplevel-relative, one consistent namespace
+
+
+# --- the WORKSPACE repo's own config must never get to run a program of
+# its choosing during a checkpoint --------------------------------------
+#
+# The gate calls `git add -A` (and friends) in the AGENT's own workspace
+# repo, under `--checkpoints`. That repo's local .git/config,
+# .gitattributes and .git/info/attributes are all agent-controlled, so
+# `git config core.fsmonitor "sh -c '...'"` makes the next checkpoint run a
+# program the agent chose, not git's own. Each test below plants the
+# marker-touching PoC for one such mechanism, snapshots, and asserts BOTH
+# that the marker was never created AND that the checkpoint still worked
+# (a content match, not just "didn't crash": this must be a real fix, not
+# an add that now silently fails closed).
+
+
+def test_snapshot_does_not_run_the_repos_own_fsmonitor(repo: Path, tmp_path: Path):
+    marker = tmp_path / "fsmonitor-ran"
+    _git(repo, "config", "core.fsmonitor", f"sh -c 'touch {marker}'")
+    cp = snapshot(repo, session_id="s1", entry_id="e1")
+    assert not marker.exists()
+    assert _git(repo, "show", f"{cp.ref}:a.txt") == "one"
+
+
+def test_snapshot_does_not_run_a_config_defined_hook(repo: Path, tmp_path: Path):
+    """git 2.36's hook.<name>.command/.event is a SECOND hook mechanism,
+    entirely separate from the hooks-directory core.hooksPath disables."""
+    marker = tmp_path / "confighook-ran"
+    _git(repo, "config", "hook.evil.command", f"sh -c 'touch {marker}'")
+    _git(repo, "config", "hook.evil.event", "post-index-change")
+    reftx_marker = tmp_path / "reftx-ran"
+    _git(repo, "config", "hook.evil2.command", f"sh -c 'touch {reftx_marker}'")
+    _git(repo, "config", "hook.evil2.event", "reference-transaction")
+    cp = snapshot(repo, session_id="s1", entry_id="e1")
+    assert not marker.exists()
+    assert not reftx_marker.exists()
+    assert _git(repo, "show", f"{cp.ref}:a.txt") == "one"
+
+
+def test_snapshot_neutralizes_a_repo_configured_clean_filter(repo: Path, tmp_path: Path):
+    """A clean filter driver named by .gitattributes and defined in the
+    repo's own config: the same shape of hole as fsmonitor, one step
+    removed. `required = true` (a real git-lfs default) is set too. The
+    fix must not turn a legitimate required-filter repo's checkpoints into
+    a permanent failure just by neutralizing the command."""
+    marker = tmp_path / "filter-ran"
+    (repo / ".gitattributes").write_text("*.txt filter=evil\n")
+    _git(repo, "config", "filter.evil.clean", f"sh -c 'touch {marker}; cat'")
+    _git(repo, "config", "filter.evil.required", "true")
+    cp = snapshot(repo, session_id="s1", entry_id="e1")
+    assert not marker.exists()
+    assert _git(repo, "show", f"{cp.ref}:a.txt") == "one"  # content preserved
+
+
+def test_restore_neutralizes_a_repo_configured_smudge_filter(repo: Path, tmp_path: Path):
+    marker = tmp_path / "smudge-ran"
+    (repo / ".gitattributes").write_text("*.txt filter=evil\n")
+    _git(repo, "config", "filter.evil.clean", "cat")
+    cp = snapshot(repo, session_id="s1", entry_id="e1")
+    _git(repo, "config", "filter.evil.smudge", f"sh -c 'touch {marker}; cat'")
+    (repo / "a.txt").write_text("changed\n")
+    restore(repo, ref=cp.ref, session_id="s1", entry_id="e2")
+    assert not marker.exists()
+    assert (repo / "a.txt").read_text() == "one\n"
+
+
+def _live_pids(needle: str) -> list[int]:
+    """Every live (not zombie) process whose argv contains ``needle``."""
+    out = []
+    for d in Path("/proc").iterdir():
+        if not d.name.isdigit():
+            continue
+        try:
+            cmd = (d / "cmdline").read_bytes()
+            stat = (d / "stat").read_text()
+        except OSError:
+            continue
+        if needle.encode() in cmd and not stat[stat.rindex(")") :].startswith(") Z"):
+            out.append(int(d.name))
+    return out
+
+
+def test_a_git_call_past_its_deadline_leaves_nothing_behind(repo: Path):
+    """git starts processes of its own (here a shell alias's sleep, which
+    holds git's stdout). At the deadline the whole process group is killed,
+    so the call ends at once and no process from it is left running."""
+    import signal
+    import time
+
+    from opendaisugi.checkpoints import _git as checkpoint_git
+
+    marker = f"97.{time.time_ns() % 1_000_000_000:09d}"
+    _git(repo, "config", "alias.slow", f"!sleep {marker}")
+    t0 = time.monotonic()
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            checkpoint_git(repo, "slow", deadline=time.monotonic() + 0.3)
+        assert time.monotonic() - t0 < 3
+        for _ in range(100):
+            if not _live_pids(marker):
+                break
+            time.sleep(0.02)
+        assert _live_pids(marker) == []
+    finally:
+        for pid in _live_pids(marker):
+            os.kill(pid, signal.SIGKILL)

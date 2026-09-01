@@ -114,10 +114,10 @@ def test_real_gate_denies_read_in_live_host(tmp_path):
     The hook command is the shipped ``python -m opendaisugi.gate`` entry in
     enforce mode, against a registered default envelope that grants no read
     permission for the sentinel. The denial must (a) keep the secret from the
-    model and (b) land in the gate's shadow log with a proof-backed
+    model and (b) land in the gate's audit log with a proof-backed
     permission reason.
     """
-    from opendaisugi.gate import gate_settings_json, register_envelope, shadow_report
+    from opendaisugi.gate import audit_report, gate_settings_json, register_envelope
     from opendaisugi.models import Envelope, Permission
 
     secret_file, prompt = _sentinel_setup(tmp_path)
@@ -137,7 +137,7 @@ def test_real_gate_denies_read_in_live_host(tmp_path):
     # The secret must NOT have reached the model.
     assert _SECRET not in str(out.get("result", "")), "the gate failed to block the sentinel read"
     # The gate evaluated and denied it, with the verifier's reason on record.
-    rep = shadow_report(root=gate_root)
+    rep = audit_report(root=gate_root)
     denies = [
         r
         for r in rep["denied"]

@@ -47,6 +47,55 @@ def resolve_strict(strict: bool | None, envelope: Envelope) -> bool:
     return envelope.stakes in _STRICT_STAKES
 
 
+# A Z3 timeout (Z3 answered `unknown`) is a Violation, not a warning, when the
+# effective mode is strict or the envelope's stakes is 'physical'. Fail
+# closed, because an unfinished check must never let a call through. Physical
+# stakes forces this even if the caller passed strict=False for this call:
+# physical safety is not waivable by mode. Every other caller keeps verify()'s
+# longstanding default: the timeout is a warning and the pipeline continues.
+Z3_TIMEOUT_REASON = "z3_timeout"
+
+_Z3_TIMEOUT_WARNING_RE = re.compile(r"^Z3 .* exceeded -?\d+ms$")
+
+
+def is_z3_timeout_warning(text: str) -> bool:
+    """True when `text` is one of verify()'s Z3-timeout warning strings.
+
+    Every warning verify() keeps for a caught VerificationTimeout has this
+    shape ("Z3 <check> exceeded <N>ms"). Callers (the gate, pathway import)
+    use this to tell a Z3-timeout warning apart from any other message in
+    VerificationResult.warnings.
+    """
+    return bool(_Z3_TIMEOUT_WARNING_RE.match(text))
+
+
+def is_z3_timeout_violation(violation: Violation) -> bool:
+    """True when `violation` is a Z3-timeout Violation (see
+    ``_z3_timeout_violation``), the strict/physical-stakes counterpart of
+    ``is_z3_timeout_warning``."""
+    return violation.detail.get("reason") == Z3_TIMEOUT_REASON
+
+
+def _z3_timeout_is_violation(strict: bool, envelope: Envelope) -> bool:
+    """Whether a caught Z3 VerificationTimeout must be a Violation here,
+    rather than a warning."""
+    return strict or envelope.stakes == "physical"
+
+
+def _z3_timeout_violation(
+    e: VerificationTimeout, *, which: str, stage: str, detail: dict | None = None
+) -> Violation:
+    """The Violation for a Z3 timeout that must not be a warning."""
+    d = {"reason": Z3_TIMEOUT_REASON, "z3_message": str(e)}
+    if detail:
+        d.update(detail)
+    return Violation(
+        stage=stage,
+        message=f"verifier timed out ({which}); raise the Z3 timeout",
+        detail=d,
+    )
+
+
 _MAX_INTERPRETER_DEPTH = 4
 _GLOB_CHARS_RE = re.compile(r"[*?\[]")
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -339,7 +388,33 @@ def _path_matches_any(path: str, globs: list[str]) -> bool:
     return any(_match_glob(normalized, g) for g in globs)
 
 
-def _match_glob(norm: str, glob: str) -> bool:
+# The matcher below is exponential in the number of ``**`` segments. It stops
+# after a fixed number of steps (calls of its inner ``match_from``) rather than
+# a wall-clock budget, so whether a glob is too complex is the same answer on
+# every box and in every client.
+GLOB_MATCH_STEP_LIMIT = 100_000
+
+
+class GlobTooComplex(ValueError):
+    """A file glob needed more than ``GLOB_MATCH_STEP_LIMIT`` match steps.
+
+    Raised, never answered: a scope the verifier cannot decide denies."""
+
+
+def glob_match_steps(norm: str, glob: str) -> int:
+    """The steps ``_match_glob(norm, glob)`` takes, with no limit (for tests)."""
+    counter = [0]
+    _match_glob(norm, glob, limit=None, counter=counter)
+    return counter[0]
+
+
+def _match_glob(
+    norm: str,
+    glob: str,
+    *,
+    limit: int | None = GLOB_MATCH_STEP_LIMIT,
+    counter: list[int] | None = None,
+) -> bool:
     """Left-anchored, ``/``-aware glob match against a normalized path.
 
     Implemented natively rather than via ``PurePosixPath.match`` because that
@@ -349,6 +424,9 @@ def _match_glob(norm: str, glob: str) -> bool:
     a pattern must consume the whole path, so a relative pattern never matches an
     absolute path, and ``**`` recursively spans zero or more segments on every
     Python. ``*``/``?``/``[...]`` stay within one segment.
+
+    Each call of ``match_from`` is one step; past ``limit`` steps the match
+    raises :class:`GlobTooComplex`.
     """
     if glob.endswith("/**"):
         raw = glob[:-3]
@@ -361,8 +439,14 @@ def _match_glob(norm: str, glob: str) -> bool:
 
     pat_segs = glob.split("/")
     path_segs = norm.split("/")
+    steps = counter if counter is not None else [0]
 
     def match_from(pi: int, ti: int) -> bool:
+        steps[0] += 1
+        if limit is not None and steps[0] > limit:
+            raise GlobTooComplex(
+                f"file glob {glob!r} is too complex to match: more than {limit} steps"
+            )
         if pi == len(pat_segs):
             return ti == len(path_segs)
         if pat_segs[pi] == "**":
@@ -648,6 +732,10 @@ def check_skill_delegations(
     delegate to something it cannot bound); under lenient mode it is surfaced as
     a warning and allowed. Mirrors the opaque-invariant policy in
     ``_check_predicate_item``.
+
+    A Z3 timeout while proving subsumption is a Violation in every mode, at
+    every stakes level. Unlike verify()'s other Z3 stages, it is never kept
+    as a warning: an unproved delegation must never run.
     """
     skill_steps = [s for s in plan.steps if getattr(s, "type", None) == "skill"]
     if not skill_steps:
@@ -690,7 +778,27 @@ def check_skill_delegations(
             skill_id=step.skill_id,
             envelope=contract_env,
         )
-        decision = verify_delegation(envelope, contract, strict=strict, timeout_ms=timeout_ms)
+        timeout: VerificationTimeout | None = None
+        try:
+            decision = verify_delegation(envelope, contract, strict=strict, timeout_ms=timeout_ms)
+        except VerificationTimeout as e:
+            timeout = e
+        else:
+            if decision.subsumption.timed_out:
+                timeout = VerificationTimeout("; ".join(decision.subsumption.reasons))
+        if timeout is not None:
+            # An unfinished proof never lets a delegation through, in any
+            # mode: a delegation hands authority to code this caller cannot
+            # see, so a warning here would be an allow.
+            violations.append(
+                _z3_timeout_violation(
+                    timeout,
+                    which="skill-delegation subsumption",
+                    stage="delegation",
+                    detail={"step": step.id, "skill_id": step.skill_id},
+                )
+            )
+            continue
         if not decision.allowed:
             violations.append(
                 Violation(
@@ -717,22 +825,52 @@ def verify(
     z3_timeout_ms: int = 500,
     strict: bool | None = None,
     aliases: AliasRegistry | None = None,
+    dialect_pin: str | None = None,
+    dialect_base: str | None = None,
 ) -> VerificationResult:
     """Run the full verification pipeline: permissions → Z3 → DAG.
+
+    A Z3 timeout (Z3 answered ``unknown``) is a warning by default, so a
+    transient budget exhaustion does not block verification. Under strict
+    mode, or for a physical-stakes envelope, the same timeout is a Violation
+    instead: an unfinished check must never let a call through, and physical
+    stakes forces this even if the caller passed ``strict=False``.
 
     When ``OPENDAISUGI_CONFORMANCE_RECORD`` is set, the (plan, envelope,
     options, result) tuple is appended to the conformance corpus — the
     language-neutral oracle the multi-client rewrites verify against. Calls
     carrying an alias registry are skipped (a registry is process state, so
     the case would not be self-contained).
+
+    ``dialect_pin`` is the dialect hash the operator enforces
+    (``config.yaml`` ``dialect_enforce``). None is audit: an invariant whose
+    type names a word of the system dialect (``dialect.py``) is evaluated,
+    and a would-deny is a warning that starts with ``dialect.AUDIT_PREFIX``;
+    the verdict does not change. A pin equal to ``dialect.DIALECT_HASH``
+    enforces the words. Any other pin makes every use of a word a violation.
+
+    ``dialect_base`` is the directory a word's relative target and the
+    plan's relative write paths are placed from (the gate passes the call's
+    cwd). Only an absolute path counts; it is normalized. None places
+    nothing.
     """
+    base = _dialect_base(dialect_base)
     result = _verify(
-        plan, envelope, z3_timeout_ms=z3_timeout_ms, strict=strict, aliases=aliases
+        plan,
+        envelope,
+        z3_timeout_ms=z3_timeout_ms,
+        strict=strict,
+        aliases=aliases,
+        dialect_pin=dialect_pin,
+        dialect_base=base,
     )
     if aliases is None:
-        conformance.record_verify(
-            plan, envelope, {"strict": strict, "z3_timeout_ms": z3_timeout_ms}, result
-        )
+        options: dict = {"strict": strict, "z3_timeout_ms": z3_timeout_ms}
+        if dialect_pin is not None:
+            options["dialect_pin"] = dialect_pin
+        if base is not None:
+            options["dialect_base"] = base
+        conformance.record_verify(plan, envelope, options, result)
     return result
 
 
@@ -743,12 +881,17 @@ def _verify(
     z3_timeout_ms: int = 500,
     strict: bool | None = None,
     aliases: AliasRegistry | None = None,
+    dialect_pin: str | None = None,
+    dialect_base: str | None = None,
 ) -> VerificationResult:
     """The pipeline behind ``verify()``: permissions → Z3 → DAG.
 
     The first failing stage short-circuits the pipeline. Z3 timeouts are
     added as warnings (not violations) so verification is not blocked by
-    transient Z3 budget exhaustion on complex envelopes.
+    transient Z3 budget exhaustion on complex envelopes, except under strict
+    mode, or for a physical-stakes envelope, where a timeout is a Violation
+    instead: an unfinished check must never let a call through (see
+    ``_z3_timeout_is_violation``).
 
     All checks are sync and pure — no I/O.
     """
@@ -799,28 +942,47 @@ def _verify(
     try:
         violations.extend(check_envelope_self_consistency(envelope, timeout_ms=z3_timeout_ms))
     except VerificationTimeout as e:
-        warnings.append(str(e))
+        if _z3_timeout_is_violation(effective_strict, envelope):
+            violations.append(
+                _z3_timeout_violation(e, which="envelope self-consistency check", stage="z3")
+            )
+        else:
+            warnings.append(str(e))
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
 
     try:
         violations.extend(check_plan_against_envelope(plan, envelope, timeout_ms=z3_timeout_ms))
     except VerificationTimeout as e:
-        warnings.append(str(e))
+        if _z3_timeout_is_violation(effective_strict, envelope):
+            violations.append(_z3_timeout_violation(e, which="plan-vs-envelope check", stage="z3"))
+        else:
+            warnings.append(str(e))
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
 
     # Stage 2b: predicate-algebra invariants + postconditions
     violations.extend(
         _check_predicate_invariants(
-            plan, envelope, strict=effective_strict, aliases=aliases, warnings_out=warnings
+            plan,
+            envelope,
+            strict=effective_strict,
+            aliases=aliases,
+            warnings_out=warnings,
+            dialect_pin=dialect_pin,
+            dialect_base=dialect_base,
         )
     )
     # Stage 2c: numerical trajectory checks (robotics Z3 — not expressible as predicates)
     try:
         violations.extend(check_plan_invariants(plan, envelope, timeout_ms=z3_timeout_ms))
     except VerificationTimeout as e:
-        warnings.append(str(e))
+        if _z3_timeout_is_violation(effective_strict, envelope):
+            violations.append(
+                _z3_timeout_violation(e, which="robotics trajectory check", stage="z3")
+            )
+        else:
+            warnings.append(str(e))
 
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
@@ -859,6 +1021,10 @@ def verify_step(
 
     Drops per-step verify cost from ~3.5ms to ~0.1-0.3ms on a 20-step plan,
     a ~10-30× win on the supervisor's hot path.
+
+    A Z3 timeout in the robotics trajectory check is a Violation under strict
+    mode or for a physical-stakes envelope, the same rule ``verify()`` uses.
+    This is the path a robot's own motion is checked against before it runs.
     """
     t0 = time.monotonic()
     violations: list[Violation] = []
@@ -901,7 +1067,12 @@ def verify_step(
     try:
         violations.extend(check_plan_invariants(plan, envelope, timeout_ms=z3_timeout_ms))
     except VerificationTimeout as e:
-        warnings.append(str(e))
+        if _z3_timeout_is_violation(resolve_strict(None, envelope), envelope):
+            violations.append(
+                _z3_timeout_violation(e, which="robotics trajectory check", stage="z3")
+            )
+        else:
+            warnings.append(str(e))
 
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
@@ -989,11 +1160,127 @@ def _check_delegation_safety(plan: ActionPlan, envelope: Envelope) -> list[Viola
     return violations
 
 
+def _dialect_word(label: str, type_name: str, expr) -> str | None:
+    """The word an opaque invariant names in its type, or None."""
+    if label != "invariant" or expr is not None or not isinstance(type_name, str):
+        return None
+    from opendaisugi.dialect import word_for
+
+    return word_for(type_name)
+
+
+def _dialect_base(base: object) -> str | None:
+    """The base a word is placed from: an absolute path, normalized, else None."""
+    if not isinstance(base, str) or not base.startswith("/"):
+        return None
+    return posixpath.normpath(base)
+
+
+def _word_verdict(
+    word: str, target: str, plan: ActionPlan, envelope: Envelope, base: str | None = None
+) -> tuple[bool, str]:
+    """Unfold ``word(target)``, placed from ``base``, and evaluate the kernel
+    term.
+
+    Returns (holds, why). ``why`` says what fails: a step and the path it
+    writes, a step whose writes cannot be read, a target outside the
+    supported globs, or an evaluation error.
+    """
+    from opendaisugi.dialect import UnsupportedGlob, glob_regex, resolve_target, unfold, witness
+
+    try:
+        expr = unfold(word, target, base)
+    except UnsupportedGlob as e:
+        return False, f"the target is not a supported glob ({e})"
+    try:
+        holds = evaluate_predicate(expr, plan, envelope)
+    except Exception as e:  # noqa: BLE001 - an error is a deny, never a pass
+        return False, f"evaluation error: {e}"
+    if holds:
+        return True, ""
+    return False, witness(glob_regex(resolve_target(target, base)), plan, base)
+
+
+def _audit_word(
+    type_name: str,
+    word: str,
+    target: str | None,
+    plan: ActionPlan,
+    envelope: Envelope,
+    warnings_out: list[str] | None,
+    base: str | None = None,
+) -> None:
+    """Record a word's would-deny as a warning. The verdict does not change."""
+    from opendaisugi.dialect import AUDIT_PREFIX, target_of
+
+    glob = target_of(word, target)
+    holds, why = _word_verdict(word, glob, plan, envelope, base)
+    if holds:
+        return
+    msg = f"{AUDIT_PREFIX}invariant '{type_name}' is {word}('{glob}'); {why}; enforcing would deny"
+    if warnings_out is not None:
+        warnings_out.append(msg)
+    else:
+        _log.warning(msg)
+
+
+def _enforce_word(
+    label: str,
+    type_name: str,
+    word: str,
+    target: str | None,
+    plan: ActionPlan,
+    envelope: Envelope,
+    dialect_pin: str,
+    base: str | None = None,
+) -> list[Violation]:
+    """Decide an invariant that names a word, under an enforcement pin."""
+    from opendaisugi.dialect import DIALECT_HASH, target_of
+
+    glob = target_of(word, target)
+    if dialect_pin != DIALECT_HASH:
+        return [
+            Violation(
+                stage="predicate",
+                message=(
+                    f"{label} '{type_name}' is the word {word}, but the enforced dialect "
+                    f"'{dialect_pin}' is not this build's dialect '{DIALECT_HASH}'"
+                ),
+                detail={
+                    label: type_name,
+                    "word": word,
+                    "reason": "dialect_pin_mismatch",
+                    "suggested_remediation": (
+                        f"read the definitions of dialect '{DIALECT_HASH}', then set "
+                        f"dialect_enforce: {DIALECT_HASH} in config.yaml"
+                    ),
+                },
+            )
+        ]
+    holds, why = _word_verdict(word, glob, plan, envelope, base)
+    if holds:
+        return []
+    return [
+        Violation(
+            stage="predicate",
+            message=f"{label} '{type_name}' violated: {word}('{glob}'); {why}",
+            detail={
+                label: type_name,
+                "word": word,
+                "target": glob,
+                "dialect": DIALECT_HASH,
+                "reason": "word_violated",
+            },
+        )
+    ]
+
+
 def _check_predicate_item(
     *,
     label: str,
     type_name: str,
     raw_expr,
+    target: str | None = None,
     enforce: bool,
     description,
     plan: ActionPlan,
@@ -1001,6 +1288,8 @@ def _check_predicate_item(
     strict: bool,
     aliases: AliasRegistry | None,
     warnings_out: list[str] | None,
+    dialect_pin: str | None = None,
+    dialect_base: str | None = None,
 ) -> list[Violation]:
     """Run one invariant or postcondition through the full predicate pipeline:
     opaque strict-reject -> alias resolution -> vacuity -> evaluation.
@@ -1014,6 +1303,17 @@ def _check_predicate_item(
     if not enforce:
         return []
     expr = _normalize_expr(raw_expr)
+
+    # An opaque invariant whose type names a word of the system dialect.
+    # Audit (no pin): the ordinary opaque handling below decides, and the
+    # word's would-deny becomes a warning. Enforce: the word decides.
+    word = _dialect_word(label, type_name, expr)
+    if word is not None:
+        if dialect_pin is not None:
+            return _enforce_word(
+                label, type_name, word, target, plan, envelope, dialect_pin, dialect_base
+            )
+        _audit_word(type_name, word, target, plan, envelope, warnings_out, dialect_base)
 
     # Opaque item: no predicate to evaluate. Recognized robotics types are
     # discharged by z3_checks.check_plan_invariants — but ONLY for invariants;
@@ -1201,6 +1501,8 @@ def _check_predicate_invariants(
     strict: bool = False,
     aliases: AliasRegistry | None = None,
     warnings_out: list[str] | None = None,
+    dialect_pin: str | None = None,
+    dialect_base: str | None = None,
 ) -> list[Violation]:
     """Evaluate predicate-algebra invariants and postconditions against the plan.
 
@@ -1215,6 +1517,7 @@ def _check_predicate_invariants(
                 label="invariant",
                 type_name=inv.type,
                 raw_expr=inv.expr,
+                target=inv.target,
                 enforce=inv.enforce,
                 description=inv.description,
                 plan=plan,
@@ -1222,6 +1525,8 @@ def _check_predicate_invariants(
                 strict=strict,
                 aliases=aliases,
                 warnings_out=warnings_out,
+                dialect_pin=dialect_pin,
+                dialect_base=dialect_base,
             )
         )
     for pc in envelope.postconditions:
@@ -1237,6 +1542,8 @@ def _check_predicate_invariants(
                 strict=strict,
                 aliases=aliases,
                 warnings_out=warnings_out,
+                dialect_pin=dialect_pin,
+                dialect_base=dialect_base,
             )
         )
     return violations

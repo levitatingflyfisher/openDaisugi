@@ -1,0 +1,90 @@
+# Builds the three openDaisugi binaries from source at one pinned commit.
+# It needs no release tag. Not published.
+#
+# _commit must be a commit on the public repository that carries
+# scripts/release.sh and clients/go/scripts/native.sh with the
+# libghostty-vt step. The public history is squashed once a month, so pin
+# a commit of a finished month. Until one exists, the empty _commit makes
+# makepkg stop at the source step, which is the intent.
+#
+# Every native source is fetched here, in source=(), and checked by
+# sha256 (Z3, tree-sitter, tree-sitter-bash, zig 0.16.0) or by commit
+# (ghostty). prepare() fetches ghostty's zig dependencies, which its
+# build.zig.zon pins by hash, and the Go modules, which go.sum pins.
+# build() then needs no network. Everything it writes stays in $srcdir.
+
+pkgname=opendaisugi
+pkgver=0.43.0
+pkgrel=1
+_commit=
+_ghostty=b0c421fcd2e290629d4285c181b52fe2f2095f06
+_zig=0.16.0
+pkgdesc='Agent floor (coppice), loop (sprig) and tool-call gate (daisugi) for AI coding agents'
+arch=('x86_64')
+url='https://github.com/levitatingflyfisher/openDaisugi'
+license=('MIT')
+depends=('glibc')
+makedepends=('go' 'git' 'cmake' 'make' 'gcc' 'python' 'pkgconf' 'binutils')
+provides=('coppice' 'sprig')
+conflicts=('opendaisugi-bin')
+options=('!lto' '!debug')
+source=("openDaisugi::git+${url}.git#commit=${_commit}"
+        "ghostty::git+https://github.com/ghostty-org/ghostty.git#commit=${_ghostty}"
+        "https://ziglang.org/download/${_zig}/zig-x86_64-linux-${_zig}.tar.xz"
+        "https://github.com/Z3Prover/z3/releases/download/z3-5.1.0/z3_solver-5.1.0.0.tar.gz"
+        "https://files.pythonhosted.org/packages/f7/03/5600b84aff2e6c4fe80cfebb4063fe2f50299521befe5f6092ab8c082f4a/tree_sitter-0.26.0.tar.gz"
+        "https://files.pythonhosted.org/packages/8e/0e/f0108be910f1eef6499eabce517e79fe3b12057280ed398da67ce2426cba/tree_sitter_bash-0.25.1.tar.gz")
+noextract=('z3_solver-5.1.0.0.tar.gz' 'tree_sitter-0.26.0.tar.gz' 'tree_sitter_bash-0.25.1.tar.gz')
+sha256sums=('SKIP'
+            'SKIP'
+            '70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00'
+            '269a0bf62949d227a16ab42afee6750f18477e173a14de6aeaf8789f33f813b5'
+            'b40c219edccc4564530c96f8f1556f6202b37cda964d1cbd7bd2b7e68b40a245'
+            'bfc0bdaa77bc1e86e3c6652e5a6e140c40c0a16b84185c2b63ad7cd809b88f14')
+
+_env() {
+  export PATH="${srcdir}/zig-x86_64-linux-${_zig}:${PATH}"
+  export ZIG_GLOBAL_CACHE_DIR="${srcdir}/zig-cache"
+  export GOPATH="${srcdir}/gopath"
+  export GOMODCACHE="${srcdir}/gopath/pkg/mod"
+  export GOCACHE="${srcdir}/gocache"
+  export GOTOOLCHAIN=auto
+  export XDG_CACHE_HOME="${srcdir}/cache"
+  export DAISUGI_NATIVE_PREFIX="${srcdir}/native"
+  export DAISUGI_NATIVE_BUILD_DIR="${srcdir}/native-build"
+}
+
+prepare() {
+  _env
+  mkdir -p "${DAISUGI_NATIVE_BUILD_DIR}"
+  # native.sh finds the archives and the ghostty clone already in its build
+  # directory, checks them, and fetches nothing.
+  local f
+  for f in "${noextract[@]}"; do
+    ln -sf "${srcdir}/${f}" "${DAISUGI_NATIVE_BUILD_DIR}/${f}"
+  done
+  ln -sfn "${srcdir}/ghostty" "${DAISUGI_NATIVE_BUILD_DIR}/ghostty"
+  (cd "${srcdir}/ghostty" && zig build --fetch)
+  local m
+  for m in harness/coppice harness/sprig clients/go; do
+    (cd "${srcdir}/openDaisugi/${m}" && go mod download -x)
+  done
+}
+
+build() {
+  _env
+  # The binaries must name no build path and link only glibc, so the
+  # release script's own Go flags are used, not the distribution's CGO
+  # flags. SOURCE_DATE_EPOCH comes from makepkg.
+  cd "${srcdir}/openDaisugi"
+  scripts/release.sh "${pkgver}"
+  tar -xzf "dist/opendaisugi-${pkgver}-linux-x86_64.tar.gz" -C "${srcdir}"
+}
+
+package() {
+  cd "${srcdir}/opendaisugi-${pkgver}-linux-x86_64"
+  install -Dm755 coppice sprig daisugi -t "${pkgdir}/usr/bin/"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 NOTICE-coppice NOTICE-sprig NOTICE-daisugi -t "${pkgdir}/usr/share/licenses/${pkgname}/"
+  install -Dm644 README "${pkgdir}/usr/share/doc/${pkgname}/README"
+}

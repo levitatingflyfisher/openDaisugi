@@ -1,0 +1,9 @@
+#rule: coppice_first_run_trust
+╭──────────────────────────────────────────────╮
+│ Accessing workspace:                         │
+│                                              │
+│ /home/me/new-project                         │
+│                                              │
+│ ❯ 1. Yes, I trust this folder                │
+│   2. No, exit                                │
+╰──────────────────────────────────────────────╯

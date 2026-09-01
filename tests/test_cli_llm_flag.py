@@ -157,18 +157,29 @@ def test_llm_flag_absent_leaves_auto_detection(monkeypatch, tmp_path):
     assert "OPENDAISUGI_LLM_BACKEND" not in os.environ
 
 
-def test_explicit_litellm_is_honoured(monkeypatch, tmp_path):
+def test_explicit_api_is_honoured(monkeypatch, tmp_path):
     _fake_orchestrate(monkeypatch)
     monkeypatch.delenv("OPENDAISUGI_LLM_BACKEND", raising=False)
-    res = runner.invoke(app, ["orchestrate", "t", "--llm", "litellm", "--data-dir", str(tmp_path)])
+    res = runner.invoke(app, ["orchestrate", "t", "--llm", "api", "--data-dir", str(tmp_path)])
     assert res.exit_code == 0, res.output
-    assert os.environ.get("OPENDAISUGI_LLM_BACKEND") == "litellm"
+    assert os.environ.get("OPENDAISUGI_LLM_BACKEND") == "api"
 
 
 def test_orchestrate_echoes_resolved_state(monkeypatch, tmp_path):
     _fake_orchestrate(monkeypatch)
-    res = runner.invoke(app, ["orchestrate", "t", "--llm", "litellm", "--data-dir", str(tmp_path)])
+    res = runner.invoke(app, ["orchestrate", "t", "--llm", "api", "--data-dir", str(tmp_path)])
     assert res.exit_code == 0, res.output
-    assert "backend: litellm" in res.output
-    assert "gate: shadow" in res.output
+    assert "backend: api" in res.output
+    assert "gate: audit" in res.output
     assert "data:" in res.output
+
+
+def test_old_backend_name_is_refused_with_one_line(monkeypatch, tmp_path):
+    from opendaisugi.llm import RENAMED_BACKEND_TEXT
+
+    _fake_orchestrate(monkeypatch)
+    monkeypatch.delenv("OPENDAISUGI_LLM_BACKEND", raising=False)
+    res = runner.invoke(app, ["orchestrate", "t", "--llm", "litellm", "--data-dir", str(tmp_path)])
+    assert res.exit_code == 2, res.output
+    assert res.output.strip() == RENAMED_BACKEND_TEXT
+    assert "OPENDAISUGI_LLM_BACKEND" not in os.environ

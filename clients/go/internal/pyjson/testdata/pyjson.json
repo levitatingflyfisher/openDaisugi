@@ -1,0 +1,263 @@
+{
+ "loads": [
+  {
+   "text": "{\"a\": 1, \"b\": 2, \"a\": 3}",
+   "ok": true,
+   "ascii": "{\"a\": 3, \"b\": 2}",
+   "utf8": "{\"a\": 3, \"b\": 2}"
+  },
+  {
+   "text": "[-0, 1E2, 1.5e-7, 12345678901234567890123, 0.1, 1e400]",
+   "ok": true,
+   "ascii": "[0, 100.0, 1.5e-07, 12345678901234567890123, 0.1, Infinity]",
+   "utf8": "[0, 100.0, 1.5e-07, 12345678901234567890123, 0.1, Infinity]"
+  },
+  {
+   "text": "{\"s\": \"\\u00e9\\u2014\\ud83d\\ude00 \\/ \\b\\f\\n\\r\\t\"}",
+   "ok": true,
+   "ascii": "{\"s\": \"\\u00e9\\u2014\\ud83d\\ude00 / \\b\\f\\n\\r\\t\"}",
+   "utf8": "{\"s\": \"\u00e9\u2014\ud83d\ude00 / \\b\\f\\n\\r\\t\"}"
+  },
+  {
+   "text": "[NaN, Infinity, -Infinity]",
+   "ok": true,
+   "ascii": "[NaN, Infinity, -Infinity]",
+   "utf8": "[NaN, Infinity, -Infinity]"
+  },
+  {
+   "text": "  {\"nested\": {\"x\": [true, false, null, {}]}}  ",
+   "ok": true,
+   "ascii": "{\"nested\": {\"x\": [true, false, null, {}]}}",
+   "utf8": "{\"nested\": {\"x\": [true, false, null, {}]}}"
+  },
+  {
+   "text": "\"just a string\"",
+   "ok": true,
+   "ascii": "\"just a string\"",
+   "utf8": "\"just a string\""
+  },
+  {
+   "text": "01",
+   "ok": false
+  },
+  {
+   "text": "1.",
+   "ok": false
+  },
+  {
+   "text": "[1,]",
+   "ok": false
+  },
+  {
+   "text": "{\"a\":1,}",
+   "ok": false
+  },
+  {
+   "text": "",
+   "ok": false
+  },
+  {
+   "text": "   ",
+   "ok": false
+  },
+  {
+   "text": "\ufeff{}",
+   "ok": false
+  },
+  {
+   "text": "\"tab\there\"",
+   "ok": false
+  },
+  {
+   "text": "{\"a\" 1}",
+   "ok": false
+  },
+  {
+   "text": "[1] [2]",
+   "ok": false
+  },
+  {
+   "text": "tru",
+   "ok": false
+  },
+  {
+   "text": "-",
+   "ok": false
+  },
+  {
+   "text": "1e5",
+   "ok": true,
+   "ascii": "100000.0",
+   "utf8": "100000.0"
+  },
+  {
+   "text": "-1.25e-3",
+   "ok": true,
+   "ascii": "-0.00125",
+   "utf8": "-0.00125"
+  },
+  {
+   "text": "\"\\x41\"",
+   "ok": false
+  },
+  {
+   "text": "{\"\u00e9\": \"\u00e9\u2014\u007f\"}",
+   "ok": true,
+   "ascii": "{\"\\u00e9\": \"\\u00e9\\u2014\\u007f\"}",
+   "utf8": "{\"\u00e9\": \"\u00e9\u2014\u007f\"}"
+  }
+ ],
+ "floats": [
+  {
+   "bits": "0x1.999999999999ap-4",
+   "repr": "0.1"
+  },
+  {
+   "bits": "0x1.1c37937e08000p+53",
+   "repr": "1e+16"
+  },
+  {
+   "bits": "0x1.c6bf526340000p+49",
+   "repr": "1000000000000000.0"
+  },
+  {
+   "bits": "0x1.b69b4ba630f35p+56",
+   "repr": "1.2345678901234568e+17"
+  },
+  {
+   "bits": "0x1.4f8b588e368f1p-17",
+   "repr": "1e-05"
+  },
+  {
+   "bits": "0x1.a36e2eb1c432dp-14",
+   "repr": "0.0001"
+  },
+  {
+   "bits": "-0x1.4000000000000p+1",
+   "repr": "-2.5"
+  },
+  {
+   "bits": "0x1.8000000000000p+1",
+   "repr": "3.0"
+  },
+  {
+   "bits": "0x1.aad52f26635abp+30",
+   "repr": "1790266313.5970256"
+  },
+  {
+   "bits": "0x1.0f0cf064dd592p+73",
+   "repr": "1e+22"
+  },
+  {
+   "bits": "0x0.0000000000001p-1022",
+   "repr": "5e-324"
+  },
+  {
+   "bits": "0x1.fffffffffffffp+1023",
+   "repr": "1.7976931348623157e+308"
+  },
+  {
+   "bits": "-0x0.0p+0",
+   "repr": "-0.0"
+  },
+  {
+   "bits": "0x1.9000000000000p+6",
+   "repr": "100.0"
+  },
+  {
+   "bits": "0x1.81cd6c8b43958p+13",
+   "repr": "12345.678"
+  },
+  {
+   "bits": "0x1.1c37937e07fffp+53",
+   "repr": "9999999999999998.0"
+  },
+  {
+   "bits": "0x1.02e4b6ce5dc68p-13",
+   "repr": "0.00012345"
+  }
+ ],
+ "rounds": [
+  {
+   "bits": "0x1.0624dd2f1a9fcp-11",
+   "n": 3,
+   "repr": "0.001"
+  },
+  {
+   "bits": "0x1.0020c49ba5e35p+0",
+   "n": 3,
+   "repr": "1.0"
+  },
+  {
+   "bits": "0x1.5666666666666p+1",
+   "n": 2,
+   "repr": "2.67"
+  },
+  {
+   "bits": "0x1.1f8c7e28240b8p+7",
+   "n": 3,
+   "repr": "143.774"
+  },
+  {
+   "bits": "0x1.f9db22d0e5604p-4",
+   "n": 3,
+   "repr": "0.123"
+  },
+  {
+   "bits": "0x1.f7851e9d79f8fp+4",
+   "n": 3,
+   "repr": "31.47"
+  }
+ ],
+ "reprs": [
+  {
+   "s": "a",
+   "repr": "'a'"
+  },
+  {
+   "s": "it's",
+   "repr": "\"it's\""
+  },
+  {
+   "s": "say \"hi\"",
+   "repr": "'say \"hi\"'"
+  },
+  {
+   "s": "both ' \"",
+   "repr": "'both \\' \"'"
+  },
+  {
+   "s": "tab\t\u0000\u007f\u0085\u00e9\u2028\ud83d\ude00",
+   "repr": "'tab\\t\\x00\\x7f\\x85\u00e9\\u2028\ud83d\ude00'"
+  },
+  {
+   "s": "back\\slash",
+   "repr": "'back\\\\slash'"
+  },
+  {
+   "s": "",
+   "repr": "''"
+  },
+  {
+   "s": "/work/**",
+   "repr": "'/work/**'"
+  },
+  {
+   "s": "\u200b",
+   "repr": "'\\u200b'"
+  },
+  {
+   "s": "\u001b[0m",
+   "repr": "'\\x1b[0m'"
+  }
+ ],
+ "repr_list": {
+  "in": [
+   "a",
+   "it's",
+   "say \"hi\"",
+   "both ' \""
+  ],
+  "repr": "['a', \"it's\", 'say \"hi\"', 'both \\' \"']"
+ }
+}

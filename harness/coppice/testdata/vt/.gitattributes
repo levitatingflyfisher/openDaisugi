@@ -1,0 +1,7 @@
+# These *.bin fixtures carry literal VT protocol bytes, including CR LF pairs
+# that are the stream's own line endings, not this repo's text convention.
+# Without this, a checkout under core.autocrlf=input (or Windows autocrlf=true)
+# silently drops the CR half of every \r\n, corrupting the fixture in a way
+# `go run ./testdata/vt/gen` can never reproduce and no golden re-run catches
+# until someone re-clones.
+*.bin binary

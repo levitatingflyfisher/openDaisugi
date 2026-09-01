@@ -246,6 +246,15 @@ def _check_superset(
         violations.append(
             Violation(
                 stage=_STAGE,
-                message=(f"{field}: child is missing parent {field} {frozenset(missing)}"),
+                message=(f"{field}: child is missing parent {field} {_frozenset_text(missing)}"),
             )
         )
+
+
+def _frozenset_text(members: set[str]) -> str:
+    """``repr(frozenset(members))`` with the members sorted.
+
+    A frozenset's own order follows the string hash, which Python seeds per
+    process, so its repr is not stable from run to run.
+    """
+    return "frozenset({" + ", ".join(repr(m) for m in sorted(members)) + "})"

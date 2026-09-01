@@ -32,17 +32,12 @@ from opendaisugi.tui_base import CockpitScreen
 _STATE_GLYPH = {"active": "●", "available": "○", "possible": "·"}
 _EFFECT_COLOR = {"live": "#7fd08a", "cfg": "#e5b567", "planned": "#8a93a6"}
 
-# A short, specific "how to make it take effect" line per non-live stage.
-_EFFECT_HINT: dict[str, str] = {
-    "gate": "run `daisugi install --enforce` to apply",
-    "backend": "set OPENDAISUGI_LLM_BACKEND, then restart",
-    "envelope": "pick a backend first, then restart",
-    "harness": "change by running `daisugi install` in your host",
-    "router": "start routing with `daisugi gateway`",
-    "verifier": "not wired yet — python always enforces",
-    "matcher": "not wired yet — MiniLM runs regardless",
-    "stores": "git store: run `daisugi registry init`",
-}
+
+def _effect_hint(stage_key: str) -> str:
+    """Why this stage is not live, from the one source of truth in swap.py."""
+    from opendaisugi.swap import reason_for
+
+    return reason_for(stage_key) or "not live yet"
 
 
 def swap_confirmation(stage_key: str, label: str, *, config_path) -> str:
@@ -52,8 +47,14 @@ def swap_confirmation(stage_key: str, label: str, *, config_path) -> str:
     command from ANY screen without querying the wiring screen's buttons — and
     it never returns the ``Config`` ``apply_swap`` hands back (that would print a
     ``Config`` repr and lose the honest "needs a restart/reinstall" tail)."""
-    apply_swap(stage_key, label, config_path=config_path)
-    tail = "" if is_live(stage_key) else f"  ({_EFFECT_HINT.get(stage_key, 'not live yet')})"
+    from opendaisugi.exceptions import MatcherNotAvailable
+
+    try:
+        apply_swap(stage_key, label, config_path=config_path)
+    except MatcherNotAvailable as exc:
+        # Refused before writing config — report honestly, change nothing.
+        return f"can't set {stage_key} → {label}: {exc}"
+    tail = "" if is_live(stage_key) else f"  ({_effect_hint(stage_key)})"
     return f"set {stage_key} → {label}{tail}"
 
 
@@ -127,7 +128,7 @@ class WiringScreen(CockpitScreen):
                     yield Static(chips, classes="chips")
                 if not is_live(st.key):
                     yield Static(
-                        f"↳ {_EFFECT_HINT.get(st.key, 'not live yet')}",
+                        _effect_hint(st.key),
                         classes="effnote",
                         id=f"effnote-{st.key}",
                     )

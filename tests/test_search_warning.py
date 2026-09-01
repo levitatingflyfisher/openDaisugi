@@ -49,7 +49,7 @@ def test_find_emits_user_warning_when_search_extra_missing(tmp_path):
     assert user_warnings, "expected a UserWarning when [search] extra is missing"
     msg = str(user_warnings[0].message)
     assert "opendaisugi[search]" in msg
-    assert "uv add" in msg
+    assert "pip install" in msg
 
 
 def test_find_warning_fires_at_most_once(tmp_path):

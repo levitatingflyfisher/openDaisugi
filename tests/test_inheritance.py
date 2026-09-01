@@ -328,3 +328,19 @@ def test_child_may_drop_shell_decomposition_the_parent_allows():
     parent = _env(shell=True, shell_allowlist=["git"], shell_allow_decomposition=True)
     child = _env(shell=True, shell_allowlist=["git"], shell_allow_decomposition=False)
     assert verify_inheritance(child, parent) == []
+
+
+def test_missing_invariants_are_listed_sorted():
+    """Two or more dropped members read the same in every process."""
+    invs = [
+        Invariant(type="file_unchanged", target=t, description="keep") for t in ("/z", "/a", "/m")
+    ]
+    parent = Envelope(generated_by="t", task="t", permissions=Permission(), invariants=invs)
+    child = Envelope(generated_by="t", task="t", permissions=Permission())
+    [v] = verify_inheritance(child, parent)
+    keys = sorted(i.model_dump_json() for i in invs)
+    assert v.message == (
+        "invariants: child is missing parent invariants frozenset({"
+        + ", ".join(repr(k) for k in keys)
+        + "})"
+    )

@@ -5,7 +5,7 @@
 //
 // This interface is named SessionObserver, not Observer: loop.go already
 // declares `type Observer interface { OnState(state string) }` for fleet
-// state-fusion (grove's cockpit). A second, unrelated five-method interface
+// state reports. A second, unrelated five-method interface
 // reusing that name would not just be confusing — it would not compile.
 // SessionObserver and Observer are deliberately distinct types on distinct
 // fields (Agent.Observer vs Agent.SessionObserver / Executor.SessionObserver).

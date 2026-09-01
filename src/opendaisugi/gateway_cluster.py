@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from opendaisugi.gateway_journal import GatewayTurnRecord
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
 
 EmbedFn = Callable[[list[str]], Any]
 
@@ -53,22 +52,32 @@ def _lazy_embed(texts: list[str]) -> Any:
     module import — mirrors ``PathwayStore.find()``'s guard, not the
     (import-statement-only) one in ``Journal.search()``.
     """
-    from opendaisugi._search import _get_model
+    from opendaisugi._search import _get_model, selected_matcher
+    from opendaisugi.exceptions import MatcherNotAvailable
 
     try:
         model = _get_model()
     except ImportError:
+        # ADR-0019's fallback catches package absence before this point (a
+        # missing [search]/[potion] resolves to lexical instead), so this now
+        # fires only if numpy itself is missing or a package vanished mid-process.
+        extra = "opendaisugi[potion]" if selected_matcher() == "potion" else "opendaisugi[search]"
         raise ImportError(
-            "Embedding-based repeat clustering requires the [search] extra: "
-            "uv add 'opendaisugi[search]'  (or: pip install 'opendaisugi[search]')"
+            f"Embedding-based repeat clustering requires {extra}: pip install '{extra}', "
+            f"or set matcher_model: lexical (no model needed)."
         ) from None
+    except MatcherNotAvailable as exc:
+        # An unbuilt backend, a potion model that failed to load, or an int8
+        # build this CPU cannot run or fetch. Surface it as the same
+        # ImportError the caller already handles, with the honest reason.
+        raise ImportError(str(exc)) from None
     return model.encode(texts, convert_to_numpy=True)
 
 
 def cluster_repeats(
     records: Iterable[GatewayTurnRecord],
     *,
-    threshold: float = DEFAULT_PATHWAY_THRESHOLD,
+    threshold: float | None = None,
     embed: EmbedFn | None = None,
 ) -> list[RepeatCluster]:
     """Group repeated asks by embedding similarity, paraphrases included.
@@ -94,6 +103,11 @@ def cluster_repeats(
     signed = [r for r in records if r.signature]
     if not signed:
         return []
+
+    if threshold is None:
+        from opendaisugi._search import active_threshold
+
+        threshold = active_threshold()
 
     if embed is None:
         embed = _lazy_embed

@@ -111,7 +111,7 @@ async def ab_test(
         tier0_tokens=0,  # Tier-0 is deterministic
         # v0.28.4: tier2_tokens is a placeholder, not a measured value.
         # Downstream cost analysis MUST NOT treat this as real telemetry —
-        # wire ``litellm.token_counter`` against the generator's prompt
+        # count the tokens of the generator's prompt (the model reply's usage)
         # before relying on it. Tracked as planned work.
         tier2_tokens=0,
     )

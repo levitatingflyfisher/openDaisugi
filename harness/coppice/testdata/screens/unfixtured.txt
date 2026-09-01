@@ -1,0 +1,25 @@
+# Manifests with no screen fixtures yet, one id per line.
+#
+# A fixture must come from a screen someone actually saw. Inventing one asserts
+# a guess about a UI we have never run, which is worse than an honest gap: the
+# test would pass and the detection would still be wrong.
+#
+# To close a line: record the screen with scripts/record-vt.sh, save the text as
+# testdata/screens/<agent>/<state>-1.txt, and delete the line.
+amp
+agy
+cline
+cursor
+devin
+droid
+gemini
+grok
+hermes
+kilo
+kimi
+kiro
+maki
+muse
+qodercli
+qwen
+copilot

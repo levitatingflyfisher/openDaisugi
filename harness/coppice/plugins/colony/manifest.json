@@ -1,0 +1,7 @@
+{
+  "id": "colony",
+  "kind": "view",
+  "title": "Colony",
+  "about": "Every pane as a forager on a field, with a bar for its time since the last state. Drag a box to select.",
+  "page": "index.html"
+}

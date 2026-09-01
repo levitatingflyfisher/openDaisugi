@@ -30,21 +30,27 @@ journal, and export like any other step:
 
 ```python
 from opendaisugi.models import (
-    ActionPlan, CartesianMoveStep, GripperStep, JointMoveStep,
+    ActionPlan,
+    CartesianMoveStep,
+    GripperStep,
+    JointMoveStep,
     SimulationResetStep,
 )
 
-plan = ActionPlan(source="demo", task="pick and place", steps=[
-    SimulationResetStep(id="reset"),
-    JointMoveStep(id="home", joint_targets={"j1": 0.0, "j2": 0.0},
-                  duration_s=1.0, depends_on=["reset"]),
-    CartesianMoveStep(id="approach", target_position=(0.3, 0.2, 0.0),
-                      depends_on=["home"]),
-    GripperStep(id="grasp", action="close", depends_on=["approach"]),
-    CartesianMoveStep(id="lift", target_position=(0.3, 0.3, 0.0),
-                      depends_on=["grasp"]),
-    GripperStep(id="release", action="open", depends_on=["lift"]),
-])
+plan = ActionPlan(
+    source="demo",
+    task="pick and place",
+    steps=[
+        SimulationResetStep(id="reset"),
+        JointMoveStep(
+            id="home", joint_targets={"j1": 0.0, "j2": 0.0}, duration_s=1.0, depends_on=["reset"]
+        ),
+        CartesianMoveStep(id="approach", target_position=(0.3, 0.2, 0.0), depends_on=["home"]),
+        GripperStep(id="grasp", action="close", depends_on=["approach"]),
+        CartesianMoveStep(id="lift", target_position=(0.3, 0.3, 0.0), depends_on=["grasp"]),
+        GripperStep(id="release", action="open", depends_on=["lift"]),
+    ],
+)
 ```
 
 ## Robot permissions

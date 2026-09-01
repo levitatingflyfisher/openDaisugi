@@ -66,7 +66,7 @@ CORPUS_SAMPLE_CMDS = [
     "pytest -q > /etc/passwd",
     "git status && rm -rf /tmp/x",
     "timeout 30 git fetch && make install",
-    "grep -E \"a|b\" f && ls",
+    'grep -E "a|b" f && ls',
     "prog --version > /dev/null 2>&1",
     "wc -l < /etc/shadow",
     "grep x f | sed -n 1,5p f",

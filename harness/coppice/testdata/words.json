@@ -1,0 +1,13 @@
+{
+  "_about": "Words the web page and the TUI both show. Each side has a test that holds its own copy to this file.",
+  "ended": "fine ended",
+  "ended_exit_0": "fine ended (exit 0)",
+  "ended_exit_3": "fine ended (exit 3)",
+  "ended_killed": "fine ended (killed)",
+  "kill_confirm": "Stop fine? Enter stops it, Esc keeps it.",
+  "clear_all_confirm_2": "Forget 2 ended agents? Enter forgets them, Esc keeps them.",
+  "clear_all_confirm_1": "Forget 1 ended agent? Enter forgets it, Esc keeps it.",
+  "blocked_by_gate": "Blocked. The gate gave no detail.",
+  "blocked_own_question": "Waiting on the agent's own question. Open it to answer.",
+  "ended_clear_ms": 10000
+}

@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"daisugi-verify/internal/lazyre"
 	"regexp"
 	"strings"
 	"sync"
@@ -29,7 +30,7 @@ var (
 
 // noMatch is a sentinel: some translated patterns (an empty "[]" class) can
 // never match anything.
-var noMatchPattern = regexp.MustCompile(`\x00NEVER\x00`)
+var noMatchPattern = lazyre.New(`\x00NEVER\x00`)
 
 func compileFnmatch(pat string, dotAll bool) *regexp.Regexp {
 	key := pat
@@ -112,14 +113,14 @@ func buildFnmatchRegex(pat string, dotAll bool) *regexp.Regexp {
 	}
 	b.WriteString(`\z`)
 	if neverMatches {
-		return noMatchPattern
+		return noMatchPattern()
 	}
 	re, err := regexp.Compile(b.String())
 	if err != nil {
 		// A pattern our translator produced but Go's RE2 rejects (should not
 		// happen for the corpus's realistic patterns) — fail closed: match
 		// nothing rather than risk a broad, unintended accept.
-		return noMatchPattern
+		return noMatchPattern()
 	}
 	return re
 }

@@ -38,7 +38,7 @@ async def test_single_model_str_preserves_current_behavior():
     fake = MagicMock()
     fake.chat.completions.create = AsyncMock(return_value=env)
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake):
+    with patch("opendaisugi.envelope._llm.get_model_client", return_value=fake):
         out = await generate_envelope(task="t", model="anthropic/claude-sonnet-4-20250514")
 
     assert out.id == "env_t"
@@ -51,7 +51,7 @@ async def test_ladder_first_model_success_no_escalation():
     fake = MagicMock()
     fake.chat.completions.create = AsyncMock(return_value=env)
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake):
+    with patch("opendaisugi.envelope._llm.get_model_client", return_value=fake):
         out = await generate_envelope(
             task="t",
             model=["anthropic/claude-sonnet-4-20250514", "anthropic/claude-opus-4-20250514"],
@@ -76,7 +76,7 @@ async def test_ladder_escalates_on_instructor_exhaustion():
         return sonnet_client if "sonnet" in model else opus_client
 
     with (
-        patch("opendaisugi.envelope._llm.get_instructor_client", side_effect=client_factory),
+        patch("opendaisugi.envelope._llm.get_model_client", side_effect=client_factory),
         patch(
             "opendaisugi.envelope._llm.translate_llm_error",
             side_effect=lambda e: EnvelopeGenerationError(str(e)),
@@ -109,7 +109,7 @@ async def test_ladder_escalates_on_z3_self_consistency_violation():
         return []
 
     with (
-        patch("opendaisugi.envelope._llm.get_instructor_client", side_effect=client_factory),
+        patch("opendaisugi.envelope._llm.get_model_client", side_effect=client_factory),
         patch("opendaisugi.envelope.check_envelope_self_consistency", side_effect=fake_selfcheck),
     ):
         out = await generate_envelope(
@@ -126,7 +126,7 @@ async def test_ladder_exhaustion_raises_ModelLadderExhausted():
     fake.chat.completions.create = AsyncMock(side_effect=RuntimeError("parse fail"))
 
     with (
-        patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake),
+        patch("opendaisugi.envelope._llm.get_model_client", return_value=fake),
         patch(
             "opendaisugi.envelope._llm.translate_llm_error",
             side_effect=lambda e: EnvelopeGenerationError(str(e)),
@@ -155,7 +155,7 @@ async def test_ladder_cache_key_uses_successful_model(tmp_path):
         return sonnet if "sonnet" in model else opus
 
     with (
-        patch("opendaisugi.envelope._llm.get_instructor_client", side_effect=factory),
+        patch("opendaisugi.envelope._llm.get_model_client", side_effect=factory),
         patch(
             "opendaisugi.envelope._llm.translate_llm_error",
             side_effect=lambda e: EnvelopeGenerationError(str(e)),
@@ -209,7 +209,7 @@ async def test_ladder_cache_hit_at_first_rung_short_circuits_llm(tmp_path):
 
     fake = MagicMock()
     fake.chat.completions.create = AsyncMock(side_effect=AssertionError("should not be called"))
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake):
+    with patch("opendaisugi.envelope._llm.get_model_client", return_value=fake):
         out = await generate_envelope(
             task="t",
             cache=cache,
@@ -218,3 +218,46 @@ async def test_ladder_cache_hit_at_first_rung_short_circuits_llm(tmp_path):
 
     assert out.id == "env_cached"
     assert fake.chat.completions.create.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_self_consistency_check_that_did_not_finish_fails_the_rung():
+    """A Z3 unknown is not a pass: the rung fails, and the next rung runs."""
+    from opendaisugi.exceptions import VerificationTimeout
+
+    env_a = _make_envelope("env_a")
+    env_b = _make_envelope("env_b")
+    fake = MagicMock()
+    fake.chat.completions.create = AsyncMock(side_effect=[env_a, env_b])
+
+    def selfcheck(env, timeout_ms=500):
+        if env.id == "env_a":
+            raise VerificationTimeout("Z3 self-consistency check exceeded 500ms")
+        return []
+
+    with (
+        patch("opendaisugi.envelope._llm.get_model_client", return_value=fake),
+        patch("opendaisugi.envelope.check_envelope_self_consistency", side_effect=selfcheck),
+    ):
+        out = await generate_envelope(task="t", model=["m1", "m2"])
+    assert out.id == "env_b"
+
+
+@pytest.mark.asyncio
+async def test_a_single_model_whose_check_did_not_finish_raises():
+    from opendaisugi.exceptions import VerificationTimeout
+
+    fake = MagicMock()
+    fake.chat.completions.create = AsyncMock(return_value=_make_envelope("env_a"))
+    with (
+        patch("opendaisugi.envelope._llm.get_model_client", return_value=fake),
+        patch(
+            "opendaisugi.envelope.check_envelope_self_consistency",
+            side_effect=VerificationTimeout("Z3 self-consistency check exceeded 500ms"),
+        ),
+    ):
+        with pytest.raises(EnvelopeGenerationError) as ei:
+            await generate_envelope(task="t", model="m1")
+    assert str(ei.value) == (
+        "Model 'm1' produced self-inconsistent envelope: Z3 self-consistency check exceeded 500ms"
+    )

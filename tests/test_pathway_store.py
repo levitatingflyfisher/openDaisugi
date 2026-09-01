@@ -3,9 +3,13 @@
 import sqlite3
 import time
 
+import pytest
+
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 from opendaisugi.pathway import CompiledPathway
 from opendaisugi.pathway_store import PathwayStore
+
+pytestmark = pytest.mark.usefixtures("minilm_matcher")
 
 
 def _pathway(id_: str = "pathway_abc12345", embedding=None) -> CompiledPathway:
@@ -61,6 +65,7 @@ def test_put_replaces_existing(tmp_path):
     assert count == 1
 
 
+@pytest.mark.usefixtures("sentence_transformers_installed")
 def test_find_returns_best_match_above_threshold(tmp_path):
     store = PathwayStore(tmp_path / "p.db")
     # Two pathways with distinct embeddings.
@@ -143,6 +148,7 @@ def test_stats(tmp_path):
     assert s["total_hits"] == 1
 
 
+@pytest.mark.usefixtures("sentence_transformers_installed")
 def test_v028_4_find_filters_out_stale_embedding_rows(tmp_path):
     """v0.28.4 — find() now filters rows whose embedding_model /
     embedding_model_version don't match the current distiller. Pre-fix,
@@ -227,3 +233,19 @@ def test_parameters_and_structure_signature_survive_store_round_trip(tmp_path):
     assert got.parameters[0].observed == ["grep -rn TODO src", "grep -rn FIXME src"]
     # and via find()'s row path too (list_all → _row_to_pathway)
     assert store.list_all()[0].parameters[0].field == "command"
+
+
+def test_a_non_finite_row_is_refused_not_read_as_no_limit(tmp_path):
+    """GD-16 at the model level: a stored envelope or plan whose text holds
+    NaN or an infinity raises on read; it never reads as a null limit."""
+    import pytest
+    from pydantic import ValidationError
+
+    store = PathwayStore(tmp_path / "p.db")
+    p = _pathway()
+    p.envelope.permissions.velocity_limit = 1.5
+    store.put(p)
+    with sqlite3.connect(tmp_path / "p.db") as con:
+        con.execute("UPDATE pathways SET envelope_json = replace(envelope_json, '1.5', 'Infinity')")
+    with pytest.raises(ValidationError, match="finite_number"):
+        store.list_all()

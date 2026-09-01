@@ -8,48 +8,176 @@ only fall back to the in-process gate, never to allow.
 from __future__ import annotations
 
 import base64
+import errno
 import json
 import os
+import socket
 import socketserver
+import struct
 import threading
 from pathlib import Path
 
 SOCK_NAME = "gate.sock"
+
+# The variables that tell a reporter which floor pane it runs in.
+_PANE_ENV = ("COPPICE_SOCK", "COPPICE_PANE", "HERDR_PANE_ID", "HERDR_PANE")
 _MAX_REQUEST = 4 * 1024 * 1024
+
+
+def _str_or_none(v: object) -> str | None:
+    return v if isinstance(v, str) else None
+
+
+def _peer_pid(sock: socket.socket) -> int | None:
+    """The real OS pid of the process on the other end of this connected
+    AF_UNIX socket, via SO_PEERCRED. Never a value a request body could
+    set. This is the one fact a caller cannot fake: it names whichever
+    process the kernel actually accepted this connection from, which
+    report_state then hands to coppice as ``peer_pids`` so coppice's own
+    kernel-pid placement (not this process's say-so) decides which pane,
+    if any, that pid really belongs to. None when the platform has no
+    SO_PEERCRED (non-Linux); every caller here already treats an unknown
+    peer_pid as "cannot authenticate the claim," never as "trust it."
+    """
+    try:
+        creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        pid, _uid, _gid = struct.unpack("3i", creds)
+    except (OSError, AttributeError):
+        return None
+    return pid
 
 
 class _Handler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
         from opendaisugi.gate import run_argv
 
+        caller_peer_pid = _peer_pid(self.request)
         line = self.rfile.readline(_MAX_REQUEST)
         try:
             req = json.loads(line)
             argv = [str(a) for a in req["argv"]]
             raw = base64.b64decode(req.get("stdin_b64", ""))
         except Exception:  # noqa: BLE001 — a bad request gets a deny, not a crash
-            reply = {"v": 1, "stdout": "", "stderr": "openDaisugi gate: DENIED — bad request", "exit_code": 2}
+            reply = {
+                "v": 1,
+                "stdout": "",
+                "stderr": "openDaisugi gate: DENIED — bad request",
+                "exit_code": 2,
+            }
         else:
-            out = run_argv(argv, raw)
+            # The caller's own pane identity, carried as explicit request
+            # fields (gate_client.py, the pi extension and the OpenCode
+            # plugin all send these off their own environment). This
+            # process's environment never names a pane at all (see
+            # serve()'s docstring), so these fields are the only way a
+            # report this handler triggers can ever reach the caller's own
+            # pane rather than nobody's. ``coppice_pane`` is still only a
+            # claim, though: caller_peer_pid (above, read straight off
+            # THIS connection, not the request body) is what lets
+            # report_state ask coppice to check that claim against the
+            # caller's real process ancestry rather than believing it.
+            caller_sock = _str_or_none(req.get("coppice_sock"))
+            caller_pane = _str_or_none(req.get("coppice_pane"))
+            caller_herdr_pane = _str_or_none(req.get("herdr_pane"))
+            # The caller's coppice data directory. It can only add a
+            # directory the hard-deny rules guard, never remove one.
+            caller_data_dir = _str_or_none(req.get("coppice_data_dir"))
+            if argv[:2] == ["hook", "report"]:
+                from opendaisugi._state_report import hook_report_argv
+                from opendaisugi.gate import _pane_free_env
+
+                out = hook_report_argv(
+                    argv[2:],
+                    raw,
+                    coppice_sock=caller_sock,
+                    coppice_pane=caller_pane,
+                    herdr_pane=caller_herdr_pane,
+                    peer_pid=caller_peer_pid,
+                    env=_pane_free_env(),
+                )
+            else:
+                from opendaisugi.gate import resident_call
+
+                with resident_call(
+                    sock=caller_sock,
+                    pane=caller_pane,
+                    herdr_pane=caller_herdr_pane,
+                    peer_pid=caller_peer_pid,
+                    data_dir=caller_data_dir,
+                ):
+                    out = run_argv(argv, raw)
             reply = {"v": 1, "stdout": out.stdout, "stderr": out.stderr, "exit_code": out.exit_code}
         self.wfile.write(json.dumps(reply).encode() + b"\n")
 
 
+class GateAlreadyServed(RuntimeError):
+    """A live gate already answers on this socket; a second one must not
+    take the path over."""
+
+
+def probe(sock: Path, timeout: float = 1.0) -> str:
+    """What is at the gate socket path: ``"none"``, ``"live"`` (a server
+    accepts a connection, or its queue is full) or ``"stale"`` (something
+    is there but nobody listens: the socket of a dead server, a regular
+    file, a directory).
+
+    The probe sends an empty request and reads the reply, so a Python
+    server never writes to a client that already left.
+    """
+    if not sock.exists():
+        return "none"
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        try:
+            s.connect(str(sock))
+        except (BlockingIOError, TimeoutError):
+            return "live"
+        except OSError as e:
+            return "live" if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK) else "stale"
+        try:
+            s.shutdown(socket.SHUT_WR)
+            while s.recv(4096):
+                pass
+        except OSError:
+            pass
+        return "live"
+    finally:
+        s.close()
+
+
+def _unlink_if_ours(sock: Path, inode: int) -> None:
+    """Remove the socket this server bound, and never one another server
+    bound at the same path since."""
+    try:
+        if os.lstat(sock).st_ino == inode:
+            sock.unlink()
+    except OSError:
+        pass
+
+
 class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     allow_reuse_address = True
+    # The system's queue, as the ports use: with 5, a burst of clients
+    # found it full and read the gate as unreachable, a deny.
+    request_queue_size = socket.SOMAXCONN
     # A slow verdict (a future plan can block a gate call for up to 90s on an
     # operator) must not freeze every other session's fast calls — see
     # serve()'s docstring for the concurrency tradeoff this makes.
     daemon_threads = True
 
 
-def serve(root: Path, *, ready: threading.Event | None = None, stop: threading.Event | None = None) -> None:
+def serve(
+    root: Path, *, ready: threading.Event | None = None, stop: threading.Event | None = None
+) -> None:
     """Serve gate verdicts on ``<root>/gate.sock`` until ``stop`` is set (or forever).
 
     Thread-per-connection (``ThreadingMixIn``): a later plan blocks a gate
     call for up to 90 s waiting on an operator, and a single-connection
     server would freeze every other session for that whole window. A stale
-    socket file from a dead server is removed.
+    socket file from a dead server is removed; a socket a live server
+    answers on raises ``GateAlreadyServed``. The socket is removed when
+    the server stops, whatever stops it.
 
     ``z3_checks``/``predicate_z3``/``subsumption``/``vacuity`` call bare
     ``z3.Solver()`` — the process-wide default Z3 context — and Z3 releases
@@ -86,19 +214,33 @@ def serve(root: Path, *, ready: threading.Event | None = None, stop: threading.E
     thread, threaded through the verify pipeline — deferred as a known
     residual, not attempted here; see ADR-0017.
     """
+    # This process serves every session, so it is no one pane. Started from
+    # a shell inside a coppice or Herdr pane it inherits that pane's ids,
+    # and every report it sent, a caller's `hook report` included, would
+    # land on that pane as the pane's own. Without them it reports nowhere
+    # from its own environment. _Handler.handle() instead forwards each
+    # caller's own coppice_sock/coppice_pane/herdr_pane request fields, so
+    # a report still lands, but only on the caller's own pane.
+    for key in _PANE_ENV:
+        os.environ.pop(key, None)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(root, 0o700)  # mkdir's mode= is a no-op on a pre-existing dir
     sock = root / SOCK_NAME
-    if sock.exists():
+    state = probe(sock)
+    if state == "live":
+        raise GateAlreadyServed(str(sock))
+    if state == "stale":
         sock.unlink()
     with _Server(str(sock), _Handler) as srv:
-        os.chmod(sock, 0o600)
-        srv.timeout = 0.2
-        if ready is not None:
-            ready.set()
-        while stop is None or not stop.is_set():
-            srv.handle_request()
-    try:
-        sock.unlink()
-    except OSError:
-        pass
+        inode = os.lstat(sock).st_ino
+        try:
+            os.chmod(sock, 0o600)
+            srv.timeout = 0.2
+            if ready is not None:
+                ready.set()
+            while stop is None or not stop.is_set():
+                srv.handle_request()
+        finally:
+            # Ctrl-C and SIGTERM end here too: a socket left behind reads
+            # as a running gate to the next `start`.
+            _unlink_if_ours(sock, inode)

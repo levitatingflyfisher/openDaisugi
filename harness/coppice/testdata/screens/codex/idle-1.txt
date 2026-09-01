@@ -1,0 +1,2 @@
+#rule: osc_title_idle
+#osc_title: ✳ idle

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, PrivateAttr, TypeAdapter
 
 
 class _ExprBase(BaseModel):
@@ -121,6 +121,29 @@ class ForallOutputs(_ExprBase):
     pred: "Expression"
 
 
+class ForallWrites(_ExprBase):
+    """For every write path of one step, ``pred`` holds.
+
+    It sits inside ``forall_steps`` or ``exists_step``. ``pred`` sees one
+    write path at a time as the field ``path``. A step's write paths are
+    the path of a ``file_write`` step, and for a ``shell`` step every
+    literal write redirect the shell decomposition finds and every file a
+    known command writes through its operands (``cp``, ``mv``, ``tee``,
+    ``sed -i``, ``rm`` and others), also inside ``sh -c`` and other
+    command-taking wrappers (``write_paths.py``). The null device and the
+    standard streams are not write paths. Each path is normalized
+    (``posixpath.normpath``). Other step types have no write paths. A shell
+    step whose write paths cannot be read makes the quantifier false.
+    """
+
+    op: Literal["forall_writes"] = "forall_writes"
+    pred: "Expression"
+    # The directory relative write paths resolve against. Only an unfolded
+    # word sets it (dialect.unfold, from the call's cwd); it is never read
+    # from JSON and never dumped.
+    _base: str | None = PrivateAttr(default=None)
+
+
 class DependsOn(_ExprBase):
     op: Literal["depends_on"] = "depends_on"
     step_id_a: str
@@ -163,6 +186,7 @@ Expression = Annotated[
         ForallSteps,
         ExistsStep,
         ForallOutputs,
+        ForallWrites,
         DependsOn,
         Before,
         AliasRef,
@@ -187,6 +211,7 @@ Implies.model_rebuild()
 ForallSteps.model_rebuild()
 ExistsStep.model_rebuild()
 ForallOutputs.model_rebuild()
+ForallWrites.model_rebuild()
 
 
 __all__ = [
@@ -200,6 +225,7 @@ __all__ = [
     "Expression",
     "ForallOutputs",
     "ForallSteps",
+    "ForallWrites",
     "Implies",
     "InSet",
     "IsEmpty",

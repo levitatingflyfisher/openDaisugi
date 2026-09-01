@@ -36,7 +36,7 @@ async def test_medium_stakes_is_default_and_uses_cache(tmp_path, sample_envelope
     fake_client = MagicMock()
     fake_client.chat.completions.create = AsyncMock(return_value=sample_envelope)
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake_client):
+    with patch("opendaisugi.envelope._llm.get_model_client", return_value=fake_client):
         await generate_envelope(task="x", cache=cache)
         await generate_envelope(task="x", cache=cache)
 
@@ -62,7 +62,7 @@ async def test_high_stakes_bypasses_cache_read(tmp_path, sample_envelope):
     fake_client = MagicMock()
     fake_client.chat.completions.create = AsyncMock(return_value=sample_envelope)
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake_client):
+    with patch("opendaisugi.envelope._llm.get_model_client", return_value=fake_client):
         await generate_envelope(task="x", cache=cache, stakes="high")
 
     assert fake_client.chat.completions.create.await_count == 1
@@ -89,7 +89,7 @@ async def test_high_stakes_overwrites_cache_on_write(tmp_path, sample_envelope):
     fake_client = MagicMock()
     fake_client.chat.completions.create = AsyncMock(return_value=fresh)
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake_client):
+    with patch("opendaisugi.envelope._llm.get_model_client", return_value=fake_client):
         await generate_envelope(task="x", cache=cache, stakes="high")
 
     got = cache.get(
@@ -113,7 +113,7 @@ async def test_medium_stakes_explicit_same_as_default(tmp_path, sample_envelope)
     fake_client = MagicMock()
     fake_client.chat.completions.create = AsyncMock(return_value=sample_envelope)
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake_client):
+    with patch("opendaisugi.envelope._llm.get_model_client", return_value=fake_client):
         await generate_envelope(task="x", cache=cache, stakes="medium")
         await generate_envelope(task="x", cache=cache, stakes="medium")
 
@@ -127,7 +127,7 @@ async def test_low_stakes_returns_configured_envelope_without_llm(sample_envelop
     fake_client = MagicMock()
     fake_client.chat.completions.create = AsyncMock(return_value=sample_envelope)
 
-    with patch("opendaisugi.envelope._llm.get_instructor_client", return_value=fake_client):
+    with patch("opendaisugi.envelope._llm.get_model_client", return_value=fake_client):
         env = await generate_envelope(
             task="anything",
             stakes="low",

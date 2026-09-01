@@ -9,6 +9,12 @@ So the pitch is not "dethrone Claude Code." It is: **rent your harness, own your
 minimal, automatable harness whose one non-negotiable edge is openDaisugi's runtime envelope, and
 which is a switchable openDaisugi module, take-it-or-leave-it.*
 
+> **Update 2026-09-28: grove is retired.** coppice (`harness/coppice`) replaced it: coppice
+> took grove's daemon half (a headless server that holds every session, with thin TUI, web and
+> phone clients) and is the floor for every harness, not only sprig. The grove binary
+> (`cmd/grove`) and its fleet package (`sprig/fleet`) are deleted. Design B below is kept as
+> history.
+
 ## The name
 
 The daisugi metaphor is already the product: one trunk (`大杉`), many straight shoots harvested
@@ -62,7 +68,7 @@ guard rail) state✓. The infant pole done right.
 
 ---
 
-## Design B — `grove`: the fleet (the many-agent instrument)
+## Design B — `grove`: the fleet (the many-agent instrument; retired, coppice replaced it)
 
 **The bet:** the pain point the landscape names is *status visibility across many agents*. Solve
 that. A headless daemon runs N `sprig` shoots concurrently — each in its own git worktree/branch

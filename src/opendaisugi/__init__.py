@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os as _os
 import sys as _sys
 import types as _types
 from pathlib import Path
@@ -100,7 +101,7 @@ _LAZY: dict[str, tuple[str, str | None]] = {
     "Journal": ("opendaisugi.journal", "Journal"),
     "JournalStats": ("opendaisugi.journal", "JournalStats"),
     "LengthRange": ("opendaisugi.predicate", "LengthRange"),
-    "LiteLLMTier1Provider": ("opendaisugi.tier1", "LiteLLMTier1Provider"),
+    "HTTPTier1Provider": ("opendaisugi.tier1", "HTTPTier1Provider"),
     "LowStakesNotConfigured": ("opendaisugi.exceptions", "LowStakesNotConfigured"),
     "MCPExecutor": ("opendaisugi.orchestration_executors", "MCPExecutor"),
     "MCPStep": ("opendaisugi.models", "MCPStep"),
@@ -437,7 +438,7 @@ __all__ = [
     "TendReport",
     # v0.4.0: Tier-1 pluggable local-model routing
     "Tier1Provider",
-    "LiteLLMTier1Provider",
+    "HTTPTier1Provider",
     "ClaudeCodeTier1Provider",
     "OllamaTier1Provider",
     # v0.4.0: Token-tier accounting

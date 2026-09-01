@@ -71,8 +71,12 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 # --- presence -------------------------------------------------------------
-def write_presence(root: Path, *, pid: int | None = None, clock: Callable[[], float] = time.time) -> Path:
-    return _write_json(root / PRESENCE, {"pid": pid if pid is not None else os.getpid(), "at": clock()})
+def write_presence(
+    root: Path, *, pid: int | None = None, clock: Callable[[], float] = time.time
+) -> Path:
+    return _write_json(
+        root / PRESENCE, {"pid": pid if pid is not None else os.getpid(), "at": clock()}
+    )
 
 
 def clear_presence(root: Path) -> None:
@@ -150,8 +154,14 @@ def _sweep_expired(root: Path, *, now: float) -> None:
                     pass
 
 
-def post_ask(root: Path, *, tool_use_id: str, question: dict[str, Any], deadline: float,
-             clock: Callable[[], float] = time.time) -> Path:
+def post_ask(
+    root: Path,
+    *,
+    tool_use_id: str,
+    question: dict[str, Any],
+    deadline: float,
+    clock: Callable[[], float] = time.time,
+) -> Path:
     """Post an ask for a present operator, minting a fresh nonce for it.
 
     Sweeps other expired asks first (never this one — it doesn't exist yet).
@@ -167,9 +177,45 @@ def post_ask(root: Path, *, tool_use_id: str, question: dict[str, Any], deadline
     return _write_json(root / ASKS / f"{_safe(tool_use_id)}.json", body)
 
 
-def answer(root: Path, *, tool_use_id: str, decision: str, reason: str = "",
-           updated_input: dict[str, Any] | None = None) -> Path:
+# A name is one word of ASCII letters, digits, dash and underscore, up to
+# 32 characters. A pane is pane:<id>, or pane alone when coppice cannot
+# name it by id, and a plugin is plugin:<id>. The Go twins are
+# web.CheckName and Client.Who in the coppice harness.
+_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}")
+_PANE = re.compile(r"pane(:[A-Za-z0-9._:-]{1,128})?")
+_PLUGIN = re.compile(r"plugin:[A-Za-z0-9._:-]{1,128}")
+_WHO_FROM = {"token": _NAME, "socket": _NAME, "pane": _PANE, "plugin": _PLUGIN}
+
+
+def who_of(by: object, who_from: object) -> tuple[str, str]:
+    """The name an answer gives and how it was known, checked.
+
+    A name that fits its source is kept. A missing name, a name that breaks
+    the rule, or a source nobody defined is ``("local", "none")``, never an
+    empty name.
+    """
+    if not isinstance(who_from, str) or not isinstance(by, str):
+        return "local", "none"
+    rule = _WHO_FROM.get(who_from)
+    if rule is None or not rule.fullmatch(by):
+        return "local", "none"
+    return by, who_from
+
+
+def answer(
+    root: Path,
+    *,
+    tool_use_id: str,
+    decision: str,
+    reason: str = "",
+    updated_input: dict[str, Any] | None = None,
+    by: str = "",
+    who_from: str = "none",
+) -> Path:
     """Record an operator's decision for a pending ask.
+
+    ``by`` names who gave it and ``who_from`` says how that name is known:
+    token, socket, pane or plugin. No name records ``local`` from ``none``.
 
     Automatically echoes the nonce of whatever ask is currently live for this
     ``tool_use_id`` (``None`` when there is none) — the caller never handles
@@ -187,7 +233,28 @@ def answer(root: Path, *, tool_use_id: str, decision: str, reason: str = "",
         "updatedInput": updated_input,
         "nonce": nonce,
     }
+    body["by"], body["whoFrom"] = who_of(by, who_from)
     return _write_json(root / ANSWERS / f"{_safe(tool_use_id)}.json", body)
+
+
+def check_allow(root: Path, *, tool_use_id: str, name: str, confirm: str | None) -> str | None:
+    """The permanent rule for an allow, read from the ask file itself.
+
+    Returns None when the allow may be written, else the sentence that
+    refuses it. An ask is undoable only when its file says ``undoable``.
+    Any other ask needs ``confirm`` equal to ``name``, and an empty name
+    never matches. It is the same rule coppice-server holds, with the
+    session id as the name the operator types.
+    """
+    body = _read_json(root / ASKS / f"{_safe(tool_use_id)}.json")
+    if body is None:
+        return "that ask is gone"
+    if body.get("tier") == "undoable":
+        return None
+    typed = (confirm or "").strip()
+    if not name or typed != name:
+        return f"this cannot be undone. Type the session id to allow: {name}"
+    return None
 
 
 def _consume(root: Path, tool_use_id: str) -> None:
@@ -201,9 +268,15 @@ def _consume(root: Path, tool_use_id: str) -> None:
             pass
 
 
-def wait_answer(root: Path, *, tool_use_id: str, timeout_s: float, poll_s: float = 0.2,
-                sleep: Callable[[float], None] = time.sleep,
-                clock: Callable[[], float] = time.monotonic) -> dict[str, Any] | None:
+def wait_answer(
+    root: Path,
+    *,
+    tool_use_id: str,
+    timeout_s: float,
+    poll_s: float = 0.2,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, Any] | None:
     """Poll for the answer file until ``timeout_s`` has passed.
 
     An answer is honored ONLY when: it is well-formed JSON with
@@ -268,12 +341,27 @@ def pending_asks(root: Path, *, now: float | None = None) -> list[dict[str, Any]
 
 
 # --- proposals -------------------------------------------------------------
-def propose(root: Path, *, kind: str, scope: str, expires_at: float, body: dict[str, Any],
-            clock: Callable[[], float] = time.time) -> Path:
+def propose(
+    root: Path,
+    *,
+    kind: str,
+    scope: str,
+    expires_at: float,
+    body: dict[str, Any],
+    clock: Callable[[], float] = time.time,
+) -> Path:
     """Record a proposed envelope edit. Nothing applies it; `daisugi gate proposals` lists them."""
     from opendaisugi.session_tree import new_id
 
     pid = new_id()
-    return _write_json(root / PROPOSALS / f"{pid}.json",
-                       {"id": pid, "kind": kind, "scope": scope, "expiresAt": expires_at,
-                        "createdAt": clock(), **body})
+    return _write_json(
+        root / PROPOSALS / f"{pid}.json",
+        {
+            "id": pid,
+            "kind": kind,
+            "scope": scope,
+            "expiresAt": expires_at,
+            "createdAt": clock(),
+            **body,
+        },
+    )

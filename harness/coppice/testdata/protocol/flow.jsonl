@@ -1,0 +1,18 @@
+# Per-pane flow control on one connection: attach, pause, resume, detach.
+# A pause on a pane this connection is not attached to is not_attached.
+{"id":"1","cmd":"pane.create","cwd":"/","cmd_argv":["sh","-c","sleep 30"],"label":"flow","kind":"pty","cols":20,"rows":6}
+{"id":"$id","ok":true,"result":{"pane":"$p"}}
+{"id":"2","cmd":"events.pause","pane":"$p"}
+{"id":"$id","ok":false,"error":{"code":"not_attached","message":"*"}}
+{"id":"3","cmd":"pane.attach","pane":"$p","cols":20,"rows":6}
+{"id":"$id","ok":true,"result":{"pane":"*","attached":true}}
+{"id":"4","cmd":"events.pause","pane":"$p"}
+{"id":"$id","ok":true,"result":{"pane":"*","paused":true}}
+{"id":"5","cmd":"events.resume","pane":"$p"}
+{"id":"$id","ok":true,"result":{"pane":"*","paused":false}}
+{"id":"6","cmd":"pane.detach","pane":"$p"}
+{"id":"$id","ok":true,"result":{"pane":"*","attached":false}}
+{"id":"7","cmd":"events.resume","pane":"$p"}
+{"id":"$id","ok":false,"error":{"code":"not_attached","message":"*"}}
+{"id":"8","cmd":"events.pause"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}

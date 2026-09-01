@@ -18,7 +18,7 @@ import (
 func main() {
 	args := os.Args[1:]
 	gateOn := false
-	gateCmd := "python -m opendaisugi.gate --mode enforce"
+	gateCmd := sprig.DefaultGateCmd()
 	jsonOut := false
 	var file string
 	for i := 0; i < len(args); i++ {

@@ -1,0 +1,10 @@
+{
+  "id": "merge-on-green",
+  "kind": "policy",
+  "title": "Merge on green",
+  "about": "When a task's pane is done and its pull request checks pass, it asks that pane to merge.",
+  "run": "merge-on-green.py",
+  "listens": ["state"],
+  "needs": ["task.list", "agent.prompt", "floor.note"],
+  "config": {"poll_seconds": 60, "max_polls": 30}
+}

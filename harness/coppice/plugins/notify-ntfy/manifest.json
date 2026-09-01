@@ -1,0 +1,10 @@
+{
+  "id": "notify-ntfy",
+  "kind": "policy",
+  "title": "Notify through ntfy",
+  "about": "When a pane becomes blocked, it posts the label and the ask to the ntfy topic you set.",
+  "run": "notify-ntfy.py",
+  "listens": ["state"],
+  "needs": ["pane.list"],
+  "config": {"url": "", "topic": "", "token_env": "", "click_base": ""}
+}

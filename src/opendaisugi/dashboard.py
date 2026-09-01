@@ -77,22 +77,18 @@ def read_raw(data_dir: Path) -> RawMetrics:
     data_dir = Path(data_dir)
     raw = RawMetrics()
 
-    if (data_dir / "journal" / "index.db").exists():
-        try:
-            from opendaisugi.journal import Journal
+    try:
+        from opendaisugi.journal import read_stats
 
-            j = Journal(data_dir=data_dir)
-            try:
-                st = j.stats()
-            finally:
-                j.close()
+        st = read_stats(data_dir)
+        if st is not None:
             raw.journal_total, raw.journal_passed, raw.journal_failed = (
                 st.total,
                 st.passed,
                 st.failed,
             )
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     pdb = data_dir / "pathways.db"
     if pdb.exists():

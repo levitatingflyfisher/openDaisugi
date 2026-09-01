@@ -10,6 +10,7 @@ frontier — and flags where the advisor-tool pairing is the better spend.
 import time
 
 import numpy as np
+import pytest
 
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
 from opendaisugi.pathway import CompiledPathway
@@ -59,6 +60,7 @@ def test_difficulty_high_for_complex_task():
     )
 
 
+@pytest.mark.usefixtures("minilm_matcher")
 def test_pathway_hit_routes_to_tier0_reuse(tmp_path):
     adv = RouteAdvisor(pathway_store=_store_with_hit(tmp_path))
     advice = adv.advise("known task")

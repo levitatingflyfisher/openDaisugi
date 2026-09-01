@@ -1,0 +1,22 @@
+{
+  "id": "env_bench_battery",
+  "generated_by": "hand-written for bench/corpus",
+  "task": "the bench battery envelope",
+  "stakes": "medium",
+  "permissions": {
+    "file_read": ["**"],
+    "file_write": ["build/**"],
+    "network": false,
+    "network_hosts": [],
+    "shell": true,
+    "shell_allowlist": ["echo", "ls"],
+    "shell_allow_decomposition": false,
+    "mcp_allowlist": ["daisugi/*"],
+    "custom_step_allowlist": [],
+    "max_execution_time_s": 30,
+    "max_output_size_mb": 10
+  },
+  "invariants": [],
+  "postconditions": [],
+  "tightening_only": true
+}

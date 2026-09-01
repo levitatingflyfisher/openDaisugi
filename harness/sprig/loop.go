@@ -15,10 +15,11 @@ const clarifyNudge = "Your last reply was not a valid tool call and not a final 
 // (Text, no Calls) or requests tools (Calls). A tool turn carries a result.
 // Model and Usage are populated when the backend actually knows them: the API
 // backend (path E, model_api.go's parseAPIResponse) fills both from the
-// Messages API's own model and usage fields; the text-hardened `claude -p`
-// backend (model_claude.go) sets Model from its own config but leaves Usage
-// at its zero value — that IS honest there, since `claude -p`'s plain-text
-// output carries no token counts to report, not a stand-in for real data.
+// Messages API's own model and usage fields; the claude-code backend
+// (model_claude.go) sets Model from its own config and Usage from the
+// `claude -p --output-format json` envelope (see parseClaudeCLIEnvelope).
+// The plain-text default carries no token counts, which is why sprig asks
+// for the json format instead.
 type Message struct {
 	Role  string // "user" | "assistant" | "tool"
 	Text  string

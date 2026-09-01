@@ -10,37 +10,45 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.12"
-          enable-cache: true
+          enable-cache: "true"
 
-      # Use a uv-managed venv (not --system: the runner's /usr python is
-      # externally managed / PEP 668). Dev extras pull [search]
-      # (sentence-transformers), [mcp], [sign] — the suite needs them (see the
-      # pyproject dev note). [lora]/[robotics] stay opt-in; those tests are
-      # importorskip-gated.
-      # setup-uv (with python-version) already provisions a .venv; install into it.
+      # uv.lock pins every package and its hashes. --locked fails the job
+      # when the lock no longer matches pyproject.toml, and a package whose
+      # hash differs fails the install, so a run never resolves fresh.
+      # [dev] holds every light extra the suite needs. It leaves out
+      # [search] (torch and the CUDA wheels) and [lora]/[robotics]; their
+      # tests are importorskip-gated.
       - name: Install
-        run: uv pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Lint (ruff)
-        run: uv run ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: Format check (ruff)
-        run: uv run ruff format --check .
+        run: uv run --no-sync ruff format --check .
 
       - name: Test (pytest)
         # Smoke/calibration tests need a live LLM / `claude` binary and are gated by
         # env vars (DAISUGI_SMOKE / ANTHROPIC_API_KEY); they stay skipped in CI.
-        run: uv run pytest -q
+        # HF_HUB_OFFLINE: no test downloads a model; one that needs a model
+        # the runner does not have skips.
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: uv run --no-sync pytest -q
 
       - name: Adversarial merge gate (roadmap Stage 3)
         # The deterministic gate corpus is exactly reproducible, so any attack
@@ -48,5 +56,5 @@ jobs:
         # its role is legible in CI output rather than buried in the full suite.
         # Prints the published attack-denial / false-positive rates too.
         run: |
-          uv run pytest -q tests/test_adversarial.py
-          uv run daisugi gate audit
+          uv run --no-sync pytest -q tests/test_adversarial.py
+          uv run --no-sync daisugi gate audit

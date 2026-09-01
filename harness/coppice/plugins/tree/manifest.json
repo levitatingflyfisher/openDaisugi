@@ -1,0 +1,7 @@
+{
+  "id": "tree",
+  "kind": "view",
+  "title": "Tree",
+  "about": "The task tree, the same lines the terminal floor draws.",
+  "page": "index.html"
+}

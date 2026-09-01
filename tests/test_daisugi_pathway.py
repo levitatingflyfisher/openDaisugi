@@ -120,7 +120,7 @@ async def test_adapt_plan_returns_adapted_or_falls_back(tmp_path, monkeypatch):
 
     from opendaisugi import llm
 
-    monkeypatch.setattr(llm, "get_instructor_client", lambda _m: _FakeClient())
+    monkeypatch.setattr(llm, "get_model_client", lambda _m: _FakeClient())
 
     result = await d.adapt_plan(match, "find stale /var/tmp files")
     # Either the adapted plan or the template (on verify failure).

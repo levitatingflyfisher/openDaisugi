@@ -1,0 +1,38 @@
+{
+  "verified": false,
+  "source": "https://herdr.dev/docs/cli-reference/ fetched 2026-09-08",
+  "note": "no herdr on the box that recorded this. Re-run with herdr installed and set verified true.",
+  "spawn_chain": ["tab create", "pane run", "pane rename"],
+  "spawn_chain_alternatives": [["pane split", "pane run", "pane rename"]],
+  "json_commands": [
+    "session list", "session stop", "session delete", "machine list",
+    "server agent-manifests", "plugin list", "agent explain"
+  ],
+  "list_commands_without_json": ["pane list", "agent list"],
+  "states": ["idle", "working", "blocked", "unknown"],
+  "read_sources": ["visible", "recent", "recent-unwrapped", "detection"],
+  "pane_env_vars": ["HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV"],
+  "report_agent": "pane report-agent <pane_id> --source ID --agent LABEL --state STATE",
+  "explain": "agent explain <target> --json",
+  "authority_field": ["authority", "source"],
+  "authority_value": "daisugi",
+  "argv": {
+    "read": ["pane", "read"],
+    "send_text": ["pane", "send-text"],
+    "send_keys": ["pane", "send-keys"],
+    "close": ["pane", "close"],
+    "list_panes": ["pane", "list"],
+    "list_agents": ["agent", "list"],
+    "prompt": ["agent", "prompt"],
+    "explain": ["agent", "explain"],
+    "report_agent": ["pane", "report-agent"]
+  },
+  "keys": {
+    "enter": "enter", "esc": "esc", "escape": "esc", "tab": "tab",
+    "backspace": "backspace", "space": "space",
+    "up": "up", "down": "down", "left": "left", "right": "right",
+    "ctrl+a": "ctrl+a", "ctrl+b": "ctrl+b", "ctrl+c": "ctrl+c", "ctrl+d": "ctrl+d",
+    "ctrl+r": "ctrl+r",
+    "f1": "f1", "f2": "f2", "f3": "f3", "f4": "f4"
+  }
+}

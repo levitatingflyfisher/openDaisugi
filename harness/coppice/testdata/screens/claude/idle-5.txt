@@ -1,0 +1,8 @@
+#rule: live_prompt_box
+⏺ The first run shows Security notes: and ends with
+  Security notes:
+  Press Enter to continue…
+────────────────────
+❯ 
+────────────────────
+  ? for shortcuts

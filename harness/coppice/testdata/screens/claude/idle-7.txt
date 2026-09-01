@@ -1,0 +1,9 @@
+#rule: live_prompt_box
+⏺ I detected a custom API key in your env file.
+  Detected a custom API key in your environment
+  Do you want to use this API key?
+  ❯ 1. Yes
+────────────────────
+❯ 
+────────────────────
+  ? for shortcuts

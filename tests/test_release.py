@@ -119,3 +119,31 @@ def test_verify_release_rejects_unknown_signer(tmp_path):
     v = verify_release(signed, artifact_dir=tmp_path, registry=reg, signer_names=["release-bot"])
     assert v.ok is False
     assert v.signature_ok is False
+
+
+def test_build_manifest_refuses_two_artifacts_with_one_name(tmp_path):
+    import pytest
+
+    (tmp_path / "d").mkdir()
+    _write(tmp_path / "a.whl", b"one")
+    _write(tmp_path / "d" / "a.whl", b"two")
+    with pytest.raises(ValueError, match="a.whl"):
+        build_manifest([tmp_path / "a.whl", tmp_path / "d" / "a.whl"], version="1", created_at="t")
+
+
+def test_release_sign_refuses_two_artifacts_with_one_name(tmp_path):
+    from typer.testing import CliRunner
+
+    from opendaisugi.cli import app
+
+    priv, _ = generate_keypair()
+    key = _write(tmp_path / "k.key", (priv + "\n").encode())
+    (tmp_path / "d").mkdir()
+    a = _write(tmp_path / "a.whl", b"one")
+    b = _write(tmp_path / "d" / "a.whl", b"two")
+    out = tmp_path / "m.json"
+    args = ["release", "sign", str(a), str(b), "--version", "1", "--key", str(key)]
+    res = CliRunner().invoke(app, args + ["--signer", "s", "-o", str(out)])
+    assert res.exit_code == 2
+    assert "a.whl" in res.output
+    assert not out.exists()

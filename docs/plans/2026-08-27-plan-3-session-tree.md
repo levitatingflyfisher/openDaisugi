@@ -179,7 +179,12 @@ def test_open_missing_raises_and_open_or_create_creates(tmp_path: Path):
         SessionTree.open(tmp_path / "s", "nope")
     t = SessionTree.open_or_create(tmp_path / "s", session_id="s2", harness="x", cwd="/")
     assert t.meta()["id"] == "s2"
-    assert SessionTree.open_or_create(tmp_path / "s", session_id="s2", harness="y", cwd="/").meta()["harness"] == "x"
+    assert (
+        SessionTree.open_or_create(tmp_path / "s", session_id="s2", harness="y", cwd="/").meta()[
+            "harness"
+        ]
+        == "x"
+    )
 
 
 def test_torn_last_line_is_ignored(tmp_path: Path):
@@ -193,10 +198,26 @@ def test_torn_last_line_is_ignored(tmp_path: Path):
 
 def test_entry_types_are_the_spec_set():
     assert ENTRY_TYPES == frozenset(
-        {"session", "prompt", "assistant", "tool_call", "verdict", "tool_result",
-         "checkpoint", "compaction", "branch_summary", "label", "note", "head"}
+        {
+            "session",
+            "prompt",
+            "assistant",
+            "tool_call",
+            "verdict",
+            "tool_result",
+            "checkpoint",
+            "compaction",
+            "branch_summary",
+            "label",
+            "note",
+            "head",
+        }
     )
-    assert Entry("prompt", "a1b2c3d4", None, 1.0, {"text": "x"}).to_json().startswith('{"type": "prompt"')
+    assert (
+        Entry("prompt", "a1b2c3d4", None, 1.0, {"text": "x"})
+        .to_json()
+        .startswith('{"type": "prompt"')
+    )
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -230,8 +251,20 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 ENTRY_TYPES = frozenset(
-    {"session", "prompt", "assistant", "tool_call", "verdict", "tool_result", "checkpoint",
-     "compaction", "branch_summary", "label", "note", "head"}
+    {
+        "session",
+        "prompt",
+        "assistant",
+        "tool_call",
+        "verdict",
+        "tool_result",
+        "checkpoint",
+        "compaction",
+        "branch_summary",
+        "label",
+        "note",
+        "head",
+    }
 )
 _RESERVED = frozenset({"session", "head"})
 _NO_MOVE = frozenset({"label", "head", "session"})
@@ -269,8 +302,11 @@ class Entry:
     def from_row(cls, row: dict[str, Any]) -> "Entry":
         data = {k: v for k, v in row.items() if k not in _META_KEYS}
         return cls(
-            type=str(row["type"]), id=row.get("id"), parent_id=row.get("parentId"),
-            ts=float(row.get("ts") or 0.0), data=data,
+            type=str(row["type"]),
+            id=row.get("id"),
+            parent_id=row.get("parentId"),
+            ts=float(row.get("ts") or 0.0),
+            data=data,
         )
 
 
@@ -285,10 +321,18 @@ class SessionTree:
     # --- construction -------------------------------------------------------
     @classmethod
     def create(
-        cls, sessions_dir: Path, *, session_id: str, harness: str, cwd: str,
-        harness_session_id: str | None = None, transcript_path: str | None = None,
-        parent_session: str | None = None, parent_entry: str | None = None,
-        cache_key: str | None = None, clock: Callable[[], float] = time.time,
+        cls,
+        sessions_dir: Path,
+        *,
+        session_id: str,
+        harness: str,
+        cwd: str,
+        harness_session_id: str | None = None,
+        transcript_path: str | None = None,
+        parent_session: str | None = None,
+        parent_entry: str | None = None,
+        cache_key: str | None = None,
+        clock: Callable[[], float] = time.time,
     ) -> "SessionTree":
         sessions_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
@@ -299,11 +343,22 @@ class SessionTree:
         path = sessions_dir / f"{sid}.jsonl"
         if path.exists():
             raise FileExistsError(path)
-        header = Entry("session", sid, None, clock(), {
-            "v": SCHEMA_VERSION, "harness": harness, "cwd": cwd,
-            "harnessSessionId": harness_session_id, "transcriptPath": transcript_path,
-            "parentSession": parent_session, "parentEntry": parent_entry, "cacheKey": cache_key,
-        })
+        header = Entry(
+            "session",
+            sid,
+            None,
+            clock(),
+            {
+                "v": SCHEMA_VERSION,
+                "harness": harness,
+                "cwd": cwd,
+                "harnessSessionId": harness_session_id,
+                "transcriptPath": transcript_path,
+                "parentSession": parent_session,
+                "parentEntry": parent_entry,
+                "cacheKey": cache_key,
+            },
+        )
         tree = cls(path)
         tree._write(header)
         try:
@@ -365,7 +420,11 @@ class SessionTree:
         return head
 
     def append(
-        self, type: str, data: dict[str, Any], *, parent_id: str | None = "head",
+        self,
+        type: str,
+        data: dict[str, Any],
+        *,
+        parent_id: str | None = "head",
         clock: Callable[[], float] = time.time,
     ) -> Entry:
         if type not in ENTRY_TYPES or type in _RESERVED:
@@ -401,8 +460,7 @@ class SessionTree:
 
     def children(self, entry_id: str | None) -> list[Entry]:
         return [
-            e for e in self.entries()
-            if e.id and e.type not in _NO_MOVE and e.parent_id == entry_id
+            e for e in self.entries() if e.id and e.type not in _NO_MOVE and e.parent_id == entry_id
         ]
 ```
 
@@ -436,7 +494,9 @@ from opendaisugi.session_tree import SessionIndex, SessionSummary
 
 
 def test_fork_copies_the_path_and_names_its_parent(tmp_path: Path):
-    t = SessionTree.create(tmp_path / "s", session_id="s1", harness="sprig", cwd="/w", cache_key="k")
+    t = SessionTree.create(
+        tmp_path / "s", session_id="s1", harness="sprig", cwd="/w", cache_key="k"
+    )
     p = t.append("prompt", {"text": "one"})
     a = t.append("assistant", {"text": "a"})
     t.append("tool_call", {"name": "Bash"})  # not on the forked path
@@ -454,11 +514,18 @@ def test_fork_copies_the_path_and_names_its_parent(tmp_path: Path):
 
 def test_index_lists_sessions_newest_first(tmp_path: Path):
     d = tmp_path / "s"
-    old = SessionTree.create(d, session_id="old", harness="claude-code", cwd="/a", clock=lambda: 10.0)
+    old = SessionTree.create(
+        d, session_id="old", harness="claude-code", cwd="/a", clock=lambda: 10.0
+    )
     old.append("prompt", {"text": "x"}, clock=lambda: 11.0)
     new = SessionTree.create(d, session_id="new", harness="sprig", cwd="/b", clock=lambda: 20.0)
     c = new.append("tool_call", {"name": "Bash", "detail": "ls"}, clock=lambda: 21.0)
-    new.append("verdict", {"toolUseId": "t1", "decision": "deny", "clause": "shell: no"}, parent_id=c.id, clock=lambda: 22.0)
+    new.append(
+        "verdict",
+        {"toolUseId": "t1", "decision": "deny", "clause": "shell: no"},
+        parent_id=c.id,
+        clock=lambda: 22.0,
+    )
     rows = SessionIndex(d).list()
     assert [r.session_id for r in rows] == ["new", "old"]
     assert isinstance(rows[0], SessionSummary)
@@ -484,30 +551,36 @@ Expected: FAIL with `ImportError: SessionIndex`.
 Add to `SessionTree`:
 
 ```python
-    def fork(
-        self, at_entry_id: str, *, new_session_id: str | None = None,
-        clock: Callable[[], float] = time.time,
-    ) -> "SessionTree":
-        """Copy the path root→``at_entry_id`` into a new session that names this one.
+def fork(
+    self,
+    at_entry_id: str,
+    *,
+    new_session_id: str | None = None,
+    clock: Callable[[], float] = time.time,
+) -> "SessionTree":
+    """Copy the path root→``at_entry_id`` into a new session that names this one.
 
-        Ids are kept, so the copied path is byte-for-byte the same tree; the
-        child's head is ``at_entry_id``; ``cacheKey`` is inherited (forks share
-        the cached prefix).
-        """
-        path = self.path_to(at_entry_id)
-        meta = self.meta()
-        child = SessionTree.create(
-            self.path.parent,
-            session_id=new_session_id or f"{self.session_id}-{new_id()}",
-            harness=str(meta.get("harness", "")), cwd=str(meta.get("cwd", "")),
-            harness_session_id=meta.get("harnessSessionId"),
-            transcript_path=meta.get("transcriptPath"),
-            parent_session=self.session_id, parent_entry=at_entry_id,
-            cache_key=meta.get("cacheKey"), clock=clock,
-        )
-        for e in path:
-            child._write(e)
-        return child
+    Ids are kept, so the copied path is byte-for-byte the same tree; the
+    child's head is ``at_entry_id``; ``cacheKey`` is inherited (forks share
+    the cached prefix).
+    """
+    path = self.path_to(at_entry_id)
+    meta = self.meta()
+    child = SessionTree.create(
+        self.path.parent,
+        session_id=new_session_id or f"{self.session_id}-{new_id()}",
+        harness=str(meta.get("harness", "")),
+        cwd=str(meta.get("cwd", "")),
+        harness_session_id=meta.get("harnessSessionId"),
+        transcript_path=meta.get("transcriptPath"),
+        parent_session=self.session_id,
+        parent_entry=at_entry_id,
+        cache_key=meta.get("cacheKey"),
+        clock=clock,
+    )
+    for e in path:
+        child._write(e)
+    return child
 ```
 
 Add at module level:
@@ -550,14 +623,22 @@ class SessionIndex:
             meta = {"id": entries[0].id, **entries[0].data}
             last_call = next((e for e in reversed(entries) if e.type == "tool_call"), None)
             last_verdict = next((e for e in reversed(entries) if e.type == "verdict"), None)
-            out.append(SessionSummary(
-                session_id=str(meta["id"]), harness=str(meta.get("harness", "")),
-                cwd=str(meta.get("cwd", "")), harness_session_id=meta.get("harnessSessionId"),
-                transcript_path=meta.get("transcriptPath"), parent_session=meta.get("parentSession"),
-                last_ts=max(e.ts for e in entries), entry_count=len(entries),
-                last_tool_call=(dict(last_call.data, id=last_call.id) if last_call else None),
-                last_verdict=(dict(last_verdict.data, id=last_verdict.id) if last_verdict else None),
-            ))
+            out.append(
+                SessionSummary(
+                    session_id=str(meta["id"]),
+                    harness=str(meta.get("harness", "")),
+                    cwd=str(meta.get("cwd", "")),
+                    harness_session_id=meta.get("harnessSessionId"),
+                    transcript_path=meta.get("transcriptPath"),
+                    parent_session=meta.get("parentSession"),
+                    last_ts=max(e.ts for e in entries),
+                    entry_count=len(entries),
+                    last_tool_call=(dict(last_call.data, id=last_call.id) if last_call else None),
+                    last_verdict=(
+                        dict(last_verdict.data, id=last_verdict.id) if last_verdict else None
+                    ),
+                )
+            )
         out.sort(key=lambda s: s.last_ts, reverse=True)
         return out
 ```
@@ -593,19 +674,35 @@ Append to `tests/test_hook.py`:
 ```python
 def test_record_keeps_the_join_keys(tmp_path: Path):
     payload = {
-        "session_id": "sess1", "tool_name": "Bash", "tool_input": {"command": "ls"},
-        "tool_use_id": "toolu_01", "agent_id": "ag1", "agent_type": "Explore",
-        "cwd": "/w", "transcript_path": "/t/sess1.jsonl", "hook_event_name": "PreToolUse",
+        "session_id": "sess1",
+        "tool_name": "Bash",
+        "tool_input": {"command": "ls"},
+        "tool_use_id": "toolu_01",
+        "agent_id": "ag1",
+        "agent_type": "Explore",
+        "cwd": "/w",
+        "transcript_path": "/t/sess1.jsonl",
+        "hook_event_name": "PreToolUse",
         "permission_mode": "default",
     }
     p = record_call(payload, root=tmp_path)
     rec = json.loads(p.read_text().splitlines()[0])
-    for k in ("tool_use_id", "agent_id", "agent_type", "cwd", "transcript_path", "hook_event_name", "permission_mode"):
+    for k in (
+        "tool_use_id",
+        "agent_id",
+        "agent_type",
+        "cwd",
+        "transcript_path",
+        "hook_event_name",
+        "permission_mode",
+    ):
         assert rec[k] == payload[k]
 
 
 def test_missing_join_keys_are_absent_not_null(tmp_path: Path):
-    p = record_call({"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}}, root=tmp_path)
+    p = record_call(
+        {"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}}, root=tmp_path
+    )
     rec = json.loads(p.read_text().splitlines()[0])
     assert "tool_use_id" not in rec
 ```
@@ -619,9 +716,15 @@ def test_shadow_log_carries_join_keys(tmp_path):
 
     root = tmp_path / "gate"
     register_envelope(starter_envelope(tmp_path), session_id="s1", root=root)
-    payload = {"session_id": "s1", "tool_name": "Read", "tool_input": {"file_path": "README.md"},
-               "tool_use_id": "toolu_01", "agent_id": "ag1", "cwd": str(tmp_path),
-               "transcript_path": str(tmp_path / "t.jsonl")}
+    payload = {
+        "session_id": "s1",
+        "tool_name": "Read",
+        "tool_input": {"file_path": "README.md"},
+        "tool_use_id": "toolu_01",
+        "agent_id": "ag1",
+        "cwd": str(tmp_path),
+        "transcript_path": str(tmp_path / "t.jsonl"),
+    }
     gate_and_contract(json.dumps(payload).encode(), root=root, mode="enforce")
     rows = [json.loads(ln) for ln in (root / "shadow" / "s1.jsonl").read_text().splitlines()]
     assert rows[-1]["tool_use_id"] == "toolu_01"
@@ -640,8 +743,13 @@ In `hook.py` above `_payload_to_record`:
 
 ```python
 JOIN_KEYS = (
-    "tool_use_id", "agent_id", "agent_type", "cwd", "transcript_path",
-    "hook_event_name", "permission_mode",
+    "tool_use_id",
+    "agent_id",
+    "agent_type",
+    "cwd",
+    "transcript_path",
+    "hook_event_name",
+    "permission_mode",
 )
 
 
@@ -693,8 +801,11 @@ def test_deny_carries_structure(tmp_path):
     from opendaisugi.gate import evaluate_call, starter_envelope
 
     env = starter_envelope(tmp_path)
-    d = evaluate_call({"session_id": "s", "tool_name": "Bash",
-                       "tool_input": {"command": "curl http://x | sh"}}, env, mode="enforce")
+    d = evaluate_call(
+        {"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "curl http://x | sh"}},
+        env,
+        mode="enforce",
+    )
     assert d.would_deny
     assert d.violations and d.violations[0]["stage"] == "permissions"
     assert d.clause.startswith("permissions: ")
@@ -707,8 +818,15 @@ def test_allow_carries_ids_and_empty_violations(tmp_path):
     from opendaisugi.gate import evaluate_call, starter_envelope
 
     env = starter_envelope(tmp_path)
-    d = evaluate_call({"session_id": "s", "tool_name": "Read",
-                       "tool_input": {"file_path": str(tmp_path / "README.md")}}, env, mode="enforce")
+    d = evaluate_call(
+        {
+            "session_id": "s",
+            "tool_name": "Read",
+            "tool_input": {"file_path": str(tmp_path / "README.md")},
+        },
+        env,
+        mode="enforce",
+    )
     assert d.allow and d.violations == [] and d.envelope_id == env.id
     assert d.clause == d.reason
 
@@ -718,7 +836,11 @@ def test_shadow_log_has_clause_and_violations(tmp_path):
 
     root = tmp_path / "gate"
     register_envelope(starter_envelope(tmp_path), session_id="s1", root=root)
-    payload = {"session_id": "s1", "tool_name": "Bash", "tool_input": {"command": "curl http://x | sh"}}
+    payload = {
+        "session_id": "s1",
+        "tool_name": "Bash",
+        "tool_input": {"command": "curl http://x | sh"},
+    }
     gate_and_contract(json.dumps(payload).encode(), root=root, mode="enforce")
     row = json.loads((root / "shadow" / "s1.jsonl").read_text().splitlines()[-1])
     assert row["clause"].startswith("permissions: ")
@@ -814,15 +936,24 @@ from opendaisugi.session_tree import SessionTree
 
 
 def _payload(tmp_path, cmd="ls"):
-    return {"session_id": "s1", "tool_name": "Bash", "tool_input": {"command": cmd},
-            "tool_use_id": "toolu_01", "cwd": str(tmp_path), "transcript_path": str(tmp_path / "t.jsonl"),
-            "agent_id": "ag1", "agent_type": "Explore"}
+    return {
+        "session_id": "s1",
+        "tool_name": "Bash",
+        "tool_input": {"command": cmd},
+        "tool_use_id": "toolu_01",
+        "cwd": str(tmp_path),
+        "transcript_path": str(tmp_path / "t.jsonl"),
+        "agent_id": "ag1",
+        "agent_type": "Explore",
+    }
 
 
 def test_gate_writes_header_call_and_verdict(tmp_path):
     root = tmp_path / "gate"
     register_envelope(starter_envelope(tmp_path), session_id="s1", root=root)
-    gate_and_contract(json.dumps(_payload(tmp_path, "curl http://x | sh")).encode(), root=root, mode="enforce")
+    gate_and_contract(
+        json.dumps(_payload(tmp_path, "curl http://x | sh")).encode(), root=root, mode="enforce"
+    )
     tree = SessionTree.open(tmp_path / "sessions", "s1")
     meta = tree.meta()
     assert meta["harness"] == "claude-code" and meta["harnessSessionId"] == "s1"
@@ -876,12 +1007,21 @@ Expected: FAIL (`FileNotFoundError: sessions/s1.jsonl`).
 In `gate.py`:
 
 ```python
-_HARNESS_BY_FMT = {"claude": "claude-code", "codex": "codex", "hermes": "hermes", "openclaw": "openclaw"}
+_HARNESS_BY_FMT = {
+    "claude": "claude-code",
+    "codex": "codex",
+    "hermes": "hermes",
+    "openclaw": "openclaw",
+}
 
 
 def _log_tree(
-    root: Path, payload: dict[str, Any] | None, decision: GateDecision, *,
-    session_id: str | None, fmt: str,
+    root: Path,
+    payload: dict[str, Any] | None,
+    decision: GateDecision,
+    *,
+    session_id: str | None,
+    fmt: str,
 ) -> None:
     """Best-effort mirror of the call and its verdict into the session tree.
 
@@ -895,24 +1035,42 @@ def _log_tree(
 
         sid = _safe_session_id(session_id or payload.get("session_id"))
         tree = SessionTree.open_or_create(
-            root.parent / "sessions", session_id=sid, harness=_HARNESS_BY_FMT.get(fmt, fmt),
-            cwd=str(payload.get("cwd") or ""), harness_session_id=payload.get("session_id"),
+            root.parent / "sessions",
+            session_id=sid,
+            harness=_HARNESS_BY_FMT.get(fmt, fmt),
+            cwd=str(payload.get("cwd") or ""),
+            harness_session_id=payload.get("session_id"),
             transcript_path=payload.get("transcript_path"),
         )
         tool_use_id = payload.get("tool_use_id")
-        call = tree.append("tool_call", {
-            "toolUseId": tool_use_id, "name": decision.tool_name or payload.get("tool_name"),
-            "stepType": decision.step_type, "detail": decision.detail,
-            "agentId": payload.get("agent_id"), "agentType": payload.get("agent_type"),
-        })
-        tree.append("verdict", {
-            "toolUseId": tool_use_id, "decision": "allow" if decision.allow else "deny",
-            "wouldDeny": decision.would_deny, "mode": decision.mode, "reason": decision.reason,
-            "clause": decision.clause, "counterexample": decision.counterexample,
-            "envelopeId": decision.envelope_id, "planId": decision.plan_id,
-            "latencyMs": round(decision.elapsed_ms, 3),
-            "answeredBy": "operator" if decision.ask else None,
-        }, parent_id=call.id)
+        call = tree.append(
+            "tool_call",
+            {
+                "toolUseId": tool_use_id,
+                "name": decision.tool_name or payload.get("tool_name"),
+                "stepType": decision.step_type,
+                "detail": decision.detail,
+                "agentId": payload.get("agent_id"),
+                "agentType": payload.get("agent_type"),
+            },
+        )
+        tree.append(
+            "verdict",
+            {
+                "toolUseId": tool_use_id,
+                "decision": "allow" if decision.allow else "deny",
+                "wouldDeny": decision.would_deny,
+                "mode": decision.mode,
+                "reason": decision.reason,
+                "clause": decision.clause,
+                "counterexample": decision.counterexample,
+                "envelopeId": decision.envelope_id,
+                "planId": decision.plan_id,
+                "latencyMs": round(decision.elapsed_ms, 3),
+                "answeredBy": "operator" if decision.ask else None,
+            },
+            parent_id=call.id,
+        )
     except Exception:  # noqa: BLE001 — logging is best-effort by contract
         pass
 ```
@@ -955,25 +1113,77 @@ import json
 from pathlib import Path
 
 from opendaisugi.claude_transcript import (
-    last_model, last_prompt_uuid, leaf_uuids, read_turns, usage_totals,
+    last_model,
+    last_prompt_uuid,
+    leaf_uuids,
+    read_turns,
+    usage_totals,
 )
 
 ROWS = [
     {"type": "summary", "summary": "x"},
-    {"type": "user", "uuid": "u1", "parentUuid": None, "sessionId": "s", "timestamp": "2026-08-27T10:00:00Z",
-     "message": {"role": "user", "content": "list files"}},
-    {"type": "assistant", "uuid": "a1", "parentUuid": "u1", "timestamp": "2026-08-27T10:00:01Z",
-     "message": {"role": "assistant", "model": "claude-sonnet-4", "content": [
-         {"type": "text", "text": "Sure."},
-         {"type": "tool_use", "id": "toolu_01", "name": "Bash", "input": {"command": "ls"}}],
-      "usage": {"input_tokens": 12, "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 50, "output_tokens": 30}}},
-    {"type": "user", "uuid": "u2", "parentUuid": "a1", "timestamp": "2026-08-27T10:00:02Z",
-     "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_01", "content": "a b"}]}},
-    {"type": "assistant", "uuid": "a2", "parentUuid": "u2", "timestamp": "2026-08-27T10:00:03Z",
-     "message": {"role": "assistant", "model": "claude-sonnet-4", "content": [{"type": "text", "text": "Done."}],
-      "usage": {"input_tokens": 5, "cache_read_input_tokens": 1100, "cache_creation_input_tokens": 0, "output_tokens": 4}}},
-    {"type": "user", "uuid": "u3", "parentUuid": "a1", "timestamp": "2026-08-27T10:05:00Z",
-     "message": {"role": "user", "content": "try again"}},  # a branch from a1
+    {
+        "type": "user",
+        "uuid": "u1",
+        "parentUuid": None,
+        "sessionId": "s",
+        "timestamp": "2026-08-27T10:00:00Z",
+        "message": {"role": "user", "content": "list files"},
+    },
+    {
+        "type": "assistant",
+        "uuid": "a1",
+        "parentUuid": "u1",
+        "timestamp": "2026-08-27T10:00:01Z",
+        "message": {
+            "role": "assistant",
+            "model": "claude-sonnet-4",
+            "content": [
+                {"type": "text", "text": "Sure."},
+                {"type": "tool_use", "id": "toolu_01", "name": "Bash", "input": {"command": "ls"}},
+            ],
+            "usage": {
+                "input_tokens": 12,
+                "cache_read_input_tokens": 1000,
+                "cache_creation_input_tokens": 50,
+                "output_tokens": 30,
+            },
+        },
+    },
+    {
+        "type": "user",
+        "uuid": "u2",
+        "parentUuid": "a1",
+        "timestamp": "2026-08-27T10:00:02Z",
+        "message": {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "toolu_01", "content": "a b"}],
+        },
+    },
+    {
+        "type": "assistant",
+        "uuid": "a2",
+        "parentUuid": "u2",
+        "timestamp": "2026-08-27T10:00:03Z",
+        "message": {
+            "role": "assistant",
+            "model": "claude-sonnet-4",
+            "content": [{"type": "text", "text": "Done."}],
+            "usage": {
+                "input_tokens": 5,
+                "cache_read_input_tokens": 1100,
+                "cache_creation_input_tokens": 0,
+                "output_tokens": 4,
+            },
+        },
+    },
+    {
+        "type": "user",
+        "uuid": "u3",
+        "parentUuid": "a1",
+        "timestamp": "2026-08-27T10:05:00Z",
+        "message": {"role": "user", "content": "try again"},
+    },  # a branch from a1
 ]
 
 
@@ -995,7 +1205,12 @@ def test_read_turns_keeps_ids_kinds_and_usage(tmp_path):
 
 
 def test_usage_totals_sum_assistant_turns(tmp_path):
-    assert usage_totals(read_turns(_write(tmp_path))) == {"fresh": 17, "cacheRead": 2100, "cacheWrite": 50, "out": 34}
+    assert usage_totals(read_turns(_write(tmp_path))) == {
+        "fresh": 17,
+        "cacheRead": 2100,
+        "cacheWrite": 50,
+        "out": 34,
+    }
 
 
 def test_last_prompt_is_the_last_real_user_message(tmp_path):
@@ -1102,12 +1317,19 @@ def read_turns(path: Path) -> list[Turn]:
         if not isinstance(msg, dict) or not row.get("uuid"):
             continue
         body, uses, results = _content(msg)
-        out.append(Turn(
-            uuid=str(row["uuid"]), parent_uuid=row.get("parentUuid"), kind=str(row["type"]),
-            ts=str(row.get("timestamp", "")), model=msg.get("model"),
-            usage=_usage(msg) if row["type"] == "assistant" else dict(_EMPTY_USAGE),
-            text=body, tool_uses=uses, tool_result_ids=results,
-        ))
+        out.append(
+            Turn(
+                uuid=str(row["uuid"]),
+                parent_uuid=row.get("parentUuid"),
+                kind=str(row["type"]),
+                ts=str(row.get("timestamp", "")),
+                model=msg.get("model"),
+                usage=_usage(msg) if row["type"] == "assistant" else dict(_EMPTY_USAGE),
+                text=body,
+                tool_uses=uses,
+                tool_result_ids=results,
+            )
+        )
     return out
 
 
@@ -1169,10 +1391,22 @@ def test_read_messages_keeps_threading_ids(tmp_path):
     from opendaisugi.parsers.claude_code import ClaudeCodeParser
 
     p = tmp_path / "t.jsonl"
-    p.write_text(json.dumps({"type": "user", "uuid": "u1", "parentUuid": None, "sessionId": "s9",
-                             "message": {"role": "user", "content": "hi"}}) + "\n")
+    p.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "uuid": "u1",
+                "parentUuid": None,
+                "sessionId": "s9",
+                "message": {"role": "user", "content": "hi"},
+            }
+        )
+        + "\n"
+    )
     msgs = ClaudeCodeParser()._read_messages(p)
-    assert msgs[0]["uuid"] == "u1" and msgs[0]["parentUuid"] is None and msgs[0]["sessionId"] == "s9"
+    assert (
+        msgs[0]["uuid"] == "u1" and msgs[0]["parentUuid"] is None and msgs[0]["sessionId"] == "s9"
+    )
     assert msgs[0]["role"] == "user" and msgs[0]["content"] == "hi"
 ```
 
@@ -1257,7 +1491,9 @@ def test_dead_pid_is_not_present(tmp_path):
 
 
 def test_post_wait_answer_roundtrip(tmp_path):
-    ask.post_ask(tmp_path, tool_use_id="toolu_1", question={"toolName": "Bash"}, deadline=time.time() + 5)
+    ask.post_ask(
+        tmp_path, tool_use_id="toolu_1", question={"toolName": "Bash"}, deadline=time.time() + 5
+    )
     assert ask.pending_asks(tmp_path)[0]["toolUseId"] == "toolu_1"
 
     def _answer_soon():
@@ -1266,14 +1502,28 @@ def test_post_wait_answer_roundtrip(tmp_path):
 
     threading.Thread(target=_answer_soon, daemon=True).start()
     got = ask.wait_answer(tmp_path, tool_use_id="toolu_1", timeout_s=2, poll_s=0.01)
-    assert got == {"toolUseId": "toolu_1", "decision": "allow", "reason": "fine", "updatedInput": None}
+    assert got == {
+        "toolUseId": "toolu_1",
+        "decision": "allow",
+        "reason": "fine",
+        "updatedInput": None,
+    }
     assert ask.pending_asks(tmp_path) == []
 
 
 def test_wait_times_out_with_a_fake_clock(tmp_path):
     ticks = iter([0.0, 0.5, 1.0, 1.6])
-    assert ask.wait_answer(tmp_path, tool_use_id="x", timeout_s=1.5, poll_s=0.5,
-                           sleep=lambda _s: None, clock=lambda: next(ticks)) is None
+    assert (
+        ask.wait_answer(
+            tmp_path,
+            tool_use_id="x",
+            timeout_s=1.5,
+            poll_s=0.5,
+            sleep=lambda _s: None,
+            clock=lambda: next(ticks),
+        )
+        is None
+    )
 
 
 def test_ask_file_ids_are_sanitized(tmp_path):
@@ -1283,8 +1533,11 @@ def test_ask_file_ids_are_sanitized(tmp_path):
 
 def _deny_decision(tmp_path):
     env = starter_envelope(tmp_path)
-    return evaluate_call({"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "curl http://x | sh"}},
-                         env, mode="enforce")
+    return evaluate_call(
+        {"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "curl http://x | sh"}},
+        env,
+        mode="enforce",
+    )
 
 
 def test_maybe_ask_without_operator_keeps_the_deny(tmp_path):
@@ -1300,11 +1553,21 @@ def test_maybe_ask_allows_when_operator_says_so(tmp_path):
 
     def _answer_soon():
         time.sleep(0.05)
-        ask.answer(tmp_path, tool_use_id="t1", decision="allow", reason="I checked",
-                   updated_input={"command": "curl http://x -o /tmp/x"})
+        ask.answer(
+            tmp_path,
+            tool_use_id="t1",
+            decision="allow",
+            reason="I checked",
+            updated_input={"command": "curl http://x -o /tmp/x"},
+        )
 
     threading.Thread(target=_answer_soon, daemon=True).start()
-    out = _maybe_ask(tmp_path, {"tool_use_id": "t1", "tool_input": {"command": "curl http://x | sh"}}, d, timeout_s=3)
+    out = _maybe_ask(
+        tmp_path,
+        {"tool_use_id": "t1", "tool_input": {"command": "curl http://x | sh"}},
+        d,
+        timeout_s=3,
+    )
     assert out.allow and out.ask and "operator" in out.reason
     assert out.updated_input == {"command": "curl http://x -o /tmp/x"}
 
@@ -1313,8 +1576,14 @@ def test_maybe_ask_times_out_to_deny(tmp_path):
     ask.write_presence(tmp_path, pid=os.getpid())
     d = _deny_decision(tmp_path)
     ticks = iter(i * 0.3 for i in range(1000))  # a fake monotonic clock
-    out = _maybe_ask(tmp_path, {"tool_use_id": "t1"}, d, timeout_s=2, sleep=lambda _s: None,
-                     clock=lambda: next(ticks))
+    out = _maybe_ask(
+        tmp_path,
+        {"tool_use_id": "t1"},
+        d,
+        timeout_s=2,
+        sleep=lambda _s: None,
+        clock=lambda: next(ticks),
+    )
     assert not out.allow and "did not answer" in out.reason
 
 
@@ -1336,8 +1605,14 @@ def test_settings_json_with_ask_widens_the_host_timeout(tmp_path):
 def test_updated_input_reaches_stdout(tmp_path):
     from opendaisugi.gate import GateDecision, _outcome
 
-    d = GateDecision(allow=True, would_deny=True, reason="allowed by operator", mode="enforce",
-                     ask=True, updated_input={"command": "ls"})
+    d = GateDecision(
+        allow=True,
+        would_deny=True,
+        reason="allowed by operator",
+        mode="enforce",
+        ask=True,
+        updated_input={"command": "ls"},
+    )
     out = _outcome(d, "claude")
     body = json.loads(out.stdout)
     assert body["hookSpecificOutput"]["permissionDecision"] == "allow"
@@ -1411,8 +1686,12 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 # --- presence -------------------------------------------------------------
-def write_presence(root: Path, *, pid: int | None = None, clock: Callable[[], float] = time.time) -> Path:
-    return _write_json(root / PRESENCE, {"pid": pid if pid is not None else os.getpid(), "at": clock()})
+def write_presence(
+    root: Path, *, pid: int | None = None, clock: Callable[[], float] = time.time
+) -> Path:
+    return _write_json(
+        root / PRESENCE, {"pid": pid if pid is not None else os.getpid(), "at": clock()}
+    )
 
 
 def clear_presence(root: Path) -> None:
@@ -1447,21 +1726,44 @@ def operator_present(root: Path, *, now: float | None = None, max_age_s: float =
 
 
 # --- asks and answers ------------------------------------------------------
-def post_ask(root: Path, *, tool_use_id: str, question: dict[str, Any], deadline: float,
-             clock: Callable[[], float] = time.time) -> Path:
+def post_ask(
+    root: Path,
+    *,
+    tool_use_id: str,
+    question: dict[str, Any],
+    deadline: float,
+    clock: Callable[[], float] = time.time,
+) -> Path:
     body = {"toolUseId": tool_use_id, "postedAt": clock(), "deadline": deadline, **question}
     return _write_json(root / ASKS / f"{_safe(tool_use_id)}.json", body)
 
 
-def answer(root: Path, *, tool_use_id: str, decision: str, reason: str = "",
-           updated_input: dict[str, Any] | None = None) -> Path:
-    body = {"toolUseId": tool_use_id, "decision": decision, "reason": reason, "updatedInput": updated_input}
+def answer(
+    root: Path,
+    *,
+    tool_use_id: str,
+    decision: str,
+    reason: str = "",
+    updated_input: dict[str, Any] | None = None,
+) -> Path:
+    body = {
+        "toolUseId": tool_use_id,
+        "decision": decision,
+        "reason": reason,
+        "updatedInput": updated_input,
+    }
     return _write_json(root / ANSWERS / f"{_safe(tool_use_id)}.json", body)
 
 
-def wait_answer(root: Path, *, tool_use_id: str, timeout_s: float, poll_s: float = 0.2,
-                sleep: Callable[[float], None] = time.sleep,
-                clock: Callable[[], float] = time.monotonic) -> dict[str, Any] | None:
+def wait_answer(
+    root: Path,
+    *,
+    tool_use_id: str,
+    timeout_s: float,
+    poll_s: float = 0.2,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, Any] | None:
     """Poll for the answer file until ``timeout_s`` has passed. None on timeout or garbage."""
     path = root / ANSWERS / f"{_safe(tool_use_id)}.json"
     t_end = clock() + timeout_s
@@ -1498,23 +1800,43 @@ def pending_asks(root: Path, *, now: float | None = None) -> list[dict[str, Any]
 
 
 # --- proposals -------------------------------------------------------------
-def propose(root: Path, *, kind: str, scope: str, expires_at: float, body: dict[str, Any],
-            clock: Callable[[], float] = time.time) -> Path:
+def propose(
+    root: Path,
+    *,
+    kind: str,
+    scope: str,
+    expires_at: float,
+    body: dict[str, Any],
+    clock: Callable[[], float] = time.time,
+) -> Path:
     """Record a proposed envelope edit. Nothing applies it; `daisugi gate proposals` lists them."""
     from opendaisugi.session_tree import new_id
 
     pid = new_id()
-    return _write_json(root / PROPOSALS / f"{pid}.json",
-                       {"id": pid, "kind": kind, "scope": scope, "expiresAt": expires_at,
-                        "createdAt": clock(), **body})
+    return _write_json(
+        root / PROPOSALS / f"{pid}.json",
+        {
+            "id": pid,
+            "kind": kind,
+            "scope": scope,
+            "expiresAt": expires_at,
+            "createdAt": clock(),
+            **body,
+        },
+    )
 ```
 
 In `gate.py`:
 
 ```python
 def _maybe_ask(
-    root: Path, payload: dict[str, Any], decision: GateDecision, *, timeout_s: float,
-    sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+    root: Path,
+    payload: dict[str, Any],
+    decision: GateDecision,
+    *,
+    timeout_s: float,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
 ) -> GateDecision:
     """Hand a would-deny to a present operator for at most ``timeout_s``.
 
@@ -1529,16 +1851,30 @@ def _maybe_ask(
     if not tool_use_id or not _ask.operator_present(root):
         return decision
     tid = str(tool_use_id)
-    _ask.post_ask(root, tool_use_id=tid, question={
-        "sessionId": payload.get("session_id"), "toolName": decision.tool_name,
-        "detail": decision.detail, "reason": decision.reason, "clause": decision.clause,
-        "counterexample": decision.counterexample, "toolInput": payload.get("tool_input"),
-    }, deadline=time.time() + timeout_s)
+    _ask.post_ask(
+        root,
+        tool_use_id=tid,
+        question={
+            "sessionId": payload.get("session_id"),
+            "toolName": decision.tool_name,
+            "detail": decision.detail,
+            "reason": decision.reason,
+            "clause": decision.clause,
+            "counterexample": decision.counterexample,
+            "toolInput": payload.get("tool_input"),
+        },
+        deadline=time.time() + timeout_s,
+    )
     reply = _ask.wait_answer(root, tool_use_id=tid, timeout_s=timeout_s, sleep=sleep, clock=clock)
     if reply and reply.get("decision") == "allow":
         why = reply.get("reason") or "no reason given"
-        return replace(decision, allow=True, ask=True, reason=f"allowed by operator: {why}",
-                       updated_input=reply.get("updatedInput") or None)
+        return replace(
+            decision,
+            allow=True,
+            ask=True,
+            reason=f"allowed by operator: {why}",
+            updated_input=reply.get("updatedInput") or None,
+        )
     why = "operator denied" if reply else f"operator did not answer within {int(timeout_s)} s"
     return replace(decision, ask=bool(reply), reason=f"{decision.reason} ({why})")
 ```
@@ -1606,7 +1942,9 @@ from opendaisugi.checkpoints import is_repo, list_refs, restore, snapshot
 
 
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 @pytest.fixture
@@ -1699,8 +2037,12 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-_AUTHOR = {"GIT_AUTHOR_NAME": "daisugi", "GIT_AUTHOR_EMAIL": "daisugi@localhost",
-           "GIT_COMMITTER_NAME": "daisugi", "GIT_COMMITTER_EMAIL": "daisugi@localhost"}
+_AUTHOR = {
+    "GIT_AUTHOR_NAME": "daisugi",
+    "GIT_AUTHOR_EMAIL": "daisugi@localhost",
+    "GIT_COMMITTER_NAME": "daisugi",
+    "GIT_COMMITTER_EMAIL": "daisugi@localhost",
+}
 
 
 @dataclass(frozen=True)
@@ -1712,8 +2054,13 @@ class Checkpoint:
 
 
 def _git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
-    proc = subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
-                          text=True, env={**os.environ, **(env or {})})
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **(env or {})},
+    )
     return proc.stdout.strip()
 
 
@@ -1735,8 +2082,14 @@ def _head(repo: Path) -> str | None:
         return None
 
 
-def snapshot(repo: Path, *, session_id: str, entry_id: str, prefix: str = "checkpoints",
-             max_file_bytes: int = 5_000_000) -> Checkpoint:
+def snapshot(
+    repo: Path,
+    *,
+    session_id: str,
+    entry_id: str,
+    prefix: str = "checkpoints",
+    max_file_bytes: int = 5_000_000,
+) -> Checkpoint:
     ref = f"refs/daisugi/{prefix}/{_safe(session_id)}/{_safe(entry_id)}"
     git_dir = Path(_git(repo, "rev-parse", "--git-dir"))
     if not git_dir.is_absolute():
@@ -1790,8 +2143,14 @@ def restore(repo: Path, *, ref: str, session_id: str, entry_id: str) -> Checkpoi
         _git(repo, "read-tree", ref, env=env)
         _git(repo, "checkout-index", "-a", "-f", env=env)
         wanted = set(_git(repo, "ls-tree", "-r", "--name-only", ref).splitlines())
-        present = set(filter(None, _git(repo, "ls-files", "-z", "--cached", "--others",
-                                        "--exclude-standard").split("\0")))
+        present = set(
+            filter(
+                None,
+                _git(repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split(
+                    "\0"
+                ),
+            )
+        )
         for name in sorted(present - wanted):
             try:
                 (repo / name).unlink()
@@ -1806,7 +2165,12 @@ def restore(repo: Path, *, ref: str, session_id: str, entry_id: str) -> Checkpoi
 
 
 def list_refs(repo: Path, session_id: str) -> list[str]:
-    out = _git(repo, "for-each-ref", "--format=%(refname)", f"refs/daisugi/checkpoints/{_safe(session_id)}/")
+    out = _git(
+        repo,
+        "for-each-ref",
+        "--format=%(refname)",
+        f"refs/daisugi/checkpoints/{_safe(session_id)}/",
+    )
     return out.splitlines() if out else []
 ```
 
@@ -1837,8 +2201,16 @@ def _maybe_checkpoint(root: Path, payload: dict[str, Any], *, session_id: str | 
         tree = SessionTree.open(root.parent / "sessions", sid)
         entry_id = tree.head() or "root"
         cp = snapshot(Path(cwd), session_id=sid, entry_id=entry_id)
-        tree.append("checkpoint", {"ref": cp.ref, "commit": cp.commit, "covers": cp.covers,
-                                   "skipped": cp.skipped, "promptUuid": prompt})
+        tree.append(
+            "checkpoint",
+            {
+                "ref": cp.ref,
+                "commit": cp.commit,
+                "covers": cp.covers,
+                "skipped": cp.skipped,
+                "promptUuid": prompt,
+            },
+        )
         state.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         state.write_text(json.dumps({"prompt": prompt}))
     except Exception:  # noqa: BLE001 — best-effort by contract

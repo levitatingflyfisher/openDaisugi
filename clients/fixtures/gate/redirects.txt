@@ -1,0 +1,790 @@
+ls < /work/a >/work/b
+ls < /work/a > /work/b
+ls < /work/a >>/work/b
+ls < /work/a >> /work/b
+ls < /work/a </work/b
+ls < /work/a < /work/b
+ls < /work/a 0>/work/b
+ls < /work/a 0> /work/b
+ls < /work/a 0>>/work/b
+ls < /work/a 0>> /work/b
+ls < /work/a 0</work/b
+ls < /work/a 0< /work/b
+ls < /work/a 1>/work/b
+ls < /work/a 1> /work/b
+ls < /work/a 1>>/work/b
+ls < /work/a 1>> /work/b
+ls < /work/a 1</work/b
+ls < /work/a 1< /work/b
+ls < /work/a 2>/work/b
+ls < /work/a 2> /work/b
+ls < /work/a 2>>/work/b
+ls < /work/a 2>> /work/b
+ls < /work/a 2</work/b
+ls < /work/a 2< /work/b
+ls < /work/a 3>/work/b
+ls < /work/a 3> /work/b
+ls < /work/a 3>>/work/b
+ls < /work/a 3>> /work/b
+ls < /work/a 3</work/b
+ls < /work/a 3< /work/b
+ls < /work/a 9>/work/b
+ls < /work/a 9> /work/b
+ls < /work/a 9>>/work/b
+ls < /work/a 9>> /work/b
+ls < /work/a 9</work/b
+ls < /work/a 9< /work/b
+ls < /work/a 10>/work/b
+ls < /work/a 10> /work/b
+ls < /work/a 10>>/work/b
+ls < /work/a 10>> /work/b
+ls < /work/a 10</work/b
+ls < /work/a 10< /work/b
+ls < /work/a 00>/work/b
+ls < /work/a 00> /work/b
+ls < /work/a 00>>/work/b
+ls < /work/a 00>> /work/b
+ls < /work/a 00</work/b
+ls < /work/a 00< /work/b
+ls < /work/a 01>/work/b
+ls < /work/a 01> /work/b
+ls < /work/a 01>>/work/b
+ls < /work/a 01>> /work/b
+ls < /work/a 01</work/b
+ls < /work/a 01< /work/b
+ls < /work/a 123>/work/b
+ls < /work/a 123> /work/b
+ls < /work/a 123>>/work/b
+ls < /work/a 123>> /work/b
+ls < /work/a 123</work/b
+ls < /work/a 123< /work/b
+ls < /work/a >&2
+ls < /work/a 0>&2
+ls < /work/a 1>&2
+ls < /work/a 2>&2
+ls < /work/a 3>&2
+ls < /work/a 9>&2
+ls < /work/a 10>&2
+ls < /work/a 00>&2
+ls < /work/a 01>&2
+ls < /work/a 123>&2
+ls > /work/a >/work/b
+ls > /work/a > /work/b
+ls > /work/a >>/work/b
+ls > /work/a >> /work/b
+ls > /work/a </work/b
+ls > /work/a < /work/b
+ls > /work/a 0>/work/b
+ls > /work/a 0> /work/b
+ls > /work/a 0>>/work/b
+ls > /work/a 0>> /work/b
+ls > /work/a 0</work/b
+ls > /work/a 0< /work/b
+ls > /work/a 1>/work/b
+ls > /work/a 1> /work/b
+ls > /work/a 1>>/work/b
+ls > /work/a 1>> /work/b
+ls > /work/a 1</work/b
+ls > /work/a 1< /work/b
+ls > /work/a 2>/work/b
+ls > /work/a 2> /work/b
+ls > /work/a 2>>/work/b
+ls > /work/a 2>> /work/b
+ls > /work/a 2</work/b
+ls > /work/a 2< /work/b
+ls > /work/a 3>/work/b
+ls > /work/a 3> /work/b
+ls > /work/a 3>>/work/b
+ls > /work/a 3>> /work/b
+ls > /work/a 3</work/b
+ls > /work/a 3< /work/b
+ls > /work/a 9>/work/b
+ls > /work/a 9> /work/b
+ls > /work/a 9>>/work/b
+ls > /work/a 9>> /work/b
+ls > /work/a 9</work/b
+ls > /work/a 9< /work/b
+ls > /work/a 10>/work/b
+ls > /work/a 10> /work/b
+ls > /work/a 10>>/work/b
+ls > /work/a 10>> /work/b
+ls > /work/a 10</work/b
+ls > /work/a 10< /work/b
+ls > /work/a 00>/work/b
+ls > /work/a 00> /work/b
+ls > /work/a 00>>/work/b
+ls > /work/a 00>> /work/b
+ls > /work/a 00</work/b
+ls > /work/a 00< /work/b
+ls > /work/a 01>/work/b
+ls > /work/a 01> /work/b
+ls > /work/a 01>>/work/b
+ls > /work/a 01>> /work/b
+ls > /work/a 01</work/b
+ls > /work/a 01< /work/b
+ls > /work/a 123>/work/b
+ls > /work/a 123> /work/b
+ls > /work/a 123>>/work/b
+ls > /work/a 123>> /work/b
+ls > /work/a 123</work/b
+ls > /work/a 123< /work/b
+ls > /work/a >&2
+ls > /work/a 0>&2
+ls > /work/a 1>&2
+ls > /work/a 2>&2
+ls > /work/a 3>&2
+ls > /work/a 9>&2
+ls > /work/a 10>&2
+ls > /work/a 00>&2
+ls > /work/a 01>&2
+ls > /work/a 123>&2
+ls 2> /work/a >/work/b
+ls 2> /work/a > /work/b
+ls 2> /work/a >>/work/b
+ls 2> /work/a >> /work/b
+ls 2> /work/a </work/b
+ls 2> /work/a < /work/b
+ls 2> /work/a 0>/work/b
+ls 2> /work/a 0> /work/b
+ls 2> /work/a 0>>/work/b
+ls 2> /work/a 0>> /work/b
+ls 2> /work/a 0</work/b
+ls 2> /work/a 0< /work/b
+ls 2> /work/a 1>/work/b
+ls 2> /work/a 1> /work/b
+ls 2> /work/a 1>>/work/b
+ls 2> /work/a 1>> /work/b
+ls 2> /work/a 1</work/b
+ls 2> /work/a 1< /work/b
+ls 2> /work/a 2>/work/b
+ls 2> /work/a 2> /work/b
+ls 2> /work/a 2>>/work/b
+ls 2> /work/a 2>> /work/b
+ls 2> /work/a 2</work/b
+ls 2> /work/a 2< /work/b
+ls 2> /work/a 3>/work/b
+ls 2> /work/a 3> /work/b
+ls 2> /work/a 3>>/work/b
+ls 2> /work/a 3>> /work/b
+ls 2> /work/a 3</work/b
+ls 2> /work/a 3< /work/b
+ls 2> /work/a 9>/work/b
+ls 2> /work/a 9> /work/b
+ls 2> /work/a 9>>/work/b
+ls 2> /work/a 9>> /work/b
+ls 2> /work/a 9</work/b
+ls 2> /work/a 9< /work/b
+ls 2> /work/a 10>/work/b
+ls 2> /work/a 10> /work/b
+ls 2> /work/a 10>>/work/b
+ls 2> /work/a 10>> /work/b
+ls 2> /work/a 10</work/b
+ls 2> /work/a 10< /work/b
+ls 2> /work/a 00>/work/b
+ls 2> /work/a 00> /work/b
+ls 2> /work/a 00>>/work/b
+ls 2> /work/a 00>> /work/b
+ls 2> /work/a 00</work/b
+ls 2> /work/a 00< /work/b
+ls 2> /work/a 01>/work/b
+ls 2> /work/a 01> /work/b
+ls 2> /work/a 01>>/work/b
+ls 2> /work/a 01>> /work/b
+ls 2> /work/a 01</work/b
+ls 2> /work/a 01< /work/b
+ls 2> /work/a 123>/work/b
+ls 2> /work/a 123> /work/b
+ls 2> /work/a 123>>/work/b
+ls 2> /work/a 123>> /work/b
+ls 2> /work/a 123</work/b
+ls 2> /work/a 123< /work/b
+ls 2> /work/a >&2
+ls 2> /work/a 0>&2
+ls 2> /work/a 1>&2
+ls 2> /work/a 2>&2
+ls 2> /work/a 3>&2
+ls 2> /work/a 9>&2
+ls 2> /work/a 10>&2
+ls 2> /work/a 00>&2
+ls 2> /work/a 01>&2
+ls 2> /work/a 123>&2
+ls >&2 >/work/b
+ls >&2 > /work/b
+ls >&2 >>/work/b
+ls >&2 >> /work/b
+ls >&2 </work/b
+ls >&2 < /work/b
+ls >&2 0>/work/b
+ls >&2 0> /work/b
+ls >&2 0>>/work/b
+ls >&2 0>> /work/b
+ls >&2 0</work/b
+ls >&2 0< /work/b
+ls >&2 1>/work/b
+ls >&2 1> /work/b
+ls >&2 1>>/work/b
+ls >&2 1>> /work/b
+ls >&2 1</work/b
+ls >&2 1< /work/b
+ls >&2 2>/work/b
+ls >&2 2> /work/b
+ls >&2 2>>/work/b
+ls >&2 2>> /work/b
+ls >&2 2</work/b
+ls >&2 2< /work/b
+ls >&2 3>/work/b
+ls >&2 3> /work/b
+ls >&2 3>>/work/b
+ls >&2 3>> /work/b
+ls >&2 3</work/b
+ls >&2 3< /work/b
+ls >&2 9>/work/b
+ls >&2 9> /work/b
+ls >&2 9>>/work/b
+ls >&2 9>> /work/b
+ls >&2 9</work/b
+ls >&2 9< /work/b
+ls >&2 10>/work/b
+ls >&2 10> /work/b
+ls >&2 10>>/work/b
+ls >&2 10>> /work/b
+ls >&2 10</work/b
+ls >&2 10< /work/b
+ls >&2 00>/work/b
+ls >&2 00> /work/b
+ls >&2 00>>/work/b
+ls >&2 00>> /work/b
+ls >&2 00</work/b
+ls >&2 00< /work/b
+ls >&2 01>/work/b
+ls >&2 01> /work/b
+ls >&2 01>>/work/b
+ls >&2 01>> /work/b
+ls >&2 01</work/b
+ls >&2 01< /work/b
+ls >&2 123>/work/b
+ls >&2 123> /work/b
+ls >&2 123>>/work/b
+ls >&2 123>> /work/b
+ls >&2 123</work/b
+ls >&2 123< /work/b
+ls >&2 >&2
+ls >&2 0>&2
+ls >&2 1>&2
+ls >&2 2>&2
+ls >&2 3>&2
+ls >&2 9>&2
+ls >&2 10>&2
+ls >&2 00>&2
+ls >&2 01>&2
+ls >&2 123>&2
+ls 2>&1 >/work/b
+ls 2>&1 > /work/b
+ls 2>&1 >>/work/b
+ls 2>&1 >> /work/b
+ls 2>&1 </work/b
+ls 2>&1 < /work/b
+ls 2>&1 0>/work/b
+ls 2>&1 0> /work/b
+ls 2>&1 0>>/work/b
+ls 2>&1 0>> /work/b
+ls 2>&1 0</work/b
+ls 2>&1 0< /work/b
+ls 2>&1 1>/work/b
+ls 2>&1 1> /work/b
+ls 2>&1 1>>/work/b
+ls 2>&1 1>> /work/b
+ls 2>&1 1</work/b
+ls 2>&1 1< /work/b
+ls 2>&1 2>/work/b
+ls 2>&1 2> /work/b
+ls 2>&1 2>>/work/b
+ls 2>&1 2>> /work/b
+ls 2>&1 2</work/b
+ls 2>&1 2< /work/b
+ls 2>&1 3>/work/b
+ls 2>&1 3> /work/b
+ls 2>&1 3>>/work/b
+ls 2>&1 3>> /work/b
+ls 2>&1 3</work/b
+ls 2>&1 3< /work/b
+ls 2>&1 9>/work/b
+ls 2>&1 9> /work/b
+ls 2>&1 9>>/work/b
+ls 2>&1 9>> /work/b
+ls 2>&1 9</work/b
+ls 2>&1 9< /work/b
+ls 2>&1 10>/work/b
+ls 2>&1 10> /work/b
+ls 2>&1 10>>/work/b
+ls 2>&1 10>> /work/b
+ls 2>&1 10</work/b
+ls 2>&1 10< /work/b
+ls 2>&1 00>/work/b
+ls 2>&1 00> /work/b
+ls 2>&1 00>>/work/b
+ls 2>&1 00>> /work/b
+ls 2>&1 00</work/b
+ls 2>&1 00< /work/b
+ls 2>&1 01>/work/b
+ls 2>&1 01> /work/b
+ls 2>&1 01>>/work/b
+ls 2>&1 01>> /work/b
+ls 2>&1 01</work/b
+ls 2>&1 01< /work/b
+ls 2>&1 123>/work/b
+ls 2>&1 123> /work/b
+ls 2>&1 123>>/work/b
+ls 2>&1 123>> /work/b
+ls 2>&1 123</work/b
+ls 2>&1 123< /work/b
+ls 2>&1 >&2
+ls 2>&1 0>&2
+ls 2>&1 1>&2
+ls 2>&1 2>&2
+ls 2>&1 3>&2
+ls 2>&1 9>&2
+ls 2>&1 10>&2
+ls 2>&1 00>&2
+ls 2>&1 01>&2
+ls 2>&1 123>&2
+ls 0< /work/a >/work/b
+ls 0< /work/a > /work/b
+ls 0< /work/a >>/work/b
+ls 0< /work/a >> /work/b
+ls 0< /work/a </work/b
+ls 0< /work/a < /work/b
+ls 0< /work/a 0>/work/b
+ls 0< /work/a 0> /work/b
+ls 0< /work/a 0>>/work/b
+ls 0< /work/a 0>> /work/b
+ls 0< /work/a 0</work/b
+ls 0< /work/a 0< /work/b
+ls 0< /work/a 1>/work/b
+ls 0< /work/a 1> /work/b
+ls 0< /work/a 1>>/work/b
+ls 0< /work/a 1>> /work/b
+ls 0< /work/a 1</work/b
+ls 0< /work/a 1< /work/b
+ls 0< /work/a 2>/work/b
+ls 0< /work/a 2> /work/b
+ls 0< /work/a 2>>/work/b
+ls 0< /work/a 2>> /work/b
+ls 0< /work/a 2</work/b
+ls 0< /work/a 2< /work/b
+ls 0< /work/a 3>/work/b
+ls 0< /work/a 3> /work/b
+ls 0< /work/a 3>>/work/b
+ls 0< /work/a 3>> /work/b
+ls 0< /work/a 3</work/b
+ls 0< /work/a 3< /work/b
+ls 0< /work/a 9>/work/b
+ls 0< /work/a 9> /work/b
+ls 0< /work/a 9>>/work/b
+ls 0< /work/a 9>> /work/b
+ls 0< /work/a 9</work/b
+ls 0< /work/a 9< /work/b
+ls 0< /work/a 10>/work/b
+ls 0< /work/a 10> /work/b
+ls 0< /work/a 10>>/work/b
+ls 0< /work/a 10>> /work/b
+ls 0< /work/a 10</work/b
+ls 0< /work/a 10< /work/b
+ls 0< /work/a 00>/work/b
+ls 0< /work/a 00> /work/b
+ls 0< /work/a 00>>/work/b
+ls 0< /work/a 00>> /work/b
+ls 0< /work/a 00</work/b
+ls 0< /work/a 00< /work/b
+ls 0< /work/a 01>/work/b
+ls 0< /work/a 01> /work/b
+ls 0< /work/a 01>>/work/b
+ls 0< /work/a 01>> /work/b
+ls 0< /work/a 01</work/b
+ls 0< /work/a 01< /work/b
+ls 0< /work/a 123>/work/b
+ls 0< /work/a 123> /work/b
+ls 0< /work/a 123>>/work/b
+ls 0< /work/a 123>> /work/b
+ls 0< /work/a 123</work/b
+ls 0< /work/a 123< /work/b
+ls 0< /work/a >&2
+ls 0< /work/a 0>&2
+ls 0< /work/a 1>&2
+ls 0< /work/a 2>&2
+ls 0< /work/a 3>&2
+ls 0< /work/a 9>&2
+ls 0< /work/a 10>&2
+ls 0< /work/a 00>&2
+ls 0< /work/a 01>&2
+ls 0< /work/a 123>&2
+ls 1> /work/a >/work/b
+ls 1> /work/a > /work/b
+ls 1> /work/a >>/work/b
+ls 1> /work/a >> /work/b
+ls 1> /work/a </work/b
+ls 1> /work/a < /work/b
+ls 1> /work/a 0>/work/b
+ls 1> /work/a 0> /work/b
+ls 1> /work/a 0>>/work/b
+ls 1> /work/a 0>> /work/b
+ls 1> /work/a 0</work/b
+ls 1> /work/a 0< /work/b
+ls 1> /work/a 1>/work/b
+ls 1> /work/a 1> /work/b
+ls 1> /work/a 1>>/work/b
+ls 1> /work/a 1>> /work/b
+ls 1> /work/a 1</work/b
+ls 1> /work/a 1< /work/b
+ls 1> /work/a 2>/work/b
+ls 1> /work/a 2> /work/b
+ls 1> /work/a 2>>/work/b
+ls 1> /work/a 2>> /work/b
+ls 1> /work/a 2</work/b
+ls 1> /work/a 2< /work/b
+ls 1> /work/a 3>/work/b
+ls 1> /work/a 3> /work/b
+ls 1> /work/a 3>>/work/b
+ls 1> /work/a 3>> /work/b
+ls 1> /work/a 3</work/b
+ls 1> /work/a 3< /work/b
+ls 1> /work/a 9>/work/b
+ls 1> /work/a 9> /work/b
+ls 1> /work/a 9>>/work/b
+ls 1> /work/a 9>> /work/b
+ls 1> /work/a 9</work/b
+ls 1> /work/a 9< /work/b
+ls 1> /work/a 10>/work/b
+ls 1> /work/a 10> /work/b
+ls 1> /work/a 10>>/work/b
+ls 1> /work/a 10>> /work/b
+ls 1> /work/a 10</work/b
+ls 1> /work/a 10< /work/b
+ls 1> /work/a 00>/work/b
+ls 1> /work/a 00> /work/b
+ls 1> /work/a 00>>/work/b
+ls 1> /work/a 00>> /work/b
+ls 1> /work/a 00</work/b
+ls 1> /work/a 00< /work/b
+ls 1> /work/a 01>/work/b
+ls 1> /work/a 01> /work/b
+ls 1> /work/a 01>>/work/b
+ls 1> /work/a 01>> /work/b
+ls 1> /work/a 01</work/b
+ls 1> /work/a 01< /work/b
+ls 1> /work/a 123>/work/b
+ls 1> /work/a 123> /work/b
+ls 1> /work/a 123>>/work/b
+ls 1> /work/a 123>> /work/b
+ls 1> /work/a 123</work/b
+ls 1> /work/a 123< /work/b
+ls 1> /work/a >&2
+ls 1> /work/a 0>&2
+ls 1> /work/a 1>&2
+ls 1> /work/a 2>&2
+ls 1> /work/a 3>&2
+ls 1> /work/a 9>&2
+ls 1> /work/a 10>&2
+ls 1> /work/a 00>&2
+ls 1> /work/a 01>&2
+ls 1> /work/a 123>&2
+ls 3< /work/a >/work/b
+ls 3< /work/a > /work/b
+ls 3< /work/a >>/work/b
+ls 3< /work/a >> /work/b
+ls 3< /work/a </work/b
+ls 3< /work/a < /work/b
+ls 3< /work/a 0>/work/b
+ls 3< /work/a 0> /work/b
+ls 3< /work/a 0>>/work/b
+ls 3< /work/a 0>> /work/b
+ls 3< /work/a 0</work/b
+ls 3< /work/a 0< /work/b
+ls 3< /work/a 1>/work/b
+ls 3< /work/a 1> /work/b
+ls 3< /work/a 1>>/work/b
+ls 3< /work/a 1>> /work/b
+ls 3< /work/a 1</work/b
+ls 3< /work/a 1< /work/b
+ls 3< /work/a 2>/work/b
+ls 3< /work/a 2> /work/b
+ls 3< /work/a 2>>/work/b
+ls 3< /work/a 2>> /work/b
+ls 3< /work/a 2</work/b
+ls 3< /work/a 2< /work/b
+ls 3< /work/a 3>/work/b
+ls 3< /work/a 3> /work/b
+ls 3< /work/a 3>>/work/b
+ls 3< /work/a 3>> /work/b
+ls 3< /work/a 3</work/b
+ls 3< /work/a 3< /work/b
+ls 3< /work/a 9>/work/b
+ls 3< /work/a 9> /work/b
+ls 3< /work/a 9>>/work/b
+ls 3< /work/a 9>> /work/b
+ls 3< /work/a 9</work/b
+ls 3< /work/a 9< /work/b
+ls 3< /work/a 10>/work/b
+ls 3< /work/a 10> /work/b
+ls 3< /work/a 10>>/work/b
+ls 3< /work/a 10>> /work/b
+ls 3< /work/a 10</work/b
+ls 3< /work/a 10< /work/b
+ls 3< /work/a 00>/work/b
+ls 3< /work/a 00> /work/b
+ls 3< /work/a 00>>/work/b
+ls 3< /work/a 00>> /work/b
+ls 3< /work/a 00</work/b
+ls 3< /work/a 00< /work/b
+ls 3< /work/a 01>/work/b
+ls 3< /work/a 01> /work/b
+ls 3< /work/a 01>>/work/b
+ls 3< /work/a 01>> /work/b
+ls 3< /work/a 01</work/b
+ls 3< /work/a 01< /work/b
+ls 3< /work/a 123>/work/b
+ls 3< /work/a 123> /work/b
+ls 3< /work/a 123>>/work/b
+ls 3< /work/a 123>> /work/b
+ls 3< /work/a 123</work/b
+ls 3< /work/a 123< /work/b
+ls 3< /work/a >&2
+ls 3< /work/a 0>&2
+ls 3< /work/a 1>&2
+ls 3< /work/a 2>&2
+ls 3< /work/a 3>&2
+ls 3< /work/a 9>&2
+ls 3< /work/a 10>&2
+ls 3< /work/a 00>&2
+ls 3< /work/a 01>&2
+ls 3< /work/a 123>&2
+ls 0>&1 >/work/b
+ls 0>&1 > /work/b
+ls 0>&1 >>/work/b
+ls 0>&1 >> /work/b
+ls 0>&1 </work/b
+ls 0>&1 < /work/b
+ls 0>&1 0>/work/b
+ls 0>&1 0> /work/b
+ls 0>&1 0>>/work/b
+ls 0>&1 0>> /work/b
+ls 0>&1 0</work/b
+ls 0>&1 0< /work/b
+ls 0>&1 1>/work/b
+ls 0>&1 1> /work/b
+ls 0>&1 1>>/work/b
+ls 0>&1 1>> /work/b
+ls 0>&1 1</work/b
+ls 0>&1 1< /work/b
+ls 0>&1 2>/work/b
+ls 0>&1 2> /work/b
+ls 0>&1 2>>/work/b
+ls 0>&1 2>> /work/b
+ls 0>&1 2</work/b
+ls 0>&1 2< /work/b
+ls 0>&1 3>/work/b
+ls 0>&1 3> /work/b
+ls 0>&1 3>>/work/b
+ls 0>&1 3>> /work/b
+ls 0>&1 3</work/b
+ls 0>&1 3< /work/b
+ls 0>&1 9>/work/b
+ls 0>&1 9> /work/b
+ls 0>&1 9>>/work/b
+ls 0>&1 9>> /work/b
+ls 0>&1 9</work/b
+ls 0>&1 9< /work/b
+ls 0>&1 10>/work/b
+ls 0>&1 10> /work/b
+ls 0>&1 10>>/work/b
+ls 0>&1 10>> /work/b
+ls 0>&1 10</work/b
+ls 0>&1 10< /work/b
+ls 0>&1 00>/work/b
+ls 0>&1 00> /work/b
+ls 0>&1 00>>/work/b
+ls 0>&1 00>> /work/b
+ls 0>&1 00</work/b
+ls 0>&1 00< /work/b
+ls 0>&1 01>/work/b
+ls 0>&1 01> /work/b
+ls 0>&1 01>>/work/b
+ls 0>&1 01>> /work/b
+ls 0>&1 01</work/b
+ls 0>&1 01< /work/b
+ls 0>&1 123>/work/b
+ls 0>&1 123> /work/b
+ls 0>&1 123>>/work/b
+ls 0>&1 123>> /work/b
+ls 0>&1 123</work/b
+ls 0>&1 123< /work/b
+ls 0>&1 >&2
+ls 0>&1 0>&2
+ls 0>&1 1>&2
+ls 0>&1 2>&2
+ls 0>&1 3>&2
+ls 0>&1 9>&2
+ls 0>&1 10>&2
+ls 0>&1 00>&2
+ls 0>&1 01>&2
+ls 0>&1 123>&2
+ls 0>/work/a >/work/b
+ls 0>/work/a > /work/b
+ls 0>/work/a >>/work/b
+ls 0>/work/a >> /work/b
+ls 0>/work/a </work/b
+ls 0>/work/a < /work/b
+ls 0>/work/a 0>/work/b
+ls 0>/work/a 0> /work/b
+ls 0>/work/a 0>>/work/b
+ls 0>/work/a 0>> /work/b
+ls 0>/work/a 0</work/b
+ls 0>/work/a 0< /work/b
+ls 0>/work/a 1>/work/b
+ls 0>/work/a 1> /work/b
+ls 0>/work/a 1>>/work/b
+ls 0>/work/a 1>> /work/b
+ls 0>/work/a 1</work/b
+ls 0>/work/a 1< /work/b
+ls 0>/work/a 2>/work/b
+ls 0>/work/a 2> /work/b
+ls 0>/work/a 2>>/work/b
+ls 0>/work/a 2>> /work/b
+ls 0>/work/a 2</work/b
+ls 0>/work/a 2< /work/b
+ls 0>/work/a 3>/work/b
+ls 0>/work/a 3> /work/b
+ls 0>/work/a 3>>/work/b
+ls 0>/work/a 3>> /work/b
+ls 0>/work/a 3</work/b
+ls 0>/work/a 3< /work/b
+ls 0>/work/a 9>/work/b
+ls 0>/work/a 9> /work/b
+ls 0>/work/a 9>>/work/b
+ls 0>/work/a 9>> /work/b
+ls 0>/work/a 9</work/b
+ls 0>/work/a 9< /work/b
+ls 0>/work/a 10>/work/b
+ls 0>/work/a 10> /work/b
+ls 0>/work/a 10>>/work/b
+ls 0>/work/a 10>> /work/b
+ls 0>/work/a 10</work/b
+ls 0>/work/a 10< /work/b
+ls 0>/work/a 00>/work/b
+ls 0>/work/a 00> /work/b
+ls 0>/work/a 00>>/work/b
+ls 0>/work/a 00>> /work/b
+ls 0>/work/a 00</work/b
+ls 0>/work/a 00< /work/b
+ls 0>/work/a 01>/work/b
+ls 0>/work/a 01> /work/b
+ls 0>/work/a 01>>/work/b
+ls 0>/work/a 01>> /work/b
+ls 0>/work/a 01</work/b
+ls 0>/work/a 01< /work/b
+ls 0>/work/a 123>/work/b
+ls 0>/work/a 123> /work/b
+ls 0>/work/a 123>>/work/b
+ls 0>/work/a 123>> /work/b
+ls 0>/work/a 123</work/b
+ls 0>/work/a 123< /work/b
+ls 0>/work/a >&2
+ls 0>/work/a 0>&2
+ls 0>/work/a 1>&2
+ls 0>/work/a 2>&2
+ls 0>/work/a 3>&2
+ls 0>/work/a 9>&2
+ls 0>/work/a 10>&2
+ls 0>/work/a 00>&2
+ls 0>/work/a 01>&2
+ls 0>/work/a 123>&2
+ls x > /work/b ; ls
+ls | cat > /work/b
+A=1 ls > /work/b
+ls x >> /work/b ; ls
+ls | cat >> /work/b
+A=1 ls >> /work/b
+ls x < /work/b ; ls
+ls | cat < /work/b
+A=1 ls < /work/b
+ls x 0> /work/b ; ls
+ls | cat 0> /work/b
+A=1 ls 0> /work/b
+ls x 0>> /work/b ; ls
+ls | cat 0>> /work/b
+A=1 ls 0>> /work/b
+ls x 0< /work/b ; ls
+ls | cat 0< /work/b
+A=1 ls 0< /work/b
+ls x 1> /work/b ; ls
+ls | cat 1> /work/b
+A=1 ls 1> /work/b
+ls x 1>> /work/b ; ls
+ls | cat 1>> /work/b
+A=1 ls 1>> /work/b
+ls x 1< /work/b ; ls
+ls | cat 1< /work/b
+A=1 ls 1< /work/b
+ls x 2> /work/b ; ls
+ls | cat 2> /work/b
+A=1 ls 2> /work/b
+ls x 2>> /work/b ; ls
+ls | cat 2>> /work/b
+A=1 ls 2>> /work/b
+ls x 2< /work/b ; ls
+ls | cat 2< /work/b
+A=1 ls 2< /work/b
+ls x 3> /work/b ; ls
+ls | cat 3> /work/b
+A=1 ls 3> /work/b
+ls x 3>> /work/b ; ls
+ls | cat 3>> /work/b
+A=1 ls 3>> /work/b
+ls x 3< /work/b ; ls
+ls | cat 3< /work/b
+A=1 ls 3< /work/b
+ls x 9> /work/b ; ls
+ls | cat 9> /work/b
+A=1 ls 9> /work/b
+ls x 9>> /work/b ; ls
+ls | cat 9>> /work/b
+A=1 ls 9>> /work/b
+ls x 9< /work/b ; ls
+ls | cat 9< /work/b
+A=1 ls 9< /work/b
+ls x 10> /work/b ; ls
+ls | cat 10> /work/b
+A=1 ls 10> /work/b
+ls x 10>> /work/b ; ls
+ls | cat 10>> /work/b
+A=1 ls 10>> /work/b
+ls x 10< /work/b ; ls
+ls | cat 10< /work/b
+A=1 ls 10< /work/b
+ls x 00> /work/b ; ls
+ls | cat 00> /work/b
+A=1 ls 00> /work/b
+ls x 00>> /work/b ; ls
+ls | cat 00>> /work/b
+A=1 ls 00>> /work/b
+ls x 00< /work/b ; ls
+ls | cat 00< /work/b
+A=1 ls 00< /work/b
+ls x 01> /work/b ; ls
+ls | cat 01> /work/b
+A=1 ls 01> /work/b
+ls x 01>> /work/b ; ls
+ls | cat 01>> /work/b
+A=1 ls 01>> /work/b
+ls x 01< /work/b ; ls
+ls | cat 01< /work/b
+A=1 ls 01< /work/b
+ls x 123> /work/b ; ls
+ls | cat 123> /work/b
+A=1 ls 123> /work/b
+ls x 123>> /work/b ; ls
+ls | cat 123>> /work/b
+A=1 ls 123>> /work/b
+ls x 123< /work/b ; ls
+ls | cat 123< /work/b
+A=1 ls 123< /work/b

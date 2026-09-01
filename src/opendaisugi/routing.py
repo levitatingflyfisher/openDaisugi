@@ -31,8 +31,6 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
-
 if TYPE_CHECKING:
     from opendaisugi.pathway_store import PathwayStore
 
@@ -125,12 +123,19 @@ class RouteAdvisor:
         pathway_store: "PathwayStore | None",
         cheap_model: str = _DEFAULT_CHEAP_MODEL,
         frontier_model: str = _DEFAULT_FRONTIER_MODEL,
-        threshold: float = DEFAULT_PATHWAY_THRESHOLD,
+        threshold: float | None = None,
         advisor_tool_available: bool = True,
     ) -> None:
         self.pathway_store = pathway_store
         self.cheap_model = cheap_model
         self.frontier_model = frontier_model
+        # None resolves the active backend's threshold once, here (ADR-0018):
+        # 0.55 for MiniLM, 0.59 for potion. Matcher choice is "cfg" (restart to
+        # change), so a per-construction resolve matches its declared effect.
+        if threshold is None:
+            from opendaisugi._search import active_threshold
+
+            threshold = active_threshold()
         self.threshold = threshold
         # Whether the host harness has Anthropic's advisor tool. Default True
         # preserves the common Claude case; set False for Codex/local/Hermes/

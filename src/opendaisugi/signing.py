@@ -64,8 +64,9 @@ def canonicalize_contract(contract: Contract) -> bytes:
 def generate_keypair() -> tuple[str, str]:
     """Generate a fresh ed25519 keypair as (private_b64, public_b64).
 
-    The private key is PKCS#8 DER; the public key is raw 32 bytes. Both
-    are base64-encoded so they round-trip through JSON/CLI without issue.
+    The private key is the raw 32-byte seed; the public key is the raw 32
+    bytes. Both are base64-encoded so they round-trip through JSON/CLI
+    without issue.
     """
     from cryptography.hazmat.primitives import serialization
 

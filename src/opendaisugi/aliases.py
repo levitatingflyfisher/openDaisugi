@@ -7,9 +7,11 @@ An alias is a named, parameterizable predicate expression. Three tiers:
     - ``envelope``  private to a single envelope
 
 Resolution: lookup by name picks the highest-precedence tier
-(envelope > household > system). Parameter substitution walks the
-expression tree and replaces any value equal to ``$<param>`` with the
-corresponding argument.
+(envelope > household). A system alias's name cannot be registered again
+at any tier, so no lower tier can redefine a system word. Parameter
+substitution walks the expression tree once: a value equal to
+``$<param>`` becomes the argument itself, a ``$<param>`` inside a string
+becomes its text, and inside a regex field its escaped text.
 
 Static check at registration time: the alias expression must reference
 at least one plan path (via Equals/NotEquals/InSet/Matches/.../Exists
@@ -19,9 +21,10 @@ vacuity check (tautology/contradiction) runs via Z3 as of v0.27.0.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from opendaisugi.predicate import (
     AliasRef,
@@ -29,6 +32,7 @@ from opendaisugi.predicate import (
     ExistsStep,
     ForallOutputs,
     ForallSteps,
+    ForallWrites,
     Implies,
     Not,
     Or,
@@ -100,9 +104,21 @@ def _references_a_path(expr: Any) -> bool:
         return _references_a_path(d.get("child"))
     if op == "implies":
         return _references_a_path(d.get("a")) or _references_a_path(d.get("b"))
-    if op in ("forall_steps", "exists_step", "forall_outputs"):
+    if op in ("forall_steps", "exists_step", "forall_outputs", "forall_writes"):
         return _references_a_path(d.get("pred"))
     return False
+
+
+_REGEX_FIELDS = frozenset({"regex"})
+
+
+def _placeholder_re(args: dict[str, Any]) -> re.Pattern[str] | None:
+    """One pattern for every ``$name``, longest name first, so ``$p`` never
+    takes the front of ``$p_name``."""
+    if not args:
+        return None
+    names = sorted(args, key=len, reverse=True)
+    return re.compile(r"\$(" + "|".join(re.escape(n) for n in names) + ")")
 
 
 def _substitute_params(expr: Any, args: dict[str, Any]) -> Any:
@@ -112,31 +128,70 @@ def _substitute_params(expr: Any, args: dict[str, Any]) -> Any:
     so it can carry typed values through Pydantic-unsafe placeholders like
     `$max_scale` being spliced into a NumericRange.max float field.
 
-    Substitution is **longest-key-first** (v0.28.3) so that ``$principal``
-    cannot munge ``$principal_name`` — without this, dict-iteration order
-    determines whether the longer placeholder gets seen. Without
-    longest-first ordering, ``{"principal": "alice", "principal_name":
-    "bob"}`` substituted into ``"$principal_name"`` could yield
-    ``"alice_name"``.
+    Substitution is one pass over the structure. Each string is scanned
+    once, and text an argument puts in is never scanned again, so a value
+    that holds ``$other`` stays as it is. Names are tried longest first, so
+    ``$principal`` cannot take the front of ``$principal_name``. A value
+    put into a regex field is escaped, so it matches only itself and can
+    never widen the pattern.
     """
+    return _substitute(expr, args, _placeholder_re(args), in_regex=False)
+
+
+def _substitute(
+    expr: Any, args: dict[str, Any], pattern: re.Pattern[str] | None, *, in_regex: bool
+) -> Any:
     if isinstance(expr, str):
-        if expr.startswith("$") and expr[1:] in args:
+        if pattern is None:
+            return expr
+        if expr.startswith("$") and expr[1:] in args and not in_regex:
             return args[expr[1:]]
-        out = expr
-        for name in sorted(args, key=len, reverse=True):
-            out = out.replace(f"${name}", str(args[name]))
-        return out
+        if in_regex:
+            return pattern.sub(lambda m: re.escape(str(args[m.group(1)])), expr)
+        return pattern.sub(lambda m: str(args[m.group(1)]), expr)
 
     if isinstance(expr, list):
-        return [_substitute_params(x, args) for x in expr]
+        return [_substitute(x, args, pattern, in_regex=in_regex) for x in expr]
 
     if hasattr(expr, "model_dump"):
-        return _substitute_params(expr.model_dump(), args)
+        return _substitute(expr.model_dump(), args, pattern, in_regex=in_regex)
 
     if isinstance(expr, dict):
-        return {k: _substitute_params(v, args) for k, v in expr.items()}
+        return {
+            k: _substitute(v, args, pattern, in_regex=k in _REGEX_FIELDS) for k, v in expr.items()
+        }
 
     return expr
+
+
+def _has_placeholder(expr: Any, params: list[str]) -> bool:
+    """True when a string anywhere in ``expr`` names one of ``params``."""
+    pattern = _placeholder_re(dict.fromkeys(params))
+    if pattern is None:
+        return False
+
+    def walk(x: Any) -> bool:
+        if isinstance(x, str):
+            return pattern.search(x) is not None
+        if isinstance(x, dict):
+            return any(walk(v) for v in x.values())
+        if isinstance(x, list):
+            return any(walk(v) for v in x)
+        return False
+
+    return walk(_as_dict(expr) if hasattr(expr, "model_dump") else expr)
+
+
+def _names_an_alias(expr: Any) -> bool:
+    """True when ``expr`` holds an alias reference at any depth."""
+    d = _as_dict(expr)
+    if d is not None:
+        if d.get("op") == "alias":
+            return True
+        return any(_names_an_alias(v) for v in d.values())
+    if isinstance(expr, list):
+        return any(_names_an_alias(v) for v in expr)
+    return False
 
 
 class AliasRegistry:
@@ -150,34 +205,25 @@ class AliasRegistry:
         return name in self._entries
 
     def register(self, alias: Alias) -> None:
+        """Add an alias, or raise and add nothing.
+
+        A system alias's name is taken for good: no alias of any tier may
+        share it, in either order, so no lower tier can redefine a system
+        word to mean less. An error in the vacuity check refuses the
+        register, as a vacuous alias does.
+        """
+        taken = self._entries.get(alias.name, [])
+        if taken and (alias.tier == "system" or any(a.tier == "system" for a in taken)):
+            raise ValueError(
+                f"alias '{alias.name}' is a system alias name; a {alias.tier} alias "
+                "cannot share it, since it would redefine what the system word means"
+            )
         if not _references_a_path(alias.expr):
             raise ValueError(
                 f"alias '{alias.name}' has no plan-path reference (looks vacuous); "
                 "static check requires at least one Equals/NotEquals/Matches/... on a path"
             )
-        # v0.27.0: Z3-backed vacuity check — tautologies and contradictions are rejected.
-        # Alias.expr is typed Any and may be a raw dict; parse it to an Expression
-        # first so check_vacuity actually runs (a dict reaches _compile_scalar and
-        # raises, which the broad except below would otherwise swallow — silently
-        # admitting a vacuous dict-form alias).
-        vacuity_verdict: str = "unknown"
-        try:
-            from opendaisugi.vacuity import check_vacuity
-
-            expr_for_check = (
-                parse_expression(alias.expr) if isinstance(alias.expr, dict) else alias.expr
-            )
-            vacuity_verdict = check_vacuity(expr_for_check)
-            if vacuity_verdict in ("tautology", "contradiction"):
-                raise VacuousAliasError(
-                    f"alias '{alias.name}' is {vacuity_verdict} (constrains nothing / never satisfiable); "
-                    "the predicate must be non-trivial to be registered"
-                )
-        except VacuousAliasError:
-            raise
-        except Exception:
-            # Z3 unavailable, timeout, or unsupported expr — skip vacuity check gracefully.
-            pass
+        vacuity_verdict = self._vacuity(alias)
         self._entries.setdefault(alias.name, []).append(alias)
         # v0.27.0: emit provenance to the refinement sink (fail-soft — never crashes register).
         if self._refinement_sink is not None:
@@ -194,6 +240,41 @@ class AliasRegistry:
                 )
             except Exception as exc:
                 _log.warning("alias provenance write failed: %s", exc)
+
+    @staticmethod
+    def _vacuity(alias: Alias) -> str:
+        """The Z3 vacuity verdict for an alias body, or ``deferred``.
+
+        Tautologies and contradictions are refused. A body with a typed
+        field that holds a placeholder, such as ``max: $max_scale``, parses
+        only once its argument is bound, so its check is deferred. Any other
+        error refuses the register. A body that names another alias is
+        deferred too: what it means depends on that alias, which may not
+        be registered yet, and each alias is checked when it registers.
+        """
+        from opendaisugi.vacuity import check_vacuity
+
+        if _names_an_alias(alias.expr):
+            return "deferred"
+        try:
+            expr = parse_expression(alias.expr) if isinstance(alias.expr, dict) else alias.expr
+        except ValidationError as exc:
+            if alias.params and _has_placeholder(alias.expr, alias.params):
+                return "deferred"
+            raise ValueError(f"alias '{alias.name}' body is not a valid predicate: {exc}") from exc
+        try:
+            verdict = check_vacuity(expr)
+        except Exception as exc:  # noqa: BLE001 - an unjudged alias is refused
+            raise ValueError(
+                f"alias '{alias.name}' could not be checked for vacuity, so it is "
+                f"not registered: {exc}"
+            ) from exc
+        if verdict in ("tautology", "contradiction"):
+            raise VacuousAliasError(
+                f"alias '{alias.name}' is {verdict} (constrains nothing / never satisfiable); "
+                "the predicate must be non-trivial to be registered"
+            )
+        return verdict
 
     def lookup(self, name: str) -> Alias:
         if name not in self._entries:
@@ -230,6 +311,8 @@ class AliasRegistry:
             return ExistsStep(pred=self.resolve(expr.pred, seen))
         if isinstance(expr, ForallOutputs):
             return ForallOutputs(pred=self.resolve(expr.pred, seen))
+        if isinstance(expr, ForallWrites):
+            return ForallWrites(pred=self.resolve(expr.pred, seen))
         return expr
 
 

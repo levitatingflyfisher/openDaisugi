@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from opendaisugi.budget import BudgetTracker
 from opendaisugi.decomposer import DecomposedPlan, DecomposedStep
+from opendaisugi.llm_client import Reply
 from opendaisugi.model_sizer import DEFAULT_LADDER
 from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep, TaskStep
 from opendaisugi.orchestrator import (
@@ -63,15 +64,11 @@ def test_budget_aware_executor_downgrades_and_records():
 
 
 def test_budget_aware_executor_records_actual_tokens_when_available():
-    from types import SimpleNamespace
 
     tracker = BudgetTracker(total_tokens=100_000)
     exe = BudgetAwareDelegatingExecutor(tracker=tracker, ladder=DEFAULT_LADDER)
-    fake_result = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))],
-        usage=SimpleNamespace(total_tokens=321),
-    )
-    with patch("litellm.completion", return_value=fake_result):
+    fake_result = Reply('{"ok": true}', tokens=321)
+    with patch("opendaisugi.llm_client.complete", return_value=fake_result):
         exe.run(TaskStep(id="t1", prompt="easy"), timeout_s=5, max_output_bytes=1024)
     assert tracker.spent() == 321
 
@@ -508,15 +505,11 @@ async def test_strict_budget_overrun_keeps_work_and_stops_spending():
     # H3: pre-gate allows the step by estimate, but ACTUAL usage exceeds the strict
     # ceiling. The completed step's output must be kept (not discarded as an error),
     # its spend counted, and synthesis must NOT fire another LLM call.
-    from types import SimpleNamespace
 
     env = Envelope(generated_by="t", task="demo", permissions=Permission(), stakes="low")
     orch = Orchestrator()
-    fake = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="a real answer"))],
-        usage=SimpleNamespace(total_tokens=5000),  # >> the 2500 ceiling
-    )
-    with patch("litellm.completion", return_value=fake):
+    fake = Reply("a real answer", tokens=5000)
+    with patch("opendaisugi.llm_client.complete", return_value=fake):
         result = await orch.orchestrate(
             "one step that overruns",
             envelope=env,

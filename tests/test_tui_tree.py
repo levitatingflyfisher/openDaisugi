@@ -26,11 +26,21 @@ def _run(coro_fn):
 
 
 def _sprig_tree(tmp_path):
-    t = SessionTree.create(tmp_path / "sessions", session_id="e1", harness="sprig", cwd=str(tmp_path))
+    t = SessionTree.create(
+        tmp_path / "sessions", session_id="e1", harness="sprig", cwd=str(tmp_path)
+    )
     p = t.append("prompt", {"text": "write hello"})
-    a = t.append("assistant", {"text": "ok", "model": "m",
-                               "usage": {"fresh": 1, "cacheRead": 0, "cacheWrite": 0, "out": 1}})
-    c = t.append("tool_call", {"toolUseId": "x1", "name": "write", "detail": "hi.txt"}, parent_id=a.id)
+    a = t.append(
+        "assistant",
+        {
+            "text": "ok",
+            "model": "m",
+            "usage": {"fresh": 1, "cacheRead": 0, "cacheWrite": 0, "out": 1},
+        },
+    )
+    c = t.append(
+        "tool_call", {"toolUseId": "x1", "name": "write", "detail": "hi.txt"}, parent_id=a.id
+    )
     t.append("verdict", {"toolUseId": "x1", "decision": "allow", "clause": "ok"}, parent_id=c.id)
     return t, p, a, c
 
@@ -75,7 +85,9 @@ def test_tree_renders_a_sprig_session_and_filters(tmp_path):
 
 
 def test_tree_renders_a_claude_session_from_its_transcript(tmp_path):
-    _claude_session(tmp_path, "c1", last_ts=time.time() - 1, tool_use_id="toolu_01", decision="allow")
+    _claude_session(
+        tmp_path, "c1", last_ts=time.time() - 1, tool_use_id="toolu_01", decision="allow"
+    )
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)
@@ -128,7 +140,9 @@ def test_fork_here_creates_a_child_session(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert app.screen.name != "tree"  # the rewind menu is up
-            assert "Restore workspace" not in str(app.screen.query_one("#menu").render())  # no checkpoint
+            assert "Restore workspace" not in str(
+                app.screen.query_one("#menu").render()
+            )  # no checkpoint
             await pilot.press("f")
             await pilot.pause()
             ids = [s.session_id for s in SessionIndex(tmp_path / "sessions").list()]
@@ -164,7 +178,9 @@ def test_restore_conversation_moves_the_head(tmp_path):
 
 
 def test_rewind_menu_on_claude_session_offers_fork_command(tmp_path):
-    _claude_session(tmp_path, "c1", last_ts=time.time() - 1, tool_use_id="toolu_01", decision="allow")
+    _claude_session(
+        tmp_path, "c1", last_ts=time.time() - 1, tool_use_id="toolu_01", decision="allow"
+    )
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)

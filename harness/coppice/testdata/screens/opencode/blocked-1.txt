@@ -1,0 +1,2 @@
+#rule: permission_required
+△ Permission required

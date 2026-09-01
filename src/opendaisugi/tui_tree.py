@@ -35,11 +35,13 @@ class Node:
 
 
 def nodes_for_sprig(tree: SessionTree) -> list[Node]:
-    labels = {e.data.get("target"): e.data.get("label") for e in tree.entries() if e.type == "label"}
+    labels = {
+        e.data.get("target"): e.data.get("label") for e in tree.entries() if e.type == "label"
+    }
     cps = {e.parent_id for e in tree.entries() if e.type == "checkpoint"}
     out = []
     for e in tree.entries():
-        if not e.id or e.type in ("session", "label", "head", "checkpoint"):
+        if not e.id or e.type in ("session", "label", "head", "checkpoint", "state"):
             continue
         text = e.data.get("text") or " ".join(
             str(e.data.get(k, "")) for k in ("name", "detail") if e.data.get(k)
@@ -63,16 +65,23 @@ def nodes_for_claude(transcript: Path, tree: SessionTree | None) -> list[Node]:
         out.append(Node(t.uuid, t.parent_uuid, kind, f"{kind}: {t.text[:60]}"))
         for u in t.tool_uses:
             v = verdicts.get(u["id"])
-            vtxt = f"{v.get('decision')} {u['id']} · {v.get('clause', '')}" if v else "(no verdict recorded)"
+            vtxt = (
+                f"{v.get('decision')} {u['id']} · {v.get('clause', '')}"
+                if v
+                else "(no verdict recorded)"
+            )
             out.append(Node(f"{t.uuid}/{u['id']}", t.uuid, "verdict", f"{u['name']} → {vtxt}"))
     return out
 
 
 class RewindMenu(ModalScreen[str]):
-    BINDINGS = [Binding("c", "pick('conversation')", "c conversation"),
-                Binding("w", "pick('workspace')", "w workspace"),
-                Binding("b", "pick('both')", "b both"), Binding("f", "pick('fork')", "f fork"),
-                Binding("escape,n", "pick('never')", "n never mind")]
+    BINDINGS = [
+        Binding("c", "pick('conversation')", "c conversation"),
+        Binding("w", "pick('workspace')", "w workspace"),
+        Binding("b", "pick('both')", "b both"),
+        Binding("f", "pick('fork')", "f fork"),
+        Binding("escape,n", "pick('never')", "n never mind"),
+    ]
 
     def __init__(self, node: Node, *, workspace_ok: bool, skipped: list[str]) -> None:
         super().__init__()
@@ -92,8 +101,10 @@ class RewindMenu(ModalScreen[str]):
 
 
 class TreeScreen(CockpitScreen):
-    BINDINGS = [Binding("ctrl+o", "cycle_filter", "^O filter", show=True),
-                Binding("L", "label", "L label", show=True)]
+    BINDINGS = [
+        Binding("ctrl+o", "cycle_filter", "^O filter", show=True),
+        Binding("L", "label", "L label", show=True),
+    ]
 
     def __init__(self) -> None:
         super().__init__(name="tree")
@@ -158,10 +169,13 @@ class TreeScreen(CockpitScreen):
 
     def _visible(self, n: Node) -> bool:
         f = FILTERS[self._filter]
-        return (f == "all" or (f == "no tools" and n.kind not in _TOOL_TYPES)
-                or (f == "prompts" and n.kind == "prompt")
-                or (f == "labeled" and n.label.endswith("]"))
-                or (f == "verdicts" and n.kind == "verdict"))
+        return (
+            f == "all"
+            or (f == "no tools" and n.kind not in _TOOL_TYPES)
+            or (f == "prompts" and n.kind == "prompt")
+            or (f == "labeled" and n.label.endswith("]"))
+            or (f == "verdicts" and n.kind == "verdict")
+        )
 
     # --- actions ------------------------------------------------------------
     def action_cycle_filter(self) -> None:
@@ -227,7 +241,9 @@ class TreeScreen(CockpitScreen):
         if meta.get("harness") == "claude-code":
             if choice == "fork":
                 head = st.head()
-                child = st.fork(head) if head else None  # daisugi's own entries; Claude owns prompts
+                child = (
+                    st.fork(head) if head else None
+                )  # daisugi's own entries; Claude owns prompts
                 self.app.set_status(
                     f"fork: run `claude --resume {st.session_id} --fork-session` "
                     f"(daisugi registered {child.session_id if child else 'no child'}); "
@@ -243,12 +259,16 @@ class TreeScreen(CockpitScreen):
         if choice in ("workspace", "both") and cp is not None:
             from opendaisugi.checkpoints import restore
 
-            rb = restore(Path(meta["cwd"]), ref=cp.data["ref"], session_id=st.session_id, entry_id=n.id)
+            rb = restore(
+                Path(meta["cwd"]), ref=cp.data["ref"], session_id=st.session_id, entry_id=n.id
+            )
             self.app.set_status(f"workspace restored to {cp.data['ref']} · rollback at {rb.ref}")
         if choice == "conversation":
             self.app.set_status(f"head moved to {n.id} · workspace not restored")
         if choice == "fork":
             child = st.fork(n.id)
-            self.app.set_status(f"forked {st.session_id} at {n.id} → {child.session_id} · "
-                                f"resume with `sprig --resume {child.session_id}`")
+            self.app.set_status(
+                f"forked {st.session_id} at {n.id} → {child.session_id} · "
+                f"resume with `sprig --resume {child.session_id}`"
+            )
         self.reload()

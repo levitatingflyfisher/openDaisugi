@@ -1,0 +1,21 @@
+# Notes, and the pane role. floor.note prints one line on the floor and
+# floor.notes keeps it. A connection that says hello as a pane is refused
+# agent.allow, agent.deny, and an operator state report, with one message.
+{"id":"1","cmd":"floor.note","text":"docs pane spawned"}
+{"id":"$id","ok":true,"result":{"text":"docs pane spawned"}}
+{"id":"2","cmd":"floor.notes"}
+{"id":"$id","ok":true,"result":{"notes":"*"}}
+{"id":"3","cmd":"floor.note","text":" "}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"floor.note needs text."}}
+{"id":"4","cmd":"agent.allow","pane":"w9:p9","ask":"ask-1"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"*"}}
+{"id":"5","cmd":"hello","role":"pane","pane":"w9:p9"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"w9:p9"}}
+{"id":"6","cmd":"agent.allow","pane":"w9:p9","ask":"ask-1"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"a pane can propose. It cannot allow."}}
+{"id":"7","cmd":"agent.deny","pane":"w9:p9","ask":"ask-1"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"a pane can propose. It cannot allow."}}
+{"id":"8","cmd":"pane.report_state","pane":"w9:p9","event":{"v":1,"ts":1,"session_id":"s","harness":"claude","pane":"w9:p9","state":"idle","source":"operator"}}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"a pane can propose. It cannot allow."}}
+{"id":"9","cmd":"hello","role":"operator"}
+{"id":"$id","ok":true,"result":{"role":"pane"}}

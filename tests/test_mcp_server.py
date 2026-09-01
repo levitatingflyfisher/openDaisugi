@@ -227,6 +227,17 @@ async def test_envelope_for_rejects_invalid_stakes(tmp_path):
     assert "stakes" in str(exc.value).lower()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("age", ["NaN", "Infinity", "-Infinity"])
+async def test_recall_answer_refuses_a_ceiling_that_is_not_finite(tmp_path, age):
+    """A NaN max age makes every age check false: a stale answer would be
+    served. The tool refuses it instead."""
+    server = build_server(_daisugi(tmp_path))
+    with pytest.raises(Exception) as exc:
+        await server.call_tool("recall_answer", {"task": "t", "max_age_seconds": age})
+    assert "max_age_seconds must be a finite number" in str(exc.value)
+
+
 # ----- v0.20 new tools -----
 
 
@@ -502,3 +513,18 @@ def test_cli_mcp_serve_fails_gracefully_without_extra(monkeypatch):
     result = CliRunner().invoke(app, ["mcp", "serve"])
     assert result.exit_code == 1
     assert "opendaisugi[mcp]" in result.output
+
+
+# ----- the delegate tool -----
+
+
+@pytest.mark.asyncio
+async def test_delegate_tool_refuses_with_no_worker(tmp_path):
+    server = build_server(_daisugi(tmp_path))
+    f = tmp_path / "big.txt"
+    f.write_text("a\n" * 10)
+    names = [t.name for t in await server.list_tools()]
+    assert names[-1] == "delegate"
+    _, out = await server.call_tool("delegate", {"path": str(f), "question": "what?"})
+    assert out["ok"] is False and out["reason"].startswith("no worker")
+    assert out["mode"] == "bulk_read" and out["lines"] == 10

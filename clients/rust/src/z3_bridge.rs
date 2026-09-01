@@ -1,4 +1,4 @@
-//! SMT-LIB2 text emission + `z3 -in` subprocess bridge.
+//! SMT-LIB2 text emission, run in the linked Z3's command interpreter.
 //!
 //! Both Z3 call sites the Full profile actually needs — `check_vacuity`
 //! (predicate.py's tautology/contradiction classification) and
@@ -25,13 +25,12 @@
 use crate::predicate::Expr;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::Write;
-use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sort {
     Str,
     Real,
+    Bool,
 }
 
 #[derive(Debug, Clone)]
@@ -205,6 +204,18 @@ pub fn compile_scalar(expr: &Expr, scope: &mut Scope) -> String {
         Expr::Not { child } => format!("(not {})", compile_scalar(child, scope)),
         Expr::Implies { a, b } => format!("(=> {} {})", compile_scalar(a, scope), compile_scalar(b, scope)),
         Expr::LLMCheck { .. } => scope.fresh_soft("llm_check"),
+        Expr::ForallWrites { pred, .. } => {
+            // predicate_z3._compile_forall_writes on a symbolic step: one
+            // free write path under <prefix>__w, and a free Bool that says
+            // the step writes at all.
+            let outer = scope.prefix.clone();
+            scope.prefix = format!("{outer}__w");
+            let inner = compile_scalar(pred, scope);
+            scope.prefix = outer.clone();
+            let name = format!("{outer}__writes_nonempty");
+            scope.vars.entry(name.clone()).or_insert_with(|| (name.clone(), Sort::Bool));
+            format!("(=> {name} {inner})")
+        }
         // DependsOn/Before/ForallSteps/ExistsStep/ForallOutputs/AliasRef never
         // reach compile_scalar in practice (stripped or rejected earlier);
         // fall back to an inert `true` rather than panicking on malformed input.
@@ -218,6 +229,7 @@ fn declare_block(scope: &Scope) -> String {
         let sort_str = match sort {
             Sort::Str => "String",
             Sort::Real => "Real",
+            Sort::Bool => "Bool",
         };
         out.push_str(&format!("(declare-const {name} {sort_str})\n"));
     }
@@ -227,24 +239,12 @@ fn declare_block(scope: &Scope) -> String {
     out
 }
 
-/// Runs `script` through `z3 -in` and returns the `(check-sat)` result
-/// lines in order ("sat"/"unsat"/"unknown"). One process per call —
-/// simple and correctness-first; the corpus only needs a few dozen Z3
-/// round trips total (see `README.md`).
+/// Runs `script` in the linked Z3's SMT-LIB2 command interpreter (the text
+/// `z3 -in` would read) and returns the `(check-sat)` result lines in
+/// order ("sat"/"unsat"/"unknown").
 fn run_z3_script(script: &str) -> Result<Vec<String>, String> {
-    let mut child = Command::new("z3")
-        .arg("-in")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("failed to spawn z3: {e}"))?;
-    {
-        let stdin = child.stdin.as_mut().ok_or("z3: no stdin handle")?;
-        stdin.write_all(script.as_bytes()).map_err(|e| e.to_string())?;
-    }
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    // The linked Z3 (5.1.0, the oracle's), not a z3 binary on PATH.
+    let text = crate::z3py::eval_smtlib2(script).map_err(|e| e.0)?;
     Ok(text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
 }
 
@@ -255,11 +255,26 @@ pub enum Vacuity {
     NonTrivial,
 }
 
+/// `vacuity.check_vacuity` of a raw expr dict, exactly: the gate's
+/// tagged-union parse, the regex_to_z3 translation over the port of
+/// Python's re, and the linked Z3. An error names a pattern the port does
+/// not decide (see gate::predicate).
+pub fn check_vacuity_exact(raw: &Value) -> Result<Vacuity, String> {
+    use crate::gate::predicate::{vacuity_of, Vac};
+    let v = crate::gate::pyjson::from_serde(raw);
+    match vacuity_of(&v) {
+        Ok(Vac::Contradiction) => Ok(Vacuity::Contradiction),
+        Ok(Vac::Tautology) => Ok(Vacuity::Tautology),
+        Ok(Vac::NonTrivial) => Ok(Vacuity::NonTrivial),
+        Err(why) => Err(why),
+    }
+}
+
 /// `check_vacuity` — strips one outer quantifier (`ForallSteps`/
 /// `ExistsStep`/`ForallOutputs`), compiles the inner predicate over a fresh
 /// symbolic scope, then asks Z3 two questions in one script: is the term
 /// itself UNSAT (contradiction)? is its negation UNSAT (tautology)? Any
-/// failure (spawn error, malformed output, Z3 `unknown`) fails OPEN to
+/// failure (a Z3 error, malformed output, Z3 `unknown`) fails OPEN to
 /// `NonTrivial` — matching `_check_predicate_item`'s
 /// `except Exception: vacuity_verdict = "non_trivial"` and
 /// `_compute_vacuity`'s own unknown-falls-through-to-non_trivial behavior.

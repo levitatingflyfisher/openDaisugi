@@ -28,6 +28,11 @@ pub enum Expr {
     ForallSteps { pred: Box<Expr> },
     ExistsStep { pred: Box<Expr> },
     ForallOutputs { pred: Box<Expr> },
+    /// `forall_writes`: pred holds for every write path of one step
+    /// (`write_paths.step_write_paths`), each seen as the field `path`.
+    /// `base` is the directory relative writes resolve against: only an
+    /// unfolded word sets it (`set_write_base`); it is never parsed.
+    ForallWrites { pred: Box<Expr>, base: Option<String> },
     DependsOn { step_id_a: String, step_id_b: String },
     Before { step_id_a: String, step_id_b: String },
     AliasRef { name: String },
@@ -97,6 +102,7 @@ pub fn parse_expression(v: &Value) -> Result<Expr, String> {
         "forall_steps" => Expr::ForallSteps { pred: Box::new(child(v, "pred")?) },
         "exists_step" => Expr::ExistsStep { pred: Box::new(child(v, "pred")?) },
         "forall_outputs" => Expr::ForallOutputs { pred: Box::new(child(v, "pred")?) },
+        "forall_writes" => Expr::ForallWrites { pred: Box::new(child(v, "pred")?), base: None },
         "depends_on" => Expr::DependsOn { step_id_a: s(v, "step_id_a")?, step_id_b: s(v, "step_id_b")? },
         "before" => Expr::Before { step_id_a: s(v, "step_id_a")?, step_id_b: s(v, "step_id_b")? },
         "alias" => Expr::AliasRef { name: s(v, "name")? },
@@ -106,6 +112,46 @@ pub fn parse_expression(v: &Value) -> Result<Expr, String> {
 }
 
 // --- Python-semantics value comparison --------------------------------------------
+
+/// A value as the oracle's predicate stage holds it: JSON, except that
+/// a step's `model_dump()` keeps each tuple-typed field as a tuple, which
+/// equals no list.
+#[derive(Debug, Clone)]
+pub enum Py {
+    Json(Value),
+    Tuple(Vec<Value>),
+    Obj(Vec<(String, Py)>),
+    List(Vec<Py>),
+}
+
+/// The step fields each step type declares as a tuple.
+fn tuple_fields(step_type: &str) -> &'static [&'static str] {
+    match step_type {
+        "cartesian_move" => &["target_position", "target_orientation"],
+        "vla" => &["target_pose"],
+        _ => &[],
+    }
+}
+
+/// A step's raw JSON as its `model_dump()`: each tuple-typed field that
+/// holds a list is a tuple.
+pub fn dumped_step(step: &Value) -> Py {
+    let fields = step.get("type").and_then(|t| t.as_str()).map(tuple_fields).unwrap_or(&[]);
+    match step.as_object() {
+        Some(o) if !fields.is_empty() => Py::Obj(
+            o.iter()
+                .map(|(k, v)| {
+                    let x = match v {
+                        Value::Array(l) if fields.contains(&k.as_str()) => Py::Tuple(l.clone()),
+                        other => Py::Json(other.clone()),
+                    };
+                    (k.clone(), x)
+                })
+                .collect(),
+        ),
+        _ => Py::Json(step.clone()),
+    }
+}
 
 fn is_numericish(v: &Value) -> bool {
     matches!(v, Value::Bool(_) | Value::Number(_))
@@ -137,17 +183,65 @@ pub fn py_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
-fn py_in(val: &Value, values: &[Value]) -> bool {
-    values.iter().any(|v| py_eq(val, v))
+/// `==` of a step value against a JSON value: a tuple equals none.
+fn py_eq_py(a: &Py, b: &Value) -> bool {
+    match (a, b) {
+        (Py::Json(x), y) => py_eq(x, y),
+        (Py::Tuple(_), _) => false,
+        (Py::List(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| py_eq_py(p, q)),
+        (Py::Obj(x), Value::Object(y)) => {
+            x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| py_eq_py(v, w)))
+        }
+        _ => false,
+    }
+}
+
+/// A resolved path: a step value, or a JSON value inside one.
+enum At<'a> {
+    Py(&'a Py),
+    Json(&'a Value),
+}
+
+impl<'a> At<'a> {
+    /// The JSON value, where the value is plain JSON.
+    fn json(&self) -> Option<&'a Value> {
+        match *self {
+            At::Json(v) | At::Py(Py::Json(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    fn eq(&self, b: &Value) -> bool {
+        match self {
+            At::Json(v) => py_eq(v, b),
+            At::Py(p) => py_eq_py(p, b),
+        }
+    }
+
+    fn is_in(&self, values: &[Value]) -> bool {
+        values.iter().any(|v| self.eq(v))
+    }
+
+    fn len(&self) -> Option<usize> {
+        match *self {
+            At::Json(v) | At::Py(Py::Json(v)) => has_len(v),
+            At::Py(Py::Tuple(l)) => Some(l.len()),
+            At::Py(Py::List(l)) => Some(l.len()),
+            At::Py(Py::Obj(o)) => Some(o.len()),
+        }
+    }
 }
 
 /// `_resolve_path` — dict-only path walk (the pure-Python evaluation path
 /// never resolves against a raw pydantic object; every scope handed to
 /// `_eval_scalar` is already a dict). Returns `None` for "MISSING".
-fn resolve_path<'a>(scope: &'a Value, path: &str) -> Option<&'a Value> {
-    let mut cur = scope;
+fn resolve_path<'a>(scope: &'a Py, path: &str) -> Option<At<'a>> {
+    let mut cur = At::Py(scope);
     for part in path.split('.') {
-        cur = cur.as_object()?.get(part)?;
+        cur = match cur {
+            At::Py(Py::Obj(o)) => At::Py(o.iter().find(|(k, _)| k == part).map(|(_, v)| v)?),
+            other => At::Json(other.json()?.as_object()?.get(part)?),
+        };
     }
     Some(cur)
 }
@@ -161,42 +255,86 @@ fn has_len(v: &Value) -> Option<usize> {
     }
 }
 
+/// `dialect._set_base`: every forall_writes in expr gets the base its
+/// writes resolve against.
+pub fn set_write_base(expr: &mut Expr, to: &str) {
+    match expr {
+        Expr::ForallWrites { pred, base } => {
+            *base = Some(to.to_string());
+            set_write_base(pred, to);
+        }
+        Expr::ForallSteps { pred } | Expr::ExistsStep { pred } | Expr::ForallOutputs { pred } => {
+            set_write_base(pred, to)
+        }
+        Expr::Not { child } => set_write_base(child, to),
+        Expr::Implies { a, b } => {
+            set_write_base(a, to);
+            set_write_base(b, to);
+        }
+        Expr::And { children } | Expr::Or { children } => {
+            for c in children {
+                set_write_base(c, to);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn compile_regex(pattern: &str) -> Result<regex::Regex, String> {
-    regex::Regex::new(pattern).map_err(|e| format!("bad regex {pattern:?}: {e}"))
+    regex::Regex::new(&crate::dialect::py_pattern(pattern)).map_err(|e| format!("bad regex {pattern:?}: {e}"))
 }
 
 /// `_eval_scalar` — evaluate a per-step scalar predicate against one scope
 /// (a JSON object: a step dict, an output dict, or the `{"steps": [...]}`
 /// synthetic wrapper).
-pub fn eval_scalar(expr: &Expr, scope: &Value) -> Result<bool, String> {
+pub fn eval_scalar(expr: &Expr, scope: &Py) -> Result<bool, String> {
     match expr {
-        Expr::Equals { path, value } => Ok(resolve_path(scope, path).is_some_and(|v| py_eq(v, value))),
-        Expr::NotEquals { path, value } => Ok(resolve_path(scope, path).is_some_and(|v| !py_eq(v, value))),
-        Expr::InSet { path, values } => Ok(resolve_path(scope, path).is_some_and(|v| py_in(v, values))),
-        Expr::NotInSet { path, values } => Ok(resolve_path(scope, path).is_some_and(|v| !py_in(v, values))),
+        Expr::ForallWrites { pred, base } => {
+            // predicate_z3._scope_writes: only a step record has write paths.
+            if resolve_path(scope, "type").is_none() {
+                return Err("forall_writes must stand inside forall_steps or exists_step".into());
+            }
+            let writes = match scope {
+                Py::Json(step) => crate::dialect::step_write_paths(step, base.as_deref()),
+                // A step held as an object has tuple fields: a robot step.
+                _ => Some(vec![]),
+            };
+            let Some(writes) = writes else { return Ok(false) };
+            for p in writes {
+                let mut m = serde_json::Map::new();
+                m.insert("path".into(), Value::String(p));
+                if !eval_scalar(pred, &Py::Json(Value::Object(m)))? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        Expr::Equals { path, value } => Ok(resolve_path(scope, path).is_some_and(|v| v.eq(value))),
+        Expr::NotEquals { path, value } => Ok(resolve_path(scope, path).is_some_and(|v| !v.eq(value))),
+        Expr::InSet { path, values } => Ok(resolve_path(scope, path).is_some_and(|v| v.is_in(values))),
+        Expr::NotInSet { path, values } => Ok(resolve_path(scope, path).is_some_and(|v| !v.is_in(values))),
         Expr::Matches { path, regex } => {
             let re = compile_regex(regex)?;
-            Ok(match resolve_path(scope, path) {
+            Ok(match resolve_path(scope, path).as_ref().and_then(At::json) {
                 Some(Value::String(s)) => re.is_match(s),
                 _ => false,
             })
         }
         Expr::NotMatches { path, regex } => {
             let re = compile_regex(regex)?;
-            Ok(match resolve_path(scope, path) {
+            Ok(match resolve_path(scope, path).as_ref().and_then(At::json) {
                 Some(Value::String(s)) => !re.is_match(s),
-                Some(_) => true,
-                None => true,
+                _ => true,
             })
         }
-        Expr::NumericRange { path, min, max } => Ok(match resolve_path(scope, path) {
+        Expr::NumericRange { path, min, max } => Ok(match resolve_path(scope, path).as_ref().and_then(At::json) {
             Some(v) if is_numericish(v) => {
                 let n = numeric_of(v);
                 *min <= n && n <= *max
             }
             _ => false,
         }),
-        Expr::LengthRange { path, min, max } => Ok(match resolve_path(scope, path).and_then(has_len) {
+        Expr::LengthRange { path, min, max } => Ok(match resolve_path(scope, path).and_then(|v| v.len()) {
             Some(n) => {
                 let n = n as i64;
                 n >= *min && max.is_none_or(|m| n <= m)
@@ -205,8 +343,9 @@ pub fn eval_scalar(expr: &Expr, scope: &Value) -> Result<bool, String> {
         }),
         Expr::Exists { path } => Ok(resolve_path(scope, path).is_some()),
         Expr::IsEmpty { path } => Ok(match resolve_path(scope, path) {
-            None | Some(Value::Null) => true,
-            Some(v) => has_len(v).map(|n| n == 0).unwrap_or(false),
+            None => true,
+            Some(v) if v.json().is_some_and(|j| j.is_null()) => true,
+            Some(v) => v.len().map(|n| n == 0).unwrap_or(false),
         }),
         Expr::And { children } => {
             for c in children {
@@ -238,10 +377,15 @@ pub fn eval_scalar(expr: &Expr, scope: &Value) -> Result<bool, String> {
 /// physical stakes, matching the oracle — LLMCheck is otherwise not
 /// reproducible offline and does not appear in the corpus).
 pub fn evaluate_predicate(expr: &Expr, steps: &[Value], stakes: &str) -> Result<bool, String> {
-    fn go(e: &Expr, steps: &[Value], stakes: &str) -> Result<bool, String> {
+    let dumped: Vec<Py> = steps.iter().map(dumped_step).collect();
+    go(expr, steps, &dumped, stakes)
+}
+
+fn go(e: &Expr, steps: &[Value], dumped: &[Py], stakes: &str) -> Result<bool, String> {
+    {
         match e {
             Expr::ForallSteps { pred } => {
-                for st in steps {
+                for st in dumped {
                     if !eval_scalar(pred, st)? {
                         return Ok(false);
                     }
@@ -249,7 +393,7 @@ pub fn evaluate_predicate(expr: &Expr, steps: &[Value], stakes: &str) -> Result<
                 Ok(true)
             }
             Expr::ExistsStep { pred } => {
-                for st in steps {
+                for st in dumped {
                     if eval_scalar(pred, st)? {
                         return Ok(true);
                     }
@@ -267,8 +411,8 @@ pub fn evaluate_predicate(expr: &Expr, steps: &[Value], stakes: &str) -> Result<
                         Value::Object(m)
                     })
                     .collect();
-                for out in &outputs {
-                    if !eval_scalar(pred, out)? {
+                for out in outputs {
+                    if !eval_scalar(pred, &Py::Json(out))? {
                         return Ok(false);
                     }
                 }
@@ -300,7 +444,7 @@ pub fn evaluate_predicate(expr: &Expr, steps: &[Value], stakes: &str) -> Result<
             }
             Expr::And { children } => {
                 for c in children {
-                    if !go(c, steps, stakes)? {
+                    if !go(c, steps, dumped, stakes)? {
                         return Ok(false);
                     }
                 }
@@ -308,21 +452,47 @@ pub fn evaluate_predicate(expr: &Expr, steps: &[Value], stakes: &str) -> Result<
             }
             Expr::Or { children } => {
                 for c in children {
-                    if go(c, steps, stakes)? {
+                    if go(c, steps, dumped, stakes)? {
                         return Ok(true);
                     }
                 }
                 Ok(false)
             }
-            Expr::Not { child } => Ok(!go(child, steps, stakes)?),
-            Expr::Implies { a, b } => Ok(!go(a, steps, stakes)? || go(b, steps, stakes)?),
+            Expr::Not { child } => Ok(!go(child, steps, dumped, stakes)?),
+            Expr::Implies { a, b } => Ok(!go(a, steps, dumped, stakes)? || go(b, steps, dumped, stakes)?),
             other => {
                 // Scalar at plan root: evaluate against a synthetic {"steps": [...]} scope.
-                let mut m = serde_json::Map::new();
-                m.insert("steps".to_string(), Value::Array(steps.to_vec()));
-                eval_scalar(other, &Value::Object(m))
+                let scope = Py::Obj(vec![("steps".to_string(), Py::List(dumped.to_vec()))]);
+                eval_scalar(other, &scope)
             }
         }
     }
-    go(expr, steps, stakes)
+}
+
+#[cfg(test)]
+mod tuple_tests {
+    use super::*;
+
+    /// The offline verifier reads a step as its model_dump(): a
+    /// cartesian_move's target_position is a tuple, which equals no list.
+    #[test]
+    fn a_tuple_field_equals_no_list() {
+        let steps: Vec<Value> = vec![serde_json::json!({"id": "c1", "type": "cartesian_move", "target_position": [1.0, 2.0, 3.0], "target_orientation": null})];
+        let run = |e: Value| evaluate_predicate(&parse_expression(&e).unwrap(), &steps, "low").unwrap();
+        let fs = |pred: Value| serde_json::json!({"op": "forall_steps", "pred": pred});
+        assert!(!run(fs(serde_json::json!({"op": "equals", "path": "target_position", "value": [1.0, 2.0, 3.0]}))));
+        assert!(run(fs(serde_json::json!({"op": "not_equals", "path": "target_position", "value": [1.0, 2.0, 3.0]}))));
+        assert!(!run(fs(serde_json::json!({"op": "in_set", "path": "target_position", "values": [[1.0, 2.0, 3.0]]}))));
+        assert!(run(fs(serde_json::json!({"op": "not_in_set", "path": "target_position", "values": [[1.0, 2.0, 3.0]]}))));
+        assert!(run(fs(serde_json::json!({"op": "length_range", "path": "target_position", "min": 3, "max": 3}))));
+        assert!(run(fs(serde_json::json!({"op": "is_empty", "path": "target_orientation"}))));
+        assert!(run(fs(serde_json::json!({"op": "exists", "path": "target_position"}))));
+        let whole = serde_json::json!({"op": "equals", "path": "steps", "value": [
+            {"id": "c1", "type": "cartesian_move", "target_position": [1.0, 2.0, 3.0], "target_orientation": null}]});
+        assert!(!run(whole));
+        // Another step type keeps its list.
+        let shell = vec![serde_json::json!({"id": "s", "type": "shell", "command": "ls", "target_position": [1]})];
+        let e = fs(serde_json::json!({"op": "equals", "path": "target_position", "value": [1]}));
+        assert!(evaluate_predicate(&parse_expression(&e).unwrap(), &shell, "low").unwrap());
+    }
 }

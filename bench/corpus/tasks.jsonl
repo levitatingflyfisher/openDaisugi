@@ -1,0 +1,12 @@
+{"id":"t01","task":"add a pytest test for the shell decomposer","kind":"code","stakes":"medium"}
+{"id":"t02","task":"bump the docker base image to bookworm","kind":"ops","stakes":"medium"}
+{"id":"t03","task":"summarise the last ten journal traces","kind":"read","stakes":"low"}
+{"id":"t04","task":"fix the flaky gateway streaming test","kind":"code","stakes":"medium"}
+{"id":"t05","task":"list every file larger than ten megabytes under build","kind":"shell","stakes":"low"}
+{"id":"t06","task":"write the release notes for version 0.44","kind":"write","stakes":"low"}
+{"id":"t07","task":"rotate the signing key used by the registry","kind":"ops","stakes":"high"}
+{"id":"t08","task":"explain why the potion threshold is 0.59","kind":"read","stakes":"low"}
+{"id":"t09","task":"add a retry with backoff to the model download","kind":"code","stakes":"medium"}
+{"id":"t10","task":"delete the stale pathways older than ninety days","kind":"ops","stakes":"high"}
+{"id":"t11","task":"render the module map as json for a script","kind":"read","stakes":"low"}
+{"id":"t12","task":"port the lean parser rule for heredocs to go","kind":"code","stakes":"medium"}

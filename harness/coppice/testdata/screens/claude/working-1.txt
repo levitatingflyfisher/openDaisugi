@@ -1,0 +1,2 @@
+#rule: live_turn_working
+⏵ thinking about it (12s) · esc to interrupt

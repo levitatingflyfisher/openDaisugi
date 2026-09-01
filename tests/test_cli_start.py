@@ -39,7 +39,9 @@ def test_start_dry_run_prints_the_steps_and_writes_nothing(tmp_path, monkeypatch
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     monkeypatch.setattr("shutil.which", lambda n: "/usr/bin/claude")
-    res = runner.invoke(app, ["start", "--dry-run", "--no-ui", "--data-dir", str(tmp_path / "data")])
+    res = runner.invoke(
+        app, ["start", "--dry-run", "--no-ui", "--data-dir", str(tmp_path / "data")]
+    )
     assert res.exit_code == 0, res.output
     for key in ("harness", "hook", "envelope", "gate-server", "view"):
         assert key in res.output
@@ -53,14 +55,18 @@ def test_start_dry_run_step_table_survives_quiet(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     monkeypatch.setattr("shutil.which", lambda n: "/usr/bin/claude")
-    res = runner.invoke(app, ["-q", "start", "--dry-run", "--no-ui", "--data-dir", str(tmp_path / "data")])
+    res = runner.invoke(
+        app, ["-q", "start", "--dry-run", "--no-ui", "--data-dir", str(tmp_path / "data")]
+    )
     assert res.exit_code == 0, res.output
     assert "harness" in res.output
 
 
 def test_ask_without_enforce_is_an_explicit_error(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    res = runner.invoke(app, ["start", "--ask", "--dry-run", "--no-ui", "--data-dir", str(tmp_path / "data")])
+    res = runner.invoke(
+        app, ["start", "--ask", "--dry-run", "--no-ui", "--data-dir", str(tmp_path / "data")]
+    )
     assert res.exit_code == 2
     assert "--enforce" in res.output
 

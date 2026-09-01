@@ -1,0 +1,19 @@
+{
+ "cases.jsonl": {
+  "count": 158,
+  "sha256": "4431c8441351103d90e66901fc7ba924ca4218c6c6bcd18a465eb91245c9bf3d"
+ },
+ "find.jsonl": {
+  "count": 24,
+  "sha256": "e222960d09257c3f8222b02dcc754d4258e019233540e78032a3098a06a12a2c"
+ },
+ "real_potion_cases": true,
+ "units.json": {
+  "sha256": "befc964d0c90291b0fdb44b72238d7b1a6179f0120706643d0b3d3f1874099dc"
+ },
+ "v": 1,
+ "verify_messages.jsonl": {
+  "count": 577,
+  "sha256": "f4f00e0731ae5354459b354aebe58839b5b88f3754e035493abd805cdc1e91fd"
+ }
+}

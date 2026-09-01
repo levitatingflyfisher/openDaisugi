@@ -34,6 +34,7 @@ from opendaisugi.predicate import (
     ExistsStep,
     ForallOutputs,
     ForallSteps,
+    ForallWrites,
     Implies,
     InSet,
     IsEmpty,
@@ -74,7 +75,26 @@ def _step_to_dict(step: Any) -> dict[str, Any]:
     return dict(step)
 
 
+def _scope_writes(scope: dict[str, Any] | None, base: str | None = None) -> list[str] | None:
+    """The write paths of the step a ``forall_writes`` stands in.
+
+    Only a step record has write paths. At the plan root, inside
+    ``forall_outputs`` and inside another ``forall_writes`` the scope is not
+    a step, and the quantifier is an error there, never true.
+    """
+    if not isinstance(scope, dict) or "type" not in scope:
+        raise ValueError("forall_writes must stand inside forall_steps or exists_step")
+    from opendaisugi.write_paths import step_write_paths
+
+    return step_write_paths(scope, base)
+
+
 def _eval_scalar(expr: Any, scope: dict[str, Any]) -> bool:
+    if isinstance(expr, ForallWrites):
+        writes = _scope_writes(scope, expr._base)
+        if writes is None:
+            return False
+        return all(_eval_scalar(expr.pred, {"path": p}) for p in writes)
     if isinstance(expr, Equals):
         return _resolve_path(scope, expr.path) == expr.value
     if isinstance(expr, NotEquals):
@@ -284,6 +304,8 @@ def _compile_scalar(
     soft: list[str],
     soft_prefix: str,
 ) -> z3.BoolRef:
+    if isinstance(expr, ForallWrites):
+        return _compile_forall_writes(expr, scope, soft)
     if isinstance(expr, Equals):
         if isinstance(expr.value, (int, float)) and not isinstance(expr.value, bool):
             var, present = scope.resolve_numeric(expr.path)
@@ -419,6 +441,36 @@ def _compile_scalar(
             f"unresolved alias reference '{expr.name}'; resolve aliases before compilation"
         )
     raise ValueError(f"unknown scalar predicate op: {type(expr).__name__}")
+
+
+def _compile_forall_writes(expr: ForallWrites, scope: _Scope, soft: list[str]) -> z3.BoolRef:
+    """``forall_writes`` over one step.
+
+    A concrete step unrolls into a conjunction over its write paths, each a
+    concrete scope ``{"path": p}``; unknown write paths compile to false. A
+    symbolic step has one free write path ``w`` and a free Bool that says
+    whether the step writes at all: the term is ``nonempty -> pred(w)``. So
+    the quantifier is a tautology only when ``pred`` is one, and it is never
+    a contradiction, since a step may write nothing.
+    """
+    if scope.concrete is None:
+        sub = _Scope(prefix=f"{scope.prefix}__w", concrete=None)
+        inner = _compile_scalar(expr.pred, sub, soft, sub.prefix)
+        scope.vars.update(sub.vars)
+        scope.assumptions.extend(sub.assumptions)
+        return z3.Implies(z3.Bool(f"{scope.prefix}__writes_nonempty"), inner)
+    writes = _scope_writes(scope.concrete, expr._base)
+    if writes is None:
+        return z3.BoolVal(False)
+    terms: list[z3.BoolRef] = []
+    for i, path in enumerate(writes):
+        sub = _Scope(prefix=f"{scope.prefix}__w{i}", concrete={"path": path})
+        terms.append(_compile_scalar(expr.pred, sub, soft, sub.prefix))
+        scope.vars.update(sub.vars)
+        scope.assumptions.extend(sub.assumptions)
+    if not terms:
+        return z3.BoolVal(True)
+    return z3.And(*terms) if len(terms) > 1 else terms[0]
 
 
 def compile_to_z3(

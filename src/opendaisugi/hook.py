@@ -73,6 +73,21 @@ def stdout_for_format(fmt: str, *, block: bool, reason: str = "") -> str:
     return json.dumps({"continue": True})
 
 
+# Formats whose host reads the process exit code as the allow or deny signal,
+# 2 for deny, and never parses stdout for a verdict. Claude Code's PreToolUse
+# hook, pi's gate extension and OpenCode's plugin all read this signal. pi
+# and OpenCode read it from the resident gate's {"exit_code": ...} socket
+# reply. The set names every exit-code host at once so the two plugins
+# cannot land two different rewrites of gate._outcome.
+EXIT_CODE_FORMATS = frozenset({"claude", "pi", "opencode"})
+
+# Formats whose host reads a JSON body on stdout as the verdict, exit code
+# always 0. The two sets together are every format the gate speaks. A
+# format in neither set must not fall through stdout_for_format's default
+# body, which is an allow. gate._outcome denies it instead.
+STDOUT_BLOCK_FORMATS = frozenset({"hermes", "openclaw"})
+
+
 def record_and_contract(raw: bytes, *, root: Path, fmt: str) -> str:
     """Record a hook payload (best-effort) and return the host's allow contract.
 
@@ -86,6 +101,152 @@ def record_and_contract(raw: bytes, *, root: Path, fmt: str) -> str:
         payload = json.loads(text) if text.strip() else {}
         if payload:
             record_call(payload, root=root)
+    except Exception:
+        pass
+    return stdout_for_format(fmt, block=False)
+
+
+# Claude Code's Notification event (https://code.claude.com/docs/en/hooks) carries
+# session_id, transcript_path, cwd, hook_event_name, message, title, and
+# notification_type — one of exactly twelve documented values. Only these four
+# mean a human is actually being asked something; every other value (idle_prompt,
+# auth_success, elicitation_complete, elicitation_response, agent_completed,
+# quota_auto_resume_fired, quota_auto_resume_stale, quota_auto_resume_disabled)
+# is informational and reports idle.
+_BLOCKING_NOTIFICATIONS = frozenset(
+    {
+        "permission_prompt",
+        "elicitation_dialog",
+        "elicitation_url_dialog",
+        "agent_needs_input",
+    }
+)
+
+
+# Claude Code's subagent hooks, by the --event name, and the child state
+# each one reports.
+_SUBAGENT_EVENTS = {"subagent_start": "working", "subagent_stop": "done"}
+
+
+def _report_subagent(payload: object, *, state: str) -> None:
+    """Report one subagent start or stop to coppice as a child of this pane.
+
+    The payload carries ``agent_id`` and ``agent_type``. A payload with no
+    agent id names no child and reports nothing. Never raises.
+    """
+    try:
+        if not isinstance(payload, dict):
+            return
+        agent_id = payload.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id:
+            return
+        label = payload.get("agent_type")
+        from opendaisugi import _state_report
+
+        _state_report.report_child(agent_id, state, label if isinstance(label, str) else "")
+    except Exception:
+        pass
+
+
+def record_lifecycle_event(
+    raw: bytes,
+    *,
+    event: str,
+    fmt: str = "claude",
+    sessions_root: Path | None = None,
+) -> str:
+    """Handle Claude Code's Stop, Notification, SubagentStart and
+    SubagentStop hooks: session lifecycle, not a tool call. The two subagent
+    events report a child row to coppice through ``report_child`` and
+    nothing else. Reports 'idle' on Stop, and on Notification either
+    'blocked' (a real request for a human — see ``_BLOCKING_NOTIFICATIONS``)
+    or 'idle' (every other documented ``notification_type``) depending on
+    the payload.
+
+    MUST NOT raise, same contract as record_and_contract: a bad or missing
+    payload still returns the host's allow contract.
+
+    A payload that is not a JSON object, or that has no ``session_id``,
+    reports and writes nothing (whole-branch review, minor 2) — it mirrors
+    gate.py's own guard (``_maybe_report_state``/``_log_tree``). Without
+    this, garbage stdin fell through to ``_safe_session_id(None) ==
+    "no-session"`` and both delivered a report and created a real
+    session-tree directory for a session that never existed.
+
+    Classification: ``notification_type in _BLOCKING_NOTIFICATIONS`` when
+    that field is present; when it is ABSENT, falls back to a "permission"
+    substring match on ``message``. A present-but-non-blocking type (e.g.
+    ``idle_prompt``) is idle regardless of what ``message`` says — the
+    enum is authoritative once it exists. Fail this classification any
+    OTHER way and it must fail toward idle, never toward a manufactured
+    'blocked' (master spec §3.6): an over-eager blocked reading would show
+    an operator a fake pending ask.
+    """
+    try:
+        text = raw.decode("utf-8", "replace")
+        payload = json.loads(text) if text.strip() else {}
+    except Exception:
+        payload = {}
+    if event in _SUBAGENT_EVENTS:
+        _report_subagent(payload, state=_SUBAGENT_EVENTS[event])
+        return stdout_for_format(fmt, block=False)
+    if not isinstance(payload, dict) or not payload.get("session_id"):
+        return stdout_for_format(fmt, block=False)
+    try:
+        from opendaisugi._state_report import build_event, report_state, report_transcript_path
+        from opendaisugi.gate import _HARNESS_BY_FMT
+
+        sid = _safe_session_id(payload.get("session_id"))
+        harness = _HARNESS_BY_FMT.get(fmt, fmt)
+        if event == "stop":
+            state, detail, ask_row = "idle", "session stop", None
+        else:  # notification
+            message = str(payload.get("message") or "")
+            notif_type = payload.get("notification_type")
+            is_permission = (
+                notif_type in _BLOCKING_NOTIFICATIONS
+                if notif_type
+                else "permission" in message.lower()
+            )
+            if is_permission:
+                state = "blocked"
+                ask_row = {
+                    "id": "harness",
+                    "tool": str(notif_type or "notification"),
+                    "summary": message,
+                    "deadline": time.time() + 90,
+                }
+                detail = f"notification: {message}"[:200]
+            else:
+                state = "idle"
+                detail = f"notification: {message}"[:200] if message else "notification"
+                ask_row = None
+        ev = build_event(
+            session_id=sid,
+            harness=harness,
+            state=state,
+            source="headless",
+            harness_session_id=payload.get("session_id"),
+            detail=detail,
+            ask=ask_row,
+            transcript_path=report_transcript_path(payload.get("transcript_path")),
+        )
+        report_state(ev)
+        try:
+            from opendaisugi.session_tree import SessionTree
+
+            root = sessions_root or (DEFAULT_CAPTURES_ROOT.parent / "sessions")
+            tree = SessionTree.open_or_create(
+                root,
+                session_id=sid,
+                harness=harness,
+                cwd=str(payload.get("cwd") or ""),
+                harness_session_id=payload.get("session_id"),
+                transcript_path=payload.get("transcript_path"),
+            )
+            tree.append("state", json.loads(ev))
+        except Exception:
+            pass
     except Exception:
         pass
     return stdout_for_format(fmt, block=False)
@@ -108,20 +269,90 @@ _TOOL_TYPE_MAP: dict[str, str] = {
     "WebSearch": "network",
 }
 
+# Every built-in tool pi ships, from its own docs. Recorded with its source
+# line in src/opendaisugi/harness_pi/extension/PINS.md.
+_PI_BUILTIN_TOOLS = frozenset({"read", "bash", "powershell", "edit", "write", "grep", "find", "ls"})
 
-def _classify_tool(name: str) -> str | None:
+# pi's built-in tool names with a known input shape, lowercase. Consulted
+# only under fmt="pi", so a lowercase name stays unknown under every other
+# format and no host gains a mapping it did not have. Both shells map to
+# "shell" so every shell predicate sees their command. grep, find and ls
+# are not here: their path parameter is not pinned, so they stay MCP-style
+# and an envelope must name each one to admit it.
+_PI_TOOL_TYPE_MAP: dict[str, str] = {
+    "bash": "shell",
+    "powershell": "shell",
+    "read": "file_read",
+    "write": "file_write",
+    "edit": "file_write",
+}
+
+
+def _classify_tool(name: str, *, fmt: str = "claude") -> str | None:
     """Return our step type for a host's tool name, or None for unknown.
 
-    Unknown tools are dropped from captures rather than guessed at — keeps
-    the post-hoc inference honest. v0.22+ may add a registry for custom
-    mappings. Host MCP tools follow the ``mcp__<server>__<tool>`` convention
-    and classify as ``mcp`` so the gate can check them against the envelope's
-    deny-by-default ``mcp_allowlist`` rather than blanket-denying every MCP
-    call as an unknown tool.
+    Unknown tools are dropped from captures rather than guessed at, which
+    keeps the post-hoc inference honest. One exception: under ``fmt="pi"``
+    a name this function does not recognize is treated as MCP-style instead
+    of dropped. pi has no ``mcp__`` prefix convention, and a dropped record
+    would become an unconditional deny that no envelope could override. As
+    an MCP-style call, the gate's deny-by-default ``mcp_allowlist`` can name
+    it, the same as any other MCP tool. Host MCP tools follow the
+    ``mcp__<server>__<tool>`` convention under every other format and
+    classify as ``mcp`` regardless of ``fmt``.
     """
     if name.startswith("mcp__"):
         return "mcp"
-    return _TOOL_TYPE_MAP.get(name)
+    mapped = _TOOL_TYPE_MAP.get(name)
+    if mapped is not None:
+        return mapped
+    if fmt == "pi":
+        return _PI_TOOL_TYPE_MAP.get(name, "mcp")
+    return None
+
+
+# OpenCode's apply_patch tool. The plugin sends it under this MCP-style
+# name, but it writes files, so the gate never treats it as an MCP call.
+APPLY_PATCH_TOOL = "mcp__opencode__apply_patch"
+
+_PATCH_HEREDOC = re.compile(r"^(?:cat\s+)?<<['\"]?(\w+)['\"]?\s*\n([\s\S]*?)\n\1\s*$")
+_PATCH_HEADERS = ("*** Add File:", "*** Update File:", "*** Delete File:", "*** Move to:")
+
+
+def parse_apply_patch(text: object) -> list[str] | None:
+    """Every path an OpenCode apply_patch names, in order, or None when the
+    patch cannot be read.
+
+    This follows OpenCode's own parser: strip the text, unwrap one heredoc,
+    find the first Begin Patch and End Patch lines, and read the header
+    lines between them. It takes every header line in that range, even one
+    OpenCode would skip, so the gate checks at least every path OpenCode
+    touches. A patch with no Begin and End pair, or with no path, is None.
+    """
+    if not isinstance(text, str):
+        return None
+    body = text.strip()
+    m = _PATCH_HEREDOC.match(body)
+    if m:
+        body = m.group(2)
+    lines = body.split("\n")
+    stripped = [line.strip() for line in lines]
+    try:
+        begin = stripped.index("*** Begin Patch")
+        end = stripped.index("*** End Patch")
+    except ValueError:
+        return None
+    if begin >= end:
+        return None
+    paths: list[str] = []
+    for line in lines[begin + 1 : end]:
+        for head in _PATCH_HEADERS:
+            if line.startswith(head):
+                path = line[len(head) :].strip()
+                if path:
+                    paths.append(path)
+                break
+    return paths or None
 
 
 def _parse_mcp_tool_name(name: str) -> tuple[str, str] | None:
@@ -141,8 +372,13 @@ def _parse_mcp_tool_name(name: str) -> tuple[str, str] | None:
 
 
 JOIN_KEYS = (
-    "tool_use_id", "agent_id", "agent_type", "cwd", "transcript_path",
-    "hook_event_name", "permission_mode",
+    "tool_use_id",
+    "agent_id",
+    "agent_type",
+    "cwd",
+    "transcript_path",
+    "hook_event_name",
+    "permission_mode",
 )
 
 
@@ -156,12 +392,15 @@ def join_keys(payload: dict[str, Any]) -> dict[str, Any]:
     return {k: payload[k] for k in JOIN_KEYS if payload.get(k)}
 
 
-def _payload_to_record(payload: dict[str, Any]) -> dict[str, Any] | None:
+def _payload_to_record(payload: dict[str, Any], *, fmt: str = "claude") -> dict[str, Any] | None:
     """Convert a raw hook payload into a normalized capture record.
 
-    Handles two shapes:
+    Handles the shapes different hosts emit:
     - Claude Code: ``{tool_name, tool_input, session_id, ...}``
     - Hermes shell-hook: ``{event, tool, args, session_id, ...}``
+    - pi (``fmt="pi"``): ``{tool_name, tool_input, session_id, cwd}`` with
+      lowercase built-in names. Anything not in ``_TOOL_TYPE_MAP`` becomes
+      an MCP-style record with ``mcp_server="pi"``.
 
     Returns ``None`` for payloads that don't carry a recognizable tool
     call. Caller is expected to skip these (still emitting continue:true
@@ -170,7 +409,7 @@ def _payload_to_record(payload: dict[str, Any]) -> dict[str, Any] | None:
     tool_name = payload.get("tool_name") or payload.get("tool") or payload.get("name")
     if not tool_name:
         return None
-    step_type = _classify_tool(tool_name)
+    step_type = _classify_tool(tool_name, fmt=fmt)
     if step_type is None:
         return None
     inp = payload.get("tool_input") or payload.get("args") or payload.get("input") or {}
@@ -183,18 +422,48 @@ def _payload_to_record(payload: dict[str, Any]) -> dict[str, Any] | None:
     if step_type == "shell":
         record["command"] = inp.get("command") or inp.get("cmd") or ""
     elif step_type in ("file_read", "file_write"):
-        record["path"] = inp.get("file_path") or inp.get("path") or inp.get("pattern") or ""
+        # OpenCode's file tools name their path filePath.
+        record["path"] = (
+            inp.get("file_path")
+            or inp.get("path")
+            or inp.get("filePath")
+            or inp.get("pattern")
+            or ""
+        )
+        # A relative path names a file under the call's working directory,
+        # so the gate checks that file. With no absolute cwd the path stays
+        # as written, and no workspace pattern matches it. A path that starts
+        # with ~ or names a $variable also stays as written: the hard-deny
+        # rules expand those, and a join would hide them from those rules.
+        cwd = payload.get("cwd")
+        path = record["path"]
+        if (
+            isinstance(path, str)
+            and path
+            and not os.path.isabs(path)
+            and not path.startswith("~")
+            and "$" not in path
+            and isinstance(cwd, str)
+            and os.path.isabs(cwd)
+        ):
+            record["path"] = os.path.normpath(os.path.join(cwd, path))
         if step_type == "file_write":
             # Don't store full content — captures are for distillation,
             # not exfil. Hash + length is enough.
-            content = inp.get("content") or inp.get("new_string") or ""
+            content = inp.get("content") or inp.get("new_string") or inp.get("newString") or ""
             record["content_len"] = len(content)
     elif step_type == "network":
         record["url"] = inp.get("url") or inp.get("query") or ""
     elif step_type == "mcp":
+        if tool_name == APPLY_PATCH_TOOL:
+            # A file writer, never an MCP call. The gate reads its paths
+            # with parse_apply_patch, and a capture never names it.
+            return None
         parsed = _parse_mcp_tool_name(tool_name)
         if parsed is None:
-            return None
+            if fmt != "pi":
+                return None
+            parsed = ("pi", tool_name)
         record["mcp_server"], record["mcp_tool"] = parsed
         record["arguments"] = inp if isinstance(inp, dict) else {}
     record.update(join_keys(payload))
@@ -417,7 +686,9 @@ def infer_envelope(
         elif r["step_type"] == "mcp":
             server = r.get("mcp_server") or ""
             tool = r.get("mcp_tool") or ""
-            if server and tool:
+            # apply_patch writes files, so an envelope never admits it by
+            # name. The gate checks each path it names instead.
+            if server and tool and (server, tool) != ("opencode", "apply_patch"):
                 mcp_tools.add(f"{server}/{tool}")
     return Envelope(
         generated_by="opendaisugi.hook.infer_envelope",

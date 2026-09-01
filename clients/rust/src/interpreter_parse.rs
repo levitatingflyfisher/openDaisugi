@@ -74,8 +74,10 @@ pub fn shlex_split(s: &str) -> Result<Vec<String>, String> {
                 loop {
                     match chars.next() {
                         Some('"') => break,
+                        // Python's shlex escapes only `"` and `\` inside
+                        // double quotes; `\$` and `` \` `` keep the backslash.
                         Some('\\') => match chars.next() {
-                            Some(n) if matches!(n, '"' | '\\' | '$' | '`') => cur.push(n),
+                            Some(n) if matches!(n, '"' | '\\') => cur.push(n),
                             Some(n) => {
                                 cur.push('\\');
                                 cur.push(n);
@@ -288,4 +290,36 @@ pub fn parse_interpreter(command: &str) -> Option<InterpreterPayload> {
         return Some(parse_wrapper(&head, &tokens));
     }
     Some(InterpreterPayload { head, inner_commands: vec![], opaque: true })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shlex_split;
+
+    /// Every row of `clients/go/internal/verify/testdata/shlex_fixture.jsonl`
+    /// is what CPython's `shlex.split(s, posix=True)` produced.
+    #[test]
+    fn shlex_split_matches_python() {
+        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../go/internal/verify/testdata/shlex_fixture.jsonl");
+        let text = std::fs::read_to_string(p).unwrap();
+        let mut n = 0;
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            let row: serde_json::Value = serde_json::from_str(line).unwrap();
+            let cmd = row["command"].as_str().unwrap();
+            let got = shlex_split(cmd);
+            match row.get("tokens") {
+                Some(t) if !t.is_null() => {
+                    let want: Vec<String> =
+                        t.as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect();
+                    assert_eq!(got.as_ref().ok(), Some(&want), "shlex_split({cmd:?})");
+                }
+                _ => assert!(got.is_err(), "shlex_split({cmd:?}) should fail: {got:?}"),
+            }
+            n += 1;
+        }
+        assert!(n >= 50);
+        // Inside double quotes Python escapes only `"` and `\`.
+        assert_eq!(shlex_split(r#""a\$b" "a\`b" "a\xb""#).unwrap(), vec![r"a\$b", r"a\`b", r"a\xb"]);
+    }
 }

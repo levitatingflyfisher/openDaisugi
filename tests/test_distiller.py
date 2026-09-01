@@ -344,7 +344,7 @@ async def test_generalize_template_calls_llm_and_returns_pair(monkeypatch):
             self.chat = _FakeChat()
 
     fake = _FakeClient()
-    monkeypatch.setattr(dist_mod, "get_instructor_client", lambda _m: fake)
+    monkeypatch.setattr(dist_mod, "get_model_client", lambda _m: fake)
 
     result = await _generalize_template(
         plan=plan,
@@ -430,7 +430,7 @@ async def test_improve_envelope_calls_llm_with_failure_context(monkeypatch):
     class _FakeClient:
         chat = _FakeChat()
 
-    monkeypatch.setattr(dist_mod, "get_instructor_client", lambda _m: _FakeClient())
+    monkeypatch.setattr(dist_mod, "get_model_client", lambda _m: _FakeClient())
 
     result = await _improve_envelope(
         envelope=tight,

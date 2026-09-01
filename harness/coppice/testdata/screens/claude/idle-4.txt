@@ -1,0 +1,8 @@
+#rule: live_prompt_box
+⏺ The login rule reads contains = ["select login method:"] and
+  Select login method:
+  ❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise
+────────────────────
+❯ 
+────────────────────
+  ? for shortcuts

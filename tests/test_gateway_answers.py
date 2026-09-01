@@ -243,7 +243,14 @@ def test_missing_search_extra_propagates_for_the_install_hint():
 
 def test_real_embedder_finds_an_obvious_paraphrase() -> None:
     pytest.importorskip("sentence_transformers")
-    # This box's GPU crashes the embedder; force CPU before the model loads.
+    if os.environ.get("HF_HUB_OFFLINE") == "1":
+        from huggingface_hub import try_to_load_from_cache
+
+        if not isinstance(
+            try_to_load_from_cache("sentence-transformers/all-MiniLM-L6-v2", "config.json"), str
+        ):
+            pytest.skip("HF_HUB_OFFLINE=1 and all-MiniLM-L6-v2 is not in the cache")
+    # A Pascal GPU (sm_61) crashes the embedder; force CPU before the model loads.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
     query = "explain OAuth to me"

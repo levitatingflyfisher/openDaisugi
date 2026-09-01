@@ -17,7 +17,7 @@ plans authored by LLMs at runtime", and a plan is the thing being verified:
    flowing into execution. The Supervisor re-verifies each step at run time too;
    this is the earlier, cheaper gate that also lets the caller retry.
 
-The instructor client is injectable (``client=``) so this is unit-testable
+The model client is injectable (``client=``) so this is unit-testable
 without a live model, mirroring ``envelope.py``.
 """
 
@@ -190,7 +190,7 @@ async def decompose(
     was built) so a caller can inspect or retry.
     """
     if client is None:
-        client = _llm.get_instructor_client(model=model, backend=backend)
+        client = _llm.get_model_client(model=model, backend=backend)
     user_content = _inventory_block(available_skills, available_mcp_tools) + prompt
     try:
         decomposed: DecomposedPlan = await client.chat.completions.create(

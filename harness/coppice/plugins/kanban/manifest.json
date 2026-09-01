@@ -1,0 +1,7 @@
+{
+  "id": "kanban",
+  "kind": "view",
+  "title": "Kanban",
+  "about": "Tasks as cards in four columns that are the states the server reports.",
+  "page": "index.html"
+}

@@ -144,8 +144,17 @@ def _classify_file_redirect(node) -> tuple[str | None, str | None, str | None]:
         if operator is None:
             operator = child.type
             continue
+        if destination is not None:
+            # tree-sitter-bash files the words after a redirect under it as
+            # more destinations. In bash they are the command or its
+            # arguments, so a head or a path would go unchecked.
+            return (
+                None,
+                None,
+                "ambiguous shell (a redirect with more than one target "
+                f"{node.text.decode('utf-8', 'replace')!r})",
+            )
         destination = child
-        break
 
     if operator in _FD_CLOSE_OPS and destination is None:
         return None, None, None
@@ -352,9 +361,7 @@ def _decompose(command: str, _depth: int = 0) -> Decomposition:
                 "fusion-repair recursion exceeded; a rewrite re-fused, which "
                 "should be impossible (each pass replaces newlines with ';')"
             )
-        rewritten = _rewrite_fused_newlines(
-            src, fused, frozenset(_comment_end_offsets(root))
-        )
+        rewritten = _rewrite_fused_newlines(src, fused, frozenset(_comment_end_offsets(root)))
         if rewritten == src:
             # Every fused newline terminates a comment; none can be rewritten to
             # ``;`` without burying the following statement in the comment. The

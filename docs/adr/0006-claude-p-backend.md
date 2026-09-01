@@ -43,3 +43,9 @@ upgrade for anything cost- or latency-sensitive.
   answer (context amortization, real token streams), but `claude -p
   --output-format json` already delivers exact cost, so the SDK wasn't needed to
   ship keyless operation. Tracked as the successor.
+
+## Note (2026-09-27)
+
+The API-key backend is now our own model client, and its name is `api`,
+not `litellm`. The old name is refused with one line that names `api`
+(`clients/ADJUDICATIONS.md` LLM-13).

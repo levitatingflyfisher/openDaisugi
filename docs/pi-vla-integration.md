@@ -7,7 +7,9 @@ the integrity-check participation. Subclasses implement one method:
 
 ```python
 def _predict_actions(
-    self, step: VLAStep, observation: dict[str, Any],
+    self,
+    step: VLAStep,
+    observation: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Return a list of action dicts. Each is {joint_name: target}."""
 ```
@@ -35,14 +37,15 @@ class LeRobotPi0Executor(VLAExecutorBase):
     one action at a time so contact dynamics integrate properly.
     """
 
-    def __init__(self, *, mjcf_path: str, model_id: str = "lerobot/pi0",
-                 device: str = "cuda"):
+    def __init__(self, *, mjcf_path: str, model_id: str = "lerobot/pi0", device: str = "cuda"):
         super().__init__(mjcf_path=mjcf_path)
         from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
+
         self.policy = PI0Policy.from_pretrained(model_id).to(device)
         self.device = device
         # MuJoCo offscreen renderer for the visual observation.
         import mujoco
+
         self.renderer = mujoco.Renderer(self._model, height=480, width=640)
         self.camera = "wrist_cam"  # MJCF must declare it
 
@@ -52,11 +55,13 @@ class LeRobotPi0Executor(VLAExecutorBase):
 
     def _predict_actions(self, step, observation):
         image = self._capture_image()
-        batch = self.policy.normalize_inputs({
-            "observation.image": torch.from_numpy(np.array(image)).to(self.device),
-            "observation.state": torch.tensor(observation["qpos"]).to(self.device),
-            "task": [step.task],
-        })
+        batch = self.policy.normalize_inputs(
+            {
+                "observation.image": torch.from_numpy(np.array(image)).to(self.device),
+                "observation.state": torch.tensor(observation["qpos"]).to(self.device),
+                "task": [step.task],
+            }
+        )
         with torch.no_grad():
             action_chunk = self.policy.select_action(batch)
         # action_chunk is shape (1, T, action_dim); convert each timestep
@@ -64,11 +69,13 @@ class LeRobotPi0Executor(VLAExecutorBase):
         result = []
         for t in range(action_chunk.shape[1]):
             row = action_chunk[0, t].cpu().numpy()
-            result.append({
-                "j1": float(row[0]),
-                "j2": float(row[1]),
-                "j_grip": float(row[2]),
-            })
+            result.append(
+                {
+                    "j1": float(row[0]),
+                    "j2": float(row[1]),
+                    "j_grip": float(row[2]),
+                }
+            )
         return result[: step.max_actions]
 ```
 
@@ -94,7 +101,7 @@ from opendaisugi.vla_executor import TransformersVLAExecutor
 exe = TransformersVLAExecutor(
     mjcf_path="path/to/robot.xml",
     model_id="lerobot/smolvla_base",  # or your model id
-    device="cpu",                      # or "cuda" if GPU
+    device="cpu",  # or "cuda" if GPU
     action_horizon=16,
 )
 ```

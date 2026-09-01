@@ -98,19 +98,21 @@ def _view_step(opts: StartOptions) -> StartStep:
 
         text = "open the multi-session view (daisugi dashboard --tui)"
     except ImportError:
-        text = "open the live view (daisugi dashboard); install the tui extra for the full instrument"
+        text = (
+            "open the live view (daisugi dashboard); install the tui extra for the full instrument"
+        )
     return StartStep("view", "skipped" if opts.no_ui else "would", text)
 
 
 def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
     from opendaisugi.config import installed_hook_mode
     from opendaisugi.gate import _envelopes_dir, register_envelope, starter_envelope
-    from opendaisugi.gate_server import SOCK_NAME
+    from opendaisugi.gate_server import SOCK_NAME, probe
     from opendaisugi.install import _patch_claude_gate
 
     out: list[StartStep] = []
     root = opts.data_dir / "gate"
-    mode = "enforce" if opts.enforce else "shadow"
+    mode = "enforce" if opts.enforce else "audit"
     settings_path = opts.cwd / ".claude" / "settings.json"
     session_key = _session_key(opts.cwd)
 
@@ -131,7 +133,9 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
         # project's `start` might trip over. Report all four remaining keys
         # (the caller indexes by key) and stop acting.
         out.append(StartStep("hook", "skipped", "no harness to hook into"))
-        out.append(StartStep("envelope", "skipped", "no harness session to register an envelope for"))
+        out.append(
+            StartStep("envelope", "skipped", "no harness session to register an envelope for")
+        )
         out.append(StartStep("gate-server", "skipped", "no harness session needs it yet"))
         out.append(_view_step(opts))
         return out
@@ -165,7 +169,9 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
         )
     elif act:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
-        _patch_claude_gate(settings_path, enforce=opts.enforce, ask=opts.ask, root=root, session=session_key)
+        _patch_claude_gate(
+            settings_path, enforce=opts.enforce, ask=opts.ask, root=root, session=session_key
+        )
         out.append(
             StartStep(
                 "hook",
@@ -190,18 +196,35 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
     env_path = env_dir / f"{session_key}.json"
     if env_path.exists():
         out.append(
-            StartStep("envelope", "skipped", f"an envelope for this directory is already registered at {env_path}")
+            StartStep(
+                "envelope",
+                "skipped",
+                f"an envelope for this directory is already registered at {env_path}",
+            )
         )
     elif act:
         register_envelope(starter_envelope(opts.cwd), session_id=session_key, root=root)
-        out.append(StartStep("envelope", "done", f"registered a starter envelope for {opts.cwd} at {env_path}"))
+        out.append(
+            StartStep(
+                "envelope", "done", f"registered a starter envelope for {opts.cwd} at {env_path}"
+            )
+        )
     else:
         out.append(StartStep("envelope", "would", f"register a starter envelope for {opts.cwd}"))
 
     sock = root / SOCK_NAME
-    if sock.exists():
+    # A socket file is not a running gate: a server stopped by SIGKILL (or
+    # an older one stopped by Ctrl-C) leaves it behind. Only one that
+    # answers is.
+    state = probe(sock)
+    if state == "live":
         out.append(StartStep("gate-server", "skipped", "the resident gate is already running"))
     elif act:
+        if state == "stale":
+            try:
+                sock.unlink()
+            except OSError:
+                pass
         opts.spawn([sys.executable, "-m", "opendaisugi.cli", "gate", "serve", "--root", str(root)])
         t0 = time.monotonic()
         while not sock.exists() and time.monotonic() - t0 < opts.server_wait_s:
@@ -219,7 +242,9 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
                 )
             )
     else:
-        out.append(StartStep("gate-server", "would", "start the resident gate (daisugi gate serve)"))
+        out.append(
+            StartStep("gate-server", "would", "start the resident gate (daisugi gate serve)")
+        )
 
     out.append(_view_step(opts))
     return out

@@ -1,0 +1,3206 @@
+{
+ "paths": [
+  "\n/$/.x/a/ab.py",
+  "\n/*/$/+",
+  "\n/+",
+  "\n/ab.py/b/+",
+  "\n/ab/ab.py/a/a",
+  "$",
+  "$/+/ab/$",
+  "(/\n/\u00e9/\\",
+  "(/(/\n/+/\\",
+  "(/*/b",
+  "(/\\/a/\n/ab",
+  "(/b/ab.py",
+  "(/c/x.py",
+  "*",
+  "*/(",
+  "*/.x/+/(",
+  "+",
+  "+/(",
+  "+/\\/(",
+  "+/x.py",
+  ".",
+  "..",
+  "../a",
+  ".x",
+  ".x/+",
+  ".x/\\",
+  ".x/\\/\u00e9",
+  ".x/c",
+  "/",
+  "/\n/.x/\\/+/\u00e9",
+  "/$/$/(/$",
+  "/(",
+  "/(/(/(",
+  "/(/(/ab.py",
+  "/(/x.py/\\/ab",
+  "/+/ab.py",
+  "/+/x.py",
+  "/.x",
+  "/.x/+/a/b/c",
+  "/.x/x.py",
+  "/.x/\u00e9/b/*",
+  "//a",
+  "/\\",
+  "/\\/(/ab.py/(",
+  "/a",
+  "/a/a",
+  "/ab.py",
+  "/ab.py/$/.x/b",
+  "/ab.py/\\/$",
+  "/ab.py/b/\u00e9",
+  "/ab/\u00e9/a/(",
+  "/abs/proj/src/a.py",
+  "/b",
+  "/c/$",
+  "/x.py",
+  "/x.py/a",
+  "/x.py/a/.x/$",
+  "\\",
+  "\\/\n",
+  "\\/\\/*/c/ab.py",
+  "\\/a",
+  "\\/a/c",
+  "\\/b",
+  "a",
+  "a\nb.py",
+  "a/\n",
+  "a/$",
+  "a/+/*/x.py/b",
+  "a/\\/.x",
+  "a/c/*",
+  "a/\u00e9/+/$",
+  "ab",
+  "ab.py",
+  "ab.py/+/ab.py",
+  "ab/ab.py/$/a",
+  "ab/ab.py/c/c",
+  "ab/x.py",
+  "ab/\u00e9",
+  "b",
+  "b/\n/(/ab.py/x.py",
+  "b/.x",
+  "b/\\/ab",
+  "b/x.py/ab.py/+",
+  "c",
+  "c/\n/\u00e9/\n/\\",
+  "c/+/ab.py/(",
+  "c/b/a/ab.py/+",
+  "c/x.py",
+  "src",
+  "src/a.py",
+  "x.py",
+  "x.py\n",
+  "x.py/\n/ab",
+  "x.py/.x/b/.x",
+  "x.py/\\/a/a",
+  "\u00e9/(/$/a/b",
+  "\u00e9/+/(",
+  "\u00e9/a/x.py",
+  "\u00e9/ab/\\"
+ ],
+ "globs": [
+  {
+   "glob": "**",
+   "regex": "^(?:(?:|[^/]*(?:/[^/]*)*))\\Z",
+   "error": null,
+   "matches": [
+    "\n/$/.x/a/ab.py",
+    "\n/*/$/+",
+    "\n/+",
+    "\n/ab.py/b/+",
+    "\n/ab/ab.py/a/a",
+    "$",
+    "$/+/ab/$",
+    "(/\n/\u00e9/\\",
+    "(/(/\n/+/\\",
+    "(/*/b",
+    "(/\\/a/\n/ab",
+    "(/b/ab.py",
+    "(/c/x.py",
+    "*",
+    "*/(",
+    "*/.x/+/(",
+    "+",
+    "+/(",
+    "+/\\/(",
+    "+/x.py",
+    ".",
+    "..",
+    "../a",
+    ".x",
+    ".x/+",
+    ".x/\\",
+    ".x/\\/\u00e9",
+    ".x/c",
+    "/",
+    "/\n/.x/\\/+/\u00e9",
+    "/$/$/(/$",
+    "/(",
+    "/(/(/(",
+    "/(/(/ab.py",
+    "/(/x.py/\\/ab",
+    "/+/ab.py",
+    "/+/x.py",
+    "/.x",
+    "/.x/+/a/b/c",
+    "/.x/x.py",
+    "/.x/\u00e9/b/*",
+    "//a",
+    "/\\",
+    "/\\/(/ab.py/(",
+    "/a",
+    "/a/a",
+    "/ab.py",
+    "/ab.py/$/.x/b",
+    "/ab.py/\\/$",
+    "/ab.py/b/\u00e9",
+    "/ab/\u00e9/a/(",
+    "/abs/proj/src/a.py",
+    "/b",
+    "/c/$",
+    "/x.py",
+    "/x.py/a",
+    "/x.py/a/.x/$",
+    "\\",
+    "\\/\n",
+    "\\/\\/*/c/ab.py",
+    "\\/a",
+    "\\/a/c",
+    "\\/b",
+    "a",
+    "a\nb.py",
+    "a/\n",
+    "a/$",
+    "a/+/*/x.py/b",
+    "a/\\/.x",
+    "a/c/*",
+    "a/\u00e9/+/$",
+    "ab",
+    "ab.py",
+    "ab.py/+/ab.py",
+    "ab/ab.py/$/a",
+    "ab/ab.py/c/c",
+    "ab/x.py",
+    "ab/\u00e9",
+    "b",
+    "b/\n/(/ab.py/x.py",
+    "b/.x",
+    "b/\\/ab",
+    "b/x.py/ab.py/+",
+    "c",
+    "c/\n/\u00e9/\n/\\",
+    "c/+/ab.py/(",
+    "c/b/a/ab.py/+",
+    "c/x.py",
+    "src",
+    "src/a.py",
+    "x.py",
+    "x.py\n",
+    "x.py/\n/ab",
+    "x.py/.x/b/.x",
+    "x.py/\\/a/a",
+    "\u00e9/(/$/a/b",
+    "\u00e9/+/(",
+    "\u00e9/a/x.py",
+    "\u00e9/ab/\\"
+   ]
+  },
+  {
+   "glob": "*",
+   "regex": "^(?:[^/]*)\\Z",
+   "error": null,
+   "matches": [
+    "$",
+    "*",
+    "+",
+    ".",
+    "..",
+    ".x",
+    "\\",
+    "a",
+    "a\nb.py",
+    "ab",
+    "ab.py",
+    "b",
+    "c",
+    "src",
+    "x.py",
+    "x.py\n"
+   ]
+  },
+  {
+   "glob": "/**",
+   "regex": "^(?:/[^/]*)+\\Z",
+   "error": null,
+   "matches": [
+    "/",
+    "/\n/.x/\\/+/\u00e9",
+    "/$/$/(/$",
+    "/(",
+    "/(/(/(",
+    "/(/(/ab.py",
+    "/(/x.py/\\/ab",
+    "/+/ab.py",
+    "/+/x.py",
+    "/.x",
+    "/.x/+/a/b/c",
+    "/.x/x.py",
+    "/.x/\u00e9/b/*",
+    "//a",
+    "/\\",
+    "/\\/(/ab.py/(",
+    "/a",
+    "/a/a",
+    "/ab.py",
+    "/ab.py/$/.x/b",
+    "/ab.py/\\/$",
+    "/ab.py/b/\u00e9",
+    "/ab/\u00e9/a/(",
+    "/abs/proj/src/a.py",
+    "/b",
+    "/c/$",
+    "/x.py",
+    "/x.py/a",
+    "/x.py/a/.x/$"
+   ]
+  },
+  {
+   "glob": "//**",
+   "regex": "^/(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": [
+    "/",
+    "//a"
+   ]
+  },
+  {
+   "glob": "src/**",
+   "regex": "^src(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": [
+    "src",
+    "src/a.py"
+   ]
+  },
+  {
+   "glob": "src/*/**",
+   "regex": "^src/\\*(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/*.py",
+   "regex": "^(?:(?:[^/]*\\.py|[^/]*(?:/[^/]*)*/[^/]*\\.py))\\Z",
+   "error": null,
+   "matches": [
+    "\n/$/.x/a/ab.py",
+    "(/b/ab.py",
+    "(/c/x.py",
+    "+/x.py",
+    "/(/(/ab.py",
+    "/+/ab.py",
+    "/+/x.py",
+    "/.x/x.py",
+    "/ab.py",
+    "/abs/proj/src/a.py",
+    "/x.py",
+    "\\/\\/*/c/ab.py",
+    "a\nb.py",
+    "ab.py",
+    "ab.py/+/ab.py",
+    "ab/x.py",
+    "b/\n/(/ab.py/x.py",
+    "c/x.py",
+    "src/a.py",
+    "x.py",
+    "\u00e9/a/x.py"
+   ]
+  },
+  {
+   "glob": "*.py",
+   "regex": "^(?:[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": [
+    "a\nb.py",
+    "ab.py",
+    "x.py"
+   ]
+  },
+  {
+   "glob": "/abs/proj/**",
+   "regex": "^/abs/proj(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": [
+    "/abs/proj/src/a.py"
+   ]
+  },
+  {
+   "glob": "a/**/b",
+   "regex": "^(?:a(?:/[^/]*)*/b)\\Z",
+   "error": null,
+   "matches": [
+    "a/+/*/x.py/b"
+   ]
+  },
+  {
+   "glob": "**/**",
+   "regex": "^\\*\\*(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/src/**",
+   "regex": "^\\*\\*/src(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "src/a.py",
+   "regex": "^(?:src/a\\.py)\\Z",
+   "error": null,
+   "matches": [
+    "src/a.py"
+   ]
+  },
+  {
+   "glob": "/",
+   "regex": "^(?:/)\\Z",
+   "error": null,
+   "matches": [
+    "/"
+   ]
+  },
+  {
+   "glob": "",
+   "regex": null,
+   "error": "the glob is empty",
+   "matches": null
+  },
+  {
+   "glob": "[x]",
+   "regex": null,
+   "error": "character classes ([...]) are not supported",
+   "matches": null
+  },
+  {
+   "glob": "a]",
+   "regex": null,
+   "error": "character classes ([...]) are not supported",
+   "matches": null
+  },
+  {
+   "glob": "./**",
+   "regex": null,
+   "error": "a /** glob whose prefix is . is not supported",
+   "matches": null
+  },
+  {
+   "glob": "a/../**",
+   "regex": null,
+   "error": "a /** glob whose prefix is . is not supported",
+   "matches": null
+  },
+  {
+   "glob": "**/**/**/**/**",
+   "regex": "^\\*\\*/\\*\\*/\\*\\*/\\*\\*(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/**/**/**/**/x",
+   "regex": null,
+   "error": "the glob has more than 4 ** segments",
+   "matches": null
+  },
+  {
+   "glob": "****************",
+   "regex": "^(?:[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*[^/]*)\\Z",
+   "error": null,
+   "matches": [
+    "$",
+    "*",
+    "+",
+    ".",
+    "..",
+    ".x",
+    "\\",
+    "a",
+    "a\nb.py",
+    "ab",
+    "ab.py",
+    "b",
+    "c",
+    "src",
+    "x.py",
+    "x.py\n"
+   ]
+  },
+  {
+   "glob": "*****************",
+   "regex": null,
+   "error": "the glob has more than 16 stars",
+   "matches": null
+  },
+  {
+   "glob": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "regex": "^(?:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "regex": null,
+   "error": "the glob is longer than 1024 characters",
+   "matches": null
+  },
+  {
+   "glob": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+   "regex": "^(?:\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+   "regex": null,
+   "error": "the glob is longer than 1024 characters",
+   "matches": null
+  },
+  {
+   "glob": "a\\b",
+   "regex": "^(?:a\\\\b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a.b+c(d)|e{1}$^",
+   "regex": "^(?:a\\.b\\+c\\(d\\)\\|e\\{1\\}\\$\\^)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x/|/?/\\",
+   "regex": "^(?:\\.x/\\|/[^/]/\\\\)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|/*.py/a/b/$",
+   "regex": "^(?:\\|/[^/]*\\.py/a/b/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/\n/$/*.py",
+   "regex": "^(?:/\n/\\$/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9",
+   "regex": "^(?:\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{/(",
+   "regex": "^(?:\\{/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/*b/ab/.x",
+   "regex": "^(?:\\\\/[^/]*b/ab/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a/+",
+   "regex": "^(?:a/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/./*/{/(",
+   "regex": "^(?:\\(/\\./[^/]*/\\{/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a?b/(/*.py",
+   "regex": "^(?:a[^/]b/\\(/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/b",
+   "regex": "^(?:/b)\\Z",
+   "error": null,
+   "matches": [
+    "/b"
+   ]
+  },
+  {
+   "glob": "\u00e9",
+   "regex": "^(?:\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/**/**/a/+",
+   "regex": "^(?:\\((?:/[^/]*)*(?:/[^/]*)*/a/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b/|",
+   "regex": "^(?:[^/]*b/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/..",
+   "regex": "^(?:ab/\\.\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/*.py/\n/**/*b",
+   "regex": "^(?:(?:[^/]*\\.py/\n(?:/[^/]*)*/[^/]*b|[^/]*(?:/[^/]*)*/[^/]*\\.py/\n(?:/[^/]*)*/[^/]*b))\\Z",
+   "error": null,
+   "matches": [
+    "x.py/\n/ab"
+   ]
+  },
+  {
+   "glob": "(",
+   "regex": "^(?:\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/ab/b/a*",
+   "regex": "^(?:/ab/b/a[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/.x/*.py/b",
+   "regex": "^(?:/\\.x/[^/]*\\.py/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/{/*b",
+   "regex": "^(?:ab/\\{/[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*",
+   "regex": "^(?:[^/]*)\\Z",
+   "error": null,
+   "matches": [
+    "$",
+    "*",
+    "+",
+    ".",
+    "..",
+    ".x",
+    "\\",
+    "a",
+    "a\nb.py",
+    "ab",
+    "ab.py",
+    "b",
+    "c",
+    "src",
+    "x.py",
+    "x.py\n"
+   ]
+  },
+  {
+   "glob": "/\\",
+   "regex": "^(?:/\\\\)\\Z",
+   "error": null,
+   "matches": [
+    "/\\"
+   ]
+  },
+  {
+   "glob": ".x/$/*.py/..",
+   "regex": "^(?:\\.x/\\$/[^/]*\\.py/\\.\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/$/b",
+   "regex": "^(?:\\\\/\\$/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a?b/a?b/a",
+   "regex": "^(?:a[^/]b/a[^/]b/a)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/\u00e9/{",
+   "regex": "^(?:ab/\u00e9/\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/(/{/+",
+   "regex": "^(?:/\\(/\\{/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab",
+   "regex": "^(?:ab)\\Z",
+   "error": null,
+   "matches": [
+    "ab"
+   ]
+  },
+  {
+   "glob": "+/|/$",
+   "regex": "^(?:\\+/\\|/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py",
+   "regex": "^(?:[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": [
+    "a\nb.py",
+    "ab.py",
+    "x.py"
+   ]
+  },
+  {
+   "glob": "a?b/$",
+   "regex": "^(?:a[^/]b/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/\u00e9/b/",
+   "regex": "^(?:ab/\u00e9/b/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "b/ab/a?b",
+   "regex": "^(?:b/ab/a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "+",
+   "regex": "^(?:\\+)\\Z",
+   "error": null,
+   "matches": [
+    "+"
+   ]
+  },
+  {
+   "glob": "(/b",
+   "regex": "^(?:\\(/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/*.py",
+   "regex": "^(?:[^/]*\\.py/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "?/*.py/*.py",
+   "regex": "^(?:[^/]/[^/]*\\.py/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/{/$/$/?/",
+   "regex": "^(?:/\\{/\\$/\\$/[^/]/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{/{/+/+/a",
+   "regex": "^(?:\\{/\\{/\\+/\\+/a)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "//$/\\/../\\",
+   "regex": "^(?://\\$/\\\\/\\.\\./\\\\)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/\u00e9",
+   "regex": "^(?:/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a?b//.x",
+   "regex": "^(?:a[^/]b//\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*/+/ab/$",
+   "regex": "^(?:[^/]*/\\+/ab/\\$)\\Z",
+   "error": null,
+   "matches": [
+    "$/+/ab/$"
+   ]
+  },
+  {
+   "glob": "+/*.py/b/+",
+   "regex": "^(?:\\+/[^/]*\\.py/b/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/.x/",
+   "regex": "^(?:\\\\/\\.x/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/b/\u00e9",
+   "regex": "^(?:/b/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\n/$/+/",
+   "regex": "^(?:\n/\\$/\\+/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "..",
+   "regex": "^(?:\\.\\.)\\Z",
+   "error": null,
+   "matches": [
+    ".."
+   ]
+  },
+  {
+   "glob": "a?b/+/.x/\\/|",
+   "regex": "^(?:a[^/]b/\\+/\\.x/\\\\/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/../?/./|",
+   "regex": "^(?:(?:\\.\\./[^/]/\\./\\||[^/]*(?:/[^/]*)*/\\.\\./[^/]/\\./\\|))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b/*.py",
+   "regex": "^(?:[^/]*b/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": [
+    "ab/x.py"
+   ]
+  },
+  {
+   "glob": "/a/.x/*.py",
+   "regex": "^(?:/a/\\.x/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/*",
+   "regex": "^(?:[^/]*\\.py/[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/\u00e9/*/+",
+   "regex": "^(?:\\$/\u00e9/[^/]*/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b",
+   "regex": "^(?:[^/]*b)\\Z",
+   "error": null,
+   "matches": [
+    "ab",
+    "b"
+   ]
+  },
+  {
+   "glob": ".",
+   "regex": "^(?:\\.)\\Z",
+   "error": null,
+   "matches": [
+    "."
+   ]
+  },
+  {
+   "glob": "*.py/a/a?b/*b/|",
+   "regex": "^(?:[^/]*\\.py/a/a[^/]b/[^/]*b/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/{/\n/+/a?b/+",
+   "regex": "^(?:/\\{/\n/\\+/a[^/]b/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/*/(//|/*",
+   "regex": "^(?:/[^/]*/\\(//\\|/[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py",
+   "regex": "^(?:[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": [
+    "a\nb.py",
+    "ab.py",
+    "x.py"
+   ]
+  },
+  {
+   "glob": "?/.x/*.py/*/{",
+   "regex": "^(?:[^/]/\\.x/[^/]*\\.py/[^/]*/\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "./.",
+   "regex": "^(?:\\./\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x/a*/$",
+   "regex": "^(?:\\.x/a[^/]*/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/\u00e9/+",
+   "regex": "^(?:\\\\/\u00e9/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/$",
+   "regex": "^(?:\\(/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/*.py/?",
+   "regex": "^(?:/[^/]*\\.py/[^/])\\Z",
+   "error": null,
+   "matches": [
+    "/x.py/a"
+   ]
+  },
+  {
+   "glob": "\u00e9/\u00e9/a?b/.",
+   "regex": "^(?:\u00e9/\u00e9/a[^/]b/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{/\n/*/a/{",
+   "regex": "^(?:\\{/\n/[^/]*/a/\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "b/../{/*/**",
+   "regex": "^\\{/\\*(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/|",
+   "regex": "^(?:\\$/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(",
+   "regex": "^(?:\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/+/ab/*/*b",
+   "regex": "^(?:a[^/]*/\\+/ab/[^/]*/[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/a",
+   "regex": "^(?:a[^/]*/a)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/\u00e9/a*/(/$",
+   "regex": "^(?:[^/]*\\.py/\u00e9/a[^/]*/\\(/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/.//$/\n",
+   "regex": "^(?:/\\.//\\$/\n)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{",
+   "regex": "^(?:\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**",
+   "regex": "^(?:(?:|[^/]*(?:/[^/]*)*))\\Z",
+   "error": null,
+   "matches": [
+    "\n/$/.x/a/ab.py",
+    "\n/*/$/+",
+    "\n/+",
+    "\n/ab.py/b/+",
+    "\n/ab/ab.py/a/a",
+    "$",
+    "$/+/ab/$",
+    "(/\n/\u00e9/\\",
+    "(/(/\n/+/\\",
+    "(/*/b",
+    "(/\\/a/\n/ab",
+    "(/b/ab.py",
+    "(/c/x.py",
+    "*",
+    "*/(",
+    "*/.x/+/(",
+    "+",
+    "+/(",
+    "+/\\/(",
+    "+/x.py",
+    ".",
+    "..",
+    "../a",
+    ".x",
+    ".x/+",
+    ".x/\\",
+    ".x/\\/\u00e9",
+    ".x/c",
+    "/",
+    "/\n/.x/\\/+/\u00e9",
+    "/$/$/(/$",
+    "/(",
+    "/(/(/(",
+    "/(/(/ab.py",
+    "/(/x.py/\\/ab",
+    "/+/ab.py",
+    "/+/x.py",
+    "/.x",
+    "/.x/+/a/b/c",
+    "/.x/x.py",
+    "/.x/\u00e9/b/*",
+    "//a",
+    "/\\",
+    "/\\/(/ab.py/(",
+    "/a",
+    "/a/a",
+    "/ab.py",
+    "/ab.py/$/.x/b",
+    "/ab.py/\\/$",
+    "/ab.py/b/\u00e9",
+    "/ab/\u00e9/a/(",
+    "/abs/proj/src/a.py",
+    "/b",
+    "/c/$",
+    "/x.py",
+    "/x.py/a",
+    "/x.py/a/.x/$",
+    "\\",
+    "\\/\n",
+    "\\/\\/*/c/ab.py",
+    "\\/a",
+    "\\/a/c",
+    "\\/b",
+    "a",
+    "a\nb.py",
+    "a/\n",
+    "a/$",
+    "a/+/*/x.py/b",
+    "a/\\/.x",
+    "a/c/*",
+    "a/\u00e9/+/$",
+    "ab",
+    "ab.py",
+    "ab.py/+/ab.py",
+    "ab/ab.py/$/a",
+    "ab/ab.py/c/c",
+    "ab/x.py",
+    "ab/\u00e9",
+    "b",
+    "b/\n/(/ab.py/x.py",
+    "b/.x",
+    "b/\\/ab",
+    "b/x.py/ab.py/+",
+    "c",
+    "c/\n/\u00e9/\n/\\",
+    "c/+/ab.py/(",
+    "c/b/a/ab.py/+",
+    "c/x.py",
+    "src",
+    "src/a.py",
+    "x.py",
+    "x.py\n",
+    "x.py/\n/ab",
+    "x.py/.x/b/.x",
+    "x.py/\\/a/a",
+    "\u00e9/(/$/a/b",
+    "\u00e9/+/(",
+    "\u00e9/a/x.py",
+    "\u00e9/ab/\\"
+   ]
+  },
+  {
+   "glob": "a*",
+   "regex": "^(?:a[^/]*)\\Z",
+   "error": null,
+   "matches": [
+    "a",
+    "a\nb.py",
+    "ab",
+    "ab.py"
+   ]
+  },
+  {
+   "glob": "ab/ab/$//b",
+   "regex": "^(?:ab/ab/\\$//b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/\\/\n/b/..",
+   "regex": "^(?:\\\\/\\\\/\n/b/\\.\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/{/\u00e9/a/$/b",
+   "regex": "^(?:/\\{/\u00e9/a/\\$/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{/\u00e9",
+   "regex": "^(?:\\{/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b/|/(/ab/b",
+   "regex": "^(?:[^/]*b/\\|/\\(/ab/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a",
+   "regex": "^(?:a)\\Z",
+   "error": null,
+   "matches": [
+    "a"
+   ]
+  },
+  {
+   "glob": "(/../+/\u00e9",
+   "regex": "^(?:\\(/\\.\\./\\+/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|/ab",
+   "regex": "^(?:\\|/ab)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b/.x/*b",
+   "regex": "^(?:[^/]*b/\\.x/[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/./\\/|",
+   "regex": "^(?:(?:\\./\\\\/\\||[^/]*(?:/[^/]*)*/\\./\\\\/\\|))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\",
+   "regex": "^(?:\\\\)\\Z",
+   "error": null,
+   "matches": [
+    "\\"
+   ]
+  },
+  {
+   "glob": "\\",
+   "regex": "^(?:\\\\)\\Z",
+   "error": null,
+   "matches": [
+    "\\"
+   ]
+  },
+  {
+   "glob": "",
+   "regex": null,
+   "error": "the glob is empty",
+   "matches": null
+  },
+  {
+   "glob": "/+/(/$/ab",
+   "regex": "^(?:/\\+/\\(/\\$/ab)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/*.py/\\/\n/*.py",
+   "regex": "^(?:ab/[^/]*\\.py/\\\\/\n/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "../$/?",
+   "regex": "^(?:\\.\\./\\$/[^/])\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/\u00e9/|/./?",
+   "regex": "^(?:[^/]*\\.py/\u00e9/\\|/\\./[^/])\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py",
+   "regex": "^(?:[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": [
+    "a\nb.py",
+    "ab.py",
+    "x.py"
+   ]
+  },
+  {
+   "glob": "\\",
+   "regex": "^(?:\\\\)\\Z",
+   "error": null,
+   "matches": [
+    "\\"
+   ]
+  },
+  {
+   "glob": "/a*/../..",
+   "regex": "^(?:/a[^/]*/\\.\\./\\.\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/**/$",
+   "regex": "^(?:\\$(?:/[^/]*)*/\\$)\\Z",
+   "error": null,
+   "matches": [
+    "$/+/ab/$"
+   ]
+  },
+  {
+   "glob": "/(/\n/*/*/*.py",
+   "regex": "^(?:/\\(/\n/[^/]*/[^/]*/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/.x",
+   "regex": "^(?:\\$/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/./*b",
+   "regex": "^(?:\\(/\\./[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "+/(/\u00e9/**",
+   "regex": "^\\+/\\(/\u00e9(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|/\n/+/\n",
+   "regex": "^(?:\\|/\n/\\+/\n)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/{",
+   "regex": "^(?:[^/]*\\.py/\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/ab/?/a?b/{",
+   "regex": "^(?:/ab/[^/]/a[^/]b/\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/",
+   "regex": "^(?:/)\\Z",
+   "error": null,
+   "matches": [
+    "/"
+   ]
+  },
+  {
+   "glob": "{/../+/",
+   "regex": "^(?:\\{/\\.\\./\\+/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b/*/*.py/|/$",
+   "regex": "^(?:[^/]*b/[^/]*/[^/]*\\.py/\\|/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/a?b/$/{/..",
+   "regex": "^(?:[^/]*\\.py/a[^/]b/\\$/\\{/\\.\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "?/*.py/ab",
+   "regex": "^(?:[^/]/[^/]*\\.py/ab)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\",
+   "regex": "^(?:\\\\)\\Z",
+   "error": null,
+   "matches": [
+    "\\"
+   ]
+  },
+  {
+   "glob": "/|/?",
+   "regex": "^(?:/\\|/[^/])\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{/**/$",
+   "regex": "^(?:\\{(?:/[^/]*)*/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\n/\n",
+   "regex": "^(?:\n/\n)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|",
+   "regex": "^(?:\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b/*/ab",
+   "regex": "^(?:[^/]*b/[^/]*/ab)\\Z",
+   "error": null,
+   "matches": [
+    "b/\\/ab"
+   ]
+  },
+  {
+   "glob": ".x/a?b/a/$",
+   "regex": "^(?:\\.x/a[^/]b/a/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/+/a*",
+   "regex": "^(?:/\\+/a[^/]*)\\Z",
+   "error": null,
+   "matches": [
+    "/+/ab.py"
+   ]
+  },
+  {
+   "glob": "/?",
+   "regex": "^(?:/[^/])\\Z",
+   "error": null,
+   "matches": [
+    "/(",
+    "/\\",
+    "/a",
+    "/b"
+   ]
+  },
+  {
+   "glob": "**/a*/?",
+   "regex": "^(?:(?:a[^/]*/[^/]|[^/]*(?:/[^/]*)*/a[^/]*/[^/]))\\Z",
+   "error": null,
+   "matches": [
+    "\n/ab/ab.py/a/a",
+    "$/+/ab/$",
+    "/\\/(/ab.py/(",
+    "/a/a",
+    "/ab/\u00e9/a/(",
+    "\\/a/c",
+    "a/\n",
+    "a/$",
+    "ab/\u00e9",
+    "b/x.py/ab.py/+",
+    "c/+/ab.py/(",
+    "c/b/a/ab.py/+",
+    "x.py/\\/a/a",
+    "\u00e9/(/$/a/b",
+    "\u00e9/ab/\\"
+   ]
+  },
+  {
+   "glob": "/?/.x/a*/$",
+   "regex": "^(?:/[^/]/\\.x/a[^/]*/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a?b/(",
+   "regex": "^(?:a[^/]b/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*/a?b/*.py/./",
+   "regex": "^(?:[^/]*/a[^/]b/[^/]*\\.py/\\./)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/.x/+/a*/*",
+   "regex": "^(?:a[^/]*/\\.x/\\+/a[^/]*/[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/*/ab",
+   "regex": "^(?:[^/]*\\.py/[^/]*/ab)\\Z",
+   "error": null,
+   "matches": [
+    "x.py/\n/ab"
+   ]
+  },
+  {
+   "glob": "/b/\\/b/*b/.",
+   "regex": "^(?:/b/\\\\/b/[^/]*b/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x/*/\n/a*/?",
+   "regex": "^(?:\\.x/[^/]*/\n/a[^/]*/[^/])\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/$/\u00e9/*/.",
+   "regex": "^(?:\\\\/\\$/\u00e9/[^/]*/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "?/.x/a*/\u00e9",
+   "regex": "^(?:[^/]/\\.x/a[^/]*/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "?",
+   "regex": "^(?:[^/])\\Z",
+   "error": null,
+   "matches": [
+    "$",
+    "*",
+    "+",
+    ".",
+    "\\",
+    "a",
+    "b",
+    "c"
+   ]
+  },
+  {
+   "glob": "/+",
+   "regex": "^(?:/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/*.py/+/(/$",
+   "regex": "^(?:ab/[^/]*\\.py/\\+/\\(/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9/$/+/**/.x",
+   "regex": "^(?:\u00e9/\\$/\\+(?:/[^/]*)*/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/b/b//?",
+   "regex": "^(?:(?:b/b//[^/]|[^/]*(?:/[^/]*)*/b/b//[^/]))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/|/ab/a?b",
+   "regex": "^(?:/\\|/ab/a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9/*.py/../*",
+   "regex": "^(?:\u00e9/[^/]*\\.py/\\.\\./[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b/\n/\n",
+   "regex": "^(?:[^/]*b/\n/\n)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x",
+   "regex": "^(?:\\.x)\\Z",
+   "error": null,
+   "matches": [
+    ".x"
+   ]
+  },
+  {
+   "glob": "|",
+   "regex": "^(?:\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/./",
+   "regex": "^(?:\\\\/\\./)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/\n/\\/?",
+   "regex": "^(?:\\(/\n/\\\\/[^/])\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "+/a/(/.x",
+   "regex": "^(?:\\+/a/\\(/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x/./b",
+   "regex": "^(?:\\.x/\\./b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/\n/**/.",
+   "regex": "^(?:/\n(?:/[^/]*)*/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/b/{/**/a?b",
+   "regex": "^(?:/b/\\{(?:/[^/]*)*/a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/*/../b",
+   "regex": "^(?:/[^/]*/\\.\\./b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a",
+   "regex": "^(?:a)\\Z",
+   "error": null,
+   "matches": [
+    "a"
+   ]
+  },
+  {
+   "glob": ".",
+   "regex": "^(?:\\.)\\Z",
+   "error": null,
+   "matches": [
+    "."
+   ]
+  },
+  {
+   "glob": "/\\/*/..//\\",
+   "regex": "^(?:/\\\\/[^/]*/\\.\\.//\\\\)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "+/\n",
+   "regex": "^(?:\\+/\n)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/\u00e9/(",
+   "regex": "^(?:\\\\/\u00e9/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "+/\\/a?b/|/+",
+   "regex": "^(?:\\+/\\\\/a[^/]b/\\|/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/|/a?b",
+   "regex": "^(?:/\\|/a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/+/$/$",
+   "regex": "^(?:/\\+/\\$/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "./ab/**/*.py",
+   "regex": "^(?:\\./ab(?:/[^/]*)*/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/{/a/\u00e9",
+   "regex": "^(?:a[^/]*/\\{/a/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/a",
+   "regex": "^(?:/a)\\Z",
+   "error": null,
+   "matches": [
+    "/a"
+   ]
+  },
+  {
+   "glob": "$/a?b/+//+",
+   "regex": "^(?:\\$/a[^/]b/\\+//\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/\n/*/.x",
+   "regex": "^(?:\\(/\n/[^/]*/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/a",
+   "regex": "^(?:/a)\\Z",
+   "error": null,
+   "matches": [
+    "/a"
+   ]
+  },
+  {
+   "glob": "|",
+   "regex": "^(?:\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/(/a//.x",
+   "regex": "^(?:\\(/\\(/a//\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "./*.py/\u00e9",
+   "regex": "^(?:\\./[^/]*\\.py/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9/ab/ab",
+   "regex": "^(?:\u00e9/ab/ab)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/.x/\u00e9/|",
+   "regex": "^(?:/\\.x/\u00e9/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9/\\",
+   "regex": "^(?:\u00e9/\\\\)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\",
+   "regex": "^(?:\\\\)\\Z",
+   "error": null,
+   "matches": [
+    "\\"
+   ]
+  },
+  {
+   "glob": "*b/$/\n/(",
+   "regex": "^(?:[^/]*b/\\$/\n/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/\\/|//\u00e9/*.py",
+   "regex": "^(?:/\\\\/\\|//\u00e9/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py",
+   "regex": "^(?:[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": [
+    "a\nb.py",
+    "ab.py",
+    "x.py"
+   ]
+  },
+  {
+   "glob": "/\u00e9/\\/|/**",
+   "regex": "^/\u00e9/\\\\/\\|(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/",
+   "regex": "^(?:\\(/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/a*/\u00e9/{/.x",
+   "regex": "^(?:\\$/a[^/]*/\u00e9/\\{/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*/a",
+   "regex": "^(?:[^/]*/a)\\Z",
+   "error": null,
+   "matches": [
+    "../a",
+    "/a",
+    "\\/a"
+   ]
+  },
+  {
+   "glob": ".x/a?b",
+   "regex": "^(?:\\.x/a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/\u00e9/*b/a?b",
+   "regex": "^(?:a[^/]*/\u00e9/[^/]*b/a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/|/*b",
+   "regex": "^(?:\\\\/\\|/[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|/\u00e9/*/b/{",
+   "regex": "^(?:\\|/\u00e9/[^/]*/b/\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9/?/a/ab",
+   "regex": "^(?:\u00e9/[^/]/a/ab)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\n/+/\n/(/|",
+   "regex": "^(?:\n/\\+/\n/\\(/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a?b/b/\\",
+   "regex": "^(?:a[^/]b/b/\\\\)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "../+/{/a*/|",
+   "regex": "^(?:\\.\\./\\+/\\{/a[^/]*/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "./**/{",
+   "regex": "^(?:\\.(?:/[^/]*)*/\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b/.x/.x",
+   "regex": "^(?:[^/]*b/\\.x/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{/{/*/*.py",
+   "regex": "^(?:\\{/\\{/[^/]*/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/**/|/../a?b/+",
+   "regex": "^(?:(?:/[^/]*)*/\\|/\\.\\./a[^/]b/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "./a*/a*/+",
+   "regex": "^(?:\\./a[^/]*/a[^/]*/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9/?/ab/ab/a*",
+   "regex": "^(?:\u00e9/[^/]/ab/ab/a[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/../a?b/b",
+   "regex": "^(?:/\\.\\./a[^/]b/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{/a?b/(/{/(",
+   "regex": "^(?:\\{/a[^/]b/\\(/\\{/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "?/+/(/$",
+   "regex": "^(?:[^/]/\\+/\\(/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "?",
+   "regex": "^(?:[^/])\\Z",
+   "error": null,
+   "matches": [
+    "$",
+    "*",
+    "+",
+    ".",
+    "\\",
+    "a",
+    "b",
+    "c"
+   ]
+  },
+  {
+   "glob": "$/\\",
+   "regex": "^(?:\\$/\\\\)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/|/.x",
+   "regex": "^(?:/\\|/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "..",
+   "regex": "^(?:\\.\\.)\\Z",
+   "error": null,
+   "matches": [
+    ".."
+   ]
+  },
+  {
+   "glob": "*.py",
+   "regex": "^(?:[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": [
+    "a\nb.py",
+    "ab.py",
+    "x.py"
+   ]
+  },
+  {
+   "glob": "a/(",
+   "regex": "^(?:a/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/*b/*/(/",
+   "regex": "^(?:a[^/]*/[^/]*b/[^/]*/\\(/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "b/*",
+   "regex": "^(?:b/[^/]*)\\Z",
+   "error": null,
+   "matches": [
+    "b/.x"
+   ]
+  },
+  {
+   "glob": "\u00e9",
+   "regex": "^(?:\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/\\/..",
+   "regex": "^(?:ab/\\\\/\\.\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "b/$/.x/**",
+   "regex": "^b/\\$/\\.x(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/../a/\u00e9",
+   "regex": "^(?:\\(/\\.\\./a/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/.",
+   "regex": "^(?:a[^/]*/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9",
+   "regex": "^(?:\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a?b",
+   "regex": "^(?:a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/(/\n/a?b/../\u00e9",
+   "regex": "^(?:/\\(/\n/a[^/]b/\\.\\./\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(",
+   "regex": "^(?:\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/*/",
+   "regex": "^(?:/[^/]*/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/|/?",
+   "regex": "^(?:\\$/\\|/[^/])\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/a*/?/a?b",
+   "regex": "^(?:(?:a[^/]*/[^/]/a[^/]b|[^/]*(?:/[^/]*)*/a[^/]*/[^/]/a[^/]b))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/**",
+   "regex": "^(?:/[^/]*)+\\Z",
+   "error": null,
+   "matches": [
+    "/",
+    "/\n/.x/\\/+/\u00e9",
+    "/$/$/(/$",
+    "/(",
+    "/(/(/(",
+    "/(/(/ab.py",
+    "/(/x.py/\\/ab",
+    "/+/ab.py",
+    "/+/x.py",
+    "/.x",
+    "/.x/+/a/b/c",
+    "/.x/x.py",
+    "/.x/\u00e9/b/*",
+    "//a",
+    "/\\",
+    "/\\/(/ab.py/(",
+    "/a",
+    "/a/a",
+    "/ab.py",
+    "/ab.py/$/.x/b",
+    "/ab.py/\\/$",
+    "/ab.py/b/\u00e9",
+    "/ab/\u00e9/a/(",
+    "/abs/proj/src/a.py",
+    "/b",
+    "/c/$",
+    "/x.py",
+    "/x.py/a",
+    "/x.py/a/.x/$"
+   ]
+  },
+  {
+   "glob": "\u00e9/\\/b/|",
+   "regex": "^(?:\u00e9/\\\\/b/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "//$/\\/*.py",
+   "regex": "^(?://\\$/\\\\/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/.x",
+   "regex": "^(?:\\$/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|/b",
+   "regex": "^(?:\\|/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/.",
+   "regex": "^(?:ab/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x/ab",
+   "regex": "^(?:\\.x/ab)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/|",
+   "regex": "^(?:/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/ab",
+   "regex": "^(?:ab/ab)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab",
+   "regex": "^(?:ab)\\Z",
+   "error": null,
+   "matches": [
+    "ab"
+   ]
+  },
+  {
+   "glob": "*b/../.",
+   "regex": "^(?:[^/]*b/\\.\\./\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|/(/*/(",
+   "regex": "^(?:\\|/\\(/[^/]*/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "b",
+   "regex": "^(?:b)\\Z",
+   "error": null,
+   "matches": [
+    "b"
+   ]
+  },
+  {
+   "glob": "*b/\u00e9/\u00e9",
+   "regex": "^(?:[^/]*b/\u00e9/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "../{/{/|",
+   "regex": "^(?:\\.\\./\\{/\\{/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/*",
+   "regex": "^(?:a[^/]*/[^/]*)\\Z",
+   "error": null,
+   "matches": [
+    "a/\n",
+    "a/$",
+    "ab/x.py",
+    "ab/\u00e9"
+   ]
+  },
+  {
+   "glob": "/*b",
+   "regex": "^(?:/[^/]*b)\\Z",
+   "error": null,
+   "matches": [
+    "/b"
+   ]
+  },
+  {
+   "glob": "ab/\\/\n/|",
+   "regex": "^(?:ab/\\\\/\n/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/(/|/*",
+   "regex": "^(?:/\\(/\\|/[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/.",
+   "regex": "^(?:\\$/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "b",
+   "regex": "^(?:b)\\Z",
+   "error": null,
+   "matches": [
+    "b"
+   ]
+  },
+  {
+   "glob": "*/(/ab/*b/*b",
+   "regex": "^(?:[^/]*/\\(/ab/[^/]*b/[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".",
+   "regex": "^(?:\\.)\\Z",
+   "error": null,
+   "matches": [
+    "."
+   ]
+  },
+  {
+   "glob": "b",
+   "regex": "^(?:b)\\Z",
+   "error": null,
+   "matches": [
+    "b"
+   ]
+  },
+  {
+   "glob": "{/**/.x/**/*",
+   "regex": "^(?:\\{(?:/[^/]*)*/\\.x(?:/[^/]*)*/[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/\\/*b/*.py/*.py",
+   "regex": "^(?:/\\\\/[^/]*b/[^/]*\\.py/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/\n/",
+   "regex": "^(?:/\n/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "?",
+   "regex": "^(?:[^/])\\Z",
+   "error": null,
+   "matches": [
+    "$",
+    "*",
+    "+",
+    ".",
+    "\\",
+    "a",
+    "b",
+    "c"
+   ]
+  },
+  {
+   "glob": "*b/**/\u00e9",
+   "regex": "^(?:[^/]*b(?:/[^/]*)*/\u00e9)\\Z",
+   "error": null,
+   "matches": [
+    "ab/\u00e9"
+   ]
+  },
+  {
+   "glob": "$/\\/.x/.",
+   "regex": "^(?:\\$/\\\\/\\.x/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\",
+   "regex": "^(?:\\\\)\\Z",
+   "error": null,
+   "matches": [
+    "\\"
+   ]
+  },
+  {
+   "glob": "a?b/a*/?/ab",
+   "regex": "^(?:a[^/]b/a[^/]*/[^/]/ab)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "./ab",
+   "regex": "^(?:\\./ab)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x/**/.",
+   "regex": "^(?:\\.x(?:/[^/]*)*/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a/*b/|/*",
+   "regex": "^(?:a/[^/]*b/\\|/[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/**/|",
+   "regex": "^(?:(?:(?:\\||[^/]*(?:/[^/]*)*/\\|)|[^/]*(?:/[^/]*)*(?:/[^/]*)*/\\|))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/*b/a/ab/.",
+   "regex": "^(?:[^/]*\\.py/[^/]*b/a/ab/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*/?",
+   "regex": "^(?:[^/]*/[^/])\\Z",
+   "error": null,
+   "matches": [
+    "\n/+",
+    "*/(",
+    "+/(",
+    "../a",
+    ".x/+",
+    ".x/\\",
+    ".x/c",
+    "/(",
+    "/\\",
+    "/a",
+    "/b",
+    "\\/\n",
+    "\\/a",
+    "\\/b",
+    "a/\n",
+    "a/$",
+    "ab/\u00e9"
+   ]
+  },
+  {
+   "glob": "./\u00e9/\n/*.py",
+   "regex": "^(?:\\./\u00e9/\n/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/..",
+   "regex": "^(?:\\\\/\\.\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a?b",
+   "regex": "^(?:a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/?//../{/.",
+   "regex": "^(?:/[^/]//\\.\\./\\{/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a/*",
+   "regex": "^(?:a/[^/]*)\\Z",
+   "error": null,
+   "matches": [
+    "a/\n",
+    "a/$"
+   ]
+  },
+  {
+   "glob": "{",
+   "regex": "^(?:\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\/(/b/{",
+   "regex": "^(?:\\\\/\\(/b/\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/\u00e9",
+   "regex": "^(?:ab/\u00e9)\\Z",
+   "error": null,
+   "matches": [
+    "ab/\u00e9"
+   ]
+  },
+  {
+   "glob": "/a*/?/*/b",
+   "regex": "^(?:/a[^/]*/[^/]/[^/]*/b)\\Z",
+   "error": null,
+   "matches": [
+    "/ab.py/$/.x/b"
+   ]
+  },
+  {
+   "glob": "a/{/?/+/*b",
+   "regex": "^(?:a/\\{/[^/]/\\+/[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/\\/**/|/*b",
+   "regex": "^(?:\\(/\\\\(?:/[^/]*)*/\\|/[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/|",
+   "regex": "^(?:(?:\\||[^/]*(?:/[^/]*)*/\\|))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\n/\u00e9",
+   "regex": "^(?:\n/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/a?b/a*/..",
+   "regex": "^(?:(?:a[^/]b/a[^/]*/\\.\\.|[^/]*(?:/[^/]*)*/a[^/]b/a[^/]*/\\.\\.))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/(/?",
+   "regex": "^(?:/\\(/[^/])\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/./.x/a*/|/(",
+   "regex": "^(?:/\\./\\.x/a[^/]*/\\|/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\n/\u00e9/**/\u00e9/a?b",
+   "regex": "^(?:\n/\u00e9(?:/[^/]*)*/\u00e9/a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/*/a?b/\\/.x",
+   "regex": "^(?:/[^/]*/a[^/]b/\\\\/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a/\\//$/a*",
+   "regex": "^(?:a/\\\\//\\$/a[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "..",
+   "regex": "^(?:\\.\\.)\\Z",
+   "error": null,
+   "matches": [
+    ".."
+   ]
+  },
+  {
+   "glob": "\u00e9/\u00e9/.x/{/a*",
+   "regex": "^(?:\u00e9/\u00e9/\\.x/\\{/a[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|/*.py/*",
+   "regex": "^(?:\\|/[^/]*\\.py/[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "b/\u00e9/$",
+   "regex": "^(?:b/\u00e9/\\$)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py",
+   "regex": "^(?:[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": [
+    "a\nb.py",
+    "ab.py",
+    "x.py"
+   ]
+  },
+  {
+   "glob": "\u00e9/.x",
+   "regex": "^(?:\u00e9/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{/\\/b",
+   "regex": "^(?:\\{/\\\\/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/.x/|/b//a?b",
+   "regex": "^(?:/\\.x/\\|/b//a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$",
+   "regex": "^(?:\\$)\\Z",
+   "error": null,
+   "matches": [
+    "$"
+   ]
+  },
+  {
+   "glob": "\n/b/\\/**",
+   "regex": "^\n/b/\\\\(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/",
+   "regex": "^(?:\\$/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "b/*",
+   "regex": "^(?:b/[^/]*)\\Z",
+   "error": null,
+   "matches": [
+    "b/.x"
+   ]
+  },
+  {
+   "glob": "+/a/(/a*/b",
+   "regex": "^(?:\\+/a/\\(/a[^/]*/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/./*.py/*.py/*.py/*b",
+   "regex": "^(?:/\\./[^/]*\\.py/[^/]*\\.py/[^/]*\\.py/[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(/a*",
+   "regex": "^(?:\\(/a[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|",
+   "regex": "^(?:\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/b/\u00e9/b",
+   "regex": "^(?:/b/\u00e9/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/*b/.",
+   "regex": "^(?:/[^/]*b/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "../(/\u00e9/?/(",
+   "regex": "^(?:\\.\\./\\(/\u00e9/[^/]/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/+",
+   "regex": "^(?:a[^/]*/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/\n/\n/a",
+   "regex": "^(?:a[^/]*/\n/\n/a)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|/b/*/a/\u00e9",
+   "regex": "^(?:\\|/b/[^/]*/a/\u00e9)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/(/.x",
+   "regex": "^(?:(?:\\(/\\.x|[^/]*(?:/[^/]*)*/\\(/\\.x))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{//../a",
+   "regex": "^(?:\\{//\\.\\./a)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "+/*.py/$/a",
+   "regex": "^(?:\\+/[^/]*\\.py/\\$/a)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{/(/*b/(/b",
+   "regex": "^(?:\\{/\\(/[^/]*b/\\(/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "./(/$/.x",
+   "regex": "^(?:\\./\\(/\\$/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/./*b/a*",
+   "regex": "^(?:[^/]*\\.py/\\./[^/]*b/a[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/?/\\",
+   "regex": "^(?:/[^/]/\\\\)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "../.",
+   "regex": "^(?:\\.\\./\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "./?/\\",
+   "regex": "^(?:\\./[^/]/\\\\)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/b/../a",
+   "regex": "^(?:/b/\\.\\./a)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab",
+   "regex": "^(?:ab)\\Z",
+   "error": null,
+   "matches": [
+    "ab"
+   ]
+  },
+  {
+   "glob": "?",
+   "regex": "^(?:[^/])\\Z",
+   "error": null,
+   "matches": [
+    "$",
+    "*",
+    "+",
+    ".",
+    "\\",
+    "a",
+    "b",
+    "c"
+   ]
+  },
+  {
+   "glob": "\n/(/../\u00e9/(",
+   "regex": "^(?:\n/\\(/\\.\\./\u00e9/\\()\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/a*",
+   "regex": "^(?:/a[^/]*)\\Z",
+   "error": null,
+   "matches": [
+    "/a",
+    "/ab.py"
+   ]
+  },
+  {
+   "glob": "\\/ab/**/a*/|",
+   "regex": "^(?:\\\\/ab(?:/[^/]*)*/a[^/]*/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b/**/**/?",
+   "regex": "^(?:[^/]*b(?:/[^/]*)*(?:/[^/]*)*/[^/])\\Z",
+   "error": null,
+   "matches": [
+    "ab/ab.py/$/a",
+    "ab/ab.py/c/c",
+    "ab/\u00e9",
+    "b/x.py/ab.py/+"
+   ]
+  },
+  {
+   "glob": "+/(/a",
+   "regex": "^(?:\\+/\\(/a)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9/a/../..",
+   "regex": "^(?:\u00e9/a/\\.\\./\\.\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\n/{/b",
+   "regex": "^(?:\n/\\{/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/.x/?/.",
+   "regex": "^(?:(?:\\.x/[^/]/\\.|[^/]*(?:/[^/]*)*/\\.x/[^/]/\\.))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x/./\n/*.py",
+   "regex": "^(?:\\.x/\\./\n/[^/]*\\.py)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/?/.",
+   "regex": "^(?:/[^/]/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/*b/.x/(/a*",
+   "regex": "^(?:/[^/]*b/\\.x/\\(/a[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\\",
+   "regex": "^(?:\\\\)\\Z",
+   "error": null,
+   "matches": [
+    "\\"
+   ]
+  },
+  {
+   "glob": "*b",
+   "regex": "^(?:[^/]*b)\\Z",
+   "error": null,
+   "matches": [
+    "ab",
+    "b"
+   ]
+  },
+  {
+   "glob": "/*/?",
+   "regex": "^(?:/[^/]*/[^/])\\Z",
+   "error": null,
+   "matches": [
+    "//a",
+    "/a/a",
+    "/c/$",
+    "/x.py/a"
+   ]
+  },
+  {
+   "glob": "/*b/b/$/*",
+   "regex": "^(?:/[^/]*b/b/\\$/[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b/a?b/.x",
+   "regex": "^(?:[^/]*b/a[^/]b/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/+/+",
+   "regex": "^(?:/\\+/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/\n/\u00e9",
+   "regex": "^(?:(?:\n/\u00e9|[^/]*(?:/[^/]*)*/\n/\u00e9))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/|",
+   "regex": "^(?:(?:\\||[^/]*(?:/[^/]*)*/\\|))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x",
+   "regex": "^(?:\\.x)\\Z",
+   "error": null,
+   "matches": [
+    ".x"
+   ]
+  },
+  {
+   "glob": "+/$/*.py/*",
+   "regex": "^(?:\\+/\\$/[^/]*\\.py/[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\n/$/.x/\n/",
+   "regex": "^(?:\n/\\$/\\.x/\n/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\u00e9/*.py/\n/|",
+   "regex": "^(?:\u00e9/[^/]*\\.py/\n/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "\n",
+   "regex": "^(?:\n)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a*/(/\u00e9/ab",
+   "regex": "^(?:a[^/]*/\\(/\u00e9/ab)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "ab/$/b",
+   "regex": "^(?:ab/\\$/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a/\u00e9/.",
+   "regex": "^(?:a/\u00e9/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "//?",
+   "regex": "^(?://[^/])\\Z",
+   "error": null,
+   "matches": [
+    "//a"
+   ]
+  },
+  {
+   "glob": "**/\u00e9/(/$",
+   "regex": "^(?:(?:\u00e9/\\(/\\$|[^/]*(?:/[^/]*)*/\u00e9/\\(/\\$))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a?b/b/*",
+   "regex": "^(?:a[^/]b/b/[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/?",
+   "regex": "^(?:/[^/])\\Z",
+   "error": null,
+   "matches": [
+    "/(",
+    "/\\",
+    "/a",
+    "/b"
+   ]
+  },
+  {
+   "glob": "ab/*/?/+/a?b",
+   "regex": "^(?:ab/[^/]*/[^/]/\\+/a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a/.x//ab/.x",
+   "regex": "^(?:a/\\.x//ab/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/b",
+   "regex": "^(?:/b)\\Z",
+   "error": null,
+   "matches": [
+    "/b"
+   ]
+  },
+  {
+   "glob": "a?b/?",
+   "regex": "^(?:a[^/]b/[^/])\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a/{/*.py/**/*b",
+   "regex": "^(?:a/\\{/[^/]*\\.py(?:/[^/]*)*/[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**/*b/+/+/\\",
+   "regex": "^(?:(?:[^/]*b/\\+/\\+/\\\\|[^/]*(?:/[^/]*)*/[^/]*b/\\+/\\+/\\\\))\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/*b/",
+   "regex": "^(?:/[^/]*b/)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "{/\\/**",
+   "regex": "^\\{/\\\\(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/+/.x",
+   "regex": "^(?:/\\+/\\.x)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "./a*/**/**/|",
+   "regex": "^(?:\\./a[^/]*(?:/[^/]*)*(?:/[^/]*)*/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/a?b/.x/../a?b",
+   "regex": "^(?:[^/]*\\.py/a[^/]b/\\.x/\\.\\./a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/*b/a?b",
+   "regex": "^(?:/[^/]*b/a[^/]b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|/**",
+   "regex": "^\\|(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x/{/a?b//b",
+   "regex": "^(?:\\.x/\\{/a[^/]b//b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "?/a?b/+",
+   "regex": "^(?:[^/]/a[^/]b/\\+)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a?b/$/\u00e9/\n",
+   "regex": "^(?:a[^/]b/\\$/\u00e9/\n)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": ".x",
+   "regex": "^(?:\\.x)\\Z",
+   "error": null,
+   "matches": [
+    ".x"
+   ]
+  },
+  {
+   "glob": "+/(",
+   "regex": "^(?:\\+/\\()\\Z",
+   "error": null,
+   "matches": [
+    "+/("
+   ]
+  },
+  {
+   "glob": "/**/{",
+   "regex": "^(?:(?:/[^/]*)*/\\{)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "(//\\/|/|",
+   "regex": "^(?:\\(//\\\\/\\|/\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*b",
+   "regex": "^(?:[^/]*b)\\Z",
+   "error": null,
+   "matches": [
+    "ab",
+    "b"
+   ]
+  },
+  {
+   "glob": "a?b/b/../|",
+   "regex": "^(?:a[^/]b/b/\\.\\./\\|)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/(/\\/*/?",
+   "regex": "^(?:\\$/\\(/\\\\/[^/]*/[^/])\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py/$/\n",
+   "regex": "^(?:[^/]*\\.py/\\$/\n)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "?",
+   "regex": "^(?:[^/])\\Z",
+   "error": null,
+   "matches": [
+    "$",
+    "*",
+    "+",
+    ".",
+    "\\",
+    "a",
+    "b",
+    "c"
+   ]
+  },
+  {
+   "glob": "\n",
+   "regex": "^(?:\n)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "//\n/|/\n",
+   "regex": "^(?://\n/\\|/\n)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "**",
+   "regex": "^(?:(?:|[^/]*(?:/[^/]*)*))\\Z",
+   "error": null,
+   "matches": [
+    "\n/$/.x/a/ab.py",
+    "\n/*/$/+",
+    "\n/+",
+    "\n/ab.py/b/+",
+    "\n/ab/ab.py/a/a",
+    "$",
+    "$/+/ab/$",
+    "(/\n/\u00e9/\\",
+    "(/(/\n/+/\\",
+    "(/*/b",
+    "(/\\/a/\n/ab",
+    "(/b/ab.py",
+    "(/c/x.py",
+    "*",
+    "*/(",
+    "*/.x/+/(",
+    "+",
+    "+/(",
+    "+/\\/(",
+    "+/x.py",
+    ".",
+    "..",
+    "../a",
+    ".x",
+    ".x/+",
+    ".x/\\",
+    ".x/\\/\u00e9",
+    ".x/c",
+    "/",
+    "/\n/.x/\\/+/\u00e9",
+    "/$/$/(/$",
+    "/(",
+    "/(/(/(",
+    "/(/(/ab.py",
+    "/(/x.py/\\/ab",
+    "/+/ab.py",
+    "/+/x.py",
+    "/.x",
+    "/.x/+/a/b/c",
+    "/.x/x.py",
+    "/.x/\u00e9/b/*",
+    "//a",
+    "/\\",
+    "/\\/(/ab.py/(",
+    "/a",
+    "/a/a",
+    "/ab.py",
+    "/ab.py/$/.x/b",
+    "/ab.py/\\/$",
+    "/ab.py/b/\u00e9",
+    "/ab/\u00e9/a/(",
+    "/abs/proj/src/a.py",
+    "/b",
+    "/c/$",
+    "/x.py",
+    "/x.py/a",
+    "/x.py/a/.x/$",
+    "\\",
+    "\\/\n",
+    "\\/\\/*/c/ab.py",
+    "\\/a",
+    "\\/a/c",
+    "\\/b",
+    "a",
+    "a\nb.py",
+    "a/\n",
+    "a/$",
+    "a/+/*/x.py/b",
+    "a/\\/.x",
+    "a/c/*",
+    "a/\u00e9/+/$",
+    "ab",
+    "ab.py",
+    "ab.py/+/ab.py",
+    "ab/ab.py/$/a",
+    "ab/ab.py/c/c",
+    "ab/x.py",
+    "ab/\u00e9",
+    "b",
+    "b/\n/(/ab.py/x.py",
+    "b/.x",
+    "b/\\/ab",
+    "b/x.py/ab.py/+",
+    "c",
+    "c/\n/\u00e9/\n/\\",
+    "c/+/ab.py/(",
+    "c/b/a/ab.py/+",
+    "c/x.py",
+    "src",
+    "src/a.py",
+    "x.py",
+    "x.py\n",
+    "x.py/\n/ab",
+    "x.py/.x/b/.x",
+    "x.py/\\/a/a",
+    "\u00e9/(/$/a/b",
+    "\u00e9/+/(",
+    "\u00e9/a/x.py",
+    "\u00e9/ab/\\"
+   ]
+  },
+  {
+   "glob": "",
+   "regex": null,
+   "error": "the glob is empty",
+   "matches": null
+  },
+  {
+   "glob": "$//*.py/.x/b",
+   "regex": "^(?:\\$//[^/]*\\.py/\\.x/b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "/.",
+   "regex": "^(?:/\\.)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "|/ab/../**/a*",
+   "regex": "^(?:\\|/ab/\\.\\.(?:/[^/]*)*/a[^/]*)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "a//$/\\",
+   "regex": "^(?:a//\\$/\\\\)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "b",
+   "regex": "^(?:b)\\Z",
+   "error": null,
+   "matches": [
+    "b"
+   ]
+  },
+  {
+   "glob": "/$/*b",
+   "regex": "^(?:/\\$/[^/]*b)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "*.py//\\",
+   "regex": "^(?:[^/]*\\.py//\\\\)\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "$/a*/**",
+   "regex": "^\\$/a\\*(?:/[^/]*)*\\Z",
+   "error": null,
+   "matches": []
+  },
+  {
+   "glob": "./*b/\\",
+   "regex": "^(?:\\./[^/]*b/\\\\)\\Z",
+   "error": null,
+   "matches": []
+  }
+ ]
+}

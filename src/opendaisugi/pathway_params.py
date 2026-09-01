@@ -11,6 +11,8 @@ producing a free ``{command}`` slot.
 from __future__ import annotations
 
 import os
+import posixpath
+import re
 import shlex
 from urllib.parse import urlsplit
 
@@ -144,8 +146,18 @@ def apply_bindings(
         step = steps[p.step_index]
         if _capability_head(step.type, value) != p.head:
             return None
+        if not _holds_a_string(type(step), p.field):
+            # setattr does not validate: a string in a list, dict or literal
+            # field would leave a plan that is not well formed.
+            raise ValueError(f"the {step.type} step has no string field {p.field!r}")
         setattr(step, p.field, value)
     return plan
+
+
+def _holds_a_string(model: type, field: str) -> bool:
+    """Whether ``model`` declares ``field`` as ``str`` or ``str | None``."""
+    info = getattr(model, "model_fields", {}).get(field)
+    return info is not None and info.annotation in (str, str | None)
 
 
 __all__ = ["apply_bindings", "diff_plans_for_parameters", "rekey_to_template"]
@@ -240,6 +252,41 @@ def plan_divergence(plans: list[ActionPlan]) -> tuple[list[int], list[PathwayPar
     if divergent and len(divergent) >= len(ordered[0]):
         return [], []
     return divergent, params
+
+
+_GLOB_SEGMENT = re.compile(r"[*?\[]")
+
+
+def salvage_workspace(file_read: list[str]) -> str | None:
+    """The workspace of a salvaged leaf: the fixed prefix of a ``file_read`` glob.
+
+    The prefix is the glob's leading segments before the first one with a
+    glob character (``/work/**`` gives ``/work``, ``**`` gives ``.``, ``/**``
+    gives ``/``). A glob with no glob character names one file, so it gives no
+    prefix. The first prefix that the globs admit under verify's own path
+    matcher wins, so the leaf passes the workspace check. None when no glob
+    gives one; a glob too complex to match gives none.
+    """
+    from opendaisugi.verify import GlobTooComplex, _path_matches_any
+
+    for glob in file_read:
+        fixed: list[str] = []
+        for seg in glob.split("/"):
+            if _GLOB_SEGMENT.search(seg):
+                break
+            fixed.append(seg)
+        else:
+            continue
+        prefix = "/".join(fixed)
+        if prefix == "" and glob.startswith("/"):
+            prefix = "/"
+        workspace = posixpath.normpath(prefix)
+        try:
+            if _path_matches_any(workspace, file_read):
+                return workspace
+        except GlobTooComplex:
+            continue
+    return None
 
 
 def build_delegated_template(
