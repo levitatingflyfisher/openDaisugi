@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openDaisugi Field Boards</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..700&family=Instrument+Sans:ital,wght@0,400..700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="_shell/style.css">
+</head>
+<body>
+<div class="wrap">
+<!-- title: openDaisugi Field Boards -->
+<header>
+  <div class="kicker">openDaisugi · field boards · 2026-09-12</div>
+  <h1>One stack, <b>six boards.</b></h1>
+  <p class="lede">A field board is three parts. What the field built, with the screens archived here so they outlive their sources. What survived verification. What ours is, and should be. One board per layer of the stack, and every layer stands alone.</p>
+  <div class="frame">
+    <div><div class="kicker">layer</div><strong>Gate and garden</strong><span>Importable alone. A verifier in front of every action, a store of verified pathways behind it.</span></div>
+    <div><div class="kicker">floor</div><strong>coppice</strong><span>One server owning every pane and one socket every screen speaks.</span></div>
+    <div><div class="kicker">loop</div><strong>Any harness</strong><span>Claude Code, Codex, pi, OpenCode, sprig. A command and its args.</span></div>
+  </div>
+</header>
+
+<section>
+  <div class="sechead">
+    <div><div class="kicker">the boards</div><h2>Read in any order</h2></div>
+    <p>Each opens in this folder. No server needed. Fonts load from the web when it is there and fall back when it is not.</p>
+  </div>
+  <div class="patterns">
+    <a class="pattern" href="gate/index.html"><strong>Gate</strong><span>Allowed is not decided. Guardrails, sandboxes, approval modes, interlocks, and the verdict that carries its proof.</span></a>
+    <a class="pattern" href="garden/index.html"><strong>Garden</strong><span>Paths worn in by use. Skill libraries, memory layers, Voyager, Luhmann's box, and the pathway curve.</span></a>
+    <a class="pattern" href="gateway/index.html"><strong>Gateway</strong><span>A meter, then a chooser. Routers, proxies, switchboards, and the cache column on the roster.</span></a>
+    <a class="pattern" href="loop/index.html"><strong>Loop</strong><span>Rent the loop, own the boundary. Nine harnesses, one governor, and five transports for one gate.</span></a>
+    <a class="pattern" href="floor/index.html"><strong>Floor</strong><span>A floor you can talk to. Fifty-five screens from the multi-agent landscape and twelve views of coppice.</span></a>
+    <a class="pattern" href="cockpit/index.html"><strong>Cockpit</strong><span>Honesty by glyph. The terminal instruments, the ten laws, and where the roster went.</span></a>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <div><div class="kicker">the wiring</div><h2>What is live today</h2></div>
+    <p>Real output of the module map on the day the boards were made. Filled is active, hollow is available, dotted is planned.</p>
+  </div>
+  <div class="term">
+    <div class="bar"><i></i><i></i><i></i><b>daisugi modules</b> · 2026-09-12</div>
+    <pre>  a task from your agent
+        |
++- harness (agent host) -------------------------- [cfg] +   * claude-code  . codex  . hermes  . openclaw
++- gate (call-time) ------------------------------ [cfg] +   . claude PreToolUse  o codex hooks.json  o shadow / off
++- verifier (the checker) --------------------- [planned] +   * python  . rust  . go  . typescript  . lean
++- shell decomposition --------------------------- [live] +   * tree-sitter-bash  o reject-compound
++- envelope source ------------------------------- [cfg] +   * evidence-inferred  . llm-generated
++- model backend --------------------------------- [cfg] +   o claude-code  o anthropic-api  o llamafile  o ollama
++- matcher / embedder ---------------------------- [cfg] +   o all-MiniLM-L6-v2  * potion static  . int8 / fp16 onnx  o lexical
++- token router / gateway ------------------------ [cfg] +   . daisugi gateway  . NeMo Switchyard  o off (direct)
++- distillation (the gardener) ------------------- [live] +   o sentence-transformers  * potion  o lexical  o no-embedder
++- stores (local-first) ------------------------ [planned] +   * journal (sqlite)  * pathway store (sqlite)  o git-backed
++- floor report (state to a pane host) ----------- [cfg] +   . herdr  . coppice  * none
++- pane backend ---------------------------------- [live] +   * coppice  . herdr  o tmux
++- voice engine (speech to text) ----------------- [cfg] +   * faster-whisper  . parakeet
+        |
+  verified action runs  (or falls back / is refused)
+
+<span class="t-dim">3 live · 8 need a restart or reinstall · 2 planned, not wired yet</span></pre>
+  </div>
+</section>
+
+<section>
+  <div class="sechead">
+    <div><div class="kicker">the recipe</div><h2>How a board is made</h2></div>
+  </div>
+  <div class="patterns">
+    <div class="pattern"><strong>A report first.</strong><span>Deep research with three-vote verification, committed under docs/research. The board cites it and never goes past it.</span></div>
+    <div class="pattern"><strong>Archive every screen.</strong><span>sources.json names each image and where it came from. fetch.py downloads, verifies, shrinks, and writes the fetch date. The repo is the record, so a vanished source does not take the board with it.</span></div>
+    <div class="pattern"><strong>Tag with the report's verdict.</strong><span>Steal, avoid, competitor, unverified, reference. verdicts.json holds the rule, the card shows the reason.</span></div>
+    <div class="pattern"><strong>Draw ours from real screens.</strong><span>Part three starts from the CLI as it runs today, then says what should change, and names the plan that changes it.</span></div>
+    <div class="pattern"><strong>Three examples per plugin kind.</strong><span>No kind exists in the spec until three examples run against it. Views, policies, adapters, backends, state sources, bridges, notifiers.</span></div>
+  </div>
+</section>
+
+<footer>
+  <p>Screens in part one of each board belong to their makers and are archived for study. Everything in part three is original work for openDaisugi. To rebuild after editing a body.html, run _shell/render.py.</p>
+</footer>
+
+</div>
+<script>window.ITEMS = [];</script>
+<script src="_shell/board.js"></script>
+</body>
+</html>

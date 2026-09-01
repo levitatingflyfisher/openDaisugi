@@ -53,6 +53,10 @@ daisugi install --gateway --gate            # save (base_url) + verify (shadow g
 daisugi install --gateway --gate --enforce  # same, but the gate denies out-of-envelope calls
 ```
 
+`--enforce` needs a registered envelope, or the hook would deny every call;
+with none, install refuses and writes nothing. Run
+`daisugi gate init --workspace DIR` first for a starter envelope.
+
 `--gateway` and `--gate` are both **opt-in** — a plain `daisugi install` wires
 only the skill, MCP, capture, and instructions, and changes nothing about your
 model routing. Every write is idempotent, backed up, and reversible with
@@ -96,10 +100,11 @@ request against your rate limit — so this path is a safe fallback, not a no-op
 
 ```python
 from opendaisugi.gateway_journal import GatewayJournal
+
 s = GatewayJournal(path="~/.opendaisugi/gateway/turns.jsonl").summary()
-print(s.frontier_tokens_saved)   # frontier-quota tokens preserved (the binding constraint)
-print(s.dollars_saved, s.blended_multiplier)   # and how cheap those tokens were
-print(s.repeats)                 # asks you made more than once
+print(s.frontier_tokens_saved)  # frontier-quota tokens preserved (the binding constraint)
+print(s.dollars_saved, s.blended_multiplier)  # and how cheap those tokens were
+print(s.repeats)  # asks you made more than once
 ```
 
 Two currencies, because they answer different questions. On a subscription plan
@@ -116,17 +121,14 @@ prices what the frontier model *would* have cost at the same token split, and do
 not model the frontier's own warm cache. Actual spend is always exact, taken from
 the model's own usage report.
 
-## Compose with a trained router (e.g. NeMo Switchyard)
+## Compose with a trained router: NeMo Switchyard
 
-The gateway's upstream is one setting. Point it at a raw provider to *replace* a
-router, or at a trained routing endpoint to *compose* with one:
-
-```bash
-daisugi gateway --upstream https://your-switchyard-endpoint
-```
-
-The router picks the model; the gateway still journals the turn and books the
-saving. Same build either way.
+The gateway can hand the model choice to NVIDIA NeMo Switchyard and stay the
+meter. Use `daisugi gateway --router switchyard`. The gateway starts
+Switchyard on loopback, sends each turn to its route, and journals the target
+that served the turn. Do not point `--upstream` at a Switchyard endpoint by
+hand. The rules router would then send model names that Switchyard does not
+know. See [Hand model choice to NeMo Switchyard](router-switchyard.md).
 
 ## Reuse — the opt-in tools (Phase 2)
 

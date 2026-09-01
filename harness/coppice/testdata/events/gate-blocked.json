@@ -1,0 +1,1 @@
+{"v":1,"ts":1757300000.123,"session_id":"d41c","harness_session_id":"11111111-2222-3333-4444-555555555555","harness":"claude-code","pane":"w1:p3","state":"blocked","source":"gate","ask":{"id":"toolu_01","tool":"Bash","summary":"rm -rf build/","deadline":1757300090.0},"detail":"verdict=deny clause=shell.deny[2]"}

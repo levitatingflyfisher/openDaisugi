@@ -18,7 +18,10 @@ def _run(*args: str, env_extra: dict | None = None) -> subprocess.CompletedProce
     env = dict(os.environ, **(env_extra or {}))
     return subprocess.run(
         [sys.executable, "-m", "opendaisugi.cli", *args],
-        capture_output=True, text=True, env=env, timeout=60,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
     )
 
 
@@ -35,7 +38,10 @@ def _run_no_force_color(*args: str) -> subprocess.CompletedProcess:
     env["NO_COLOR"] = "1"
     return subprocess.run(
         [sys.executable, "-m", "opendaisugi.cli", *args],
-        capture_output=True, text=True, env=env, timeout=60,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
     )
 
 
@@ -76,6 +82,8 @@ def test_quiet_silences_the_state_echo(tmp_path, monkeypatch):
         return _fake_result()
 
     monkeypatch.setattr(Daisugi, "orchestrate", _ok)
-    res = runner.invoke(app, ["-q", "orchestrate", "t", "--llm", "litellm", "--data-dir", str(tmp_path)])
+    res = runner.invoke(
+        app, ["-q", "orchestrate", "t", "--llm", "litellm", "--data-dir", str(tmp_path)]
+    )
     assert res.exit_code == 0, res.output
     assert "backend:" not in res.output

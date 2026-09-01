@@ -2,6 +2,7 @@ package verify
 
 import (
 	"encoding/json"
+	"math/big"
 	"testing"
 )
 
@@ -22,7 +23,7 @@ func TestCheckEnvelopeSelfConsistency(t *testing.T) {
 	env := DefaultEnvelope()
 	env.Permissions.Shell = false
 	env.Permissions.ShellAllowlist = []string{"git"} // inconsistent: allowlist without shell
-	v := CheckEnvelopeSelfConsistency(env, 500)
+	v, _ := CheckEnvelopeSelfConsistency(env, 500)
 	if len(v) != 1 || v[0].Stage != "z3" || v[0].HasStep {
 		t.Fatalf("want one z3 violation with step=null, got %+v", v)
 	}
@@ -30,13 +31,13 @@ func TestCheckEnvelopeSelfConsistency(t *testing.T) {
 	env2 := DefaultEnvelope()
 	env2.Permissions.Shell = true
 	env2.Permissions.ShellAllowlist = []string{"git"}
-	if v := CheckEnvelopeSelfConsistency(env2, 500); len(v) != 0 {
+	if v, _ := CheckEnvelopeSelfConsistency(env2, 500); len(v) != 0 {
 		t.Fatalf("want zero violations for a consistent envelope, got %+v", v)
 	}
 
 	env3 := DefaultEnvelope()
-	env3.Permissions.MaxExecutionTimeS = 9999 // outside (0, 3600]
-	if v := CheckEnvelopeSelfConsistency(env3, 500); len(v) != 1 {
+	env3.Permissions.MaxExecutionTimeS = big.NewInt(9999) // outside (0, 3600]
+	if v, _ := CheckEnvelopeSelfConsistency(env3, 500); len(v) != 1 {
 		t.Fatalf("want one violation for max_execution_time_s out of range, got %+v", v)
 	}
 }
@@ -45,7 +46,7 @@ func TestCheckPlanAgainstEnvelope(t *testing.T) {
 	requireZ3(t)
 	env := DefaultEnvelope() // shell=false
 	plan := ActionPlan{Steps: []Step{stepRaw("s1", "shell", map[string]interface{}{"command": "ls"})}}
-	v := CheckPlanAgainstEnvelope(plan, env, 500)
+	v, _ := CheckPlanAgainstEnvelope(plan, env, 500)
 	if len(v) != 1 {
 		t.Fatalf("want one violation (plan needs shell, envelope forbids it), got %+v", v)
 	}
@@ -159,12 +160,12 @@ func TestCheckSkillDelegations_OpaqueSkillStrictRejects(t *testing.T) {
 	plan := ActionPlan{Steps: []Step{
 		stepRaw("k1", "skill", map[string]interface{}{"skill_id": "mystery", "skill_input": map[string]interface{}{}}),
 	}}
-	var warnings []string
-	v := CheckSkillDelegations(plan, env, true, 2000, &warnings)
+	var warnings, timeouts []string
+	v := CheckSkillDelegations(plan, env, true, 2000, &warnings, &timeouts)
 	if len(v) != 1 || v[0].Stage != "delegation" || v[0].Step != "k1" {
 		t.Fatalf("strict mode: want one delegation violation for an opaque skill, got %+v", v)
 	}
-	v = CheckSkillDelegations(plan, env, false, 2000, &warnings)
+	v = CheckSkillDelegations(plan, env, false, 2000, &warnings, &timeouts)
 	if len(v) != 0 {
 		t.Fatalf("non-strict mode: want zero violations for an opaque skill, got %+v", v)
 	}

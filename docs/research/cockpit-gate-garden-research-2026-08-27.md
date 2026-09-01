@@ -25,7 +25,7 @@ doctrine), [`../plans/2026-08-26-daisugi-interface-two-lenses.md`](../plans/2026
   reads alone because none of their claims was load-bearing enough to verify.
 - **Time sensitivity.** pi moved from `badlogic/pi-mono` to `earendil-works/pi` and
   changes daily. Codex removed file undo in April 2026. Claude Code figures are from
-  v2.1.247 docs and this machine's own session files. OpenClaw's rewind exists on
+  v2.1.247 docs and local session-file inspection. OpenClaw's rewind exists on
   `main` but may post-date the v2026.7.1 stable line.
 - **Refuted, do not cite.** Cline's "shadow git repo" data model and a "three-way
   destructive restore" (0-3; the current SDK uses private refs in the user's own repo,
@@ -101,7 +101,7 @@ Ten laws for daisugi's cockpit. Each one is backed in §2 and §3.
 | **oh-my-pi** | Same `/tree` + `/branch`, model-callable `checkpoint`/`rewind`, `/btw` → `f` promotes a side answer to a branch | Yes | No | Same, plus `reset_boundary`, `providerPromptCacheKey` in header | [unverified] |
 | **OpenHands V1 SDK** | `navigate_to(event_id)` moves `leaf_event_id`; abandoned events drop out of the view | `fork(from_event_id)` copies `path_to_root` | **No: fork shares the working directory** | One JSON file per event; `parent_id` on every event; storage linear, tree logical | [confirmed] (merged 2026-07-02); Canvas exposes only *Branch from here* |
 | **OpenClaw** | `sessions.rewind` (head repoint), `sessions.branches.switch`; refused while a run is active or for harness-owned sessions | `sessions.fork` from a chosen message; `sessions.create {fork:true}` from the tail | No (files not reverted); worktree snapshots are a separate mechanism | Transcript entries `id` + `parentId`; `compaction`, `branch_summary`; per-agent SQLite on `main`/2026.8 betas, per-session JSONL in stable | [qualified]: rewind, branch-switch and mid-transcript fork exist only on `main` and the 2026.8.1 betas; stable v2026.7.1 has only the tail fork |
-| **Claude Code** | **None.** `/rewind` moves the head in place; abandoned tails stay on disk but vanish from `/resume` (issue #55347, closed not planned) | `/branch`, `--fork-session`, `/fork` copy to a new session id; no parent link written | Yes, per user prompt: `file-history-snapshot` records + `~/.claude/file-history/<session>/<hash>@vN`; 100 checkpoints, 30 days; skips bash edits, most sub-agent edits, symlinks | JSONL with `uuid`/`parentUuid` (a DAG: 411 branch points in 875 local files); head tracked by a `last-prompt {leafUuid}` record; format declared internal | [qualified]/[confirmed] |
+| **Claude Code** | **None.** `/rewind` moves the head in place; abandoned tails stay on disk but vanish from `/resume` (issue #55347, closed not planned) | `/branch`, `--fork-session`, `/fork` copy to a new session id; no parent link written | Yes, per user prompt: `file-history-snapshot` records + `~/.claude/file-history/<session>/<hash>@vN`; 100 checkpoints, 30 days; skips bash edits, most sub-agent edits, symlinks | JSONL with `uuid`/`parentUuid` (a DAG, observed locally with many branch points across many session files); head tracked by a `last-prompt {leafUuid}` record; format declared internal | [qualified]/[confirmed] |
 | **Codex CLI** | Esc-Esc backtrack (conversation only) | `codex fork`, `thread/fork` (`lastTurnId`/`beforeTurnId`) | **None** since 2026-04-28 (ghost commits removed after 100 GB `.git` bloat) | Rollout JSONL; `SessionMeta{forked_from_id, forked_from_ordinal_exclusive, parent_thread_id, history_base}`; paginated mode: a fork **references** the parent's frozen prefix instead of copying | [qualified] |
 | **Cursor** | None | Fork Chat copies the prefix (later tokens released); Side Chat = parallel thread with hidden parent context | Checkpoint restore = files only, messages stay | Flat ordered array, no parent pointers (reverse-engineered); one user's store hit 30 GB | [confirmed]/[qualified] |
 | **Cline** | None; message restore starts a **new session** | Implicit | Yes: stash-shaped commit pinned at `refs/cline/checkpoints/<session>/<run>`, once per user run; restore wrapped in a rollback ref | Session rows + `restoredFromSessionId` in metadata | [qualified] |
@@ -146,8 +146,9 @@ journal, the verdicts and the snapshot all key on, and that survives compaction.
   5.3x overall prefill amplification (35x on user-initiated steps). **[confirmed 3-0]**
   ([arxiv 2606.30560](https://arxiv.org/abs/2606.30560))
 - Cache reads are 0.1x base input on every Anthropic model; writes are 1.25x (5-min
-  TTL) or 2x (1-hour). This box's own history (86,757 responses): 428:1 input:output,
-  96.8% cache reads, $44k hypothetical uncached vs $6k actual. **[qualified 2-1]**
+  TTL) or 2x (1-hour). One local usage history across many responses: roughly
+  428:1 input:output, ~97% cache reads, uncached cost would have run several
+  times the actual billed amount. **[qualified 2-1]**
 - Lumer et al. (DeepResearch Bench): caching cut API cost 41-80% and savings scale
   linearly with prompt size (88-89% at 50k tokens). **[qualified 2-1]**
   ([arxiv 2601.06007](https://arxiv.org/abs/2601.06007))

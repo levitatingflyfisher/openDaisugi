@@ -30,17 +30,20 @@ All writes are idempotent, backed up before modification, and reversible via
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import time
 import warnings
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Protocol
 
 import yaml
+
+from opendaisugi.config import gate_hook_args, gate_hook_kind, is_record_hook
 
 _CLAUDE_MD_MARKER = "<!-- opendaisugi-managed -->"
 
@@ -149,6 +152,9 @@ class InstallResult:
     planned: list[InstallStep]
     modified_files: list[Path]
     summary: str
+    # "<runtime>: <why>" for each runtime whose apply raised; nothing was
+    # written for it. The CLI names each one and exits 1.
+    failures: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -163,9 +169,10 @@ class Runtime(Protocol):
     ``apply`` performs the writes and returns the modified paths. ``layers``
     selects which layers to act on (``None`` = the current default four —
     back-compat for every existing call site); GATE and BASE_URL are opt-in
-    only. ``enforce``/``ask``/``base_url`` only matter to runtimes that
-    support those two layers — everyone else ignores them (``ask`` is Claude
-    Code's GATE layer only; Task 8). ``reverse`` (optional) always
+    only. ``enforce``/``ask``/``base_url``/``report`` only matter to runtimes that
+    support those layers — everyone else ignores them (``ask`` and
+    ``report`` are Claude Code's GATE layer only; Task 8 and spec-01).
+    ``reverse`` (optional) always
     reverses everything it manages unconditionally (idempotent no-ops for
     anything absent) — it does not take a ``layers`` selection.
 
@@ -186,6 +193,7 @@ class Runtime(Protocol):
         enforce: bool = False,
         ask: bool = False,
         base_url: str | None = None,
+        report: str | None = None,
     ) -> list[InstallStep]: ...
     def apply(
         self,
@@ -195,6 +203,7 @@ class Runtime(Protocol):
         enforce: bool = False,
         ask: bool = False,
         base_url: str | None = None,
+        report: str | None = None,
     ) -> list[Path]: ...
     def unsupported_layers(self) -> dict[Layer, str]: ...
 
@@ -234,6 +243,7 @@ class ClaudeCodeRuntime:
         enforce: bool = False,
         ask: bool = False,
         base_url: str | None = None,
+        report: str | None = None,
     ) -> list[InstallStep]:
         sel = _resolve_layers(layers)
         claude_dir = home / ".claude"
@@ -270,6 +280,22 @@ class ClaudeCodeRuntime:
                     claude_dir / "settings.json",
                 )
             )
+            if report == "herdr":
+                steps.append(
+                    InstallStep(
+                        Layer.GATE,
+                        "Add Stop + Notification floor-report hooks (Herdr)",
+                        claude_dir / "settings.json",
+                    )
+                )
+            if report in ("herdr", "coppice"):
+                steps.append(
+                    InstallStep(
+                        Layer.GATE,
+                        "Add SubagentStart + SubagentStop hooks (subagent rows)",
+                        claude_dir / "settings.json",
+                    )
+                )
         if Layer.BASE_URL in sel:
             url = base_url or DEFAULT_GATEWAY_BASE_URL
             steps.append(
@@ -290,6 +316,7 @@ class ClaudeCodeRuntime:
         enforce: bool = False,
         ask: bool = False,
         base_url: str | None = None,
+        report: str | None = None,
     ) -> list[Path]:
         sel = _resolve_layers(layers)
         claude_dir = home / ".claude"
@@ -304,6 +331,10 @@ class ClaudeCodeRuntime:
             modified += _patch_claude_md(claude_dir / "CLAUDE.md")
         if Layer.GATE in sel:
             modified += _patch_claude_gate(claude_dir / "settings.json", enforce=enforce, ask=ask)
+            if report == "herdr":
+                modified += _patch_claude_report_hooks(claude_dir / "settings.json")
+            if report in ("herdr", "coppice"):
+                modified += _patch_claude_subagent_hooks(claude_dir / "settings.json")
         if Layer.BASE_URL in sel:
             modified += _patch_claude_base_url(
                 claude_dir / "settings.json", base_url or DEFAULT_GATEWAY_BASE_URL
@@ -312,16 +343,16 @@ class ClaudeCodeRuntime:
 
     def reverse(self, home: Path) -> list[Path]:
         claude_dir = home / ".claude"
+        _refuse_unknown_gate_hooks(claude_dir / "settings.json")
         modified: list[Path] = []
         modified += _remove_skill_both(home, ".claude/skills")
         modified += _pop_json_mcp(home / ".claude.json", mcp_key="mcpServers")
+        modified += _pop_json_hook(claude_dir / "settings.json", match=is_record_hook)
+        modified += _pop_json_hook(claude_dir / "settings.json", match=_is_gate_hook)
         modified += _pop_json_hook(
             claude_dir / "settings.json",
-            hook_substr="daisugi hook record",
-        )
-        modified += _pop_json_hook(
-            claude_dir / "settings.json",
-            hook_substr=_GATE_HOOK_SUBSTR,
+            match=is_record_hook,
+            events=("Stop", "Notification", "SubagentStart", "SubagentStop"),
         )
         modified += _pop_json_env_key(claude_dir / "settings.json", key="ANTHROPIC_BASE_URL")
         modified += _unpatch_instructions(claude_dir / "CLAUDE.md")
@@ -462,7 +493,7 @@ def _patch_claude_settings(settings_path: Path) -> list[Path]:
     existing_pre_commands = {
         h["command"] for entry in pre for h in entry.get("hooks", []) if h.get("type") == "command"
     }
-    if not any("daisugi hook record" in c for c in existing_pre_commands):
+    if not any(is_record_hook(c) for c in existing_pre_commands):
         pre.append(_PRETOOLUSE_HOOK)
         changed = True
 
@@ -495,9 +526,35 @@ def _patch_claude_settings(settings_path: Path) -> list[Path]:
     return []
 
 
-# ADR-0013 GATE layer — the substring the gate hook's command is deduped and
-# reversed by. Distinct from the capture hook's "daisugi hook record" so both
-# coexist as separate PreToolUse entries.
+def _is_gate_hook(command: object) -> bool:
+    return gate_hook_args(command) is not None
+
+
+def _refuse_unknown_gate_hooks(settings_path: Path) -> None:
+    """Raise before a reverse touches anything when a PreToolUse hook holds
+    the gate module in a form config.gate_hook_args does not read: it may
+    gate, and removing or keeping it silently would both be wrong."""
+    try:
+        data = json.loads(settings_path.read_text())
+    except (OSError, ValueError):
+        return
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    entries = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    for entry in entries if isinstance(entries, list) else []:
+        inner = entry.get("hooks") if isinstance(entry, dict) else None
+        for h in inner if isinstance(inner, list) else []:
+            command = h.get("command") if isinstance(h, dict) else None
+            if gate_hook_kind(command) == "unknown":
+                raise ValueError(
+                    f"{settings_path} holds a gate hook in a form this CLI does not read, "
+                    f"so it is left in place: {command}. Remove it by hand, then run this again"
+                )
+
+
+# ADR-0013 GATE layer: the module name in the gate hook's command. A hook
+# is found by its words (config.gate_hook_args), never by this substring.
+# Distinct from the capture hook's "daisugi hook record" so both coexist as
+# separate PreToolUse entries.
 _GATE_HOOK_SUBSTR = "opendaisugi.gate"
 
 
@@ -574,7 +631,7 @@ def _patch_claude_gate(
     if any(c == gate_command for c in existing_commands):
         return []  # exact match already installed — idempotent no-op
 
-    if any(_GATE_HOOK_SUBSTR in c for c in existing_commands):
+    if any(gate_hook_kind(c) is not None for c in existing_commands):
         # Upgrade path (ADR-0017): an install from before the resident gate
         # still runs the slow `-m opendaisugi.gate` entry directly. Rewrite
         # it in place to `-m opendaisugi.gate_client` (the resident-server
@@ -585,11 +642,13 @@ def _patch_claude_gate(
         # name is rewritten; a genuinely different mode/root/config still
         # warns, unchanged (the existing idempotent-by-presence contract).
         def _is_upgradeable(old_command: str) -> bool:
+            if not isinstance(old_command, str) or gate_hook_args(old_command) is None:
+                return False
             if "opendaisugi.gate_client" in old_command:
                 return False  # already the new module — nothing to upgrade
-            if _GATE_HOOK_SUBSTR not in old_command:
-                return False
-            return old_command.replace(_GATE_HOOK_SUBSTR, "opendaisugi.gate_client", 1) == gate_command
+            return (
+                old_command.replace(_GATE_HOOK_SUBSTR, "opendaisugi.gate_client", 1) == gate_command
+            )
 
         rewritten = False
         for entry in pre:
@@ -616,6 +675,127 @@ def _patch_claude_gate(
         _backup(settings_path)
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")
     return [settings_path]
+
+
+_STOP_REPORT_HOOK = {
+    "hooks": [{"type": "command", "command": "daisugi hook record --format claude --event stop"}],
+}
+_NOTIFICATION_REPORT_HOOK = {
+    "hooks": [
+        {"type": "command", "command": "daisugi hook record --format claude --event notification"}
+    ],
+}
+# SubagentStart and SubagentStop report each subagent to coppice as a read
+# only child row under its pane.
+_SUBAGENT_REPORT_HOOKS = {
+    "SubagentStart": "--event subagent_start",
+    "SubagentStop": "--event subagent_stop",
+}
+
+
+def _patch_claude_report_hooks(settings_path: Path) -> list[Path]:
+    """Add Stop + Notification hooks so the floor gets exact idle/blocked
+    signal between tool calls, not just around them (spec-01). Idempotent
+    by command substring, same pattern as ``_patch_claude_settings``'s
+    PreToolUse block; skip-and-warn on unparseable settings.json.
+    """
+    existed = settings_path.exists()
+    if existed:
+        try:
+            settings: dict = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            warnings.warn(
+                f"{settings_path} is not valid JSON; skipping floor-report hook "
+                f"registration to avoid overwriting your Claude Code settings. "
+                f"Fix the file and re-run `daisugi install`.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return []
+    else:
+        settings = {}
+
+    changed = False
+    hooks = settings.setdefault("hooks", {})
+
+    stop = hooks.setdefault("Stop", [])
+    stop_cmds = {
+        h.get("command", "") for e in stop for h in e.get("hooks", []) if h.get("type") == "command"
+    }
+    if not any(is_record_hook(c, "stop") for c in stop_cmds):
+        stop.append(_STOP_REPORT_HOOK)
+        changed = True
+
+    notif = hooks.setdefault("Notification", [])
+    notif_cmds = {
+        h.get("command", "")
+        for e in notif
+        for h in e.get("hooks", [])
+        if h.get("type") == "command"
+    }
+    if not any(is_record_hook(c, "notification") for c in notif_cmds):
+        notif.append(_NOTIFICATION_REPORT_HOOK)
+        changed = True
+
+    if changed:
+        if existed:
+            _backup(settings_path)
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+        return [settings_path]
+    return []
+
+
+def _patch_claude_subagent_hooks(settings_path: Path) -> list[Path]:
+    """Add SubagentStart + SubagentStop hooks so coppice shows each subagent
+    as a read only child row under its pane. Idempotent by command
+    substring; skip-and-warn on unparseable settings.json, the same as
+    ``_patch_claude_report_hooks``.
+    """
+    existed = settings_path.exists()
+    if existed:
+        try:
+            settings: dict = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            warnings.warn(
+                f"{settings_path} is not valid JSON; skipping subagent hook "
+                f"registration to avoid overwriting your Claude Code settings. "
+                f"Fix the file and re-run `daisugi install`.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return []
+    else:
+        settings = {}
+
+    changed = False
+    hooks = settings.setdefault("hooks", {})
+    for hook_event, flag in _SUBAGENT_REPORT_HOOKS.items():
+        entries = hooks.setdefault(hook_event, [])
+        cmds = {
+            h.get("command", "")
+            for e in entries
+            for h in e.get("hooks", [])
+            if h.get("type") == "command"
+        }
+        if not any(is_record_hook(c, flag.split()[-1]) for c in cmds):
+            entries.append(
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"daisugi hook record --format claude {flag}",
+                        }
+                    ]
+                }
+            )
+            changed = True
+
+    if changed:
+        if existed:
+            _backup(settings_path)
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+        return [settings_path]
+    return []
 
 
 def _patch_claude_base_url(settings_path: Path, url: str) -> list[Path]:
@@ -701,6 +881,7 @@ class HermesRuntime:
         enforce: bool = False,
         ask: bool = False,
         base_url: str | None = None,
+        report: str | None = None,
     ) -> list[InstallStep]:
         sel = _resolve_layers(layers)
         h = home / ".hermes"
@@ -732,6 +913,7 @@ class HermesRuntime:
         enforce: bool = False,
         ask: bool = False,
         base_url: str | None = None,
+        report: str | None = None,
     ) -> list[Path]:
         sel = _resolve_layers(layers)
         h = home / ".hermes"
@@ -769,9 +951,7 @@ class HermesRuntime:
         if isinstance(hooks, dict) and isinstance(hooks.get("pre_tool_call"), list):
             pre = hooks["pre_tool_call"]
             kept = [
-                hk
-                for hk in pre
-                if not (isinstance(hk, dict) and "daisugi hook record" in hk.get("command", ""))
+                hk for hk in pre if not (isinstance(hk, dict) and is_record_hook(hk.get("command")))
             ]
             if len(kept) != len(pre):
                 changed = True
@@ -852,6 +1032,7 @@ class CodexRuntime:
         enforce: bool = False,
         ask: bool = False,
         base_url: str | None = None,
+        report: str | None = None,
     ) -> list[InstallStep]:
         sel = _resolve_layers(layers)
         codex = home / ".codex"
@@ -902,6 +1083,7 @@ class CodexRuntime:
         enforce: bool = False,
         ask: bool = False,
         base_url: str | None = None,
+        report: str | None = None,
     ) -> list[Path]:
         sel = _resolve_layers(layers)
         codex = home / ".codex"
@@ -923,6 +1105,7 @@ class CodexRuntime:
 
     def reverse(self, home: Path) -> list[Path]:
         codex = home / ".codex"
+        _refuse_unknown_gate_hooks(codex / "hooks.json")
         modified: list[Path] = []
         modified += _remove_skill_both(home, ".codex/skills")
         toml_path = codex / "config.toml"
@@ -932,7 +1115,7 @@ class CodexRuntime:
             cleaned = text.replace(_CODEX_MCP_BLOCK, "").rstrip("\n")
             toml_path.write_text(cleaned + "\n" if cleaned else "")
             modified.append(toml_path)
-        modified += _pop_json_hook(codex / "hooks.json", hook_substr=_GATE_HOOK_SUBSTR)
+        modified += _pop_json_hook(codex / "hooks.json", match=_is_gate_hook)
         modified += _unpatch_codex_base_url(codex / "config.toml")
         modified += _unpatch_instructions(codex / "AGENTS.md")
         return modified
@@ -994,7 +1177,7 @@ def _patch_codex_gate(hooks_path: Path, *, enforce: bool = False) -> list[Path]:
         for h in entry.get("hooks", [])
         if h.get("type") == "command"
     }
-    if any(_GATE_HOOK_SUBSTR in c for c in existing_commands):
+    if any(gate_hook_kind(c) is not None for c in existing_commands):
         return []
     if existed:
         _backup(hooks_path)
@@ -1078,6 +1261,7 @@ class OpenClawRuntime:
         enforce: bool = False,
         ask: bool = False,
         base_url: str | None = None,
+        report: str | None = None,
     ) -> list[InstallStep]:
         sel = _resolve_layers(layers)
         oc = home / ".openclaw"
@@ -1131,6 +1315,7 @@ class OpenClawRuntime:
         enforce: bool = False,
         ask: bool = False,
         base_url: str | None = None,
+        report: str | None = None,
     ) -> list[Path]:
         sel = _resolve_layers(layers)
         oc = home / ".openclaw"
@@ -1205,6 +1390,127 @@ def _install_openclaw_plugin(home: Path) -> Path:
             out.unlink()  # never write THROUGH a pre-planted symlink (arbitrary file write)
         out.write_text(src.joinpath(name).read_text(encoding="utf-8"))
     return dest
+
+
+SUPPORTED_HARNESSES: tuple[str, ...] = ("pi", "opencode")
+
+
+def pi_extension_dir(home: Path) -> Path:
+    """Where pi auto-discovers the daisugi-gate extension."""
+    return home / ".pi" / "agent" / "extensions" / "daisugi-gate"
+
+
+def _install_pi_extension(home: Path) -> list[Path]:
+    """Materialize the daisugi-gate pi extension into
+    ~/.pi/agent/extensions/daisugi-gate/.
+
+    pi does not reload an extension on its own in --mode rpc. Restart the pi
+    process, or run /reload in an interactive session, for a new or updated
+    extension to take effect. Idempotent: a second run writes nothing.
+
+    No per-install config. The extension carries no --mode of its own, so
+    there is nothing here for an enforce flag to write. Its mode is
+    config.yaml's gate_mode, shared with every other host.
+
+    The cross-tenant uninstall limitation on ~/.agents/skills does not
+    apply here: ~/.pi/agent/extensions/daisugi-gate/ belongs to pi alone.
+    """
+    import importlib.resources as _ir
+
+    dest = pi_extension_dir(home)
+    dest.mkdir(parents=True, exist_ok=True)
+    src = _ir.files("opendaisugi").joinpath("harness_pi", "extension")
+    out = dest / "index.ts"
+    if out.is_symlink():
+        out.unlink()  # never write THROUGH a pre-planted symlink
+    new_text = src.joinpath("index.ts").read_text(encoding="utf-8")
+    if not out.exists() or out.read_text(encoding="utf-8") != new_text:
+        out.write_text(new_text, encoding="utf-8")
+        return [out]
+    return []
+
+
+def _remove_pi_extension(home: Path) -> list[Path]:
+    return _remove_dir(pi_extension_dir(home))
+
+
+def opencode_plugin_path(home: Path, env: Mapping[str, str] | None = None) -> Path:
+    """Where OpenCode loads the daisugi gate plugin from.
+
+    OpenCode's global config directory is ``$XDG_CONFIG_HOME/opencode`` when
+    that variable holds an absolute path, else ``~/.config/opencode``. It
+    loads each file in its ``plugins`` directory at start.
+    """
+    env = os.environ if env is None else env
+    xdg = env.get("XDG_CONFIG_HOME", "")
+    base = Path(xdg) if xdg and os.path.isabs(xdg) else home / ".config"
+    return base / "opencode" / "plugins" / "daisugi-gate.ts"
+
+
+def _install_opencode_plugin(home: Path) -> list[Path]:
+    """Copy the daisugi gate plugin into OpenCode's global plugin directory.
+
+    The copy is byte for byte. The plugin carries no gate mode, so there is
+    nothing to fill in: its mode is config.yaml's gate_mode, shared with
+    every other host. OpenCode loads plugins at start, so a running
+    OpenCode needs a restart. Idempotent: a second run writes nothing.
+
+    This does not touch opencode.json. Its "plugin" list names npm packages
+    that OpenCode installs at start. A local file needs no entry there,
+    since OpenCode loads every file in the plugins directory.
+    """
+    import importlib.resources as _ir
+
+    out = opencode_plugin_path(home)
+    if out.parent.is_symlink():
+        raise ValueError(
+            f"{out.parent} is a symlink, so the plugin would land somewhere else. "
+            "Replace it with a directory, then run this again."
+        )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.is_symlink():
+        out.unlink()  # never write THROUGH a pre-planted symlink
+    src = _ir.files("opendaisugi").joinpath("harness_opencode", "plugin", "daisugi-gate.ts")
+    new_text = src.read_text(encoding="utf-8")
+    if not out.exists() or out.read_text(encoding="utf-8") != new_text:
+        out.write_text(new_text, encoding="utf-8")
+        return [out]
+    return []
+
+
+def _remove_opencode_plugin(home: Path) -> list[Path]:
+    """Remove the gate plugin file. The plugins directory stays: it can hold
+    the user's own plugins."""
+    out = opencode_plugin_path(home)
+    if out.is_symlink() or out.exists():
+        out.unlink()
+        return [out]
+    return []
+
+
+_HARNESS_INSTALLERS: dict[str, tuple] = {
+    "pi": (_install_pi_extension, _remove_pi_extension),
+    "opencode": (_install_opencode_plugin, _remove_opencode_plugin),
+}
+
+
+def harness_extension_target(name: str, *, home: Path) -> Path:
+    """The path one loop harness's gate extension is written to."""
+    if name == "opencode":
+        return opencode_plugin_path(home)
+    return pi_extension_dir(home) / "index.ts"
+
+
+def install_harness_extension(name: str, *, home: Path) -> list[Path]:
+    """Install one loop harness's gate extension. Returns the paths written."""
+    installer, _ = _HARNESS_INSTALLERS[name]
+    return installer(home)
+
+
+def uninstall_harness_extension(name: str, *, home: Path) -> list[Path]:
+    """Remove one loop harness's gate extension. Returns the paths removed."""
+    _, remover = _HARNESS_INSTALLERS[name]
+    return remover(home)
 
 
 def _strip_json5_comments(text: str) -> str:
@@ -1362,26 +1668,46 @@ def _pop_json_mcp(json_path: Path, *, mcp_key: str) -> list[Path]:
     return [json_path]
 
 
-def _pop_json_hook(settings_path: Path, *, hook_substr: str) -> list[Path]:
-    """Remove the opendaisugi PreToolUse hook from settings.json; no-op if absent."""
+def _pop_json_hook(
+    settings_path: Path,
+    *,
+    match: "Callable[[object], bool]",
+    events: tuple[str, ...] = ("PreToolUse",),
+) -> list[Path]:
+    """Remove the opendaisugi hook(s) whose command ``match`` accepts from the
+    given settings.json hook event(s); no-op if absent from all of them.
+
+    ``events`` defaults to ``("PreToolUse",)`` — every call site before the
+    floor-report hooks (spec-01) removed exactly that one event, and this
+    keeps them byte-identical. The report hooks live on ``Stop`` and
+    ``Notification`` instead, so their reversal passes both.
+    """
     if not settings_path.exists():
         return []
     try:
         s = json.loads(settings_path.read_text())
     except (json.JSONDecodeError, OSError):
         return []
-    pre = s.get("hooks", {}).get("PreToolUse")
-    if not pre or not any(
-        hook_substr in h.get("command", "") for e in pre for h in e.get("hooks", [])
-    ):
+    hooks = s.get("hooks", {})
+    present = any(
+        match(h.get("command"))
+        for ev in events
+        for e in (hooks.get(ev) or [])
+        for h in e.get("hooks", [])
+    )
+    if not present:
         return []  # nothing of ours present
     _backup(settings_path)
-    for e in pre:
-        e["hooks"] = [h for h in e.get("hooks", []) if hook_substr not in h.get("command", "")]
-    s["hooks"]["PreToolUse"] = [e for e in pre if e.get("hooks")]
-    if not s["hooks"]["PreToolUse"]:
-        del s["hooks"]["PreToolUse"]
-    if not s["hooks"]:
+    for ev in events:
+        entries = hooks.get(ev)
+        if not entries:
+            continue
+        for e in entries:
+            e["hooks"] = [h for h in e.get("hooks", []) if not match(h.get("command"))]
+        hooks[ev] = [e for e in entries if e.get("hooks")]
+        if not hooks[ev]:
+            del hooks[ev]
+    if not hooks:
         del s["hooks"]
     settings_path.write_text(json.dumps(s, indent=2) + "\n")
     return [settings_path]
@@ -1477,6 +1803,7 @@ def uninstall(*, home: Path | None = None, runtimes: list | None = None) -> Inst
         planned=[],
         modified_files=modified,
         summary=summary,
+        failures=failures,
     )
 
 
@@ -1495,6 +1822,7 @@ def install(
     enforce: bool = False,
     ask: bool = False,
     base_url: str | None = None,
+    report: str | None = None,
 ) -> InstallResult:
     """Install the selected layers into every active runtime.
 
@@ -1518,7 +1846,9 @@ def install(
 
     planned: list[InstallStep] = []
     for rt in active:
-        planned.extend(rt.plan(home, layers, enforce=enforce, ask=ask, base_url=base_url))
+        planned.extend(
+            rt.plan(home, layers, enforce=enforce, ask=ask, base_url=base_url, report=report)
+        )
 
     if dry_run:
         return InstallResult(
@@ -1532,7 +1862,9 @@ def install(
     failures: list[str] = []
     for rt in active:
         try:
-            modified.extend(rt.apply(home, layers, enforce=enforce, ask=ask, base_url=base_url))
+            modified.extend(
+                rt.apply(home, layers, enforce=enforce, ask=ask, base_url=base_url, report=report)
+            )
         except Exception as exc:  # one malformed config must not abort the rest
             failures.append(f"{rt.name}: {exc}")
 
@@ -1545,6 +1877,7 @@ def install(
         planned=planned,
         modified_files=modified,
         summary=summary,
+        failures=failures,
     )
 
 

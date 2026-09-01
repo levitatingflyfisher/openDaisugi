@@ -1,0 +1,17 @@
+#rule: trust_directory
+> You are in /home/user/project
+context line 2 about the repository
+context line 3 about the repository
+context line 4 about the repository
+context line 5 about the repository
+context line 6 about the repository
+context line 7 about the repository
+context line 8 about the repository
+context line 9 about the repository
+context line 10 about the repository
+context line 11 about the repository
+context line 12 about the repository
+context line 13 about the repository
+Do you trust the contents of this directory?
+1. Yes, trust this directory
+2. No, ask me each time

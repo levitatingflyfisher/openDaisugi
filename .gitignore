@@ -38,3 +38,9 @@ decks/
 opendaisugi-session2summary.md
 **/CLAUDE.md
 gateway-spike-log/
+.superpowers/
+
+# clients/gate.py caches oracle verdicts beside the corpus it scored. Mismatch
+# samples embed corpus content, so the cache is never committed.
+.gate-cache/
+harness/coppice/.smoke/

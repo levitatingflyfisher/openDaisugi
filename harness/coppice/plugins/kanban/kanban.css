@@ -1,0 +1,12 @@
+:root { color-scheme: dark; --bg: #12181a; --fg: #e8eae7; --muted: #98a3a0; --line: #26312f; --mark: #e8eae7; }
+body { margin: 0; padding: .6rem .8rem; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#kanban-status, #kanban-hint { color: var(--muted); min-height: 1.2em; margin: 0 0 .4rem; }
+#kanban-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .6rem; }
+@media (max-width: 600px) { #kanban-board { grid-template-columns: 1fr; } }
+.column { border: 1px solid var(--line); border-radius: 6px; padding: .4rem; min-height: 6rem; }
+.column h2 { font-size: 13px; color: var(--muted); margin: 0 0 .4rem; font-weight: normal; }
+.card { display: block; width: 100%; text-align: left; font: inherit; color: var(--fg); background: none;
+  border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 4px; padding: .3rem .4rem; margin: 0 0 .3rem; cursor: pointer; }
+.card.sel { outline: 1px solid var(--mark); }
+.card small { color: var(--muted); display: block; }

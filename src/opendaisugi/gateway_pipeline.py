@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from opendaisugi.gateway import (
@@ -24,6 +24,7 @@ from opendaisugi.gateway import (
     TurnSaving,
     _latest_user_text,
     _new_user_text,
+    _strictly_cheaper,
     conversation_key,
     measure_turn,
     route_turn,
@@ -49,6 +50,29 @@ class PreparedTurn:
     ask: str
 
 
+ROUTER_MODES = ("rules", "external", "off")
+EXTERNAL_TIER = "tier-switchyard"
+OFF_TIER = "tier-off"
+
+
+@dataclass(frozen=True)
+class ExternalRouterConfig:
+    """What the gateway must know to meter an outside chooser honestly.
+
+    ``route_id`` is the model string that selects the Switchyard route.
+    ``capable_target`` and ``efficient_target`` are the real model ids the
+    route chooses between. The ASGI layer compares the target the response
+    names against these ids, never against the harness's own request, so a
+    turn counts as a saving only when the efficient target served it.
+    ``prices`` adds per-target prices to the meter's table.
+    """
+
+    route_id: str
+    capable_target: str
+    efficient_target: str
+    prices: dict[str, tuple[float, float]] = field(default_factory=dict)
+
+
 @dataclass
 class Gateway:
     """Ties routing, the meter, and the turn journal into the proxy's two touchpoints."""
@@ -64,6 +88,11 @@ class Gateway:
     # convention `daisugi tiers setup` wires). When set, easy turns take the local rung
     # ahead of any cloud downgrade — zero quota, no cache economics to forfeit.
     local_model: str | None = None
+    # "rules" routes each turn with route_turn below. "external" sends the
+    # route id of `external` and lets that chooser pick; it never rewrites a
+    # turn onto a local or cheap model. "off" forwards each turn unchanged.
+    router_mode: str = "rules"
+    external: ExternalRouterConfig | None = None
     # Per-conversation sticky memory: conversation_key -> last routed model.
     # Bounded FIFO so a long-lived proxy can't grow it without limit.
     _session_models: dict = field(default_factory=dict, repr=False)
@@ -76,6 +105,14 @@ class Gateway:
         # the frontier pool); the dollar multiplier is left conservative.
         if self.local_model and self.local_model not in self.prices:
             self.prices = {**self.prices, self.local_model: (0.0, 0.0)}
+        if self.router_mode not in ROUTER_MODES:
+            raise ValueError(
+                f"router_mode must be one of {', '.join(ROUTER_MODES)}, not {self.router_mode!r}"
+            )
+        if self.router_mode == "external":
+            if self.external is None:
+                raise ValueError("router_mode 'external' needs an ExternalRouterConfig")
+            self.prices = {**self.prices, **self.external.prices}
 
     def prepare(self, body: dict) -> PreparedTurn:
         """Decide the model for one turn and produce the body to forward.
@@ -83,7 +120,15 @@ class Gateway:
         On a downgrade the model is swapped in a shallow copy — the caller's ``body`` is left
         exactly as received, so if anything downstream fails the proxy can still forward the
         original untouched (fail-open loses savings, never the turn).
+
+        External and off modes skip route_turn and the sticky table. No turn
+        is marked downgraded here, so the proxy never retries one. The ASGI
+        layer books an external turn once the response names its target.
         """
+        if self.router_mode == "external":
+            return self._prepare_external(body)
+        if self.router_mode == "off":
+            return self._prepare_off(body)
         task = _latest_user_text(body)
         ask = _new_user_text(body)
         key = conversation_key(body)
@@ -100,6 +145,46 @@ class Gateway:
         if decision.downgraded:
             outbound_body["model"] = decision.model
         return PreparedTurn(decision=decision, outbound_body=outbound_body, task=task, ask=ask)
+
+    def _prepare_external(self, body: dict) -> PreparedTurn:
+        if self.external is None:
+            raise ValueError("router_mode 'external' needs an ExternalRouterConfig")
+        requested = body.get("model", "")
+        route_id = self.external.route_id
+        decision = RouteDecision(
+            tier=EXTERNAL_TIER,
+            model=route_id,
+            requested_model=requested if isinstance(requested, str) else "",
+            difficulty=0.0,
+            downgraded=False,
+            reason=f"the external router picks the model; sent as route {route_id!r}",
+        )
+        outbound_body = dict(body)
+        outbound_body["model"] = route_id
+        return PreparedTurn(
+            decision=decision,
+            outbound_body=outbound_body,
+            task=_latest_user_text(body),
+            ask=_new_user_text(body),
+        )
+
+    def _prepare_off(self, body: dict) -> PreparedTurn:
+        requested = body.get("model", "")
+        requested = requested if isinstance(requested, str) else ""
+        decision = RouteDecision(
+            tier=OFF_TIER,
+            model=requested,
+            requested_model=requested,
+            difficulty=0.0,
+            downgraded=False,
+            reason="routing is off; the turn goes unchanged and is only metered",
+        )
+        return PreparedTurn(
+            decision=decision,
+            outbound_body=dict(body),
+            task=_latest_user_text(body),
+            ask=_new_user_text(body),
+        )
 
     def finish(
         self,
@@ -122,8 +207,19 @@ class Gateway:
         any failure is swallowed so it can never break the turn, mirroring the ASGI layer's
         ``_record`` fail-open discipline.
         """
-        saving = measure_turn(prepared.decision, usage, prices=self.prices)
-        record = record_turn(prepared.decision, saving, task=prepared.task, ask=prepared.ask)
+        decision = prepared.decision
+        if decision.downgraded and not _strictly_cheaper(
+            decision.model, decision.requested_model, self.prices
+        ):
+            # The routing stands, but the price table shows no saving: the
+            # same model under another id, or a model with no price.
+            decision = replace(
+                decision,
+                downgraded=False,
+                reason=f"{decision.reason}; the price table shows no saving, so none is booked",
+            )
+        saving = measure_turn(decision, usage, prices=self.prices)
+        record = record_turn(decision, saving, task=prepared.task, ask=prepared.ask)
         if self.journal is not None:
             self.journal.append(record)
         if (

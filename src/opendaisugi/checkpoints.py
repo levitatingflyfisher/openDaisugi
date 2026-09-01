@@ -37,6 +37,7 @@ import os
 import stat
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,73 @@ _AUTHOR = {
     "GIT_COMMITTER_NAME": "daisugi",
     "GIT_COMMITTER_EMAIL": "daisugi@localhost",
 }
+
+# Every call below runs against the WORKSPACE repo's own .git. That repo's
+# local config, .gitattributes and .git/info/attributes are all
+# agent-controlled, so an unguarded git call can be made to run a program
+# the agent chose (a poisoned core.fsmonitor is the PoC; a clean/smudge
+# filter driver and a config-defined hook are the same shape of hole). A
+# command-line -c always beats file-based config, so this list closes it:
+#
+# - core.fsmonitor=false, core.untrackedCache=false: no external monitor
+#   program is asked about the index.
+# - core.hooksPath=/dev/null: no file-based hook is found.
+# - hook.post-index-change.enabled=false, hook.reference-transaction.
+#   enabled=false: git 2.36's CONFIG-defined hooks are a second mechanism
+#   core.hooksPath does not reach. These two events cover every command
+#   used here (add/rm/read-tree/checkout-index raise the first,
+#   update-ref the second); every other hook event is a fixed, finite
+#   git-defined name, not raised by anything called here.
+# - GIT_CONFIG_NOSYSTEM=1, GIT_CONFIG_GLOBAL=/dev/null: system and this
+#   box's own global config are never read either, so anything not
+#   overridden below can only come from the repo's own local config.
+#
+# --no-textconv is left out on purpose: none of the commands this module
+# runs (add, ls-files, rm, write-tree, commit-tree, update-ref, ls-tree,
+# read-tree, checkout-index, rev-parse) read textconv, and some reject an
+# unknown flag outright.
+#
+# clean/smudge/process filter drivers are named by the repo
+# (.gitattributes' "filter=<name>"), so no fixed flag can close them.
+# _filter_overrides reads which driver names the repo's own local config
+# actually defines and blanks each one on the command line instead.
+# filter.<name>.required=false rides along: an empty clean/smudge/process
+# value alone still fails the call when required stays at its default
+# true (verified empirically), which would break a legitimate git-lfs
+# repo's checkpoints, not just an attack.
+_SAFE_GIT_ARGS: tuple[str, ...] = (
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.untrackedCache=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "hook.post-index-change.enabled=false",
+    "-c",
+    "hook.reference-transaction.enabled=false",
+)
+
+# A timeout never changes a verdict here: every caller already swallows
+# any exception from this module (the gate's checkpoint path), or is an
+# interactive TUI action where raising is the existing behavior for any
+# other git failure too. It only stops a git call the repo's config can
+# still stall (a lock, an included file that never arrives) from hanging
+# this process forever, which it can today with no timeout at all. A
+# single call outside a tracked budget (is_repo) gets this flat ceiling.
+_GIT_CALL_TIMEOUT_S = 8.0
+
+# snapshot()/restore() share ONE deadline across their whole sequence of
+# git calls (the ``deadline`` parameter below), not this many seconds per
+# call. A repo with more files, more calls, must not add up to minutes
+# just by having more of them.
+_CHECKPOINT_BUDGET_S = 10.0
+
+
+def _remaining(deadline: float | None) -> float:
+    if deadline is None:
+        return _GIT_CALL_TIMEOUT_S
+    return max(deadline - time.monotonic(), 0.0)
 
 
 class NotAGitRepo(RuntimeError):
@@ -109,13 +177,33 @@ class Checkpoint:
     skipped: list[str]
 
 
-def _git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
+def _git(
+    repo: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+    deadline: float | None = None,
+) -> str:
+    """Run one git call against ``repo``, hardened against its own config.
+
+    ``deadline`` is a :func:`time.monotonic` timestamp shared across a
+    whole sequence of calls (:func:`snapshot`, :func:`restore`). The
+    timeout passed to this ONE call is whatever is left of it, so the
+    sequence as a whole cannot run longer than the budget its caller set
+    regardless of how many calls it makes. A bare call (``is_repo``) gets
+    the flat per-call ceiling instead.
+    """
     proc = subprocess.run(
-        ["git", "-C", str(repo), *args],
+        ["git", "-C", str(repo), *_SAFE_GIT_ARGS, *args],
         check=True,
         capture_output=True,
         text=True,
-        env={**os.environ, **(env or {})},
+        env={
+            **os.environ,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            **(env or {}),
+        },
+        timeout=_remaining(deadline),
     )
     # rstrip("\n") — NOT .strip(): several callers (ls-files -z, ls-tree -z)
     # NUL-join filenames, and a filename may legally start with a literal
@@ -126,10 +214,34 @@ def _git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
     return proc.stdout.rstrip("\n")
 
 
+def _filter_overrides(repo: Path, *, env: dict[str, str] | None = None, deadline: float) -> list[str]:
+    """``-c`` args that turn every filter driver THIS repo's own local
+    config defines into a safe no-op. See the module-level comment above
+    :data:`_SAFE_GIT_ARGS` for why this is provable rather than best-effort,
+    and why ``required=false`` rides along.
+    """
+    try:
+        raw = _git(repo, "config", "-z", "--get-regexp", r"^filter\.", env=env, deadline=deadline)
+    except subprocess.CalledProcessError:
+        return []  # no filter.* key defined at all (git config's "not found" exit)
+    names: set[str] = set()
+    for record in filter(None, raw.split("\0")):
+        key = record.split("\n", 1)[0]
+        parts = key.split(".")
+        if len(parts) >= 3 and parts[0] == "filter":
+            names.add(".".join(parts[1:-1]))
+    overrides: list[str] = []
+    for name in sorted(names):
+        for sub in ("clean", "smudge", "process"):
+            overrides += ["-c", f"filter.{name}.{sub}="]
+        overrides += ["-c", f"filter.{name}.required=false"]
+    return overrides
+
+
 def is_repo(path: Path) -> bool:
     try:
         return _git(path, "rev-parse", "--is-inside-work-tree") == "true"
-    except (subprocess.CalledProcessError, OSError):
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
         return False
 
 
@@ -193,7 +305,7 @@ def _blocking_prefix(repo: Path, name: str) -> str | None:
 _RECOVERABLE_MODES = frozenset({"100644", "100755", "120000"})
 
 
-def _recoverable_paths(repo: Path, ref: str) -> set[str]:
+def _recoverable_paths(repo: Path, ref: str, *, deadline: float | None = None) -> set[str]:
     """Every path ``ref``'s tree holds as a real, reconstructable blob.
 
     Built FRESH from ``git ls-tree -r --full-tree``, not trusted from any
@@ -205,7 +317,7 @@ def _recoverable_paths(repo: Path, ref: str) -> set[str]:
     holds no retrievable content at all.
     """
     out: set[str] = set()
-    raw = _git(repo, "ls-tree", "-r", "-z", "--full-tree", ref)
+    raw = _git(repo, "ls-tree", "-r", "-z", "--full-tree", ref, deadline=deadline)
     for entry in filter(None, raw.split("\0")):
         meta, _, name = entry.partition("\t")
         mode = meta.split(" ", 1)[0]
@@ -227,7 +339,7 @@ def _safe(raw: str) -> str:
     return cleaned.strip(".")[:128] or "none"
 
 
-def _toplevel(repo: Path) -> Path:
+def _toplevel(repo: Path, *, deadline: float | None = None) -> Path:
     """The git working-tree ROOT of ``repo``.
 
     ``snapshot`` and ``restore`` normalize ``repo`` to this at entry, so ONE
@@ -248,26 +360,26 @@ def _toplevel(repo: Path) -> Path:
     returned, because ``Path("")`` is ``.`` and would silently rebase every
     join onto the process cwd.
     """
-    top = _git(repo, "rev-parse", "--show-toplevel")
+    top = _git(repo, "rev-parse", "--show-toplevel", deadline=deadline)
     if not top:
         raise NotAGitRepo(f"not a git working tree: {repo}")
     return Path(top)
 
 
-def _git_dir(repo: Path) -> Path:
-    d = Path(_git(repo, "rev-parse", "--git-dir"))
+def _git_dir(repo: Path, *, deadline: float | None = None) -> Path:
+    d = Path(_git(repo, "rev-parse", "--git-dir", deadline=deadline))
     return d if d.is_absolute() else repo / d
 
 
-def _head(repo: Path) -> str | None:
+def _head(repo: Path, *, deadline: float | None = None) -> str | None:
     try:
-        return _git(repo, "rev-parse", "--verify", "-q", "HEAD")
+        return _git(repo, "rev-parse", "--verify", "-q", "HEAD", deadline=deadline)
     except subprocess.CalledProcessError:
         return None
 
 
 @contextlib.contextmanager
-def _temp_index(repo: Path) -> Iterator[dict[str, str]]:
+def _temp_index(repo: Path, *, deadline: float | None = None) -> Iterator[dict[str, str]]:
     """A ``GIT_INDEX_FILE`` env pointing at a fresh index only this call sees.
 
     Created then unlinked before use: git treats a missing index file as an
@@ -277,7 +389,7 @@ def _temp_index(repo: Path) -> Iterator[dict[str, str]]:
     ``.git/index`` is never opened, so their real staged state, HEAD,
     branches, tags and working tree are never touched by any of this.
     """
-    git_dir = _git_dir(repo)
+    git_dir = _git_dir(repo, deadline=deadline)
     with tempfile.NamedTemporaryFile(dir=git_dir, prefix="daisugi-index-", delete=False) as tmp:
         index = tmp.name
     os.unlink(index)
@@ -297,6 +409,7 @@ def snapshot(
     entry_id: str,
     prefix: str = "checkpoints",
     max_file_bytes: int = 5_000_000,
+    timeout_s: float = _CHECKPOINT_BUDGET_S,
 ) -> Checkpoint:
     """Commit the current working tree to ``refs/daisugi/<prefix>/<session>/<id>``.
 
@@ -309,14 +422,34 @@ def snapshot(
     dangling target) is used to tell a symlink from a regular file so a
     broken symlink is captured like any other, not miscategorized into
     ``skipped`` by an exception.
+
+    ``timeout_s`` bounds the WHOLE call. Every git invocation below shares
+    one deadline, taken from ``time.monotonic()`` here, not a fresh one per
+    invocation, so a repo with many files (more ``rm --cached`` calls)
+    cannot add up to minutes just by having more of them. Every
+    caller already treats any exception from this function (a git failure,
+    ``subprocess.TimeoutExpired`` included) the same way it always did:
+    the gate's checkpoint path swallows it (best-effort, never touches the
+    verdict), and callers that don't (the TUI restore) already surface any
+    other git failure the same way.
     """
+    deadline = time.monotonic() + timeout_s
     if not is_repo(repo):
         raise NotAGitRepo(f"not a git repository: {repo}")
-    repo = _toplevel(repo)  # one namespace for every git command and fs join below
+    repo = _toplevel(repo, deadline=deadline)  # one namespace for every git command and fs join below
     ref = f"refs/daisugi/{prefix}/{_safe(session_id)}/{_safe(entry_id)}"
-    with _temp_index(repo) as env:
-        _git(repo, "add", "-A", "--", ".", env=env)
-        listed = _git(repo, "ls-files", "-z", env=env).split("\0")
+    with _temp_index(repo, deadline=deadline) as env:
+        # Computed ONCE and passed to EVERY call below, not just `add`. An
+        # index entry whose mtime lands in the same filesystem-timestamp
+        # granularity as when it was staged is "racy", so git's own racy-git
+        # protection makes a LATER call in this same sequence (write-tree,
+        # empirically) re-read and re-convert the file to confirm its blob
+        # rather than trusting the cached stat. That re-runs the clean
+        # filter, from the repo's live config, on a call that didn't carry
+        # its own override.
+        filter_args = _filter_overrides(repo, env=env, deadline=deadline)
+        _git(repo, *filter_args, "add", "-A", "--", ".", env=env, deadline=deadline)
+        listed = _git(repo, *filter_args, "ls-files", "-z", env=env, deadline=deadline).split("\0")
         covers: list[str] = []
         skipped: list[str] = []
         for name in filter(None, listed):
@@ -331,18 +464,25 @@ def snapshot(
                 continue
             covers.append(name)
         if skipped:
-            _git(repo, "rm", "--cached", "-q", "--", *skipped, env=env)
-        tree = _git(repo, "write-tree", env=env)
-        parent = _head(repo)
-        args = ["commit-tree", tree, "-m", f"daisugi {prefix} {session_id}/{entry_id}"]
+            _git(repo, *filter_args, "rm", "--cached", "-q", "--", *skipped, env=env, deadline=deadline)
+        tree = _git(repo, *filter_args, "write-tree", env=env, deadline=deadline)
+        parent = _head(repo, deadline=deadline)
+        args = [*filter_args, "commit-tree", tree, "-m", f"daisugi {prefix} {session_id}/{entry_id}", "--no-gpg-sign"]
         if parent:
             args += ["-p", parent]
-        commit = _git(repo, *args, env={**env, **_AUTHOR})
-        _git(repo, "update-ref", ref, commit)
+        commit = _git(repo, *args, env={**env, **_AUTHOR}, deadline=deadline)
+        _git(repo, *filter_args, "update-ref", ref, commit, deadline=deadline)
     return Checkpoint(ref=ref, commit=commit, covers=sorted(covers), skipped=sorted(skipped))
 
 
-def restore(repo: Path, *, ref: str, session_id: str, entry_id: str) -> Checkpoint:
+def restore(
+    repo: Path,
+    *,
+    ref: str,
+    session_id: str,
+    entry_id: str,
+    timeout_s: float = _CHECKPOINT_BUDGET_S,
+) -> Checkpoint:
     """Put the working tree at ``ref``. Returns the rollback checkpoint taken first.
 
     Never touches HEAD, the real index, branches, or tags. The invariant
@@ -382,12 +522,12 @@ def restore(repo: Path, *, ref: str, session_id: str, entry_id: str) -> Checkpoi
 
     A git failure partway through the checkout itself (not this module's
     own refusal — an actual git error that even ``-f`` cannot route around,
-    e.g. a permission-denied containing directory; see
-    :class:`RestorePartiallyFailed`'s docstring for what this is NOT) raises
-    :class:`RestorePartiallyFailed` instead: unlike the two refusals above,
-    the working tree may already be in a mixed state by the time git
-    errors, so the message names the rollback ref as a recovery pointer
-    rather than claiming nothing changed.
+    e.g. a permission-denied containing directory, or the git call running
+    past ``timeout_s``; see :class:`RestorePartiallyFailed`'s docstring for
+    what this is NOT) raises :class:`RestorePartiallyFailed` instead: unlike
+    the two refusals above, the working tree may already be in a mixed
+    state by the time git errors, so the message names the rollback ref as
+    a recovery pointer rather than claiming nothing changed.
 
     The delete-set for what a restore removes is
     ``recoverable - wanted``, computed BEFORE any mutation (a strict subset
@@ -395,12 +535,20 @@ def restore(repo: Path, *, ref: str, session_id: str, entry_id: str) -> Checkpoi
     still on disk at that point — nothing removes an "extra" path except
     this very step): only a path that is both fully recoverable from the
     rollback AND not part of the target tree is ever unlinked.
+
+    ``timeout_s`` shares one deadline across every git call THIS function
+    makes directly, on top of whatever budget the rollback :func:`snapshot`
+    it takes first already spent. See that function's docstring for why a
+    shared deadline instead of a per-call one.
     """
+    deadline = time.monotonic() + timeout_s
     if not is_repo(repo):
         raise NotAGitRepo(f"not a git repository: {repo}")
     _require_daisugi_ref(ref)  # before any git work, and before normalization touches git
-    repo = _toplevel(repo)  # one namespace for every git command and fs join below
-    rollback = snapshot(repo, session_id=session_id, entry_id=entry_id, prefix="rollback")
+    repo = _toplevel(repo, deadline=deadline)  # one namespace for every git command and fs join below
+    rollback = snapshot(
+        repo, session_id=session_id, entry_id=entry_id, prefix="rollback", timeout_s=timeout_s
+    )
     if rollback.skipped:
         named = ", ".join(rollback.skipped[:5])
         more = "…" if len(rollback.skipped) > 5 else ""
@@ -421,9 +569,14 @@ def restore(repo: Path, *, ref: str, session_id: str, entry_id: str) -> Checkpoi
     # the same blob two ways (and joined a toplevel name onto a subdir) is
     # gone.
     wanted = set(
-        filter(None, _git(repo, "ls-tree", "-r", "-z", "--name-only", "--full-tree", ref).split("\0"))
+        filter(
+            None,
+            _git(
+                repo, "ls-tree", "-r", "-z", "--name-only", "--full-tree", ref, deadline=deadline
+            ).split("\0"),
+        )
     )
-    recoverable = _recoverable_paths(repo, rollback.ref)
+    recoverable = _recoverable_paths(repo, rollback.ref, deadline=deadline)
     endangered = set()
     for name in wanted:
         try:
@@ -466,11 +619,12 @@ def restore(repo: Path, *, ref: str, session_id: str, entry_id: str) -> Checkpoi
     # post-checkout git query.
     deletable = recoverable - wanted
 
-    with _temp_index(repo) as env:
+    with _temp_index(repo, deadline=deadline) as env:
         try:
-            _git(repo, "read-tree", ref, env=env)
-            _git(repo, "checkout-index", "-a", "-f", env=env)
-        except subprocess.CalledProcessError as exc:
+            _git(repo, "read-tree", ref, env=env, deadline=deadline)
+            filter_args = _filter_overrides(repo, env=env, deadline=deadline)
+            _git(repo, *filter_args, "checkout-index", "-a", "-f", env=env, deadline=deadline)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             raise RestorePartiallyFailed(
                 f"restore failed partway through checkout ({exc}); the working tree may now be "
                 "in a mixed state (some paths from the checkpoint written, others not). Recover "
@@ -488,6 +642,9 @@ def restore(repo: Path, *, ref: str, session_id: str, entry_id: str) -> Checkpoi
 
 def list_refs(repo: Path, session_id: str) -> list[str]:
     out = _git(
-        repo, "for-each-ref", "--format=%(refname)", f"refs/daisugi/checkpoints/{_safe(session_id)}/"
+        repo,
+        "for-each-ref",
+        "--format=%(refname)",
+        f"refs/daisugi/checkpoints/{_safe(session_id)}/",
     )
     return out.splitlines() if out else []

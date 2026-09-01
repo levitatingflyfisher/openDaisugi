@@ -16,6 +16,9 @@ import (
 // bench; each query is isolated with (push 1)/(pop 1) so declarations never
 // leak between logically-unrelated checks.
 type Z3Client struct {
+	// eval, when set, runs the commands in process instead of in the
+	// subprocess and returns their output.
+	eval   func(string) (string, error)
 	mu     sync.Mutex
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -74,14 +77,23 @@ func (c *Z3Client) CheckSat(smt2 string, timeoutMs int) (string, error) {
 	b.WriteString(smt2)
 	b.WriteString("\n(check-sat)\n")
 	fmt.Fprintf(&b, "(pop 1)\n(echo %q)\n", marker)
-	if _, err := io.WriteString(c.stdin, b.String()); err != nil {
+	stdout := c.stdout
+	if c.eval != nil {
+		out, err := c.eval(b.String())
+		if err != nil {
+			// A failed command can leave the scope pushed; start clean.
+			_, _ = c.eval("(reset)")
+			return "", fmt.Errorf("z3: %w", err)
+		}
+		stdout = bufio.NewReader(strings.NewReader(out))
+	} else if _, err := io.WriteString(c.stdin, b.String()); err != nil {
 		return "", fmt.Errorf("writing to z3: %w", err)
 	}
 
 	var result string
 	var stray []string
 	for {
-		line, err := c.stdout.ReadString('\n')
+		line, err := stdout.ReadString('\n')
 		trimmed := strings.TrimSpace(line)
 		if trimmed == marker {
 			break
@@ -114,6 +126,9 @@ func (c *Z3Client) Close() {
 		return
 	}
 	c.closed = true
+	if c.eval != nil {
+		return
+	}
 	c.stdin.Close()
 	c.cmd.Wait()
 }

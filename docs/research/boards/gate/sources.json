@@ -1,0 +1,74 @@
+[
+ {
+  "slug": "nemo-guardrails-1",
+  "title": "NeMo Guardrails",
+  "group": "oss",
+  "readme": "NVIDIA/NeMo-Guardrails",
+  "source_page": "https://github.com/NVIDIA/NeMo-Guardrails",
+  "caption": "NeMo Guardrails' rail types drawn around the LLM: input, dialog, retrieval, execution, and output rails."
+ },
+ {
+  "slug": "guardrails-ai-1",
+  "title": "Guardrails AI",
+  "group": "oss",
+  "readme": "guardrails-ai/guardrails",
+  "source_page": "https://github.com/guardrails-ai/guardrails",
+  "caption": "Guardrails AI's validator flow: an LLM call wrapped by input and output validators that re-ask on failure."
+ },
+ {
+  "slug": "codex-approvals-1",
+  "title": "Codex CLI",
+  "group": "vendor",
+  "readme": "openai/codex",
+  "source_page": "https://github.com/openai/codex",
+  "caption": "Codex CLI's README demo, with its approval modes and sandbox in the terminal.",
+  "image_url": "https://raw.githubusercontent.com/openai/codex/main/.github/codex-cli-splash.png"
+ },
+ {
+  "slug": "e2b-sandbox-1",
+  "title": "E2B",
+  "group": "oss",
+  "readme": "e2b-dev/E2B",
+  "source_page": "https://github.com/e2b-dev/E2B",
+  "caption": "E2B's sandbox model: agent code runs in an isolated cloud VM instead of on the host."
+ },
+ {
+  "slug": "littlesnitch-1",
+  "title": "Little Snitch",
+  "group": "vendor",
+  "source_page": "https://www.obdev.at/products/littlesnitch/index.html",
+  "caption": "Little Snitch's connection alert, the desktop ancestor of a per-action allow or deny."
+ },
+ {
+  "slug": "interlocking-1",
+  "title": "Railway interlocking",
+  "group": "inspiration",
+  "source_page": "https://en.wikipedia.org/wiki/Interlocking",
+  "caption": "A railway interlocking: signals and switches mechanically prevented from being set into a conflicting state.",
+  "license": "Wikipedia lead image, see file page"
+ },
+ {
+  "slug": "two-man-rule-1",
+  "title": "Two-man rule",
+  "group": "inspiration",
+  "source_page": "https://en.wikipedia.org/wiki/Two-man_rule",
+  "caption": "The two-man rule: an action so grave it needs two separate keys turned at once.",
+  "license": "Wikipedia lead image, see file page"
+ },
+ {
+  "slug": "dead-mans-switch-1",
+  "title": "Dead man's switch",
+  "group": "inspiration",
+  "source_page": "https://en.wikipedia.org/wiki/Dead_man%27s_switch",
+  "caption": "A dead man's switch: release the control and the machine stops. Fail closed, in metal.",
+  "license": "Wikipedia lead image, see file page"
+ },
+ {
+  "slug": "circuit-breaker-1",
+  "title": "Circuit breaker",
+  "group": "inspiration",
+  "source_page": "https://en.wikipedia.org/wiki/Circuit_breaker",
+  "caption": "A circuit breaker panel: a fault trips one circuit, the rest of the house keeps its lights.",
+  "license": "Wikipedia lead image, see file page"
+ }
+]

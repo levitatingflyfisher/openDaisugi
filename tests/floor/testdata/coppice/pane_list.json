@@ -1,0 +1,27 @@
+{
+  "panes": [
+    {
+      "closed": false,
+      "cmd": [
+        "sh",
+        "-c",
+        "sleep 300"
+      ],
+      "cols": 120,
+      "cwd": "/workspace/pane",
+      "detail": "",
+      "harness": "",
+      "id": "w1:p1",
+      "kind": "pty",
+      "label": "fixture probe",
+      "quiet_for": 0.003106619,
+      "rows": 40,
+      "session_id": "w1:p1",
+      "source": "process",
+      "state": "idle",
+      "tab": "w1:t1",
+      "ts": 1789316308.1958094,
+      "workspace": "w1"
+    }
+  ]
+}

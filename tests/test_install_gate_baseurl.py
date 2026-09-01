@@ -160,16 +160,19 @@ def test_claude_gate_upgrade_rewrites_old_module_to_resident_client(tmp_path):
     (tmp_path / ".claude").mkdir()
     from opendaisugi.gate import gate_settings_json
 
-    new_command = json.loads(gate_settings_json(mode="shadow"))["hooks"]["PreToolUse"][0]["hooks"][0][
-        "command"
-    ]
+    new_command = json.loads(gate_settings_json(mode="shadow"))["hooks"]["PreToolUse"][0]["hooks"][
+        0
+    ]["command"]
     old_command = new_command.replace("opendaisugi.gate_client", "opendaisugi.gate", 1)
     assert old_command != new_command  # sanity: the fixture actually differs
 
     pre_existing = {
         "hooks": {
             "PreToolUse": [
-                {"matcher": "*", "hooks": [{"type": "command", "command": old_command, "timeout": 30}]}
+                {
+                    "matcher": "*",
+                    "hooks": [{"type": "command", "command": old_command, "timeout": 30}],
+                }
             ]
         }
     }
@@ -569,8 +572,46 @@ def test_cli_install_gate_yes_writes_hook(tmp_path, monkeypatch):
     assert any("opendaisugi.gate" in c and "--mode shadow" in c for c in commands)
 
 
+def _register_default_envelope(home: Path) -> None:
+    d = home / ".opendaisugi" / "gate" / "envelopes"
+    d.mkdir(parents=True)
+    (d / "default.json").write_text("{}")
+
+
+def test_cli_install_enforce_with_no_envelope_refuses_and_writes_nothing(tmp_path, monkeypatch):
+    """An enforce hook with no envelope denies every call, so install refuses."""
+    from opendaisugi.cli import ENFORCE_NEEDS_POLICY
+
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--gate", "--enforce", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 1
+    assert ENFORCE_NEEDS_POLICY in result.output
+    assert "daisugi gate init --workspace DIR" in ENFORCE_NEEDS_POLICY
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+    assert not (tmp_path / ".opendaisugi").exists()
+
+
+def test_cli_install_enforce_with_an_envelope_installs(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    _register_default_envelope(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--gate", "--enforce", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 0
+    assert any("--mode enforce" in c for c in _pre_commands(_settings(tmp_path)))
+
+
+def test_cli_install_shadow_with_no_envelope_still_installs(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--gate", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 0
+    assert "Enforce needs a policy" not in result.output
+
+
 def test_cli_install_ask_flag_reaches_the_installed_hook(tmp_path, monkeypatch):
     (tmp_path / ".claude").mkdir()
+    _register_default_envelope(tmp_path)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     result = runner.invoke(
         app,

@@ -1,6 +1,6 @@
 # ADR-0004: openDaisugi is a layer; MCP is the control pathway
 
-- **Status:** Accepted
+- **Status:** Superseded in part by ADR-0020
 - **Date:** 2026-07-02
 
 ## Context

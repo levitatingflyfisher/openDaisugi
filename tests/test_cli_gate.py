@@ -354,7 +354,10 @@ def test_gate_proposals_lists_a_recorded_proposal(tmp_path):
 
     root = tmp_path / "gateroot"
     propose(
-        root, kind="widen-allowlist", scope="shell", expires_at=time.time() + 3600,
+        root,
+        kind="widen-allowlist",
+        scope="shell",
+        expires_at=time.time() + 3600,
         body={"note": "operator asked to widen curl"},
     )
     res = runner.invoke(app, ["gate", "proposals", "--root", str(root)])
@@ -368,3 +371,56 @@ def test_gate_proposals_lists_a_recorded_proposal(tmp_path):
     assert len(body) == 1
     assert body[0]["kind"] == "widen-allowlist"
     assert body[0]["note"] == "operator asked to widen curl"
+
+
+def _write_go_hook(settings, prog: str, mode: str) -> None:
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    cmd = (
+        f"DAISUGI_GATE_HOOK=opendaisugi.gate '{prog}' gate check --mode {mode} "
+        "--root /x/gate --format claude --verify-timeout 10.0"
+    )
+    if mode == "enforce":
+        cmd += " || exit 2"
+    settings.write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": cmd}]}]}})
+    )
+
+
+def test_gate_status_warns_when_the_hook_program_is_gone(tmp_path, monkeypatch):
+    """A package manager that removes the binary a hook names leaves a hook
+    that fails on every call; gate status says so and names the fix."""
+    from pathlib import Path
+
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.chdir(tmp_path)
+    gone = str(tmp_path / "mise" / "installs" / "daisugi" / "0.43.0" / "daisugi")
+    _write_go_hook(home / ".claude" / "settings.json", gone, "enforce")
+    res = runner.invoke(app, ["gate", "status", "--root", str(tmp_path / "gate")])
+    assert res.exit_code == 0
+    assert f"runs {gone}, which does not exist, so every call is denied" in res.stderr
+    assert "Run: daisugi install --gate --enforce" in res.stderr
+
+    present = tmp_path / "bin" / "daisugi"
+    present.parent.mkdir()
+    present.write_text("#!/bin/sh\n")
+    _write_go_hook(home / ".claude" / "settings.json", str(present), "shadow")
+    res = runner.invoke(app, ["gate", "status", "--root", str(tmp_path / "gate"), "--json"])
+    assert res.exit_code == 0
+    assert "does not exist" not in res.stderr
+
+
+# GD-16 at the model level: an envelope with NaN or an infinity is refused
+# with one clear line, and nothing is registered.
+def test_gate_register_refuses_a_non_finite_envelope(tmp_path):
+    root = tmp_path / "gate"
+    env_file = tmp_path / "e.yaml"
+    env_file.write_text("task: t\ngenerated_by: g\npermissions:\n  velocity_limit: .nan\n")
+    res = runner.invoke(app, ["gate", "register", str(env_file), "--root", str(root)])
+    assert res.exit_code == 1
+    assert res.stdout == ""
+    assert res.stderr == (
+        f"not registered: {env_file} is not a valid envelope: "
+        "permissions.velocity_limit: Input should be a finite number\n"
+    )
+    assert not (root / "envelopes").exists()

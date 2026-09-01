@@ -16,13 +16,17 @@ well.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import shutil
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Union
+
+from pydantic import BaseModel
 
 from opendaisugi.exceptions import EnvelopeGenerationError, LLMNotConfigured
+from opendaisugi.models import non_finite_error
 
 if TYPE_CHECKING:
     import instructor
@@ -75,27 +79,53 @@ def translate_llm_error(exc: BaseException) -> EnvelopeGenerationError:
 def resolve_backend(backend: str | None = None) -> str:
     """Return the active LLM backend name.
 
-    Priority: explicit ``backend=`` argument → ``OPENDAISUGI_LLM_BACKEND``
-    env var → auto-detection. Canonical source across the package — callers
-    outside this module (``llm_check``, transcript parsers, anything else
-    that needs to branch on backend) import this so the env var name and
-    resolution rule live in one place.
+    Priority: the explicit ``backend=`` argument, then the
+    ``OPENDAISUGI_LLM_BACKEND`` env var, then an ``llm_backend`` the config
+    file sets, then auto-detection. Canonical source across the package.
+    Callers outside this module (``llm_check``, transcript parsers, anything
+    else that needs to branch on backend) import this so the env var name
+    and resolution rule live in one place.
 
-    Auto-detection (when nothing is configured) picks a backend that actually
+    The config rung sits below the env var on purpose: the env var is this
+    process's own explicit setting, and a user-writable file must not
+    override it. It sits above auto-detection because otherwise the swap
+    knob writes a field nothing reads. It is read per call, so a change to
+    config.yaml takes effect with no restart.
+
+    Auto-detection (when nothing is configured) picks a backend that
     RUNS on this machine, instead of the API path that dies without a key: a
     configured Anthropic key means the ``"litellm"`` API path is intended;
     otherwise, if the local ``claude`` CLI is present, use the keyless
     ``"claude-code"`` backend; failing both, fall back to ``"litellm"`` so its
-    (human-readable) missing-key error can fire.
+    human-readable missing-key error can fire.
     """
-    return backend or os.environ.get("OPENDAISUGI_LLM_BACKEND") or _auto_backend()
+    if backend:
+        return backend
+    env_backend = os.environ.get("OPENDAISUGI_LLM_BACKEND")
+    if env_backend:
+        return env_backend
+    try:
+        from opendaisugi import DEFAULT_DATA_DIR
+        from opendaisugi.config import configured_backend
+
+        from_file = configured_backend(DEFAULT_DATA_DIR / "config.yaml")
+    except Exception:  # noqa: BLE001 - a broken config must not break backend choice
+        from_file = None
+    return from_file or _auto_backend()
 
 
-def _auto_backend() -> str:
-    """Pick a working backend when neither an argument nor the env var is set."""
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+def _auto_backend(env: "Mapping[str, str] | None" = None, *, which=None) -> str:
+    """Pick a working backend when nothing names one.
+
+    ``env`` defaults to the process env and ``which`` to ``shutil.which``,
+    both resolved at call time, so a caller that isolates its environment can
+    pass its own and a monkeypatched ``shutil.which`` still reaches the default.
+    """
+    env = os.environ if env is None else env
+    which = shutil.which if which is None else which
+    if env.get("ANTHROPIC_API_KEY") or env.get("ANTHROPIC_AUTH_TOKEN"):
         return "litellm"
-    if shutil.which("claude"):
+    if which("claude"):
         return "claude-code"
     return "litellm"
 
@@ -149,10 +179,11 @@ def get_instructor_client(
 ) -> Union[instructor.AsyncInstructor, "object"]:
     """Return an instructor-compatible client.
 
-    Backend selection (priority order):
+    Backend selection, in priority order:
       1. explicit ``backend=`` argument
       2. ``OPENDAISUGI_LLM_BACKEND`` env var
-      3. auto-detect (``_auto_backend``)
+      3. ``llm_backend`` in config.yaml, read per call
+      4. auto-detect, ``_auto_backend``
 
     - ``"litellm"`` returns ``instructor.from_litellm(acompletion, mode=JSON)``
       (v0.11.x behavior, unchanged).
@@ -171,7 +202,79 @@ def get_instructor_client(
     del model  # accepted for API symmetry; instructor/litellm use it at call time
     # Imported lazily: this is the ~2.4s import chain, and it must not load when
     # the package is imported for the capture hook (which fires per tool call).
-    import instructor
-    from litellm import acompletion
+    # Both live in the [generate] extra, not the base install (they are the
+    # heaviest of the base deps and only envelope generation needs them).
+    try:
+        import instructor
+        from litellm import acompletion
+    except ImportError as exc:
+        raise ImportError(
+            "envelope generation via litellm needs the 'generate' extra: "
+            "uv add 'opendaisugi[generate]'  (or: pip install 'opendaisugi[generate]')"
+        ) from exc
 
-    return instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
+    return _FiniteReplies(instructor.from_litellm(acompletion, mode=instructor.Mode.JSON))
+
+
+@functools.cache
+def _finite_reply_model(model: type[BaseModel]) -> type[BaseModel]:
+    """``model``, with a reply that holds NaN or an infinity schema-invalid.
+
+    instructor validates a JSON-mode reply with
+    ``response_model.model_validate_json`` and re-asks on a ValidationError.
+    This subclass keeps the model's name, docstring and so its schema text,
+    validates as the model does, and returns an instance of the model itself.
+    """
+
+    def model_validate_json(cls, json_data, **kwargs):
+        reply = model.model_validate_json(json_data, **kwargs)
+        bad = non_finite_error(reply, model.__name__)
+        if bad is not None:
+            raise bad
+        return reply
+
+    return type(model)(
+        model.__name__,
+        (model,),
+        {
+            "__doc__": model.__doc__,
+            "__module__": model.__module__,
+            "__qualname__": model.__qualname__,
+            "model_validate_json": classmethod(model_validate_json),
+        },
+    )
+
+
+class _FiniteCompletions:
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    async def create(self, *args: Any, response_model: Any = None, **kwargs: Any) -> Any:
+        if isinstance(response_model, type) and issubclass(response_model, BaseModel):
+            response_model = _finite_reply_model(response_model)
+        return await self._inner.create(*args, response_model=response_model, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _FiniteChat:
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.completions = _FiniteCompletions(inner.completions)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _FiniteReplies:
+    """The instructor client, with every structured reply checked by
+    ``non_finite_error`` inside instructor's validation, so a reply with NaN
+    or an infinity takes instructor's re-ask path like any schema error."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.chat = _FiniteChat(inner.chat)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)

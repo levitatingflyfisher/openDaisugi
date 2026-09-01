@@ -71,8 +71,17 @@ def _invoke_model(rule: str, payload: dict[str, Any]) -> tuple[bool, str]:
             return False, f"llm-check failed: {exc}"
         return bool(parsed.get("satisfied", False)), str(parsed.get("rationale", ""))
 
-    import litellm
+    try:
+        import litellm
+    except ImportError as exc:
+        raise ImportError(
+            "llm-check's litellm backend needs the 'generate' extra: "
+            "uv add 'opendaisugi[generate]'  (or: pip install 'opendaisugi[generate]')"
+        ) from exc
 
+    # litellm prints a "Give Feedback / Get Help" banner to stdout when it
+    # maps a provider error. In a hook, stdout is the host's verdict body.
+    litellm.suppress_debug_info = True
     response = litellm.completion(
         model=model,
         messages=[

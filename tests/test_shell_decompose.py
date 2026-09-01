@@ -231,3 +231,39 @@ def test_wrappers_decompose_for_verify_layer_recursion():
     d = decompose_command('eval "$s"')
     assert d.ok
     assert d.heads == ("eval",)
+
+
+# tree-sitter-bash puts words that follow a redirect under the redirect as
+# more destinations. In bash those words are the command or its arguments.
+# `ls | FOO=1 </work/i rm x` runs rm, yet the parse hid it as a redirect
+# target, so no head was checked. A redirect with more than one target is
+# ambiguous, and decomposition refuses it.
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ls | FOO=1 </work/i rm x",
+        "ls | FOO=1 </work/i rm -rf /work",
+        "rm </dev/null -rf /work",
+        "cat <a b",
+        "echo hi >out more",
+    ],
+)
+def test_a_redirect_with_more_than_one_target_is_refused(command):
+    d = decompose_command(command)
+    assert not d.ok, d
+    assert "redirect" in d.reason
+
+
+def test_the_hidden_head_no_longer_passes_verify():
+    from opendaisugi.models import ActionPlan, Envelope, Permission, ShellStep
+    from opendaisugi.verify import verify
+
+    env = Envelope(
+        generated_by="t",
+        task="t",
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], shell_allow_decomposition=True, file_read=["/work/**"]
+        ),
+    )
+    plan = ActionPlan(source="t", task="t", steps=[ShellStep(id="s0", command="ls | FOO=1 </work/i rm -rf /work")])
+    assert not verify(plan, env).ok

@@ -169,9 +169,12 @@ async def test_openai_turn_is_journaled_with_normalized_usage(tmp_path):
             200, headers={"content-type": "text/event-stream"}, content=_OPENAI_SSE
         )
 
+    # A downgrade is booked only when the price table prices both models.
+    # These two prices exist only for this test.
+    prices = {"gpt-5.3-codex": (1.25, 10.0), "gpt-5-mini": (0.25, 2.0)}
     app = make_gateway_app(
         Gateway(),
-        openai_gateway=Gateway(cheap_model="gpt-5-mini", journal=journal),
+        openai_gateway=Gateway(cheap_model="gpt-5-mini", journal=journal, prices=prices),
         openai_upstream_base_url="http://openai-up",
         client=_mock(handler),
     )
@@ -180,6 +183,29 @@ async def test_openai_turn_is_journaled_with_normalized_usage(tmp_path):
     assert len(records) == 1
     assert records[0].downgraded is True
     assert records[0].model == "gpt-5-mini"
+
+
+async def test_an_unpriced_openai_turn_is_routed_but_books_no_downgrade(tmp_path):
+    journal = GatewayJournal(path=tmp_path / "turns.jsonl")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["model"] = json.loads(request.content)["model"]
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=_OPENAI_SSE
+        )
+
+    app = make_gateway_app(
+        Gateway(),
+        openai_gateway=Gateway(cheap_model="gpt-5-mini", journal=journal),
+        openai_upstream_base_url="http://openai-up",
+        client=_mock(handler),
+    )
+    await _call(app, _chat_body("gpt-5.3-codex", "say hi please"))
+    assert seen["model"] == "gpt-5-mini"
+    rec = journal.load()[0]
+    assert rec.downgraded is False
+    assert rec.frontier_tokens_saved == 0
 
 
 async def test_without_openai_gateway_the_path_is_a_pure_passthrough():

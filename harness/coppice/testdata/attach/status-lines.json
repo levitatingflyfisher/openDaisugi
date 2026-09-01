@@ -1,0 +1,12 @@
+[
+  {"pane": "w1:p2", "label": "build", "harness": "claude-code", "state": "blocked", "source": "gate", "ask_tool": "Bash", "ask_summary": "rm -rf build/", "cols": 200, "leave": "ctrl-space", "line": "w1:p2  build  claude-code  blocked via gate Bash: rm -rf build/   ctrl-space leave", "herdr_state": "blocked"},
+  {"pane": "w1:p2", "label": "build", "harness": "pi", "state": "working", "source": "gate", "cols": 200, "leave": "ctrl-space", "line": "w1:p2  build  pi  working via gate   ctrl-space leave", "herdr_state": "working"},
+  {"pane": "w1:p2", "label": "", "harness": "", "state": "idle", "source": "process", "cols": 200, "leave": "ctrl-space", "line": "w1:p2  idle via process   ctrl-space leave", "herdr_state": "idle"},
+  {"pane": "w1:p2", "label": "build", "harness": "", "state": "done", "source": "process", "cols": 200, "leave": "ctrl-space", "line": "w1:p2  build  done via process   ctrl-space leave", "herdr_state": "unknown"},
+  {"pane": "w1:p3", "label": "", "harness": "", "state": "", "source": "", "cols": 200, "leave": "ctrl-space", "line": "w1:p3  unknown via none   ctrl-space leave", "herdr_state": "unknown"},
+  {"pane": "w1:p2", "label": "build", "harness": "claude-code", "state": "blocked", "source": "gate", "ask_tool": "Bash", "ask_summary": "rm -rf build/", "cols": 30, "leave": "ctrl-space", "line": "w1:p2  build  claude-code  bl…", "herdr_state": "unknown"},
+  {"pane": "w1:p2", "label": "idle via x  y", "harness": "claude-code", "state": "blocked", "source": "gate", "ask_tool": "Bash", "ask_summary": "rm -rf build/", "cols": 200, "leave": "ctrl-space", "line": "w1:p2  idle via x y  claude-code  blocked via gate Bash: rm -rf build/   ctrl-space leave", "herdr_state": "blocked"},
+  {"pane": "w1:p2", "label": "a\tb\nc  \u001b[31md", "harness": "pi", "state": "idle", "source": "process", "cols": 200, "leave": "ctrl-space", "line": "w1:p2  a b c [31md  pi  idle via process   ctrl-space leave", "herdr_state": "idle"},
+  {"pane": "w1:p2", "label": "   ", "harness": "claude-code", "state": "working", "source": "gate", "cols": 200, "leave": "ctrl-space", "line": "w1:p2  claude-code  working via gate   ctrl-space leave", "herdr_state": "working"},
+  {"pane": "w1:p2", "label": "blocked via gate", "harness": "", "state": "idle", "source": "process", "cols": 200, "leave": "ctrl-space", "line": "w1:p2  blocked via gate  idle via process   ctrl-space leave", "herdr_state": "blocked", "note": "a label that reads like a state can fake that state in the Herdr rules"}
+]

@@ -1,8 +1,9 @@
 package verify
 
 import (
+	"daisugi-verify/internal/lazyre"
+	"encoding/json"
 	"fmt"
-	"reflect"
 	"regexp"
 	"strings"
 )
@@ -15,10 +16,10 @@ import (
 // escape (\x{XXXX}) before compiling — a regex-DIALECT bridge, not a
 // shell-grammar adjudication, so it lives here rather than in
 // ADJUDICATIONS.md; still worth a comment since it's silent otherwise.
-var pyUEscape = regexp.MustCompile(`\\u([0-9a-fA-F]{4})`)
+var pyUEscape = lazyre.New(`\\u([0-9a-fA-F]{4})`)
 
 func translatePyRegex(pattern string) string {
-	return pyUEscape.ReplaceAllString(pattern, `\x{$1}`)
+	return pyUEscape().ReplaceAllString(pattern, `\x{$1}`)
 }
 
 // resolvePath ports predicate_z3._resolve_path for the dict-only case (our
@@ -46,6 +47,8 @@ func jsonLen(v interface{}) (int, bool) {
 		return len([]rune(t)), true
 	case []interface{}:
 		return len(t), true
+	case pyTuple:
+		return len(t), true
 	case map[string]interface{}:
 		return len(t), true
 	}
@@ -65,17 +68,17 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 	switch e := expr.(type) {
 	case Equals:
 		v, _ := resolvePath(scope, e.Path)
-		return reflect.DeepEqual(v, e.Value), nil
+		return pyEqual(v, e.Value), nil
 	case NotEquals:
 		v, present := resolvePath(scope, e.Path)
-		return present && !reflect.DeepEqual(v, e.Value), nil
+		return present && !pyEqual(v, e.Value), nil
 	case InSet:
 		v, present := resolvePath(scope, e.Path)
 		if !present {
 			return false, nil
 		}
 		for _, want := range e.Values {
-			if reflect.DeepEqual(v, want) {
+			if pyEqual(v, want) {
 				return true, nil
 			}
 		}
@@ -86,7 +89,7 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 			return false, nil
 		}
 		for _, want := range e.Values {
-			if reflect.DeepEqual(v, want) {
+			if pyEqual(v, want) {
 				return false, nil
 			}
 		}
@@ -195,9 +198,108 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 func EvaluatePredicate(expr Expression, plan ActionPlan, env Envelope) (bool, error) {
 	stepDicts := make([]map[string]interface{}, len(plan.Steps))
 	for i, s := range plan.Steps {
-		stepDicts[i] = s.Raw
+		stepDicts[i] = dumpedStep(s)
 	}
 	return evalPredicateGo(expr, plan, env, stepDicts)
+}
+
+// pyEqual is Python's == over decoded JSON values: True == 1 == 1.0 and
+// False == 0, lists and dicts compare item by item, and a pyTuple equals
+// only a pyTuple. A number past the float64 range stays a json.Number and
+// equals only the same number.
+func pyEqual(a, b interface{}) bool {
+	if x, ok := pyNumber(a); ok {
+		y, ok := pyNumber(b)
+		return ok && x == y
+	}
+	switch x := a.(type) {
+	case nil:
+		return b == nil
+	case string:
+		y, ok := b.(string)
+		return ok && x == y
+	case json.Number:
+		y, ok := b.(json.Number)
+		return ok && x == y
+	case []interface{}:
+		y, ok := b.([]interface{})
+		return ok && pyEqualItems(x, y)
+	case pyTuple:
+		y, ok := b.(pyTuple)
+		return ok && pyEqualItems(x, y)
+	case map[string]interface{}:
+		y, ok := b.(map[string]interface{})
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for k, v := range x {
+			w, present := y[k]
+			if !present || !pyEqual(v, w) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func pyEqualItems(x, y []interface{}) bool {
+	if len(x) != len(y) {
+		return false
+	}
+	for i := range x {
+		if !pyEqual(x[i], y[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// pyNumber is a bool or a float64 as the number Python compares it as.
+func pyNumber(v interface{}) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case bool:
+		if x {
+			return 1, true
+		}
+		return 0, true
+	}
+	return 0, false
+}
+
+// pyTuple is a list value that model_dump() keeps as a Python tuple. A
+// tuple equals no list, so reflect.DeepEqual against a decoded JSON value
+// (always a []interface{}) is false, as `==` is in Python. Its length is
+// the list's.
+type pyTuple []interface{}
+
+// tupleFields are the step fields each step type declares as a tuple.
+var tupleFields = map[string][]string{
+	"cartesian_move": {"target_position", "target_orientation"},
+	"vla":            {"target_pose"},
+}
+
+// dumpedStep is the step dict the oracle's evaluator reads: the step's
+// fields, with each tuple-typed field held as a pyTuple. The step's own
+// map is not changed, since the robotics stage reads those fields as
+// lists.
+func dumpedStep(s Step) map[string]interface{} {
+	fields := tupleFields[s.Type]
+	if len(fields) == 0 {
+		return s.Raw
+	}
+	out := make(map[string]interface{}, len(s.Raw))
+	for k, v := range s.Raw {
+		out[k] = v
+	}
+	for _, f := range fields {
+		if l, ok := out[f].([]interface{}); ok {
+			out[f] = pyTuple(l)
+		}
+	}
+	return out
 }
 
 func evalPredicateGo(e Expression, plan ActionPlan, env Envelope, stepDicts []map[string]interface{}) (bool, error) {

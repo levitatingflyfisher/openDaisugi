@@ -10,6 +10,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from opendaisugi.budget import BudgetTracker
 from opendaisugi.delegating_executor import DelegatingExecutor
 from opendaisugi.models import TaskStep
@@ -17,6 +19,7 @@ from opendaisugi.orchestrator import BudgetAwareDelegatingExecutor
 
 
 def test_json_mode_false_omits_response_format():
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
     exe = DelegatingExecutor(default_model="haiku", json_mode=False)
     captured = {}
 
@@ -34,6 +37,7 @@ def test_json_mode_false_omits_response_format():
 
 
 def test_json_mode_true_still_forces_json():
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
     exe = DelegatingExecutor(default_model="haiku", json_mode=True)
     captured = {}
 

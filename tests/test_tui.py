@@ -59,16 +59,17 @@ def test_swap_through_the_app_writes_config_and_highlights(tmp_path):
     asyncio.run(scenario())
 
 
-def test_preference_stage_shows_a_not_yet_enforced_note(tmp_path):
+def test_a_cfg_stage_shows_its_reason_and_a_live_stage_shows_none(tmp_path):
     async def scenario():
         app = DashboardApp(data_dir=tmp_path, interval=999)
         async with app.run_test() as pilot:
             await _to_wiring(pilot)
-            # verifier is a preference knob: option buttons render AND a note shows
-            assert app.screen.query_one("#swap-verifier-0", Button)
-            assert app.screen.query("#effnote-verifier")
-            # shell is an enforced swap: no preference note
+            # gate is a cfg knob: option buttons render AND a note says why
+            assert app.screen.query_one("#swap-gate-0", Button)
+            assert app.screen.query("#effnote-gate")
+            # shell and verifier are live swaps: no note
             assert not app.screen.query("#effnote-shell")
+            assert not app.screen.query("#effnote-verifier")
 
     asyncio.run(scenario())
 

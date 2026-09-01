@@ -62,6 +62,24 @@ The short version, by concern:
 Docs are organized [Diátaxis](https://diataxis.fr/)-style — see [docs/README.md](docs/README.md)
 for the tutorials / how-to / reference / explanation split.
 
+## Harnesses
+
+Two more codebases live in this repo, outside the Python package: `harness/coppice/`
+and `harness/sprig/`, both Go.
+
+- `harness/coppice/` is the floor: one Go binary holding the panes, the harness
+  processes and the merged pane state, served over a uid-checked unix socket. Read
+  `harness/coppice/README.md` first, then `harness/coppice/PINS.md` for what it
+  depends on and why.
+- `harness/sprig/` is a minimal coding-agent harness of its own, a Pi-style
+  competitor built to test the fail-closed gate against something other than
+  Claude Code. `harness/coppice`'s sprig adapter reads its CLI source directly to
+  stay honest about its own flags, so a change to one can break tests in the other.
+
+Both build with `go build ./...`, vet with `go vet ./...`, and test with
+`go test -race ./...` from their own directory. CI runs both jobs from
+`.github/workflows/coppice.yml`.
+
 ## How to work here
 
 ```bash

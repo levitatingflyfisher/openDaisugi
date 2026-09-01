@@ -6,8 +6,10 @@ but shell_allowlist is non-empty). The secondary role is plan-requirement
 consistency (added in a later task).
 
 All checks have a configurable timeout (default 500ms). Z3 `unknown` results
-are surfaced as `VerificationTimeout` exceptions — the caller decides whether
-to treat them as warnings (default) or failures.
+are surfaced as `VerificationTimeout` exceptions. verify() keeps them as
+warnings by default; under strict mode, or for a physical-stakes envelope, it
+turns them into Violations instead, so a check that could not finish never
+silently lets a call through.
 """
 
 from __future__ import annotations

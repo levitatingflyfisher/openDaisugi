@@ -1,0 +1,148 @@
+name: coppice
+
+on:
+  push:
+    branches: [master]
+    paths: ["harness/coppice/**", "harness/sprig/**", ".github/workflows/coppice.yml"]
+  pull_request:
+    paths: ["harness/coppice/**", "harness/sprig/**", ".github/workflows/coppice.yml"]
+
+concurrency:
+  group: coppice-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Set as a pair, never one without the other. PINS.md says the same: "set
+  # both or neither." toolchain.sh's own pkg-config wrapper is baked with a
+  # prefix at install time on a real machine; CI has no such wrapper, so
+  # PKG_CONFIG_PATH is what points the linker at the cached library instead.
+  COPPICE_GHOSTTY_PREFIX: ${{ github.workspace }}/.ghostty-vt
+  PKG_CONFIG_PATH: ${{ github.workspace }}/.ghostty-vt/share/pkgconfig
+
+jobs:
+  coppice:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: harness/coppice
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache-dependency-path: harness/coppice/go.sum
+
+      # setup-go above already caches GOMODCACHE and GOCACHE, keyed on
+      # go.sum. This second cache covers only the installed libghostty-vt
+      # tree under COPPICE_GHOSTTY_PREFIX, keyed on the ghostty commit, the
+      # Zig version, and the sha256 of toolchain.sh itself. Any of the
+      # three changing must rebuild, never reuse a library a different
+      # script or compiler produced. A pin bump invalidates the cache on
+      # purpose: a new commit gets built and tested, never assumed.
+      - name: Compute the ghostty-vt cache key
+        id: pin
+        run: |
+          commit=$(grep -oP '^GHOSTTY_COMMIT="\K[0-9a-f]{40}' scripts/toolchain.sh)
+          zig=$(grep -oP '^ZIG_VERSION="\K[0-9.]+' scripts/toolchain.sh)
+          script_sha=$(sha256sum scripts/toolchain.sh | cut -d' ' -f1)
+          echo "key=ghostty-vt-${{ runner.os }}-$commit-$zig-$script_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache libghostty-vt
+        id: cache-vt
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.COPPICE_GHOSTTY_PREFIX }}
+          key: ${{ steps.pin.outputs.key }}
+
+      # toolchain.sh needs zig, cmake through uv, curl and git. It runs
+      # only on a cache miss: a hit already has the library this pin would
+      # build sitting at COPPICE_GHOSTTY_PREFIX. curl and git already ship
+      # on ubuntu-latest; only uv needs its own setup step.
+      #
+      # Preflight is not a CI step. It also gates on zig and cmake being on
+      # PATH, which a cache hit never installs, so it would fail a run that
+      # has nothing wrong with it. The one fact that actually matters, that
+      # the linker can find libghostty-vt, is what the Test steps below
+      # check directly through COPPICE_REQUIRE_TOOLCHAIN.
+      - uses: astral-sh/setup-uv@v5
+        if: steps.cache-vt.outputs.cache-hit != 'true'
+
+      # toolchain.sh symlinks zig into $HOME/.local/bin and then calls it by
+      # bare name. ubuntu-latest happens to carry that directory on PATH
+      # already, but this build must not depend on an unstated property of
+      # the runner image. This line makes the dependency explicit.
+      - name: Put ~/.local/bin on PATH
+        if: steps.cache-vt.outputs.cache-hit != 'true'
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build libghostty-vt
+        if: steps.cache-vt.outputs.cache-hit != 'true'
+        run: ./scripts/toolchain.sh
+
+      - name: Vet
+        run: go vet ./...
+
+      # I6/I7 (final review): the README's own Contributing section points
+      # here for "the exact CI commands", and named gofmt -l . among them,
+      # but nothing here ever ran it. gofmt is clean today only because
+      # nobody has broken it yet, not because this workflow would catch it.
+      - name: Gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      # A wrong COPPICE_GHOSTTY_PREFIX must not turn this suite green by
+      # skipping every cgo test. COPPICE_REQUIRE_TOOLCHAIN turns that skip
+      # into a failure instead, through toolchain.RequireOrSkip, the one
+      # helper every skip-capable test in this module calls.
+      - name: Test
+        env:
+          COPPICE_REQUIRE_TOOLCHAIN: "1"
+        run: go test ./... -count=1
+
+      # The race detector needs cgo, already true here since libghostty
+      # forces CGO_ENABLED=1. The adapter Stop paths, the pane tree and the
+      # server's live map are all concurrent by design. A panic in an
+      # adapter goroutine takes the daemon down with every other pane's
+      # process orphaned alongside it, so the race detector is a merge gate
+      # here, not a nicety.
+      - name: Test with the race detector
+        env:
+          COPPICE_REQUIRE_TOOLCHAIN: "1"
+        run: go test ./... -count=1 -race
+
+      # PINS.md: -X main.version= is a silent no-op. The symbol lives at
+      # internal/cli.version, not main.version.
+      - name: Build
+        run: |
+          go build -ldflags "-X github.com/opendaisugi/coppice/internal/cli.version=$(git describe --tags --always)" \
+            ./cmd/coppice
+
+  # A coppice test reads harness/sprig/cli.go's own source to check its flag
+  # names have not drifted, so a sprig-only change must build and test here
+  # too, not just coppice-only changes. No cgo, no cache beyond setup-go.
+  sprig:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: harness/sprig
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache-dependency-path: harness/sprig/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      # I6/I7 (final review): symmetry with the coppice job's own Gofmt
+      # step, for the same reason.
+      - name: Gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: Test with the race detector
+        run: go test ./... -count=1 -race
+
+      - name: Build
+        run: go build ./...

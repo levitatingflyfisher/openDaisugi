@@ -1,0 +1,158 @@
+daisugi, daisugi-gate and conform (clients/go) link the following third-party code
+statically. Each is built from the pinned source archive named here by
+scripts/native.sh, which checks the SHA-256 before it builds anything.
+
+Z3 5.1.0 (the z3-solver 5.1.0.0 source archive)
+  https://github.com/Z3Prover/z3/releases/download/z3-5.1.0/z3_solver-5.1.0.0.tar.gz
+  sha256 269a0bf62949d227a16ab42afee6750f18477e173a14de6aeaf8789f33f813b5
+  License: MIT
+  Copyright (c) Microsoft Corporation
+
+tree-sitter 0.26.0 (the py-tree-sitter source archive; the C runtime)
+  https://files.pythonhosted.org/packages/source/t/tree-sitter/tree_sitter-0.26.0.tar.gz
+  sha256 b40c219edccc4564530c96f8f1556f6202b37cda964d1cbd7bd2b7e68b40a245
+  License: MIT
+  Copyright (c) 2019 Max Brunsfeld, GitHub
+  The runtime's Unicode tables (lib/src/unicode) are under the Unicode
+  License (ICU 58 and later), Copyright (c) 1991-2019 Unicode, Inc.
+
+tree-sitter-bash 0.25.1 (the grammar's source archive)
+  https://files.pythonhosted.org/packages/source/t/tree-sitter-bash/tree_sitter_bash-0.25.1.tar.gz
+  sha256 bfc0bdaa77bc1e86e3c6652e5a6e140c40c0a16b84185c2b63ad7cd809b88f14
+  License: MIT
+  Copyright (c) 2017 Max Brunsfeld
+
+LLVM libc++, libc++abi and libunwind, as shipped with zig 0.16.0 (Z3 is
+compiled with `zig c++`, and these are linked with it)
+  License: Apache License 2.0 with LLVM Exceptions
+
+golang.org/x/text v0.30.0 (Unicode NFKC normalization)
+  License: BSD-3-Clause
+  Copyright 2009 The Go Authors
+
+github.com/mattn/go-sqlite3 v1.14.52 (daisugi only: the pathway store and
+the trace journal), a Go module pinned by go.sum, not by native.sh; its cgo
+code compiles the SQLite amalgamation it bundles (SQLite 3.53.4) into the
+binary
+  License: MIT (go-sqlite3); SQLite itself is in the public domain
+  Copyright (c) 2014 Yasuhiro Matsumoto
+
+The full license texts ship inside each source archive (Z3:
+core/LICENSE.txt; tree-sitter: LICENSE and tree_sitter/core/lib/src/unicode/
+LICENSE; tree-sitter-bash: LICENSE; the LLVM runtimes:
+LICENSE.TXT in zig's lib/libcxx, lib/libcxxabi and lib/libunwind;
+golang.org/x/text: LICENSE; go-sqlite3: LICENSE).
+
+Not linked, fetched on first use: daisugi's potion matcher downloads
+minishlab/potion-base-8M (revision bf8b056651a2c21b8d2565580b8569da283cab23,
+three files pinned by sha256 in internal/embed/potion) from Hugging Face
+into $XDG_CACHE_HOME/opendaisugi/models. The model is MIT licensed (its
+model card, https://huggingface.co/minishlab/potion-base-8M).
+
+The Go standard library and runtime, linked into every Go binary
+  https://go.dev/LICENSE
+  License: BSD-3-Clause (the same text applies to golang.org/x/text)
+
+Each license was checked at the project's own LICENSE file:
+https://github.com/Z3Prover/z3/blob/master/LICENSE.txt,
+https://github.com/tree-sitter/tree-sitter/blob/master/LICENSE,
+https://github.com/tree-sitter/tree-sitter-bash/blob/master/LICENSE,
+https://github.com/llvm/llvm-project/blob/main/libcxx/LICENSE.TXT,
+https://github.com/mattn/go-sqlite3/blob/master/LICENSE,
+https://sqlite.org/copyright.html and
+https://go.dev/LICENSE. The texts the licenses ask a binary to carry
+follow.
+
+MIT License, for Z3 (Copyright (c) Microsoft Corporation), go-sqlite3
+(Copyright (c) 2014 Yasuhiro Matsumoto), tree-sitter
+(Copyright (c) 2018 Max Brunsfeld) and tree-sitter-bash (Copyright (c)
+2017 Max Brunsfeld):
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The Unicode license, for tree-sitter's Unicode tables:
+
+COPYRIGHT AND PERMISSION NOTICE (ICU 58 and later)
+
+Copyright © 1991-2019 Unicode, Inc. All rights reserved.
+Distributed under the Terms of Use in https://www.unicode.org/copyright.html.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Unicode data files and any associated documentation
+(the "Data Files") or Unicode software and any associated documentation
+(the "Software") to deal in the Data Files or Software
+without restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, and/or sell copies of
+the Data Files or Software, and to permit persons to whom the Data Files
+or Software are furnished to do so, provided that either
+(a) this copyright and permission notice appear with all copies
+of the Data Files or Software, or
+(b) this copyright and permission notice appear in associated
+Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT OF THIRD PARTY RIGHTS.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS
+NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL
+DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THE DATA FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder
+shall not be used in advertising or otherwise to promote the sale,
+use or other dealings in these Data Files or Software without prior
+written authorization of the copyright holder.
+
+BSD-3-Clause, for the Go standard library, the runtime and
+golang.org/x/text:
+
+Copyright 2009 The Go Authors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google LLC nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+LLVM libc++, libc++abi and libunwind are under the Apache License 2.0
+with LLVM Exceptions, whose exception lets a binary that embeds them
+carry no notice for them.

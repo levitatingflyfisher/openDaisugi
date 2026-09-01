@@ -21,7 +21,50 @@ declared safety *envelope* **before it runs** — fail-closed, usually milliseco
 no tokens. Cheapest and safest turn out to be the same move: **separate what is
 _allowed_ from what is _decided_.**
 
-## Install
+## Quick start
+
+With the three binaries on PATH, a floor of guarded agents is two commands:
+
+```bash
+daisugi install --gate    # the gate hook for Claude Code and Codex; shadow: it logs what it would deny
+coppice                   # the floor in this terminal; or: coppice web, for the browser and the phone
+```
+
+To enforce, register a policy first. With no policy, `install --gate --enforce` refuses and
+writes nothing, since an enforce hook with no policy denies every call:
+
+```bash
+daisugi gate init --workspace ~/Work   # a starter envelope: reads and writes in ~/Work, a short list of shell commands
+daisugi install --gate --enforce
+coppice
+```
+
+Until a gate hook is installed, the floor says so and names `daisugi install --gate`.
+`daisugi gate status` warns when the hook names a binary that is no longer there.
+
+Get the binaries (`coppice` the floor, `sprig` the loop, `daisugi` the gate) one of these ways.
+None needs Python.
+
+- **From source** (Linux; Go, zig 0.16.0, cmake, gcc, make, pkgconf, git, curl, python):
+  `scripts/install.sh`. It names every missing tool and its Arch package before it builds
+  anything, builds the pinned native libraries once, and puts the binaries in `~/.local/bin`.
+  A script already at `~/.local/bin/daisugi` (the Python CLI's, which also has
+  `install --gate`) is kept unless you pass `--replace-daisugi`.
+- **A release tarball**: `tar -xzf opendaisugi-VERSION-linux-x86_64.tar.gz --strip-components=1 -C ~/.local/bin`.
+  Each binary links only glibc. `scripts/release.sh VERSION` builds it.
+- **Omarchy**: `omarchy-mise-install github:levitatingflyfisher/openDaisugi coppice`, and the
+  same with `daisugi` for the gate. Or the AUR package `opendaisugi-bin` (`packaging/aur/`).
+  Both need a published release; there is none yet. Under mise the gate hook names mise's
+  `daisugi` shim, or else the Omarchy stub in `~/.local/bin`, when it runs the same binary, so
+  the hook survives an upgrade; with neither, install says to run `daisugi install --gate`
+  again after an upgrade.
+- **The Rust port of the gate** (`daisugi`, `daisugi-gate`): `scripts/release.sh VERSION --rust`
+  builds a second tarball. Both binaries also link `libgcc_s`.
+
+The Go `daisugi` carries the gate commands and `install --gate`. The Python package below
+carries everything else: skills, pathways, the orchestrator and the MCP server.
+
+## Install the Python package
 
 ```bash
 uv add opendaisugi          # or: pip install opendaisugi
@@ -33,17 +76,20 @@ Python 3.12+. The `z3-solver` native dependency installs automatically. Add
 re-plans — no error, just no reuse).
 
 <details>
-<summary>Optional extras — reuse, MCP server, robotics, LoRA</summary>
+<summary>Optional extras — reuse, generation, MCP server, robotics, LoRA</summary>
 
 ```bash
 uv add 'opendaisugi[search]'    # REQUIRED for pathway reuse (sentence-transformers, ~80 MB)
+uv add 'opendaisugi[generate]'  # REQUIRED for envelope generation via the litellm backend
 uv add 'opendaisugi[mcp]'       # MCP server for Claude Code / Codex / Hermes / OpenClaw
 uv add 'opendaisugi[robotics]'  # MuJoCo executor (experimental)
 uv add 'opendaisugi[lora]'      # LoRA training-data pipeline
 ```
 
-Bare `uv add opendaisugi` stays lightweight (the verifier and routing work without
-`[search]`); only Tier-0 reuse needs the embedding model.
+Bare `uv add opendaisugi` stays lightweight (the verifier, gate, and routing work
+without `[search]` or `[generate]`); only Tier-0 reuse needs the embedding model.
+Only the litellm-backend `daisugi generate-envelope` / `generate_envelope()` path
+needs litellm + instructor. The claude-code backend needs neither.
 </details>
 
 ## See it refuse an unsafe action
@@ -148,10 +194,10 @@ from opendaisugi import Daisugi
 dai = Daisugi()
 result = await dai.orchestrate(
     "summarize the open PRs and draft a standup note",
-    budget_tokens=20_000,          # gates routing DURING the run, not after
+    budget_tokens=20_000,  # gates routing DURING the run, not after
 )
 print(result.final_answer)
-for s in result.sizings:           # per-step: difficulty → the model it ran on
+for s in result.sizings:  # per-step: difficulty → the model it ran on
     print(s.step_id, s.difficulty, s.tier, s.model)
 print(result.budget.spent, "tokens")
 ```

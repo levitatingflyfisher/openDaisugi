@@ -164,3 +164,23 @@ def test_a_deleted_cwd_falls_back_instead_of_crashing(tmp_path, monkeypatch):
 def test_unknown_keys_are_reported_not_hidden(tmp_path):
     (tmp_path / "config.yaml").write_text("gate_mode: shadow\nbanana: 1\n")
     assert unknown_config_keys(tmp_path / "config.yaml") == ["banana"]
+
+
+def test_unknown_keys_recurse_into_a_nested_group(tmp_path):
+    (tmp_path / "config.yaml").write_text("floor:\n  backnd: tmux\n")
+    assert unknown_config_keys(tmp_path / "config.yaml") == ["floor.backnd"]
+
+
+def test_a_known_nested_key_is_not_reported(tmp_path):
+    (tmp_path / "config.yaml").write_text("floor:\n  backend: tmux\n")
+    assert unknown_config_keys(tmp_path / "config.yaml") == []
+
+
+def test_unknown_keys_combine_top_level_and_nested(tmp_path):
+    (tmp_path / "config.yaml").write_text("banana: 1\nfloor:\n  backnd: tmux\n")
+    assert unknown_config_keys(tmp_path / "config.yaml") == ["banana", "floor.backnd"]
+
+
+def test_a_nested_group_that_is_not_a_mapping_never_crashes(tmp_path):
+    (tmp_path / "config.yaml").write_text("floor: not-a-mapping\n")
+    assert unknown_config_keys(tmp_path / "config.yaml") == []

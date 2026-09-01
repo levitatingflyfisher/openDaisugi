@@ -123,7 +123,9 @@ def test_second_run_skips_what_exists(tmp_path):
     steps = {s.key: s for s in run_start(opts)}
     assert steps["hook"].state == "skipped" and "already installed" in steps["hook"].text
     assert steps["envelope"].state == "skipped"
-    assert steps["gate-server"].state == "skipped" and "already running" in steps["gate-server"].text
+    assert (
+        steps["gate-server"].state == "skipped" and "already running" in steps["gate-server"].text
+    )
 
 
 def test_no_claude_is_a_failed_step_with_a_fix_and_short_circuits(tmp_path):

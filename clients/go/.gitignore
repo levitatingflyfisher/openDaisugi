@@ -1,6 +1,10 @@
 .gopath/
 .gocache/
 .gomodcache/
-conform
-conform.exe
+/conform
+/conform.exe
 *.test
+/daisugi-gate
+/.native
+/daisugi
+/pathway-probe

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from opendaisugi.parsers.claude_code import ClaudeCodeParser
 from opendaisugi.split_cache import SplitCache
 
@@ -64,6 +66,7 @@ def _fake_completion_factory(counter):
 def test_second_parse_hits_cache_across_instances(tmp_path):
     """A fresh SplitCache pointed at the same db (a later `onboard` run) must
     reuse the split — no second model call."""
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
     t = _big_episode_transcript(tmp_path)
     counter = {"n": 0}
     db = tmp_path / "split.db"
@@ -81,6 +84,7 @@ def test_second_parse_hits_cache_across_instances(tmp_path):
 
 
 def test_no_cache_means_every_parse_calls_the_splitter(tmp_path):
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
     t = _big_episode_transcript(tmp_path)
     counter = {"n": 0}
     with patch("opendaisugi.parsers.claude_code.litellm") as ml:

@@ -23,6 +23,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from opendaisugi.exceptions import EnvelopeGenerationError
+from opendaisugi.models import decode_dict_text, non_finite_error
 
 _log = logging.getLogger("opendaisugi.claude_code_llm")
 T = TypeVar("T", bound=BaseModel)
@@ -205,9 +206,15 @@ def _extract_first_json_object(text: str) -> dict:
     end = text.rfind("}")
     if start == -1 or end <= start:
         raise EnvelopeGenerationError(f"no JSON object in claude -p stdout: {text[:200]!r}")
+    body = text[start : end + 1]
     try:
-        return json.loads(text[start : end + 1])
+        return json.loads(body)
     except json.JSONDecodeError as exc:
+        # A model sometimes writes the object as a Python dict literal, with
+        # single quotes, True and None. Read that as a literal, never as code.
+        decoded = decode_dict_text(body)
+        if decoded is not None:
+            return decoded
         raise EnvelopeGenerationError(f"claude -p stdout was not valid JSON: {exc}") from exc
 
 
@@ -353,13 +360,59 @@ async def call_claude_p_structured(
         model=model,
         binary=binary,
     )
+    return _parse_structured(stdout, response_model)
+
+
+def _parse_structured(stdout: str, response_model: type[T]) -> T:
+    """Read the first object in stdout and validate it as ``response_model``."""
     payload = _extract_first_json_object(stdout)
     try:
-        return response_model.model_validate(payload)
+        reply = response_model.model_validate(payload)
     except Exception as exc:
         raise EnvelopeGenerationError(
             f"claude -p output failed {response_model.__name__} validation: {exc}"
         ) from exc
+    # A number that is not finite is schema-invalid too (non_finite_error).
+    bad = non_finite_error(reply, response_model.__name__)
+    if bad is not None:
+        raise EnvelopeGenerationError(
+            f"claude -p output failed {response_model.__name__} validation: {bad}"
+        ) from bad
+    return reply
+
+
+def _result_text(stdout: str) -> str:
+    """The model's reply from a ``claude -p --output-format json`` envelope.
+
+    Raises EnvelopeGenerationError when the reply reports ``is_error`` or
+    when stdout is not the envelope (not a JSON object whose ``type`` is
+    ``result``, or no string ``result``).
+    """
+    try:
+        obj = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise EnvelopeGenerationError(
+            f"claude -p stdout was not its JSON envelope: {stdout[:200]!r}"
+        ) from exc
+    if not isinstance(obj, dict) or obj.get("type") != "result":
+        raise EnvelopeGenerationError(
+            f"claude -p stdout was not its JSON envelope: {stdout[:200]!r}"
+        )
+    if obj.get("is_error"):
+        raise EnvelopeGenerationError(
+            f"claude -p reported is_error: {str(obj.get('result'))[:200]!r}"
+        )
+    text = obj.get("result")
+    if not isinstance(text, str):
+        raise EnvelopeGenerationError(
+            f"claude -p stdout was not its JSON envelope: {stdout[:200]!r}"
+        )
+    return text
+
+
+# The most re-asks one structured call makes, whatever max_retries a caller
+# passes. Each re-ask is a full claude -p run.
+_MAX_REASKS = 3
 
 
 class _Completions:
@@ -375,7 +428,7 @@ class _Completions:
         max_retries: int = 0,
         **_: Any,
     ) -> Any:
-        del model, max_retries  # accepted for instructor signature-compat
+        del model  # accepted for instructor signature-compat
         prompt = _flatten_messages(messages)
         if response_model is None:
             return await call_claude_p_async(
@@ -384,13 +437,33 @@ class _Completions:
                 model=self._parent.model_flag,
                 binary=self._parent.binary,
             )
-        return await call_claude_p_structured(
-            prompt,
-            response_model,
-            timeout_s=self._parent.timeout_s,
-            model=self._parent.model_flag,
-            binary=self._parent.binary,
-        )
+        # Re-ask on a reply that does not parse or validate, with the error
+        # in the prompt, as instructor does on the litellm path. A failed or
+        # timed-out claude -p run is not re-asked.
+        reasks = max(0, min(max_retries, _MAX_REASKS)) if isinstance(max_retries, int) else 0
+        augmented = _augment_prompt_with_schema(prompt, response_model)
+        attempt_prompt = augmented
+        for attempt in range(reasks + 1):
+            stdout = await call_claude_p_async(
+                attempt_prompt,
+                timeout_s=self._parent.timeout_s,
+                model=self._parent.model_flag,
+                binary=self._parent.binary,
+                extra_args=("--output-format", "json"),
+            )
+            # The CLI's own failure (is_error, or stdout that is not its
+            # result envelope) is not the model's reply: never re-asked.
+            text = _result_text(stdout)
+            try:
+                return _parse_structured(text, response_model)
+            except EnvelopeGenerationError as exc:
+                if attempt == reasks:
+                    raise
+                attempt_prompt = (
+                    f"{augmented}\n\nYour last reply could not be used: {str(exc)[:1000]}\n"
+                    "Reply again with ONLY one JSON object that validates against the schema."
+                )
+        raise AssertionError("unreachable")
 
 
 class _Chat:

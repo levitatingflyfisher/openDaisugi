@@ -1,9 +1,36 @@
 package sprig
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+// claudeEnvelope builds a fixture matching what a real `claude -p
+// --output-format json` run prints on stdout: type "result", the turn's
+// text in result, and Claude Code's own usage accounting. Confirmed live
+// against Claude Code v2.1.283: the non-streaming json envelope carries a
+// top-level "type" field, the same field name the "result" line of
+// --output-format stream-json carries.
+func claudeEnvelope(t *testing.T, result string, isError bool, usage map[string]int) string {
+	t.Helper()
+	env := map[string]any{
+		"type": "result", "subtype": "success", "is_error": isError,
+		"result": result, "session_id": "fake-session",
+	}
+	if usage != nil {
+		u := map[string]any{}
+		for k, v := range usage {
+			u[k] = v
+		}
+		env["usage"] = u
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
 
 func TestParseResponseExtractsAToolCall(t *testing.T) {
 	text := "I'll list the files.\n```sprig-tool\n{\"tool\":\"bash\",\"input\":{\"cmd\":\"ls\"}}\n```\n"
@@ -48,11 +75,11 @@ func TestFormatPromptCarriesTaskToolsAndProtocol(t *testing.T) {
 }
 
 func TestClaudeCodeModelNextUsesTheInjectedRunner(t *testing.T) {
-	// Prove Next() drives the whole path — format → run → parse — with a FAKE
-	// runner, so no live `claude -p` call (and no quota) is needed to test it.
-	m := &ClaudeCodeModel{run: func(string) (string, error) {
-		return "```sprig-tool\n{\"tool\":\"read\",\"input\":{\"path\":\"x.go\"}}\n```", nil
-	}}
+	// Prove Next() drives the whole path (format, run, parse, unwrap the
+	// json envelope) with a FAKE runner, so no live `claude -p` call (and no
+	// quota) is needed to test it.
+	raw := claudeEnvelope(t, "```sprig-tool\n{\"tool\":\"read\",\"input\":{\"path\":\"x.go\"}}\n```", false, nil)
+	m := &ClaudeCodeModel{run: func(string) (string, error) { return raw, nil }}
 	msg, err := m.Next([]Message{{Role: "user", Text: "read x.go"}})
 	if err != nil {
 		t.Fatal(err)
@@ -62,13 +89,17 @@ func TestClaudeCodeModelNextUsesTheInjectedRunner(t *testing.T) {
 	}
 }
 
-func TestClaudeCodeModelNextSetsTheConfiguredModelNameAndLeavesUsageZero(t *testing.T) {
-	// `claude -p`'s plain-text output carries no token counts — Usage stays
-	// zero HONESTLY (there is nothing to report on this backend), but Model
-	// is real: it's the ClaudeCodeModel's own configured value, not a guess.
-	m := &ClaudeCodeModel{Model: "haiku", run: func(string) (string, error) {
-		return "final answer", nil
-	}}
+func TestClaudeCodeModelNextParsesUsageFromTheCLIEnvelope(t *testing.T) {
+	// This backend used to leave Usage at zero because `claude -p`'s
+	// plain-text default carries no token counts. sprig now asks for
+	// --output-format json (see claudeArgs), so Usage must come from the
+	// envelope's own usage object. Each bucket gets a distinct number, so a
+	// swap of cache_read and cache_creation would fail this.
+	raw := claudeEnvelope(t, "final answer", false, map[string]int{
+		"input_tokens": 11, "cache_read_input_tokens": 22,
+		"cache_creation_input_tokens": 33, "output_tokens": 44,
+	})
+	m := &ClaudeCodeModel{Model: "haiku", run: func(string) (string, error) { return raw, nil }}
 	msg, err := m.Next([]Message{{Role: "user", Text: "x"}})
 	if err != nil {
 		t.Fatal(err)
@@ -76,8 +107,48 @@ func TestClaudeCodeModelNextSetsTheConfiguredModelNameAndLeavesUsageZero(t *test
 	if msg.Model != "haiku" {
 		t.Fatalf("want the configured model name, got %q", msg.Model)
 	}
-	if msg.Usage != (Usage{}) {
-		t.Fatalf("want zero usage (genuinely unavailable on this backend), got %+v", msg.Usage)
+	want := Usage{Fresh: 11, CacheRead: 22, CacheWrite: 33, Out: 44}
+	if msg.Usage != want {
+		t.Fatalf("usage %+v, want %+v", msg.Usage, want)
+	}
+	if msg.Text != "final answer" {
+		t.Fatalf("got text %q", msg.Text)
+	}
+}
+
+func TestClaudeCodeModelNextFailsOnIsError(t *testing.T) {
+	// is_error can be true on an exit-0 reply (max turns, a refused turn in
+	// the CLI itself). That must surface as an error, never as a final
+	// answer parseResponse would happily accept.
+	raw := claudeEnvelope(t, "hit max turns", true, nil)
+	m := &ClaudeCodeModel{run: func(string) (string, error) { return raw, nil }}
+	if _, err := m.Next([]Message{{Role: "user", Text: "x"}}); err == nil {
+		t.Fatal("want an error when the CLI envelope reports is_error")
+	}
+}
+
+func TestClaudeCodeModelNextFailsOnUnreadableOutput(t *testing.T) {
+	// A stripping proxy, an old CLI still on plain-text, or a broken binary
+	// could all hand Next() something that is not the json envelope it asked
+	// for. That must fail loudly, not silently degrade to a half-parsed
+	// answer with lost usage.
+	m := &ClaudeCodeModel{run: func(string) (string, error) { return "not json at all", nil }}
+	if _, err := m.Next([]Message{{Role: "user", Text: "x"}}); err == nil {
+		t.Fatal("want an error on output that is not the json envelope")
+	}
+}
+
+func TestClaudeCodeModelNextFailsOnValidJSONWithNoTypeField(t *testing.T) {
+	// Valid JSON that is still not the envelope: no top-level "type". This is
+	// exactly the shape src/opendaisugi/claude_code_llm.py's own test
+	// fixtures use, since that Python reader never checks "type" (it only
+	// reads is_error/result/usage). sprig's own check is stricter, on
+	// purpose: without it, this line would decode to empty text and zero
+	// usage with no error at all.
+	raw := `{"result":"x","is_error":false,"usage":{"input_tokens":1}}`
+	m := &ClaudeCodeModel{run: func(string) (string, error) { return raw, nil }}
+	if _, err := m.Next([]Message{{Role: "user", Text: "x"}}); err == nil {
+		t.Fatal("want an error on json with no top-level type field")
 	}
 }
 
@@ -89,9 +160,9 @@ func TestAgentRunsEndToEndWithClaudeCodeModelFake(t *testing.T) {
 	m := &ClaudeCodeModel{run: func(string) (string, error) {
 		step++
 		if step == 1 {
-			return "```sprig-tool\n{\"tool\":\"bash\",\"input\":{\"cmd\":\"echo hi\"}}\n```", nil
+			return claudeEnvelope(t, "```sprig-tool\n{\"tool\":\"bash\",\"input\":{\"cmd\":\"echo hi\"}}\n```", false, nil), nil
 		}
-		return "done — it printed hi", nil
+		return claudeEnvelope(t, "done — it printed hi", false, nil), nil
 	}}
 	agent := &Agent{Model: m, Exec: NewExecutor(DefaultTools(), AllowAll{}), MaxTurns: 5}
 	out, err := agent.Run("say hi via bash")
@@ -100,6 +171,63 @@ func TestAgentRunsEndToEndWithClaudeCodeModelFake(t *testing.T) {
 	}
 	if out != "done — it printed hi" {
 		t.Fatalf("got %q", out)
+	}
+}
+
+func TestClaudeArgsRequestsJSONOutputAndBindsModelSafely(t *testing.T) {
+	args := claudeArgs("claude", "haiku")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--output-format json") {
+		t.Fatalf("want --output-format json in argv, got %v", args)
+	}
+	if !strings.Contains(joined, "--model=haiku") {
+		t.Fatalf("want --model=haiku (bound form, never a separate token), got %v", args)
+	}
+	for _, a := range args {
+		if a == "haiku" {
+			t.Fatalf("model must never appear as a bare argv element: %v", args)
+		}
+	}
+}
+
+func TestAgentReportsRealUsageIntoTheSessionTree(t *testing.T) {
+	// End to end: a claude-code backend with a fake run, wired to a REAL
+	// SessionWriter, must land non-zero usage in the actual tree file, not
+	// just in the in-memory Message, under the exact camelCase keys
+	// coppice's sprigAssistant reads.
+	raw := claudeEnvelope(t, "done", false, map[string]int{
+		"input_tokens": 11, "cache_read_input_tokens": 22,
+		"cache_creation_input_tokens": 33, "output_tokens": 44,
+	})
+	m := &ClaudeCodeModel{Model: "haiku", run: func(string) (string, error) { return raw, nil }}
+	dir := t.TempDir()
+	w, err := NewSessionWriter(dir, "s1", "/w")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{Model: m, Exec: NewExecutor(DefaultTools(), AllowAll{}), MaxTurns: 5, SessionObserver: w}
+	if _, err := agent.Run("say hi"); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ReadEntries(w.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usage map[string]any
+	for _, e := range entries {
+		if e.Type == "assistant" {
+			usage, _ = e.Data["usage"].(map[string]any)
+		}
+	}
+	if usage == nil {
+		t.Fatal("no assistant entry with usage in the tree")
+	}
+	want := map[string]float64{"fresh": 11, "cacheRead": 22, "cacheWrite": 33, "out": 44}
+	for k, v := range want {
+		if usage[k] != v {
+			t.Fatalf("usage[%q] = %v, want %v (full usage: %v)", k, usage[k], v, usage)
+		}
 	}
 }
 

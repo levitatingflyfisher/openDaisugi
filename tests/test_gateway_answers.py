@@ -243,7 +243,7 @@ def test_missing_search_extra_propagates_for_the_install_hint():
 
 def test_real_embedder_finds_an_obvious_paraphrase() -> None:
     pytest.importorskip("sentence_transformers")
-    # This box's GPU crashes the embedder; force CPU before the model loads.
+    # A Pascal GPU (sm_61) crashes the embedder; force CPU before the model loads.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
     query = "explain OAuth to me"

@@ -446,7 +446,9 @@ class Journal:
             iso = datetime.fromtimestamp(since, tz=timezone.utc).isoformat().replace("+00:00", "Z")
             sql += " AND created_at >= ?"
             params = (iso,)
-        sql += " ORDER BY created_at DESC"
+        # rowid breaks a tie: created_at has one-second steps, and the later
+        # insert is the newer trace.
+        sql += " ORDER BY created_at DESC, rowid DESC"
 
         con = self._con
         rows = con.execute(sql, params).fetchall()

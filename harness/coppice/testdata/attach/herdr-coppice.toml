@@ -1,0 +1,25 @@
+# Herdr detection rules for a pane that runs coppice attach.
+# They read the attach status line on the last row.
+# not verified: Herdr picks a manifest by the pane's foreground process, and a new agent id may need a Herdr update before this manifest applies.
+id = "coppice"
+
+[[rules]]
+id = "coppice-attach-blocked"
+state = "blocked"
+priority = 30
+region = "bottom_non_empty_lines(1)"
+line_regex = ["^\\S+  (?:[^ ]+(?: [^ ]+)*  ){0,2}blocked via [a-z]+"]
+
+[[rules]]
+id = "coppice-attach-working"
+state = "working"
+priority = 20
+region = "bottom_non_empty_lines(1)"
+line_regex = ["^\\S+  (?:[^ ]+(?: [^ ]+)*  ){0,2}working via [a-z]+"]
+
+[[rules]]
+id = "coppice-attach-idle"
+state = "idle"
+priority = 10
+region = "bottom_non_empty_lines(1)"
+line_regex = ["^\\S+  (?:[^ ]+(?: [^ ]+)*  ){0,2}idle via [a-z]+"]

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from opendaisugi.budget import BudgetTracker
 from opendaisugi.decomposer import DecomposedPlan, DecomposedStep
 from opendaisugi.model_sizer import DEFAULT_LADDER
@@ -63,6 +65,7 @@ def test_budget_aware_executor_downgrades_and_records():
 
 
 def test_budget_aware_executor_records_actual_tokens_when_available():
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
     from types import SimpleNamespace
 
     tracker = BudgetTracker(total_tokens=100_000)
@@ -508,6 +511,7 @@ async def test_strict_budget_overrun_keeps_work_and_stops_spending():
     # H3: pre-gate allows the step by estimate, but ACTUAL usage exceeds the strict
     # ceiling. The completed step's output must be kept (not discarded as an error),
     # its spend counted, and synthesis must NOT fire another LLM call.
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
     from types import SimpleNamespace
 
     env = Envelope(generated_by="t", task="demo", permissions=Permission(), stakes="low")

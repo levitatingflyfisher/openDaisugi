@@ -1,0 +1,2 @@
+#rule: interrupt_hint_working
+Generating... esc to interrupt

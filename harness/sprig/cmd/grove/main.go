@@ -19,7 +19,7 @@ import (
 
 func main() {
 	gateOn := false
-	gateCmd := "python -m opendaisugi.gate --mode enforce"
+	gateCmd := sprig.DefaultGateCmd()
 	var tasks []string
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {

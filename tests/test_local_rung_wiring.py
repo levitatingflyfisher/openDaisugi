@@ -11,6 +11,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from opendaisugi.delegating_executor import DelegatingExecutor
 from opendaisugi.model_sizer import DEFAULT_LADDER, build_ladder, size_step
 from opendaisugi.models import TaskStep
@@ -40,6 +42,7 @@ def test_build_ladder_without_local_is_two_rung():
 
 
 def test_endpoint_override_threads_base_url_to_completion():
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
     exe = DelegatingExecutor(
         default_model="openai/qwen2.5-3b",
         json_mode=False,
@@ -63,6 +66,7 @@ def test_endpoint_override_threads_base_url_to_completion():
 
 
 def test_endpoint_override_not_applied_to_other_models():
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
     exe = DelegatingExecutor(
         default_model="claude-haiku-4-5",
         json_mode=False,

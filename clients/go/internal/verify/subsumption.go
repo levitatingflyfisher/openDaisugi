@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -123,7 +124,7 @@ func permissionScopeViolation(z3c *Z3Client, outer, inner Permission, timeoutMs 
 		return "shell_allow_decomposition: inner admits compound shell but outer does not", nil
 	}
 	for _, axis := range []struct {
-		label       string
+		label          string
 		innerP, outerP []string
 	}{
 		{"file_read", inner.FileRead, outer.FileRead},
@@ -356,16 +357,24 @@ func EnvelopeSubsumes(z3c *Z3Client, outer, inner Envelope, timeoutMs int, stric
 	case "sat":
 		return false, nil
 	default:
-		return false, fmt.Errorf("z3 subsumption check exceeded %dms", timeoutMs)
+		return false, &SubsumptionTimeout{fmt.Sprintf("Z3 subsumption check exceeded %dms", timeoutMs)}
 	}
 }
+
+// SubsumptionTimeout is subsumption's VerificationTimeout: the final Z3
+// check answered unknown. Any other error is a Z3 error.
+type SubsumptionTimeout struct{ Msg string }
+
+func (e *SubsumptionTimeout) Error() string { return e.Msg }
 
 // --- the delegation-safety stage (verify.check_skill_delegations) -------------
 
 // CheckSkillDelegations ports verify.check_skill_delegations. A SkillStep
 // with no contract_envelope is opaque (strict rejects, non-strict warns +
 // allows). One with a contract proves envelope_subsumes(caller, contract).
-func CheckSkillDelegations(plan ActionPlan, env Envelope, strict bool, timeoutMs int, warnings *[]string) []Violation {
+// A subsumption check that answers unknown is a timeout, kept in
+// timeouts; under strict mode or physical stakes it is also a violation.
+func CheckSkillDelegations(plan ActionPlan, env Envelope, strict bool, timeoutMs int, warnings, timeouts *[]string) []Violation {
 	var violations []Violation
 	haveSkill := false
 	for _, s := range plan.Steps {
@@ -383,11 +392,12 @@ func CheckSkillDelegations(plan ActionPlan, env Envelope, strict bool, timeoutMs
 			continue
 		}
 		contractEnv, hasContract := step.ContractEnvelope()
+		skillID, _ := step.SkillID()
 		if !hasContract {
 			if strict {
-				violations = append(violations, VStep("delegation", step.ID))
+				violations = append(violations, VStep("delegation", step.ID, fmt.Sprintf(
+					"Step '%s' invokes opaque skill '%s' with no contract_envelope; delegation cannot be proved subsumed (strict mode rejects)", step.ID, skillID)))
 			} else if warnings != nil {
-				skillID, _ := step.SkillID()
 				*warnings = append(*warnings, "opaque skill "+skillID+" (allowed under lenient mode)")
 			}
 			continue
@@ -395,12 +405,29 @@ func CheckSkillDelegations(plan ActionPlan, env Envelope, strict bool, timeoutMs
 		if zerr != nil {
 			// Full profile unavailable -- fail closed rather than trust an
 			// unproved delegation.
-			violations = append(violations, VStep("delegation", step.ID))
+			violations = append(violations, VStep("delegation", step.ID, fmt.Sprintf(
+				"Step '%s' skill '%s' delegation refused: Z3 is not available", step.ID, skillID)))
 			continue
 		}
 		holds, err := EnvelopeSubsumes(z3c, env, *contractEnv, timeoutMs, strict)
+		var unknown *SubsumptionTimeout
+		if errors.As(err, &unknown) {
+			if strict || env.Stakes == "physical" {
+				violations = append(violations, VStep("delegation", step.ID,
+					"verifier timed out (skill-delegation subsumption); raise the Z3 timeout"))
+			}
+			*timeouts = append(*timeouts, unknown.Msg)
+			continue
+		}
 		if err != nil || !holds {
-			violations = append(violations, VStep("delegation", step.ID))
+			// The oracle's reason names Z3's counterexample; this client
+			// proves the same verdict but words the reason its own way.
+			why := "subsumption failed"
+			if err != nil {
+				why = err.Error()
+			}
+			violations = append(violations, VStep("delegation", step.ID, fmt.Sprintf(
+				"Step '%s' skill '%s' delegation refused: %s", step.ID, skillID, why)))
 		}
 	}
 	return violations

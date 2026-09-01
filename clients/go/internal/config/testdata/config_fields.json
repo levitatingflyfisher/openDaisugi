@@ -1,0 +1,154 @@
+{
+ "config": [
+  [
+   "model",
+   "<class 'str'>"
+  ],
+  [
+   "max_task_chars",
+   "<class 'int'>"
+  ],
+  [
+   "z3_timeout_ms",
+   "<class 'int'>"
+  ],
+  [
+   "data_dir",
+   "<class 'pathlib.Path'>"
+  ],
+  [
+   "auto_tend",
+   "bool | None"
+  ],
+  [
+   "gateway_local_model",
+   "str | None"
+  ],
+  [
+   "gateway_router",
+   "<class 'str'>"
+  ],
+  [
+   "switchyard_route_id",
+   "<class 'str'>"
+  ],
+  [
+   "switchyard_capable_model",
+   "<class 'str'>"
+  ],
+  [
+   "switchyard_efficient_model",
+   "str | None"
+  ],
+  [
+   "switchyard_api_key_env",
+   "str | None"
+  ],
+  [
+   "shell_allow_decomposition",
+   "<class 'bool'>"
+  ],
+  [
+   "gate_mode",
+   "<class 'str'>"
+  ],
+  [
+   "gate_ask",
+   "<class 'bool'>"
+  ],
+  [
+   "verifier_client",
+   "<class 'str'>"
+  ],
+  [
+   "matcher_model",
+   "<class 'str'>"
+  ],
+  [
+   "llm_backend",
+   "str | None"
+  ],
+  [
+   "llm_base_url",
+   "str | None"
+  ],
+  [
+   "llm_host_kind",
+   "str | None"
+  ],
+  [
+   "llm_host_model",
+   "str | None"
+  ],
+  [
+   "llm_context_window",
+   "int | None"
+  ],
+  [
+   "envelope_source",
+   "<class 'str'>"
+  ],
+  [
+   "pathway_store_backend",
+   "<class 'str'>"
+  ],
+  [
+   "floor_report",
+   "str | None"
+  ],
+  [
+   "floor",
+   "<class 'opendaisugi.config.FloorConfig'>"
+  ],
+  [
+   "voice_engine",
+   "<class 'str'>"
+  ],
+  [
+   "voice_model",
+   "<class 'str'>"
+  ],
+  [
+   "voice_device",
+   "<class 'str'>"
+  ],
+  [
+   "voice_compute_type",
+   "<class 'str'>"
+  ],
+  [
+   "voice_cleanup",
+   "<class 'bool'>"
+  ],
+  [
+   "voice_cleanup_model",
+   "str | None"
+  ],
+  [
+   "voice_cleanup_base_url",
+   "str | None"
+  ],
+  [
+   "voice_server_url",
+   "<class 'str'>"
+  ]
+ ],
+ "floor": [
+  [
+   "backend",
+   "<class 'str'>"
+  ],
+  [
+   "notify_cmd",
+   "str | None"
+  ],
+  [
+   "tmux_socket",
+   "str | None"
+  ],
+  [
+   "coppice_socket",
+   "str | None"
+  ]
+ ]
+}

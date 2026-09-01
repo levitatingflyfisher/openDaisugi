@@ -15,7 +15,7 @@ whether you're fixing a mistake or unknowingly reopening a settled trade-off.
 | [0001](0001-fail-closed-default.md) | Fail-closed is the default posture | Accepted |
 | [0002](0002-z3-over-heuristics.md) | Z3 / SMT for verification, not heuristics | Accepted |
 | [0003](0003-envelope-as-contract.md) | The Envelope is a contract, not config | Accepted |
-| [0004](0004-layer-not-harness.md) | openDaisugi is a layer; MCP is the control pathway | Accepted |
+| [0004](0004-layer-not-harness.md) | openDaisugi is a layer; MCP is the control pathway | Superseded in part by ADR-0020 |
 | [0005](0005-python-runtime.md) | Stay on Python; Rust only for a profiled bottleneck | Accepted |
 | [0006](0006-claude-p-backend.md) | `claude -p` as a keyless LLM backend (stopgap) | Accepted |
 | [0007](0007-call-time-gate.md) | A call-time tool gate, shadow-by-default, beside plan verification | Accepted |
@@ -29,6 +29,10 @@ whether you're fixing a mistake or unknowingly reopening a settled trade-off.
 | [0015](0015-cache-aware-sticky-routing.md) | Cache-aware sticky routing, the local rung, and cache visibility | Accepted |
 | [0016](0016-evidence-inferred-onboarding-envelopes.md) | Onboarding envelopes are inferred from evidence, not generated from task text | Accepted |
 | [0017](0017-lazy-init-and-resident-gate.md) | Lazy package exports and a resident gate: the gate's cost was import, not Z3 | Accepted |
+| [0018](0018-configurable-matcher-backend.md) | A configurable, torch-free pathway-reuse embedder (potion) | Accepted |
+| [0019](0019-lexical-matcher-zero-model-floor.md) | The `lexical` matcher: a zero-model, zero-download floor | Accepted |
+| [0020](0020-layer-floor-loop.md) | The layer, the floor, and the loop | Accepted |
+| [0021](0021-int8-matcher.md) | The `int8` matcher: MiniLM without torch, through onnxruntime | Accepted |
 
 ## Writing a new one
 

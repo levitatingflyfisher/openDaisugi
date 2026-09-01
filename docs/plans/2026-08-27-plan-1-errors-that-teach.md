@@ -96,7 +96,7 @@ class _RetryExc(Exception):
     """Shape of instructor.core.exceptions.InstructorRetryException."""
 
     def __init__(self, attempts: list[_Attempt]) -> None:
-        super().__init__("<failed_attempts>\n<generation number=\"1\">...</failed_attempts>")
+        super().__init__('<failed_attempts>\n<generation number="1">...</failed_attempts>')
         self.failed_attempts = attempts
 
 
@@ -886,13 +886,27 @@ def test_fail_prints_three_lines_and_exits(capsys):
 
 
 def test_main_renders_opendaisugi_errors_without_a_traceback(tmp_path):
-    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+    }
     env["OPENDAISUGI_LLM_BACKEND"] = "litellm"
     env["HOME"] = str(tmp_path)
     proc = subprocess.run(
-        [sys.executable, "-m", "opendaisugi.cli", "orchestrate", "list three things",
-         "--data-dir", str(tmp_path / "d")],
-        capture_output=True, text=True, env=env, timeout=120,
+        [
+            sys.executable,
+            "-m",
+            "opendaisugi.cli",
+            "orchestrate",
+            "list three things",
+            "--data-dir",
+            str(tmp_path / "d"),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
     )
     assert proc.returncode == 1, proc.stderr
     assert "Traceback" not in proc.stderr
@@ -902,12 +916,26 @@ def test_main_renders_opendaisugi_errors_without_a_traceback(tmp_path):
 
 
 def test_debug_env_shows_the_traceback(tmp_path):
-    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+    }
     env.update({"OPENDAISUGI_LLM_BACKEND": "litellm", "HOME": str(tmp_path), "DAISUGI_DEBUG": "1"})
     proc = subprocess.run(
-        [sys.executable, "-m", "opendaisugi.cli", "orchestrate", "list three things",
-         "--data-dir", str(tmp_path / "d")],
-        capture_output=True, text=True, env=env, timeout=120,
+        [
+            sys.executable,
+            "-m",
+            "opendaisugi.cli",
+            "orchestrate",
+            "list three things",
+            "--data-dir",
+            str(tmp_path / "d"),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
     )
     assert proc.returncode != 0
     assert "Traceback" in proc.stderr
@@ -1063,12 +1091,22 @@ For each command, find every `typer.echo(<msg>, err=True)` followed by
 Wrap the file loads in `run` and `verify`:
 
 ```python
-    try:
-        plan_obj = ActionPlan(**yaml.safe_load(plan_path.read_text()))
-    except FileNotFoundError:
-        _fail(f"Tried to read the plan {plan_path}.", "The file does not exist.", "Check the path.", code=2)
-    except (yaml.YAMLError, ValueError) as e:
-        _fail(f"Tried to read the plan {plan_path}.", f"It did not parse: {str(e).splitlines()[0]}", "Fix the file and run again.", code=2)
+try:
+    plan_obj = ActionPlan(**yaml.safe_load(plan_path.read_text()))
+except FileNotFoundError:
+    _fail(
+        f"Tried to read the plan {plan_path}.",
+        "The file does not exist.",
+        "Check the path.",
+        code=2,
+    )
+except (yaml.YAMLError, ValueError) as e:
+    _fail(
+        f"Tried to read the plan {plan_path}.",
+        f"It did not parse: {str(e).splitlines()[0]}",
+        "Fix the file and run again.",
+        code=2,
+    )
 ```
 
 (Same for the envelope path.) Do not change exit codes: 2 stays "bad input or rejected".

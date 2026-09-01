@@ -11,6 +11,7 @@ use crate::subsumption;
 use crate::violation::Violation;
 use crate::z3_bridge::Vacuity;
 use crate::z3_checks;
+use crate::gate::py::text::{repr, repr_list};
 use serde_json::Value;
 use std::sync::OnceLock;
 
@@ -56,7 +57,10 @@ fn check_redirect_scopes(decomp: &Decomposition, step_id: &str, perms: &Permissi
             continue;
         }
         if !glob_engine::path_matches_any(path, &perms.file_write) {
-            out.push(Violation::step("permissions", step_id.to_string()));
+            out.push(Violation::step("permissions", step_id.to_string()).msg(format!(
+                "Step '{step_id}' shell redirect writes '{path}' outside file_write scope {}",
+                repr_list(&perms.file_write)
+            )));
         }
     }
     for path in &decomp.reads {
@@ -64,10 +68,22 @@ fn check_redirect_scopes(decomp: &Decomposition, step_id: &str, perms: &Permissi
             continue;
         }
         if !glob_engine::path_matches_any(path, &perms.file_read) {
-            out.push(Violation::step("permissions", step_id.to_string()));
+            out.push(Violation::step("permissions", step_id.to_string()).msg(format!(
+                "Step '{step_id}' shell redirect reads '{path}' outside file_read scope {}",
+                repr_list(&perms.file_read)
+            )));
         }
     }
     out
+}
+
+/// The suffix a message takes inside an interpreter payload.
+fn depth_note(depth: u32) -> String {
+    if depth > 0 {
+        format!(" (inside interpreter at depth {depth})")
+    } else {
+        String::new()
+    }
 }
 
 /// `_check_shell_command`.
@@ -80,7 +96,9 @@ fn check_shell_command(
     shell_parser: &mut ShellParser,
 ) -> Vec<Violation> {
     if depth > MAX_INTERPRETER_DEPTH {
-        return vec![Violation::step("permissions", step_id.to_string())];
+        return vec![Violation::step("permissions", step_id.to_string()).msg(format!(
+            "Step '{step_id}' interpreter recursion exceeded max depth {MAX_INTERPRETER_DEPTH}"
+        ))];
     }
     let stripped = command.trim();
     if stripped.is_empty() {
@@ -97,7 +115,10 @@ fn check_shell_command(
                 return violations;
             }
         }
-        return vec![Violation::step("permissions", step_id.to_string())];
+        return vec![Violation::step("permissions", step_id.to_string()).msg(format!(
+            "Step '{step_id}' shell command contains dangerous metacharacters (;, |, &, `, <, >, $(, newline){}",
+            depth_note(depth)
+        ))];
     }
     verify_simple_command(stripped, step_id, perms, policy, depth, shell_parser)
 }
@@ -120,7 +141,11 @@ fn verify_simple_command(
         None => return vec![],
     };
     if !glob_engine::head_allowed(&head, &perms.shell_allowlist) {
-        return vec![Violation::step("permissions", step_id.to_string())];
+        return vec![Violation::step("permissions", step_id.to_string()).msg(format!(
+            "Step '{step_id}' shell command '{head}' not in allowlist {}{}",
+            repr_list(&perms.shell_allowlist),
+            depth_note(depth)
+        ))];
     }
     let payload = match parse_interpreter(command) {
         Some(p) => p,
@@ -128,7 +153,11 @@ fn verify_simple_command(
     };
     if payload.opaque {
         if policy == "strict" {
-            return vec![Violation::step("permissions", step_id.to_string())];
+            return vec![Violation::step("permissions", step_id.to_string()).msg(format!(
+                "Step '{step_id}' invokes opaque interpreter '{}' whose payload cannot be recursively verified \
+                 (strict shell_interpreter_policy rejects)",
+                payload.head
+            ))];
         }
         return vec![];
     }
@@ -168,19 +197,31 @@ fn check_agentic_step(step: &Step, perms: &Permission) -> Vec<Violation> {
         _ => return vec![],
     };
     let mut out = Vec::new();
+    let id = &step.id;
     if tools.is_empty() {
-        out.push(Violation::step("permissions", step.id.clone()));
+        out.push(Violation::step("permissions", id.clone()).msg(format!(
+            "Step '{id}' is agentic but requests no tools \u{2014} a tool-less delegated subtask is a TaskStep \
+             (pure reasoning); use that instead"
+        )));
         return out;
     }
     if !glob_engine::path_matches_any(workspace, &perms.file_read) {
-        out.push(Violation::step("permissions", step.id.clone()));
+        out.push(Violation::step("permissions", id.clone()).msg(format!(
+            "Step '{id}' agentic workspace '{workspace}' is not inside the envelope's file_read globs {} \u{2014} a \
+             sub-agent must be able to read its own working directory",
+            repr_list(&perms.file_read)
+        )));
     }
     for tool in tools {
         match AGENTIC_TOOL_CAPABILITIES.iter().find(|(n, _)| n == tool) {
-            None => out.push(Violation::step("permissions", step.id.clone())),
+            None => out.push(Violation::step("permissions", id.clone()).msg(format!(
+                "Step '{id}' requests host tool '{tool}' which has no capability mapping \u{2014} denied by default"
+            ))),
             Some((_, cap)) => {
                 if !capability_granted(perms, cap) {
-                    out.push(Violation::step("permissions", step.id.clone()));
+                    out.push(Violation::step("permissions", id.clone()).msg(format!(
+                        "Step '{id}' requests host tool '{tool}' but the envelope grants no {cap} capability"
+                    )));
                 }
             }
         }
@@ -233,43 +274,69 @@ pub fn check_permissions(plan: &ActionPlan, env: &Envelope, strict: bool, shell_
         match &step.kind {
             StepKind::Shell { command } => {
                 if !perms.shell {
-                    out.push(Violation::step("permissions", step.id.clone()));
+                    out.push(
+                        Violation::step("permissions", step.id.clone())
+                            .msg(format!("Step '{}' requires shell but envelope forbids it", step.id)),
+                    );
                     continue;
                 }
                 out.extend(check_shell_command(command, &step.id, perms, &env.shell_interpreter_policy, 0, shell_parser));
             }
             StepKind::Network { url } => {
                 if !perms.network {
-                    out.push(Violation::step("permissions", step.id.clone()));
+                    out.push(
+                        Violation::step("permissions", step.id.clone())
+                            .msg(format!("Step '{}' requires network but envelope forbids it", step.id)),
+                    );
                     continue;
                 }
                 let (scheme, host) = parse_url_scheme_host(url);
                 if scheme != "http" && scheme != "https" {
-                    out.push(Violation::step("permissions", step.id.clone()));
+                    out.push(Violation::step("permissions", step.id.clone()).msg(format!(
+                        "Step '{}' network URL scheme '{scheme}' not allowed (only http/https); got {}",
+                        step.id,
+                        repr(url)
+                    )));
                     continue;
                 }
                 if !perms.network_hosts.is_empty() {
                     let allowed: std::collections::HashSet<String> =
                         perms.network_hosts.iter().map(|h| h.to_lowercase()).collect();
                     if !allowed.contains(&host) {
-                        out.push(Violation::step("permissions", step.id.clone()));
+                        out.push(Violation::step("permissions", step.id.clone()).msg(format!(
+                            "Step '{}' network host '{host}' not in network_hosts allowlist {}",
+                            step.id,
+                            repr_list(&perms.network_hosts)
+                        )));
                     }
                 }
             }
             StepKind::FileRead { path } => {
                 if !glob_engine::path_matches_any(path, &perms.file_read) {
-                    out.push(Violation::step("permissions", step.id.clone()));
+                    out.push(Violation::step("permissions", step.id.clone()).msg(format!(
+                        "Step '{}' file_read path '{path}' not permitted by file_read {}",
+                        step.id,
+                        repr_list(&perms.file_read)
+                    )));
                 }
             }
             StepKind::FileWrite { path } => {
                 if !glob_engine::path_matches_any(path, &perms.file_write) {
-                    out.push(Violation::step("permissions", step.id.clone()));
+                    out.push(Violation::step("permissions", step.id.clone()).msg(format!(
+                        "Step '{}' file_write path '{path}' not permitted by file_write {}",
+                        step.id,
+                        repr_list(&perms.file_write)
+                    )));
                 }
             }
             StepKind::Mcp { server, tool } => {
                 let key = format!("{server}/{tool}");
                 if !glob_engine::head_allowed(&key, &perms.mcp_allowlist) {
-                    out.push(Violation::step("permissions", step.id.clone()));
+                    out.push(Violation::step("permissions", step.id.clone()).msg(format!(
+                        "Step '{}' MCP tool '{key}' not in mcp_allowlist {}",
+                        step.id,
+                        repr_list(&perms.mcp_allowlist)
+                    )));
                 }
             }
             StepKind::Agentic { .. } => {
@@ -280,7 +347,11 @@ pub fn check_permissions(plan: &ActionPlan, env: &Envelope, strict: bool, shell_
                     && !models::KNOWN_STEP_TYPES.contains(&step.step_type.as_str())
                     && !perms.custom_step_allowlist.iter().any(|c| c == &step.step_type)
                 {
-                    out.push(Violation::step("permissions", step.id.clone()));
+                    out.push(Violation::step("permissions", step.id.clone()).msg(format!(
+                        "Step '{}' has unverifiable step type '{}' (no permission surface or handler); rejected \
+                         under strict mode",
+                        step.id, step.step_type
+                    )));
                 }
             }
         }
@@ -296,34 +367,74 @@ pub fn check_delegation_safety(plan: &ActionPlan, env: &Envelope) -> Vec<Violati
     let mut out = Vec::new();
     for step in &plan.steps {
         if step.step_type == "agentic" {
-            out.push(Violation::step("permissions", step.id.clone()));
+            out.push(Violation::step("permissions", step.id.clone()).msg(format!(
+                "Step '{}' is an agentic delegation but envelope stakes='physical'; physical-stakes plans cannot be \
+                 LLM-delegated",
+                step.id
+            )));
             continue;
         }
-        if step.preferred_model.as_deref().is_some_and(|m| !m.is_empty()) {
-            out.push(Violation::step("permissions", step.id.clone()));
+        if let Some(m) = step.preferred_model.as_deref().filter(|m| !m.is_empty()) {
+            out.push(Violation::step("permissions", step.id.clone()).msg(format!(
+                "Step '{}' requests delegation to '{m}' but envelope stakes='physical'; physical-stakes plans \
+                 cannot be LLM-delegated",
+                step.id
+            )));
         }
     }
     out
 }
 
 /// `check_skill_delegations` — Stage 1b.
-pub fn check_skill_delegations(plan: &ActionPlan, env: &Envelope, strict: bool) -> Result<Vec<Violation>, String> {
+///
+/// With `timeouts` (the Z3 timeout in ms and where to keep the texts), a
+/// subsumption check that answers unknown is a timeout, as the oracle's
+/// `VerificationTimeout`: its text is kept, and under strict mode or
+/// physical stakes it is also a violation. Without it, an unknown is a
+/// refused delegation, which fails closed.
+pub fn check_skill_delegations(
+    plan: &ActionPlan,
+    env: &Envelope,
+    strict: bool,
+    mut timeouts: Option<(u32, &mut Vec<String>)>,
+) -> Result<Vec<Violation>, String> {
     let mut out = Vec::new();
     for step in &plan.steps {
-        let contract_env = match &step.kind {
-            StepKind::Skill { contract_envelope, .. } => contract_envelope,
+        let (skill_id, contract_env) = match &step.kind {
+            StepKind::Skill { skill_id, contract_envelope } => (skill_id, contract_envelope),
             _ => continue,
         };
         match contract_env {
             None => {
                 if strict {
-                    out.push(Violation::step("delegation", step.id.clone()));
+                    out.push(Violation::step("delegation", step.id.clone()).msg(format!(
+                        "Step '{}' invokes opaque skill '{skill_id}' with no contract_envelope; delegation cannot \
+                         be proved subsumed (strict mode rejects)",
+                        step.id
+                    )));
                 }
             }
             Some(inner_env) => {
-                let sub = subsumption::envelope_subsumes(env, inner_env, strict)?;
+                let limit = timeouts.as_ref().map(|(ms, _)| *ms);
+                let sub = subsumption::envelope_subsumes(env, inner_env, strict, limit)?;
+                if let (true, Some((ms, texts))) = (sub.unknown, timeouts.as_mut()) {
+                    if strict || env.stakes == "physical" {
+                        out.push(
+                            Violation::step("delegation", step.id.clone())
+                                .msg("verifier timed out (skill-delegation subsumption); raise the Z3 timeout"),
+                        );
+                    }
+                    texts.push(format!("Z3 subsumption check exceeded {ms}ms"));
+                    continue;
+                }
                 if !sub.holds {
-                    out.push(Violation::step("delegation", step.id.clone()));
+                    // The oracle names Z3's counterexample; this port proves
+                    // the same verdict and words its own reason.
+                    out.push(Violation::step("delegation", step.id.clone()).msg(format!(
+                        "Step '{}' skill '{skill_id}' delegation refused: the caller's envelope does not subsume \
+                         the skill's contract_envelope",
+                        step.id
+                    )));
                 }
             }
         }
@@ -388,7 +499,7 @@ fn check_predicate_item(
         return Ok(vec![Violation::plan("predicate")]);
     }
 
-    let vacuity = crate::z3_bridge::check_vacuity(&expr);
+    let vacuity = crate::z3_bridge::check_vacuity_exact(expr_value)?;
     if vacuity == Vacuity::Contradiction {
         return Ok(vec![Violation::plan("predicate")]);
     }
@@ -462,7 +573,7 @@ pub fn verify(
         return Ok(VerifyOutcome { ok: false, violations });
     }
 
-    violations.extend(check_skill_delegations(plan, env, effective_strict)?);
+    violations.extend(check_skill_delegations(plan, env, effective_strict, None)?);
     if !violations.is_empty() {
         return Ok(VerifyOutcome { ok: false, violations });
     }

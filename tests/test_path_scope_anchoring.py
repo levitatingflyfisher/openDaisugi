@@ -19,11 +19,14 @@ def test_relative_glob_does_not_admit_absolute_path():
 
 def test_authored_envelope_rejects_absolute_escape_end_to_end():
     env = Envelope(
-        generated_by="human-authored", task="write a local file", stakes="low",
+        generated_by="human-authored",
+        task="write a local file",
+        stakes="low",
         permissions=Permission(file_write=["out.txt"]),
     )
     plan = ActionPlan(
-        source="test", task="t",
+        source="test",
+        task="t",
         steps=[FileWriteStep(id="s1", path="/etc/cron.d/out.txt", content="evil")],
     )
     result = verify(plan, env)
@@ -32,7 +35,7 @@ def test_authored_envelope_rejects_absolute_escape_end_to_end():
 
 
 def test_star_stays_within_one_segment():
-    assert _path_matches_any("x.py", ["*.py"])          # single segment: matches
+    assert _path_matches_any("x.py", ["*.py"])  # single segment: matches
     assert not _path_matches_any("sub/x.py", ["*.py"])  # * does not cross '/'
 
 
@@ -41,6 +44,6 @@ def test_legitimate_scopes_still_match():
     assert _path_matches_any("notes.md", ["./**"])
     assert _path_matches_any("out.txt", ["out.txt"])
     assert _path_matches_any("/tmp/x", ["/tmp/**"])
-    assert _path_matches_any("/etc/passwd", ["/**"])       # root everything
+    assert _path_matches_any("/etc/passwd", ["/**"])  # root everything
     assert _path_matches_any("a/b/c/x.py", ["a/**/x.py"])  # ** spans segments
     assert not _path_matches_any("out/sub/x.txt", ["out/*"])

@@ -338,6 +338,7 @@ def test_parse_splits_large_episode_with_llm():
     The mock returns a single subtask covering every tool in the incoming
     batch so no steps are silently dropped.
     """
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
 
     def fake_completion(*args, **kwargs):
         user_msg = kwargs["messages"][1]["content"]
@@ -370,6 +371,7 @@ def test_parse_splits_large_episode_with_llm():
 
 def test_parse_keeps_episode_when_llm_returns_empty_subtasks():
     """If the LLM returns no subtasks, the original episode is kept intact."""
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
     fake_response = MagicMock()
     fake_response.choices = [MagicMock(message=MagicMock(content='{"subtasks": []}'))]
     with patch("opendaisugi.parsers.claude_code.litellm") as mock_litellm:
@@ -430,6 +432,7 @@ def test_validate_boundaries_rejects_missing_keys():
 
 def test_parse_falls_back_on_gapped_llm_boundaries():
     """LLM returns non-contiguous boundaries -> episode kept unsplit, no data loss."""
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
 
     def fake_completion(*args, **kwargs):
         content = _json.dumps(
@@ -455,6 +458,7 @@ def test_parse_falls_back_on_gapped_llm_boundaries():
 
 def test_split_sub_episodes_have_distinct_source_ranges():
     """After LLM split, each sub-episode carries step_start/step_end."""
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
 
     def fake_completion(*args, **kwargs):
         user_msg = kwargs["messages"][1]["content"]

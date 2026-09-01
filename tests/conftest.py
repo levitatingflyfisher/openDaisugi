@@ -17,6 +17,22 @@ from opendaisugi.models import (
 MJCF_TWO_JOINT_ARM = Path(__file__).parent / "fixtures" / "mjcf" / "two_joint_arm.xml"
 
 
+def pytest_collection_modifyitems(config, items):
+    """Skip every voice_live test unless DAISUGI_VOICE_LIVE=1 is set.
+
+    A voice_live test transcribes with a real speech-to-text engine. It
+    must never run by accident, from any test path, in a normal test pass.
+    This lives at the root so the skip applies no matter which directory
+    pytest is pointed at, not only inside tests/voice.
+    """
+    if os.environ.get("DAISUGI_VOICE_LIVE") == "1":
+        return
+    skip_live = pytest.mark.skip(reason="set DAISUGI_VOICE_LIVE=1 to run voice_live tests")
+    for item in items:
+        if "voice_live" in item.keywords:
+            item.add_marker(skip_live)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_default_data_dir(tmp_path_factory, monkeypatch):
     """Redirect the default data dir to a per-test tmp dir for every test.
@@ -58,6 +74,19 @@ def _isolate_llm_backend_env():
             os.environ.pop("OPENDAISUGI_LLM_BACKEND", None)
         else:
             os.environ["OPENDAISUGI_LLM_BACKEND"] = before
+
+
+@pytest.fixture(autouse=True)
+def _clear_floor_pane_env(monkeypatch):
+    """Whole-branch review, minor 4: opendaisugi._state_report.report_state
+    defaults its ``env`` parameter to ``os.environ`` — if this very
+    session is itself running inside a coppice pane or a Herdr pane, these
+    four vars would already be set in the real environment, and any test
+    exercising the default-env path would silently reach a real socket or
+    binary instead of the test's own fixtures. Cleared before every test.
+    """
+    for var in ("COPPICE_SOCK", "COPPICE_PANE", "HERDR_PANE_ID", "HERDR_PANE"):
+        monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture

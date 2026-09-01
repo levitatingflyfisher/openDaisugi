@@ -277,3 +277,21 @@ def test_invalidate_removes_entry_and_returns_true(tmp_path):
 def test_invalidate_returns_false_for_missing_key(tmp_path):
     cache = EnvelopeCache(tmp_path / "cache.db", prompt_version="v1")
     assert cache.invalidate("nonexistent_key") is False
+
+
+def test_a_non_finite_row_is_refused_not_read_as_no_limit(tmp_path):
+    """GD-16 at the model level: a cached envelope whose stored text holds
+    NaN raises on read, so generation fails closed instead of adopting it."""
+    import sqlite3
+
+    import pytest
+    from pydantic import ValidationError
+
+    cache = EnvelopeCache(tmp_path / "cache.db", prompt_version="v1")
+    env = _envelope()
+    env.permissions.velocity_limit = 1.5
+    cache.put(env, **_key_args())
+    with sqlite3.connect(tmp_path / "cache.db") as con:
+        con.execute("UPDATE envelope_cache SET envelope_json = replace(envelope_json, '1.5', 'NaN')")
+    with pytest.raises(ValidationError, match="finite_number"):
+        cache.get(**_key_args())

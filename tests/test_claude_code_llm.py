@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import asyncio
 import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -164,12 +165,10 @@ async def test_call_structured_raises_on_validation_failure():
 @pytest.mark.asyncio
 async def test_instructor_shim_matches_signature():
     mock_proc = MagicMock()
-    mock_proc.communicate = AsyncMock(return_value=(b'{"a": 1, "b": "x"}', b""))
+    mock_proc.communicate = AsyncMock(return_value=(_envelope(b'{"a": 1, "b": "x"}'), b""))
     mock_proc.returncode = 0
-    with patch(
-        "opendaisugi.claude_code_llm.asyncio.create_subprocess_exec",
-        AsyncMock(return_value=mock_proc),
-    ):
+    spawn = AsyncMock(return_value=mock_proc)
+    with patch("opendaisugi.claude_code_llm.asyncio.create_subprocess_exec", spawn):
         client = ClaudeCodeInstructorClient()
         result = await client.chat.completions.create(
             model="haiku",
@@ -180,6 +179,7 @@ async def test_instructor_shim_matches_signature():
             ],
         )
     assert result == _Toy(a=1, b="x")
+    assert spawn.await_args.args[-2:] == ("--output-format", "json")
 
 
 @pytest.mark.asyncio
@@ -441,3 +441,165 @@ async def test_async_huge_prompt_rides_stdin_not_argv(tmp_path):
         _HUGE_PROMPT, binary=_echo_stdin_stub(tmp_path), model=None, timeout_s=15
     )
     assert out == _HUGE_PROMPT
+
+
+def _envelope(text: bytes, *, is_error: bool = False) -> bytes:
+    """The reply as `claude -p --output-format json` wraps it."""
+    return json.dumps({"type": "result", "is_error": is_error, "result": text.decode()}).encode()
+
+
+def _proc(stdout: bytes) -> MagicMock:
+    proc = MagicMock()
+    proc.communicate = AsyncMock(return_value=(stdout, b""))
+    proc.returncode = 0
+    return proc
+
+
+@pytest.mark.asyncio
+async def test_call_structured_accepts_a_python_dict_literal():
+    with patch(
+        "opendaisugi.claude_code_llm.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=_proc(b"{'a': 7, 'b': 'hi'}")),
+    ):
+        out = await call_claude_p_structured("prompt", _Toy, timeout_s=5.0)
+    assert out == _Toy(a=7, b="hi")
+
+
+@pytest.mark.asyncio
+async def test_call_structured_still_refuses_prose():
+    with patch(
+        "opendaisugi.claude_code_llm.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=_proc(b"{a: __import__('os')}")),
+    ):
+        with pytest.raises(EnvelopeGenerationError, match="not valid JSON"):
+            await call_claude_p_structured("prompt", _Toy, timeout_s=5.0)
+
+
+@pytest.mark.asyncio
+async def test_instructor_shim_retries_a_bad_reply_with_the_error():
+    bad, good = _proc(_envelope(b'{"a": "x", "b": "hi"}')), _proc(_envelope(b'{"a": 3, "b": "hi"}'))
+    spawn = AsyncMock(side_effect=[bad, good])
+    with patch("opendaisugi.claude_code_llm.asyncio.create_subprocess_exec", spawn):
+        client = ClaudeCodeInstructorClient()
+        out = await client.chat.completions.create(
+            model="haiku",
+            messages=[{"role": "user", "content": "go"}],
+            response_model=_Toy,
+            max_retries=2,
+        )
+    assert out == _Toy(a=3, b="hi")
+    assert spawn.await_count == 2
+    retry_prompt = good.communicate.await_args.kwargs["input"].decode()
+    assert "_Toy validation" in retry_prompt
+    assert "go" in retry_prompt
+
+
+@pytest.mark.asyncio
+async def test_instructor_shim_stops_after_max_retries():
+    spawn = AsyncMock(side_effect=[_proc(_envelope(b"no json here")) for _ in range(5)])
+    with patch("opendaisugi.claude_code_llm.asyncio.create_subprocess_exec", spawn):
+        client = ClaudeCodeInstructorClient()
+        with pytest.raises(EnvelopeGenerationError):
+            await client.chat.completions.create(
+                model="haiku",
+                messages=[{"role": "user", "content": "go"}],
+                response_model=_Toy,
+                max_retries=2,
+            )
+    assert spawn.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_instructor_shim_does_not_reask_an_is_error_reply():
+    spawn = AsyncMock(side_effect=[_proc(_envelope(b"overloaded", is_error=True)) for _ in range(3)])
+    with patch("opendaisugi.claude_code_llm.asyncio.create_subprocess_exec", spawn):
+        client = ClaudeCodeInstructorClient()
+        with pytest.raises(EnvelopeGenerationError, match="is_error"):
+            await client.chat.completions.create(
+                model="haiku",
+                messages=[{"role": "user", "content": "go"}],
+                response_model=_Toy,
+                max_retries=2,
+            )
+    assert spawn.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_instructor_shim_refuses_stdout_that_is_not_the_envelope():
+    for out in (b'{"a": 1, "b": "x"}', b"plain text", b'{"type": "result", "result": 5}'):
+        spawn = AsyncMock(return_value=_proc(out))
+        with patch("opendaisugi.claude_code_llm.asyncio.create_subprocess_exec", spawn):
+            client = ClaudeCodeInstructorClient()
+            with pytest.raises(EnvelopeGenerationError, match="envelope"):
+                await client.chat.completions.create(
+                    model="haiku",
+                    messages=[{"role": "user", "content": "go"}],
+                    response_model=_Toy,
+                    max_retries=2,
+                )
+        assert spawn.await_count == 1
+
+
+# GD-16: NaN, Infinity or -Infinity anywhere in a model reply's numbers is
+# schema-invalid, and takes the schema-invalid path (a re-ask, then the error).
+_NAN_ENVELOPE_ERROR = (
+    "claude -p output failed Envelope validation: 2 validation errors for Envelope\n"
+    "permissions.velocity_limit\n"
+    "  Input should be a finite number [type=finite_number, input_value=nan, input_type=float]\n"
+    "    For further information visit https://errors.pydantic.dev/2.13/v/finite_number\n"
+    "permissions.torque_limit\n"
+    "  Input should be a finite number [type=finite_number, input_value=-inf, input_type=float]\n"
+    "    For further information visit https://errors.pydantic.dev/2.13/v/finite_number"
+)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"task": "t", "generated_by": "g", "permissions": '
+        '{"velocity_limit": NaN, "torque_limit": -Infinity}}',
+        # a number too large for a float reads as an infinity
+        '{"task": "t", "generated_by": "g", "permissions": '
+        '{"velocity_limit": NaN, "torque_limit": -1e999}}',
+    ],
+)
+def test_parse_structured_refuses_a_non_finite_number(text):
+    from opendaisugi.claude_code_llm import _parse_structured
+    from opendaisugi.models import Envelope
+
+    with pytest.raises(EnvelopeGenerationError) as exc:
+        _parse_structured(text, Envelope)
+    assert str(exc.value) == _NAN_ENVELOPE_ERROR
+
+
+def test_parse_structured_refuses_a_non_finite_number_in_any_typed_data():
+    from opendaisugi.claude_code_llm import _parse_structured
+    from opendaisugi.models import ActionPlan
+
+    text = (
+        '{"source": "s", "task": "t", "steps": [{"id": "a", "type": "shell", '
+        '"command": "ls", "metadata": {"n": [1, Infinity]}}]}'
+    )
+    with pytest.raises(EnvelopeGenerationError) as exc:
+        _parse_structured(text, ActionPlan)
+    assert "steps.0.metadata.n.1\n  Input should be a finite number" in str(exc.value)
+    assert "input_value=inf, input_type=float" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_instructor_shim_reasks_a_non_finite_reply():
+    from opendaisugi.models import Envelope
+
+    bad = _proc(_envelope(b'{"task": "t", "generated_by": "g", "permissions": {"velocity_limit": NaN}}'))
+    good = _proc(_envelope(b'{"task": "t", "generated_by": "g", "permissions": {"velocity_limit": 2.5}}'))
+    spawn = AsyncMock(side_effect=[bad, good])
+    with patch("opendaisugi.claude_code_llm.asyncio.create_subprocess_exec", spawn):
+        out = await ClaudeCodeInstructorClient().chat.completions.create(
+            model="haiku",
+            messages=[{"role": "user", "content": "go"}],
+            response_model=Envelope,
+            max_retries=1,
+        )
+    assert out.permissions.velocity_limit == 2.5
+    retry_prompt = good.communicate.await_args.kwargs["input"].decode()
+    assert "Input should be a finite number [type=finite_number, input_value=nan" in retry_prompt

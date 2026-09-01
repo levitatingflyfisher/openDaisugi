@@ -1,0 +1,31 @@
+%begin 1790154085 286 0
+%end 1790154085 286 0
+%session-changed $0 main
+%begin 1790154085 291 1
+%end 1790154085 291 1
+%begin 1790154085 292 1
+@0	tmux	
+%end 1790154085 292 1
+%begin 1790154085 293 1
+@1
+%end 1790154085 293 1
+%begin 1790154085 294 1
+132x43
+%end 1790154085 294 1
+%window-add @1
+%begin 1790154086 296 1
+%end 1790154086 296 1
+%begin 1790154086 297 1
+@0	tmux	
+@1	b'x;y#z	w1:p1
+%end 1790154086 297 1
+%begin 1790154086 298 1
+%end 1790154086 298 1
+%begin 1790154086 299 1
+%end 1790154086 299 1
+%begin 1790154086 300 1
+parse error: unknown command: no-such-command
+%error 1790154086 300 1
+%unlinked-window-renamed @1 docs
+%unlinked-window-close @1
+%exit

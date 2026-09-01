@@ -1,0 +1,98 @@
+[
+ {
+  "match": "agent view|claude code",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "Roster grouped by whether you are needed. Space peeks, Enter attaches, the count sits in the tab title."
+ },
+ {
+  "match": "codex",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "Positioned as a command center for agents. The thread and worktree details did not survive verification."
+ },
+ {
+  "match": "symphony",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "Linear issues as the control plane. Exists because three to five live sessions is the human ceiling."
+ },
+ {
+  "match": "devin",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "The unit of work sits above the pane. One worktree per unit."
+ },
+ {
+  "match": "cursor",
+  "verdict": "unverified",
+  "label": "unverified",
+  "note": "Agents window and inbox. Field note only."
+ },
+ {
+  "match": "antigravity",
+  "verdict": "unverified",
+  "label": "unverified",
+  "note": "Inbox and agent manager. The manager surface claim was refuted."
+ },
+ {
+  "match": "jetbrains",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "A registry of agents that speak the protocol."
+ },
+ {
+  "match": "agent client protocol|acp|zed",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "JSON-RPC over stdio. An agent is a command and its args. The only multi-vendor swappable-frontend protocol."
+ },
+ {
+  "match": "cmux",
+  "verdict": "watch",
+  "label": "competitor",
+  "note": "Ghostty inside, vertical tabs per branch, a ring that lights when an agent needs you, a phone mirror. The closest shape to coppice on a Mac."
+ },
+ {
+  "match": "herdr",
+  "verdict": "watch",
+  "label": "competitor",
+  "note": "The one to match. Rust, ratatui, real PTYs, hooks for state, a phone client. coppice reaches parity, then goes quieter."
+ },
+ {
+  "match": "vibe kanban",
+  "verdict": "avoid",
+  "label": "avoid",
+  "note": "Shut down 2026-04-10 with about thirty thousand monthly users. The kanban layer is the part that died."
+ },
+ {
+  "match": "agentcraft|vibecraft",
+  "verdict": "unverified",
+  "label": "unproven",
+  "note": "An RTS canvas shipped. No adoption evidence either way."
+ },
+ {
+  "match": "lazybox",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "lazygit shape. A worktree and a PTY per row. One key jumps to the one waiting on you."
+ },
+ {
+  "match": "gas ?town",
+  "verdict": "avoid",
+  "label": "avoid",
+  "note": "A vocabulary to learn, orphaned processes, and skip-permissions required. Its one durable idea is a single agent you talk to."
+ },
+ {
+  "match": "claude squad|ccmanager|crystal|nimbalyst|conductor|superset|terragon|multica|paperclip",
+  "verdict": "unverified",
+  "label": "unverified",
+  "note": "Field note only. Nothing survived verification."
+ },
+ {
+  "match": "plait",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "Local files follow the worktree, a watcher that fixes conflicts and red CI, auto-named work, review a PR locally. See docs/research/plait-2026-09-23.md."
+ }
+]

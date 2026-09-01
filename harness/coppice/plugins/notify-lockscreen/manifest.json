@@ -1,0 +1,10 @@
+{
+  "id": "notify-lockscreen",
+  "kind": "policy",
+  "title": "Lock screen card",
+  "about": "It posts an ntfy card with a Look button. The built-in publisher is the one that carries Deny.",
+  "run": "notify-lockscreen.py",
+  "listens": ["state"],
+  "needs": ["pane.list"],
+  "config": {"url": "", "topic": "", "token_env": "", "click_base": ""}
+}

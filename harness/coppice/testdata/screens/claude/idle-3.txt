@@ -1,0 +1,9 @@
+#rule: live_prompt_box
+⏺ The theme picker says:
+  Let's get started.
+  Choose the text style that looks best with your terminal
+  ❯ 1. Dark mode ✔
+────────────────────
+❯ 
+────────────────────
+  ? for shortcuts

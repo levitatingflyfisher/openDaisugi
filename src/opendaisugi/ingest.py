@@ -19,7 +19,9 @@ class EpisodeResult:
 
     episode_id: str
     task: str
-    status: str  # "OK", "FAIL", "SKIP", "TOO-LARGE", "ERROR" (dry-run previews OK/FAIL, logs nothing)
+    status: (
+        str  # "OK", "FAIL", "SKIP", "TOO-LARGE", "ERROR" (dry-run previews OK/FAIL, logs nothing)
+    )
     steps: int = 0
     violations: int = 0
     error: str | None = None
@@ -80,9 +82,7 @@ def _records_for_steps(steps: list) -> list[dict]:
         elif kind == "network":
             records.append({"step_type": "network", "url": step.url})
         elif kind == "mcp":
-            records.append(
-                {"step_type": "mcp", "mcp_server": step.server, "mcp_tool": step.tool}
-            )
+            records.append({"step_type": "mcp", "mcp_server": step.server, "mcp_tool": step.tool})
     return records
 
 

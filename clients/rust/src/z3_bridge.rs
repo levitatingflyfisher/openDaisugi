@@ -25,8 +25,6 @@
 use crate::predicate::Expr;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::Write;
-use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sort {
@@ -232,19 +230,8 @@ fn declare_block(scope: &Scope) -> String {
 /// simple and correctness-first; the corpus only needs a few dozen Z3
 /// round trips total (see `README.md`).
 fn run_z3_script(script: &str) -> Result<Vec<String>, String> {
-    let mut child = Command::new("z3")
-        .arg("-in")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("failed to spawn z3: {e}"))?;
-    {
-        let stdin = child.stdin.as_mut().ok_or("z3: no stdin handle")?;
-        stdin.write_all(script.as_bytes()).map_err(|e| e.to_string())?;
-    }
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    // The linked Z3 (5.1.0, the oracle's), not a z3 binary on PATH.
+    let text = crate::z3py::eval_smtlib2(script).map_err(|e| e.0)?;
     Ok(text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
 }
 
@@ -253,6 +240,21 @@ pub enum Vacuity {
     Contradiction,
     Tautology,
     NonTrivial,
+}
+
+/// `vacuity.check_vacuity` of a raw expr dict, exactly: the gate's
+/// tagged-union parse, the regex_to_z3 translation over the port of
+/// Python's re, and the linked Z3. An error names a pattern the port does
+/// not decide (see gate::predicate).
+pub fn check_vacuity_exact(raw: &Value) -> Result<Vacuity, String> {
+    use crate::gate::predicate::{vacuity_of, Vac};
+    let v = crate::gate::pyjson::from_serde(raw);
+    match vacuity_of(&v) {
+        Ok(Vac::Contradiction) => Ok(Vacuity::Contradiction),
+        Ok(Vac::Tautology) => Ok(Vacuity::Tautology),
+        Ok(Vac::NonTrivial) => Ok(Vacuity::NonTrivial),
+        Err(why) => Err(why),
+    }
 }
 
 /// `check_vacuity` — strips one outer quantifier (`ForallSteps`/

@@ -59,6 +59,54 @@ func TestDaisugiGateNoCommandFailsClosed(t *testing.T) {
 	}
 }
 
+// DefaultGateCmd is what every sprig entry point (cli.go and each cmd/
+// binary: grove, sprig-hook, sprig-mcp, weave) uses as its --gate-cmd
+// default. There is no Python fallback: it always names the Go daisugi
+// CLI's own gate.
+func TestDefaultGateCmdIsDaisugiGateCheckEnforce(t *testing.T) {
+	got := DefaultGateCmd()
+	want := "daisugi gate check --mode enforce"
+	if got != want {
+		t.Fatalf("DefaultGateCmd() = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "python") {
+		t.Fatalf("DefaultGateCmd() must never name python: %q", got)
+	}
+}
+
+// When the default's bare "daisugi" does not resolve on PATH, the denial
+// must say so plainly and point at how to install it, not surface a raw
+// exec error. A custom PATH (an empty temp dir) stands in for "not
+// installed" without touching the real PATH or the real daisugi.
+func TestDaisugiGateNamesDaisugiWhenMissingFromPath(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	g := DaisugiGate{Command: strings.Fields(DefaultGateCmd()), Timeout: time.Second}
+	v := g.Check(ToolCall{Name: "bash", Input: map[string]any{"cmd": "ls"}})
+	if v.Allow {
+		t.Fatal("a missing daisugi binary must fail closed (deny)")
+	}
+	want := "daisugi is not on PATH, so every tool call is denied. " +
+		"Install it: scripts/install.sh, or see the README quick start."
+	if v.Reason != want {
+		t.Fatalf("reason = %q, want %q", v.Reason, want)
+	}
+}
+
+// A missing command that is NOT the bare "daisugi" name (a path, or a
+// custom --gate-cmd override naming some other binary) keeps the generic
+// fail-closed reason — the specific daisugi message must not leak onto an
+// unrelated missing command.
+func TestDaisugiGateMissingOtherCommandKeepsGenericReason(t *testing.T) {
+	g := DaisugiGate{Command: []string{"/no/such/gate/binary"}, Timeout: time.Second}
+	v := g.Check(ToolCall{Name: "bash"})
+	if v.Allow {
+		t.Fatal("a missing gate must fail closed (deny)")
+	}
+	if strings.Contains(v.Reason, "daisugi is not on PATH") {
+		t.Fatalf("a non-daisugi missing command must not get the daisugi-specific reason: %q", v.Reason)
+	}
+}
+
 func TestGateReasonStripsImportNoise(t *testing.T) {
 	// `python -m opendaisugi.gate` prints a RuntimeWarning before its verdict; the
 	// model should see the verdict, not the noise.
@@ -105,5 +153,39 @@ func TestDaisugiGateSendsTranslatedToolNameToTheEnvelope(t *testing.T) {
 	g := DaisugiGate{Command: []string{stub(t, `grep -q '"tool_name":"Write"' && exit 0 || exit 1`)}, Timeout: 2 * time.Second}
 	if v := g.Check(ToolCall{Name: "write", Input: map[string]any{"path": "/tmp/x"}}); !v.Allow {
 		t.Fatalf("sprig 'write' must reach the gate as 'Write', got %+v", v)
+	}
+}
+
+// The gate places a relative path from the call's working directory, so
+// every payload names sprig's own. The stub allows only when stdin
+// carries the absolute cwd.
+func TestDaisugiGateSendsItsWorkingDirectory(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "payload.json")
+	g := DaisugiGate{Command: []string{stub(t, "cat > "+out)}, Timeout: 2 * time.Second}
+	if v := g.Check(ToolCall{Name: "write", Input: map[string]any{"path": "fizz.py"}}); !v.Allow {
+		t.Fatalf("stub gate should allow, got %+v", v)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"cwd":"`+wd+`"`) {
+		t.Fatalf("payload does not name the working directory %s: %s", wd, b)
+	}
+}
+
+// A gate that knows the session names it on every payload, so daisugi's
+// journal files each run under its own id.
+func TestDaisugiGateSendsItsSessionID(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "payload.json")
+	g := DaisugiGate{Command: []string{stub(t, "cat > "+out)}, Timeout: 2 * time.Second, SessionID: "run-7"}
+	g.Check(ToolCall{Name: "bash", Input: map[string]any{"cmd": "ls"}})
+	b, _ := os.ReadFile(out)
+	if !strings.Contains(string(b), `"session_id":"run-7"`) {
+		t.Fatalf("payload does not name the session: %s", b)
 	}
 }

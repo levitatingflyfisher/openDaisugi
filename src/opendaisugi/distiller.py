@@ -15,9 +15,10 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from opendaisugi.llm import get_instructor_client
+from opendaisugi.llm import get_instructor_client, translate_llm_error
 from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.permissions import intersect_permissions as _intersect_permissions
+from opendaisugi.verify import is_z3_timeout_violation, is_z3_timeout_warning
 from opendaisugi.verify import verify as _verify
 
 if TYPE_CHECKING:
@@ -27,8 +28,8 @@ if TYPE_CHECKING:
     from opendaisugi.pathway import CompiledPathway, PathwayMatch
     from opendaisugi.pathway_store import PathwayStore
 
-from opendaisugi._search import _MODEL_NAME as _EMBEDDING_MODEL_NAME
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
+from opendaisugi._search import active_model_name, active_threshold, selected_matcher
+from opendaisugi.exceptions import MatcherNotAvailable
 
 _log = logging.getLogger("opendaisugi.distiller")
 
@@ -235,6 +236,22 @@ async def _generalize_template(
     )
 
 
+# Why a pathway is not stored when a Z3 check did not finish.
+_Z3_TIMEOUT_REASON = "verifier timed out; raise the Z3 timeout"
+
+
+def _z3_timed_out(result) -> bool:
+    """True when a Z3 check of ``result`` answered unknown.
+
+    verify() keeps such a timeout as a warning (lenient mode) or as a
+    violation (strict mode, physical stakes). Either way nothing proved the
+    plan inside the envelope, so the distiller fails closed on it.
+    """
+    return any(is_z3_timeout_warning(w) for w in result.warnings) or any(
+        is_z3_timeout_violation(v) for v in result.violations
+    )
+
+
 def _validate_envelope(
     envelope: "Envelope",
     test_plans: list["ActionPlan"],
@@ -251,7 +268,7 @@ def _validate_envelope(
     passed = 0
     for plan in test_plans:
         result = _verify(plan, envelope)
-        if result.ok:
+        if result.ok and not _z3_timed_out(result):
             passed += 1
         else:
             failing.append(plan)
@@ -303,7 +320,7 @@ class Distiller:
         pathway_store: "PathwayStore",
         model: str = "anthropic/claude-sonnet-4-20250514",
         min_traces: int = 3,
-        similarity_threshold: float = DEFAULT_PATHWAY_THRESHOLD,
+        similarity_threshold: float | None = None,
         lookback_days: int = 30,
         validation_split: float = 0.6,
         structure_weight: float = 0.5,
@@ -312,7 +329,11 @@ class Distiller:
         self.pathway_store = pathway_store
         self.model = model
         self.min_traces = min_traces
-        self.similarity_threshold = similarity_threshold
+        # None resolves the active backend's clustering threshold (ADR-0018):
+        # potion's higher baseline needs a tighter threshold than MiniLM's.
+        self.similarity_threshold = (
+            similarity_threshold if similarity_threshold is not None else active_threshold()
+        )
         self.lookback_days = lookback_days
         self.validation_split = validation_split
         # v0.24+: 0.0 = pure task-text clustering (v0.23 behavior),
@@ -352,6 +373,13 @@ class Distiller:
         """Run the full distillation pipeline."""
         started = time.time()
         warnings: list[str] = []
+        # Re-embed rows stamped with another identity before clustering. Without
+        # this, switching embedder orphans the whole store: find excludes the old
+        # rows and tend distils fresh pathways beside them for good. The
+        # distiller's own embedder is used so the row and the query agree.
+        reembedded = self.pathway_store.reembed_stale(embed=self._embed_tasks)
+        if reembedded:
+            warnings.append(f"re-embedded {reembedded} pathways under the current embedder.")
         created = 0
         updated = 0
         skipped = 0
@@ -372,7 +400,7 @@ class Distiller:
                 skipped=len(traces),
                 pathways=[],
                 duration_s=time.time() - started,
-                warnings=[msg],
+                warnings=[*warnings, msg],
             )
 
         tasks = [t.task for t in traces]
@@ -380,14 +408,20 @@ class Distiller:
         try:
             task_vecs = self._embed_tasks(tasks)
         except (ImportError, ModuleNotFoundError) as exc:
-            # No pathway embedder (sentence-transformers not installed). Clustering
-            # is the token-saving payoff, but the verified journal is already built
-            # — distilling zero pathways is a degradation, not a failure. Return a
-            # warned report instead of crashing the whole onboard/tend/auto-tend.
+            # ADR-0019's fallback catches package absence before this point (a
+            # missing [search]/[potion] resolves to lexical instead), so this
+            # branch now fires only if numpy itself is missing or a package
+            # vanished mid-process. Clustering is the token-saving payoff, but the
+            # verified journal is already built — distilling zero pathways is a
+            # degradation, not a failure. Return a warned report instead of
+            # crashing the whole onboard/tend/auto-tend.
+            backend = selected_matcher()
+            hint = "opendaisugi[potion]" if backend == "potion" else "opendaisugi[search]"
             msg = (
-                f"tend: the pathway embedder (sentence-transformers) is not "
+                f"tend: the pathway embedder for matcher_model={backend!r} is not "
                 f"available ({exc}); built the verified journal but distilled 0 "
-                f"pathways. Install it with: pip install 'opendaisugi[search]'"
+                f"pathways. Install it with: pip install '{hint}', or set "
+                f"matcher_model: lexical (no model needed)."
             )
             _log.warning(msg)
             return TendReport(
@@ -396,7 +430,22 @@ class Distiller:
                 skipped=len(traces),
                 pathways=[],
                 duration_s=time.time() - started,
-                warnings=[msg],
+                warnings=[*warnings, msg],
+            )
+        except MatcherNotAvailable as exc:
+            # matcher_model names an unbuilt embedder, a misconfiguration the
+            # swap menu normally refuses, or a built one that cannot load its
+            # model here. Degrade the same way rather than crash: journal
+            # built, zero pathways, honest warning.
+            msg = f"tend: {exc} Built the verified journal but distilled 0 pathways."
+            _log.warning(msg)
+            return TendReport(
+                created=0,
+                updated=0,
+                skipped=len(traces),
+                pathways=[],
+                duration_s=time.time() - started,
+                warnings=[*warnings, msg],
             )
         if self.structure_weight > 0:
             sigs = [t.structure_signature or "" for t in traces]
@@ -504,10 +553,15 @@ class Distiller:
         # diverge in kind at some positions distills into a MIXED template —
         # invariant steps concrete, data variance typed, divergent positions
         # delegated as AgenticStep leaves under the same envelope. Falls
-        # through to the ordinary generalization flow when nothing diverges or
-        # the salvaged template does not verify.
+        # through to the ordinary generalization flow when nothing diverges, no
+        # file_read glob gives the leaves a workspace, or the salvaged template
+        # does not verify.
         from opendaisugi.pathway import CompiledPathway as _CP
-        from opendaisugi.pathway_params import build_delegated_template, plan_divergence
+        from opendaisugi.pathway_params import (
+            build_delegated_template,
+            plan_divergence,
+            salvage_workspace,
+        )
 
         try:
             all_plans = [r.plan for r in train_records] + [r.plan for r in test_records]
@@ -515,10 +569,17 @@ class Distiller:
         except Exception as exc:
             warnings.append(f"divergence analysis failed (continuing frozen): {exc}")
             divergent, salvage_params = [], []
-        if divergent:
-            salvaged = build_delegated_template(representative.plan, divergent, all_plans)
+        workspace = salvage_workspace(intersected_envelope.permissions.file_read) if divergent else None
+        if divergent and workspace is None:
+            warnings.append(
+                "delegated salvage skipped: no file_read glob gives the leaf a workspace; "
+                "falling back to frozen generalization"
+            )
+        elif divergent:
+            salvaged = build_delegated_template(representative.plan, divergent, all_plans, workspace=workspace)
             salvage_check = _verify(salvaged, intersected_envelope)
-            if salvage_check.ok:
+            salvage_timeout = _z3_timed_out(salvage_check)
+            if salvage_check.ok and not salvage_timeout:
                 try:
                     salvage_sig = plan_structure_signature(salvaged)
                 except Exception:
@@ -533,7 +594,7 @@ class Distiller:
                     id=f"pathway_{secrets.token_hex(4)}",
                     task_description=cluster_traces[-1].task,
                     task_embedding=centroid.tolist(),
-                    embedding_model=_EMBEDDING_MODEL_NAME,
+                    embedding_model=active_model_name(),
                     embedding_model_version=_EMBEDDING_MODEL_VERSION,
                     envelope=intersected_envelope,
                     plan_template=salvaged,
@@ -544,9 +605,12 @@ class Distiller:
                     structure_signature=salvage_sig,
                     parameters=salvage_params,
                 )
+            if salvage_timeout:
+                why = _Z3_TIMEOUT_REASON
+            else:
+                why = salvage_check.violations[0].message if salvage_check.violations else "unknown"
             warnings.append(
-                "delegated salvage template failed verification "
-                f"({salvage_check.violations[0].message if salvage_check.violations else 'unknown'})"
+                f"delegated salvage template failed verification ({why})"
                 " — falling back to frozen generalization"
             )
 
@@ -573,7 +637,7 @@ class Distiller:
                 model=self.model,
             )
         except Exception as exc:
-            warnings.append(f"cluster generalization failed: {exc}")
+            warnings.append(f"cluster generalization failed: {translate_llm_error(exc)}")
             return None
 
         # Validate against test set.
@@ -596,7 +660,7 @@ class Distiller:
                         f"cluster improvement pass did not increase score ({score:.2f} → {new_score:.2f})"
                     )
             except Exception as exc:
-                warnings.append(f"cluster improvement pass failed: {exc}")
+                warnings.append(f"cluster improvement pass failed: {translate_llm_error(exc)}")
 
         _log.info(
             "cluster distilled: size=%d train=%d test=%d pitfalls=%d score=%.2f",
@@ -613,11 +677,13 @@ class Distiller:
         from opendaisugi.verify import verify as _verify_plan
 
         tmpl_ok = _verify_plan(generalized.plan_template, intersected_envelope)
-        if not tmpl_ok.ok:
+        if not tmpl_ok.ok or _z3_timed_out(tmpl_ok):
+            if _z3_timed_out(tmpl_ok):
+                why = _Z3_TIMEOUT_REASON
+            else:
+                why = tmpl_ok.violations[0].message if tmpl_ok.violations else "unknown"
             warnings.append(
-                "distilled plan_template does not verify against its envelope "
-                f"({tmpl_ok.violations[0].message if tmpl_ok.violations else 'unknown'}); "
-                "dropping cluster"
+                f"distilled plan_template does not verify against its envelope ({why}); dropping cluster"
             )
             return None
 
@@ -642,7 +708,7 @@ class Distiller:
             id=f"pathway_{secrets.token_hex(4)}",
             task_description=generalized.task_description,
             task_embedding=centroid.tolist(),
-            embedding_model=_EMBEDDING_MODEL_NAME,
+            embedding_model=active_model_name(),
             embedding_model_version=_EMBEDDING_MODEL_VERSION,
             envelope=intersected_envelope,
             plan_template=generalized.plan_template,

@@ -5,6 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from opendaisugi.delegating_executor import DelegatingExecutor
 from opendaisugi.executor import DryRunExecutor, ExecutorResult, FakeExecutor
 from opendaisugi.models import MCPStep, ShellStep, SkillStep, TaskStep
@@ -47,6 +49,7 @@ def test_fake_executor_keys_new_step_types():
 
 
 def test_delegating_executor_captures_usage_tokens():
+    pytest.importorskip("litellm")  # v0.47: [generate] extra, not base
     exe = DelegatingExecutor(default_model="haiku")
     fake_result = SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))],

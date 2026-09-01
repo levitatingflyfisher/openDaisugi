@@ -4,10 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// DefaultGateCmd is the --gate-cmd default every sprig entry point (cli.go
+// and each cmd/ binary) uses: the Go daisugi CLI's own gate, in enforce
+// mode. There is no Python fallback — daisugi answers this natively, so
+// nothing at run time needs Python. When daisugi is not on PATH, this
+// string still names it, so Check below fails closed with a clear reason
+// instead of silently allowing.
+func DefaultGateCmd() string {
+	return "daisugi gate check --mode enforce"
+}
 
 // DaisugiGate is the differentiator: it verifies each proposed tool call against
 // an openDaisugi envelope BEFORE it runs, as a separate process. The design
@@ -27,6 +39,9 @@ import (
 type DaisugiGate struct {
 	Command []string
 	Timeout time.Duration
+	// SessionID names the run on every payload, so the journal keeps each
+	// run apart. Empty sends none.
+	SessionID string
 }
 
 // gateVocabulary maps sprig's lowercase tool names to the names openDaisugi's
@@ -51,10 +66,19 @@ func (g DaisugiGate) Check(call ToolCall) Verdict {
 	if len(g.Command) == 0 {
 		return Verdict{Allow: false, Reason: "no gate command configured (fail-closed)"}
 	}
-	payload, _ := json.Marshal(map[string]any{
+	body := map[string]any{
 		"tool_name":  gateToolName(call.Name),
 		"tool_input": call.Input,
-	})
+	}
+	// sprig's tools run in this process's directory, so a relative path in
+	// a call names a file there. The gate places it from this cwd.
+	if wd, err := os.Getwd(); err == nil {
+		body["cwd"] = wd
+	}
+	if g.SessionID != "" {
+		body["session_id"] = g.SessionID
+	}
+	payload, _ := json.Marshal(body)
 
 	timeout := g.Timeout
 	if timeout == 0 {
@@ -74,6 +98,13 @@ func (g DaisugiGate) Check(call ToolCall) Verdict {
 	}
 	if err == nil {
 		return Verdict{Allow: true} // exit 0 = verified, allowed
+	}
+	if g.Command[0] == "daisugi" && errors.Is(err, exec.ErrNotFound) {
+		// The default names the bare "daisugi" binary; LookPath found nothing
+		// on PATH. Say so plainly rather than surfacing a raw exec error —
+		// still fail-closed, just with a reason a human can act on.
+		return Verdict{Allow: false, Reason: "daisugi is not on PATH, so every tool call is denied. " +
+			"Install it: scripts/install.sh, or see the README quick start."}
 	}
 	// Any nonzero exit or exec error is a refusal. Surface the gate's own words.
 	reason := gateReason(errb.String(), out.String())

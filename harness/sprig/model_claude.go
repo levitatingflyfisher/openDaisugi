@@ -14,7 +14,11 @@ import (
 // itself uses (no API key, so it respects the exposure freeze). The prompt rides
 // on stdin (injection-safe, unbounded); the subprocess runs in a neutral CWD so
 // the host's CLAUDE.md/.git never leaks in; `--allowedTools ""` makes claude a
-// raw responder, not its own nested agent. The model speaks sprig's protocol:
+// raw responder, not its own nested agent. `--output-format json` is the same
+// flag src/opendaisugi/claude_code_llm.py's call_claude_p_metered uses. It
+// makes the CLI print one JSON envelope (result text plus Claude Code's own
+// usage accounting) instead of bare text, so this backend can report real
+// token counts. The model speaks sprig's protocol inside that result text:
 // one fenced ```sprig-tool JSON block to call a tool, or plain text to finish.
 type ClaudeCodeModel struct {
 	Binary  string
@@ -39,17 +43,38 @@ func (m *ClaudeCodeModel) Next(history []Message) (Message, error) {
 	if err != nil {
 		return Message{}, err
 	}
-	msg := parseResponse(out)
-	// The model NAME is real — this backend's own configured value, not a
-	// guess. Usage stays at Message's zero value: `claude -p`'s plain-text
-	// output carries no token counts, so zero here is the honest answer, not
-	// a silent stand-in for data this backend could have reported.
+	text, usage, err := parseClaudeCLIEnvelope(out)
+	if err != nil {
+		return Message{}, err
+	}
+	msg := parseResponse(text)
+	// The model NAME is real: this backend's own configured value, not a
+	// guess, same as before. Usage now comes from the CLI's own envelope
+	// (see parseClaudeCLIEnvelope), not a hardcoded zero.
 	msg.Model = m.Model
+	msg.Usage = usage
 	return msg, nil
 }
 
+// claudeArgs builds the `claude -p` argv, without the prompt (which rides on
+// stdin, injection-safe and unbounded). Model can be operator- or
+// plan-authored, so it is bound with the --model=<value> form: the value can
+// never be reparsed as a separate flag.
+func claudeArgs(binary, model string) []string {
+	if binary == "" {
+		binary = "claude"
+	}
+	args := []string{binary, "-p", "--output-format", "json", "--allowedTools", ""}
+	if model != "" {
+		args = append(args, "--model="+model)
+	}
+	return args
+}
+
 // callClaude is the proven `claude -p` invocation, mirrored from openDaisugi's
-// claude_code_llm.py: prompt on stdin, neutral CWD, model bound with --model=.
+// claude_code_llm.py: prompt on stdin, neutral CWD, --output-format json so
+// stdout is one parseable envelope (see parseClaudeCLIEnvelope) rather than
+// bare text.
 func (m *ClaudeCodeModel) callClaude(prompt string) (string, error) {
 	timeout := m.Timeout
 	if timeout == 0 {
@@ -57,15 +82,8 @@ func (m *ClaudeCodeModel) callClaude(prompt string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	binary := m.Binary
-	if binary == "" {
-		binary = "claude"
-	}
-	args := []string{"-p", "--allowedTools", ""}
-	if m.Model != "" {
-		args = append(args, "--model="+m.Model)
-	}
-	cmd := exec.CommandContext(ctx, binary, args...)
+	args := claudeArgs(m.Binary, m.Model)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = os.TempDir() // neutral CWD — no project context leaks into the call
 	out, err := cmd.Output()
@@ -73,6 +91,50 @@ func (m *ClaudeCodeModel) callClaude(prompt string) (string, error) {
 		return "", fmt.Errorf("claude -p failed (quota/auth/binary): %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// claudeCLIEnvelope is the JSON object `claude -p --output-format json` prints
+// on success: type "result", the turn's final text in Result, whether the
+// turn itself ended in an error, and Claude Code's own token accounting. This
+// is the same shape src/opendaisugi/claude_code_llm.py's call_claude_p_metered
+// reads, and the same fields the "result" line of --output-format stream-json
+// carries. See harness/coppice/internal/adapters/claude's wireLine.
+type claudeCLIEnvelope struct {
+	Type    string `json:"type"`
+	IsError bool   `json:"is_error"`
+	Result  string `json:"result"`
+	Usage   struct {
+		InputTokens              int `json:"input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+	} `json:"usage"`
+}
+
+// parseClaudeCLIEnvelope reads the CLI's --output-format json stdout: the
+// final text (to hand to parseResponse) and its usage, mapped onto sprig's
+// four buckets. It requires type "result" so that stdout which is NOT this
+// envelope (an old CLI still on plain text, a proxy that strips fields, a
+// dropped flag, or any other JSON such as "{}") is caught here as an error,
+// instead of silently decoding to empty text and zero usage. is_error is a
+// real CLI-reported failure (max turns, a refused turn) that exits 0, so it
+// surfaces as an error here rather than being handed to parseResponse as if
+// it were a genuine final answer.
+func parseClaudeCLIEnvelope(raw string) (string, Usage, error) {
+	var env claudeCLIEnvelope
+	if err := json.Unmarshal([]byte(raw), &env); err != nil || env.Type != "result" {
+		return "", Usage{}, fmt.Errorf("claude -p --output-format json gave an unreadable envelope: %s", truncateRunes(raw, 200))
+	}
+	if env.IsError {
+		return "", Usage{}, fmt.Errorf("claude -p reported is_error: %s", truncateRunes(env.Result, 200))
+	}
+	usage := Usage{
+		Fresh:      env.Usage.InputTokens,
+		CacheRead:  env.Usage.CacheReadInputTokens,
+		CacheWrite: env.Usage.CacheCreationInputTokens,
+		Out:        env.Usage.OutputTokens,
+	}
+	return strings.TrimSpace(env.Result), usage, nil
 }
 
 const _toolFence = "```sprig-tool"

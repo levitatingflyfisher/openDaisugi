@@ -1,0 +1,9 @@
+#rule: live_prompt_box
+⏺ It asks: Use Claude Code's terminal setup?
+  Use Claude Code's terminal setup?
+  ❯ 1. Yes, use recommended settings
+  Enter to confirm · Esc to skip
+────────────────────
+❯ 
+────────────────────
+  ? for shortcuts

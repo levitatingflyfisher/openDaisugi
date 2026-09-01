@@ -78,12 +78,19 @@ def read_turns(path: Path) -> list[Turn]:
         if not isinstance(msg, dict) or not row.get("uuid"):
             continue
         body, uses, results = _content(msg)
-        out.append(Turn(
-            uuid=str(row["uuid"]), parent_uuid=row.get("parentUuid"), kind=str(row["type"]),
-            ts=str(row.get("timestamp", "")), model=msg.get("model"),
-            usage=_usage(msg) if row["type"] == "assistant" else dict(_EMPTY_USAGE),
-            text=body, tool_uses=uses, tool_result_ids=results,
-        ))
+        out.append(
+            Turn(
+                uuid=str(row["uuid"]),
+                parent_uuid=row.get("parentUuid"),
+                kind=str(row["type"]),
+                ts=str(row.get("timestamp", "")),
+                model=msg.get("model"),
+                usage=_usage(msg) if row["type"] == "assistant" else dict(_EMPTY_USAGE),
+                text=body,
+                tool_uses=uses,
+                tool_result_ids=results,
+            )
+        )
     return out
 
 

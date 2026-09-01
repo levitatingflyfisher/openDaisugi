@@ -34,7 +34,13 @@ def __getattr__(name: str):
     as a patch target for tests while deferring the real import.
     """
     if name == "litellm":
-        import litellm
+        try:
+            import litellm
+        except ImportError as exc:
+            raise ImportError(
+                "episode-splitting's litellm backend needs the 'generate' extra: "
+                "uv add 'opendaisugi[generate]'  (or: pip install 'opendaisugi[generate]')"
+            ) from exc
 
         return litellm
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

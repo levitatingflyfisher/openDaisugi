@@ -1,0 +1,26 @@
+[
+ {
+  "match": "voyager",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "Skills stored only after they verify, retrieved by embedding. Pathways are this, for a household's agents."
+ },
+ {
+  "match": "agent skills",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "Folders a model loads on demand. Pathways should export to this shape."
+ },
+ {
+  "match": "mem0|letta",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "Memory of facts. The garden stores verified procedures, which is a different thing."
+ },
+ {
+  "match": "dspy",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "Compiles prompts from examples. Distillation compiles pathways from verified traces."
+ }
+]

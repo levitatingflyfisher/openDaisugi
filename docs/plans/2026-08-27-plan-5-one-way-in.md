@@ -99,9 +99,16 @@ from opendaisugi.start import StartOptions, plan_start, run_start
 def _opts(tmp_path: Path, **kw) -> StartOptions:
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True, exist_ok=True)
-    return StartOptions(cwd=tmp_path / "proj", home=home, data_dir=home / ".opendaisugi",
-                        enforce=False, ask=False, which=kw.pop("which", lambda n: "/usr/bin/claude"),
-                        spawn=kw.pop("spawn", lambda argv: None), **kw)
+    return StartOptions(
+        cwd=tmp_path / "proj",
+        home=home,
+        data_dir=home / ".opendaisugi",
+        enforce=False,
+        ask=False,
+        which=kw.pop("which", lambda n: "/usr/bin/claude"),
+        spawn=kw.pop("spawn", lambda argv: None),
+        **kw,
+    )
 
 
 def test_plan_on_a_fresh_home_would_do_everything(tmp_path):
@@ -231,8 +238,13 @@ class StartOptions:
 
 
 def _detach(argv: list[str]) -> None:
-    subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, start_new_session=True)
+    subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
@@ -249,9 +261,14 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
     if claude:
         out.append(StartStep("harness", "done", f"Claude Code found at {claude}"))
     else:
-        out.append(StartStep("harness", "failed",
-                             "Tried to find the agent harness. No `claude` on PATH. "
-                             "Install Claude Code, then run `daisugi start` again."))
+        out.append(
+            StartStep(
+                "harness",
+                "failed",
+                "Tried to find the agent harness. No `claude` on PATH. "
+                "Install Claude Code, then run `daisugi start` again.",
+            )
+        )
 
     settings = opts.home / ".claude" / "settings.json"
     installed = installed_hook_mode(settings)
@@ -261,9 +278,13 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
         out.append(StartStep("hook", "skipped", f"gate hook already installed (mode: {installed})"))
     elif act:
         _patch_claude_gate(settings, enforce=opts.enforce, ask=opts.ask)
-        out.append(StartStep("hook", "done", f"installed the gate hook in {mode} mode into {settings}"))
+        out.append(
+            StartStep("hook", "done", f"installed the gate hook in {mode} mode into {settings}")
+        )
     else:
-        out.append(StartStep("hook", "would", f"install the gate hook in {mode} mode into {settings}"))
+        out.append(
+            StartStep("hook", "would", f"install the gate hook in {mode} mode into {settings}")
+        )
 
     env_dir = _envelopes_dir(root)
     if (env_dir / "default.json").exists():
@@ -278,16 +299,22 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
         out.append(StartStep("gate-server", "skipped", "the resident gate is running"))
     elif act:
         opts.spawn([sys.executable, "-m", "opendaisugi.cli", "gate", "serve", "--root", str(root)])
-        out.append(StartStep("gate-server", "done", "started the resident gate (daisugi gate serve)"))
+        out.append(
+            StartStep("gate-server", "done", "started the resident gate (daisugi gate serve)")
+        )
     else:
-        out.append(StartStep("gate-server", "would", "start the resident gate (daisugi gate serve)"))
+        out.append(
+            StartStep("gate-server", "would", "start the resident gate (daisugi gate serve)")
+        )
 
     try:
         import textual  # noqa: F401
 
         view = "open the multi-session view (daisugi dashboard --tui)"
     except ImportError:
-        view = "open the live view (daisugi dashboard); install the tui extra for the full instrument"
+        view = (
+            "open the live view (daisugi dashboard); install the tui extra for the full instrument"
+        )
     out.append(StartStep("view", "skipped" if opts.no_ui else "would", view))
     return out
 
@@ -305,10 +332,16 @@ CLI command:
 ```python
 @app.command("start", rich_help_panel="Start here")
 def start_cmd(
-    enforce: bool = typer.Option(False, "--enforce", help="Install the gate in enforce mode (default: shadow)."),
-    ask: bool = typer.Option(False, "--ask", help="Let the gate hand a would-deny to you in the view."),
+    enforce: bool = typer.Option(
+        False, "--enforce", help="Install the gate in enforce mode (default: shadow)."
+    ),
+    ask: bool = typer.Option(
+        False, "--ask", help="Let the gate hand a would-deny to you in the view."
+    ),
     no_ui: bool = typer.Option(False, "--no-ui", help="Do the setup, do not open the view."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show the steps and their state; change nothing."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show the steps and their state; change nothing."
+    ),
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
 ) -> None:
     """Get a gated session over this directory and watch it. One command, four steps.
@@ -319,7 +352,9 @@ def start_cmd(
     """
     from opendaisugi.start import StartOptions, plan_start, run_start
 
-    opts = StartOptions(cwd=Path.cwd(), home=Path.home(), data_dir=data_dir, enforce=enforce, ask=ask, no_ui=no_ui)
+    opts = StartOptions(
+        cwd=Path.cwd(), home=Path.home(), data_dir=data_dir, enforce=enforce, ask=ask, no_ui=no_ui
+    )
     steps = plan_start(opts) if dry_run else run_start(opts)
     width = max(len(s.key) for s in steps)
     for s in steps:
@@ -417,9 +452,32 @@ def test_bare_run_is_short_and_actionable():
 def test_help_all_lists_every_command():
     res = runner.invoke(app, ["help", "--all"])
     assert res.exit_code == 0, res.output
-    for name in ("start", "status", "orchestrate", "install", "config", "gate", "pathways", "journal",
-                 "onboard", "tend", "route", "viz", "metrics", "lora", "release", "batch", "conformance",
-                 "registry", "hook", "mcp", "tiers", "gardener", "gateway", "models"):
+    for name in (
+        "start",
+        "status",
+        "orchestrate",
+        "install",
+        "config",
+        "gate",
+        "pathways",
+        "journal",
+        "onboard",
+        "tend",
+        "route",
+        "viz",
+        "metrics",
+        "lora",
+        "release",
+        "batch",
+        "conformance",
+        "registry",
+        "hook",
+        "mcp",
+        "tiers",
+        "gardener",
+        "gateway",
+        "models",
+    ):
         assert name in res.output, name
 
 
@@ -465,7 +523,14 @@ More
 
 
 @app.callback()
-def _root(ctx: typer.Context, version: bool = ..., plain: bool = ..., quiet: bool = ..., verbose: bool = ..., no_color: bool = ...) -> None:
+def _root(
+    ctx: typer.Context,
+    version: bool = ...,
+    plain: bool = ...,
+    quiet: bool = ...,
+    verbose: bool = ...,
+    no_color: bool = ...,
+) -> None:
     """Runtime assurance for agent actions."""
     ...  # the plan 2 output-mode setup stays
     if ctx.invoked_subcommand is None:

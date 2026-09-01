@@ -272,6 +272,131 @@ def test_import_overwrite_flag_replaces_existing(tmp_path):
     assert len(store.list_all()) == 1
 
 
+def test_import_rejects_when_the_verifier_times_out(tmp_path, monkeypatch):
+    """A Z3 ``unknown`` is not a pass: an import whose envelope could not be
+    checked in time is refused, and the reason names the fix."""
+    import importlib
+
+    v = importlib.import_module("opendaisugi.verify")
+    from opendaisugi.exceptions import VerificationTimeout
+
+    def timed_out(envelope, timeout_ms=500):
+        raise VerificationTimeout(f"Z3 self-consistency check exceeded {timeout_ms}ms")
+
+    monkeypatch.setattr(v, "check_envelope_self_consistency", timed_out)
+    p = _pathway(id_="p_timeout")
+    src = tmp_path / "b.json"
+    src.write_text(export(p, "json"))
+    store = PathwayStore(tmp_path / "store.db")
+    with pytest.raises(PathwayImportError) as exc:
+        import_pathway(src, store, z3_timeout_ms=7)
+    assert exc.value.code == "VERIFICATION_TIMEOUT"
+    assert "raise --z3-timeout-ms" in str(exc.value)
+    assert "exceeded 7ms" in str(exc.value)
+    assert store.list_all() == []
+
+
+def test_import_plan_check_timeout_is_refused_too(tmp_path, monkeypatch):
+    import importlib
+
+    v = importlib.import_module("opendaisugi.verify")
+    from opendaisugi.exceptions import VerificationTimeout
+
+    def timed_out(plan, envelope, timeout_ms=500):
+        raise VerificationTimeout(f"Z3 plan-vs-envelope check exceeded {timeout_ms}ms")
+
+    monkeypatch.setattr(v, "check_plan_against_envelope", timed_out)
+    p = _pathway(id_="p_timeout2")
+    src = tmp_path / "b.json"
+    src.write_text(export(p, "json"))
+    store = PathwayStore(tmp_path / "store.db")
+    with pytest.raises(PathwayImportError) as exc:
+        import_pathway(src, store)
+    assert exc.value.code == "VERIFICATION_TIMEOUT"
+
+
+def test_import_of_a_physical_stakes_pathway_still_reports_timeout(tmp_path, monkeypatch):
+    """A physical-stakes envelope turns the same Z3 timeout into a Violation
+    inside verify() (fail-closed), not a warning. import_pathway must still
+    refuse with the stable VERIFICATION_TIMEOUT code, not a generic
+    VERIFICATION_FAILED that loses the fix-it hint."""
+    import importlib
+
+    v = importlib.import_module("opendaisugi.verify")
+    from opendaisugi.exceptions import VerificationTimeout
+
+    def timed_out(envelope, timeout_ms=500):
+        raise VerificationTimeout(f"Z3 self-consistency check exceeded {timeout_ms}ms")
+
+    monkeypatch.setattr(v, "check_envelope_self_consistency", timed_out)
+    p = _pathway(id_="p_timeout_physical")
+    p.envelope.stakes = "physical"
+    src = tmp_path / "b.json"
+    src.write_text(export(p, "json"))
+    store = PathwayStore(tmp_path / "store.db")
+    with pytest.raises(PathwayImportError) as exc:
+        import_pathway(src, store, z3_timeout_ms=9)
+    assert exc.value.code == "VERIFICATION_TIMEOUT"
+    assert "exceeded 9ms" in str(exc.value)
+    assert store.list_all() == []
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda b: b["pathway"].update(task_description="x \ud800 y"),
+        lambda b: b["pathway"]["plan_template"]["steps"][0].update(command="find \udfff"),
+        lambda b: b["pathway"].update(hit_count=2**70),
+        lambda b: b["pathway"]["plan_template"]["steps"][0].update(metadata={"n": _nest(230)}),
+        lambda b: b["pathway"]["plan_template"]["steps"][0].update(metadata={"n": _nest(300)}),
+    ],
+)
+def test_import_refuses_what_the_store_cannot_read_back(tmp_path, edit):
+    """Nothing is written that would break a later list or find, and an
+    overwrite keeps the old row when the new one cannot be stored."""
+    good = _pathway(id_="p_store")
+    store = PathwayStore(tmp_path / "store.db")
+    store.put(good)
+    data = json.loads(export(good, "json"))
+    edit(data)
+    src = tmp_path / "b.json"
+    src.write_text(json.dumps(data))
+    with pytest.raises(PathwayImportError) as exc:
+        import_pathway(src, store, allow_overwrite=True)
+    assert exc.value.code == "UNSTORABLE"
+    assert [p.id for p in store.list_all()] == ["p_store"]
+    store.find("delete stale tmp files", threshold=0.0)
+
+
+def test_import_nesting_the_reader_takes_is_stored(tmp_path):
+    p = _pathway(id_="p_nest")
+    data = json.loads(export(p, "json"))
+    data["pathway"]["plan_template"]["steps"][0]["metadata"] = {"n": _nest(190)}
+    src = tmp_path / "b.json"
+    src.write_text(json.dumps(data))
+    store = PathwayStore(tmp_path / "store.db")
+    import_pathway(src, store)
+    assert len(store.list_all()) == 1
+
+
+def _nest(depth: int):
+    v: object = 1
+    for _ in range(depth):
+        v = [v]
+    return v
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "4294967296"])
+def test_cli_import_refuses_a_timeout_z3_cannot_take(tmp_path, value):
+    src = tmp_path / "b.json"
+    src.write_text(export(_pathway(id_="p_t"), "json"))
+    result = runner.invoke(
+        app, ["pathways", "import", str(src), "--data-dir", str(tmp_path), "--z3-timeout-ms", value]
+    )
+    assert result.exit_code == 2
+    assert not (tmp_path / "pathways.db").exists()
+
+
 # ─────────────────── CLI surface ───────────────────
 
 
@@ -374,3 +499,34 @@ def test_cli_import_roundtrip(tmp_path):
     )
     assert r.exit_code == 0, r.output
     assert len(PathwayStore(tmp_path / "pathways.db").list_all()) == 1
+
+
+# GD-16 at the model level: a bundle with NaN or an infinity in its
+# envelope or plan is refused as SCHEMA_INCOMPATIBLE, and nothing is stored.
+@pytest.mark.parametrize("fmt", ["json", "skill"])
+def test_import_refuses_a_non_finite_envelope(tmp_path, fmt):
+    p = _pathway(id_="p_nan")
+    p.envelope.permissions.velocity_limit = 1.5
+    text = export(p, fmt)
+    assert text.count("1.5") == 1
+    src = tmp_path / ("b.json" if fmt == "json" else "b.md")
+    src.write_text(text.replace("1.5", "NaN" if fmt == "json" else ".nan"))
+    store = PathwayStore(tmp_path / "store.db")
+    with pytest.raises(PathwayImportError) as exc:
+        import_pathway(src, store)
+    assert exc.value.code == "SCHEMA_INCOMPATIBLE"
+    assert str(exc.value).startswith(
+        "[SCHEMA_INCOMPATIBLE] the pathway is not valid: 1 validation error for CompiledPathway\n"
+        "envelope.permissions.velocity_limit\n"
+        "  Input should be a finite number [type=finite_number, input_value=nan, input_type=float]"
+    )
+    assert store.list_all() == []
+
+
+def test_parse_bundle_names_every_invalid_field():
+    with pytest.raises(PathwayImportError) as exc:
+        parse_bundle(json.dumps({"pathway": {"id": "x"}}))
+    assert exc.value.code == "SCHEMA_INCOMPATIBLE"
+    assert str(exc.value).startswith(
+        "[SCHEMA_INCOMPATIBLE] the pathway is not valid: 6 validation errors for CompiledPathway\n"
+    )

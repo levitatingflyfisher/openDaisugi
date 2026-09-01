@@ -72,7 +72,7 @@ def _unfuse(command: str) -> str | None:
             i = j + 1 if j < n else n
             continue
         if c == "\\" and i + 1 < n:
-            out.append(command[i:i + 2])
+            out.append(command[i : i + 2])
             i += 2
             continue
         if c == "'" and not dq:
@@ -85,8 +85,8 @@ def _unfuse(command: str) -> str | None:
             out.append(c)
             i += 1
             continue
-        if not sq and not dq and command[i:i + 2] == "<<" and command[i:i + 3] != "<<<":
-            dash = command[i:i + 3] == "<<-"
+        if not sq and not dq and command[i : i + 2] == "<<" and command[i : i + 3] != "<<<":
+            dash = command[i : i + 3] == "<<-"
             k = i + (3 if dash else 2)
             while k < n and command[k] in " \t":
                 k += 1
@@ -95,7 +95,7 @@ def _unfuse(command: str) -> str | None:
                 e = command.find(q, k + 1)
                 if e == -1:
                     return None
-                delim, k = command[k + 1:e], e + 1
+                delim, k = command[k + 1 : e], e + 1
             else:
                 m = k
                 while m < n and command[m] not in " \t\n;&|<>()'\"`":
@@ -142,7 +142,9 @@ def _oracle_verdicts(corpus: Path, cases: list[dict]) -> dict[str, dict]:
     digest = hashlib.sha256(corpus.read_bytes()).hexdigest()[:16]
     cache = corpus.parent / ".gate-cache" / f"oracle-{digest}.jsonl"
     if cache.exists():
-        return {v["id"]: v for v in (json.loads(x) for x in cache.read_text().splitlines() if x.strip())}
+        return {
+            v["id"]: v for v in (json.loads(x) for x in cache.read_text().splitlines() if x.strip())
+        }
     verdicts = _run_client([sys.executable, "-m", "opendaisugi.conformance"], cases)
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text("".join(canonical_json(v) + "\n" for v in verdicts.values()) + "\n")
@@ -153,13 +155,21 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("corpus", type=Path)
     ap.add_argument("--client", required=True, help="client command line (quoted)")
-    ap.add_argument("--corroborate", default=None,
-                    help="an INDEPENDENT client (quoted cmd) whose exact head match "
-                         "corroborates a divergence the oracle's tree-sitter can't parse")
-    ap.add_argument("--max-unsafe", type=int, default=None,
-                    help="fail (exit 1) if false-accept + both-ok-differ exceeds this")
-    ap.add_argument("--samples", type=int, default=0,
-                    help="print up to N sample ids per unsafe bucket")
+    ap.add_argument(
+        "--corroborate",
+        default=None,
+        help="an INDEPENDENT client (quoted cmd) whose exact head match "
+        "corroborates a divergence the oracle's tree-sitter can't parse",
+    )
+    ap.add_argument(
+        "--max-unsafe",
+        type=int,
+        default=None,
+        help="fail (exit 1) if false-accept + both-ok-differ exceeds this",
+    )
+    ap.add_argument(
+        "--samples", type=int, default=0, help="print up to N sample ids per unsafe bucket"
+    )
     args = ap.parse_args()
 
     cases = [json.loads(x) for x in args.corpus.read_text().splitlines() if x.strip()]
@@ -204,7 +214,11 @@ def main() -> int:
         if "statement fusion" in decompose_command(cmd).reason:
             joined = _unfuse(cmd)
             ref = decompose_command(joined) if joined is not None else None
-            if ref is not None and ref.ok and all(got[h] >= n for h, n in collections.Counter(ref.heads).items()):
+            if (
+                ref is not None
+                and ref.ok
+                and all(got[h] >= n for h, n in collections.Counter(ref.heads).items())
+            ):
                 return True
         cv = corrob.get(cid)
         if cv and cv.get("ok") and cv.get("heads") == client_verdict.get("heads"):
@@ -212,8 +226,18 @@ def main() -> int:
         return False
 
     kinds = sorted({c["kind"] for c in cases})
-    tally = {k: dict(match=0, false_reject=0, verified_div=0, fusion_unverified=0,
-                     genuine_fa=0, both_ok_differ=0, missing=0) for k in kinds}
+    tally = {
+        k: dict(
+            match=0,
+            false_reject=0,
+            verified_div=0,
+            fusion_unverified=0,
+            genuine_fa=0,
+            both_ok_differ=0,
+            missing=0,
+        )
+        for k in kinds
+    }
     unsafe_ids: dict[str, list[str]] = {"genuine_fa": [], "both_ok_differ": []}
 
     for cid, kind in kind_by_id.items():
@@ -230,10 +254,17 @@ def main() -> int:
         elif c_ok and not o_ok:
             if kind == "decompose" and _divergence_safe(cid, c):
                 tally[kind]["verified_div"] += 1  # completeness proven by an independent reference
-            elif kind == "decompose" and "statement fusion" in decompose_command(cmd_by_id[cid]).reason:
-                tally[kind]["fusion_unverified"] += 1  # known-class divergence, no reference; reported, spot-checked
+            elif (
+                kind == "decompose"
+                and "statement fusion" in decompose_command(cmd_by_id[cid]).reason
+            ):
+                tally[kind]["fusion_unverified"] += (
+                    1  # known-class divergence, no reference; reported, spot-checked
+                )
             else:
-                tally[kind]["genuine_fa"] += 1  # over-acceptance the oracle rejects on merits — gated
+                tally[kind]["genuine_fa"] += (
+                    1  # over-acceptance the oracle rejects on merits — gated
+                )
                 unsafe_ids["genuine_fa"].append(cid)
         elif o_ok and c_ok:
             tally[kind]["both_ok_differ"] += 1
@@ -249,21 +280,28 @@ def main() -> int:
     print(f"corpus: {args.corpus}  cases: {len(cases)}")
     for k in kinds:
         t = tally[k]
-        total_disagree += (t["false_reject"] + t["verified_div"] + t["fusion_unverified"]
-                           + t["genuine_fa"] + t["both_ok_differ"])
+        total_disagree += (
+            t["false_reject"]
+            + t["verified_div"]
+            + t["fusion_unverified"]
+            + t["genuine_fa"]
+            + t["both_ok_differ"]
+        )
         total = sum(v for kk, v in t.items() if kk != "missing")
         tag = " (out-of-scope)" if k == "verify" else ""
-        print(f"  {k:10} match={t['match']:6}  false-reject(safe)={t['false_reject']:6}  "
-              f"verified-div={t['verified_div']:4}  fusion-unverified={t['fusion_unverified']:3}  "
-              f"genuine-fa={t['genuine_fa']:3}  both-ok-differ={t['both_ok_differ']:3}  "
-              f"[{t['match']}/{total}]{tag}")
+        print(
+            f"  {k:10} match={t['match']:6}  false-reject(safe)={t['false_reject']:6}  "
+            f"verified-div={t['verified_div']:4}  fusion-unverified={t['fusion_unverified']:3}  "
+            f"genuine-fa={t['genuine_fa']:3}  both-ok-differ={t['both_ok_differ']:3}  "
+            f"[{t['match']}/{total}]{tag}"
+        )
     print(f"  DISAGREEMENTS (all mismatch): {total_disagree}")
     print(f"  GENUINE UNSAFE decompose (genuine-fa + both-ok-differ): {genuine_unsafe}")
 
     if args.samples:
         for bucket, ids in unsafe_ids.items():
             if ids:
-                print(f"  sample {bucket}: {ids[:args.samples]}")
+                print(f"  sample {bucket}: {ids[: args.samples]}")
 
     if args.max_unsafe is not None and genuine_unsafe > args.max_unsafe:
         print(f"GATE FAIL: genuine-unsafe {genuine_unsafe} > allowed {args.max_unsafe}")

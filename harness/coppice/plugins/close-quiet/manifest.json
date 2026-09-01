@@ -1,0 +1,10 @@
+{
+  "id": "close-quiet",
+  "kind": "policy",
+  "title": "Close quiet panes",
+  "about": "It closes a pane that stays idle for sixty minutes. The worktree stays.",
+  "run": "close-quiet.py",
+  "listens": ["state"],
+  "needs": ["pane.close", "floor.note"],
+  "config": {"idle_minutes": 60}
+}

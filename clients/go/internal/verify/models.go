@@ -10,8 +10,11 @@
 package verify
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"strconv"
 )
 
 // --- Permission -------------------------------------------------------------
@@ -22,36 +25,41 @@ import (
 // unmarshal on top of it (json.Unmarshal only overwrites keys present in the
 // input, so absent keys keep the pre-filled default).
 type Permission struct {
-	FileRead                []string             `json:"file_read"`
-	FileWrite               []string             `json:"file_write"`
-	Network                 bool                 `json:"network"`
-	NetworkHosts            []string             `json:"network_hosts"`
-	Shell                   bool                 `json:"shell"`
-	ShellAllowlist          []string             `json:"shell_allowlist"`
-	ShellAllowDecomposition bool                 `json:"shell_allow_decomposition"`
-	McpAllowlist            []string             `json:"mcp_allowlist"`
-	CustomStepAllowlist     []string             `json:"custom_step_allowlist"`
-	MaxExecutionTimeS       int                  `json:"max_execution_time_s"`
-	MaxOutputSizeMB         int                  `json:"max_output_size_mb"`
-	WorkspaceBounds         *[2][3]float64       `json:"workspace_bounds"`
-	Obstacles               [][2][3]float64      `json:"obstacles"`
-	VelocityLimit           *float64             `json:"velocity_limit"`
-	JointLimits             map[string][2]float64 `json:"joint_limits"`
-	TorqueLimit             *float64             `json:"torque_limit"`
+	FileRead                []string `json:"file_read"`
+	FileWrite               []string `json:"file_write"`
+	Network                 bool     `json:"network"`
+	NetworkHosts            []string `json:"network_hosts"`
+	Shell                   bool     `json:"shell"`
+	ShellAllowlist          []string `json:"shell_allowlist"`
+	ShellAllowDecomposition bool     `json:"shell_allow_decomposition"`
+	McpAllowlist            []string `json:"mcp_allowlist"`
+	CustomStepAllowlist     []string `json:"custom_step_allowlist"`
+	// MaxExecutionTimeS is an int of any size, as pydantic reads it.
+	MaxExecutionTimeS *big.Int `json:"max_execution_time_s"`
+	// MaxOutputSizeMB is kept as its text: nothing here judges it.
+	MaxOutputSizeMB json.Number           `json:"max_output_size_mb"`
+	WorkspaceBounds *[2][3]float64        `json:"workspace_bounds"`
+	Obstacles       [][2][3]float64       `json:"obstacles"`
+	VelocityLimit   *float64              `json:"velocity_limit"`
+	JointLimits     map[string][2]float64 `json:"joint_limits"`
+	TorqueLimit     *float64              `json:"torque_limit"`
+	// JointLimitOrder is joint_limits' keys in their JSON order, as a
+	// Python dict keeps them.
+	JointLimitOrder []string `json:"-"`
 }
 
 func DefaultPermission() Permission {
 	return Permission{
-		FileRead:                []string{},
-		FileWrite:               []string{},
-		NetworkHosts:            []string{},
-		ShellAllowlist:          []string{},
-		McpAllowlist:            []string{},
-		CustomStepAllowlist:     []string{},
-		MaxExecutionTimeS:       30,
-		MaxOutputSizeMB:         10,
-		Obstacles:               [][2][3]float64{},
-		JointLimits:             map[string][2]float64{},
+		FileRead:            []string{},
+		FileWrite:           []string{},
+		NetworkHosts:        []string{},
+		ShellAllowlist:      []string{},
+		McpAllowlist:        []string{},
+		CustomStepAllowlist: []string{},
+		MaxExecutionTimeS:   big.NewInt(30),
+		MaxOutputSizeMB:     "10",
+		Obstacles:           [][2][3]float64{},
+		JointLimits:         map[string][2]float64{},
 	}
 }
 
@@ -60,7 +68,42 @@ func (p *Permission) UnmarshalJSON(data []byte) error {
 	*p = DefaultPermission()
 	type alias Permission
 	a := (*alias)(p)
-	return json.Unmarshal(data, a)
+	if err := json.Unmarshal(data, a); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err == nil {
+		p.JointLimitOrder = objectKeys(fields["joint_limits"])
+	}
+	return nil
+}
+
+// objectKeys is a JSON object's keys in order (the last of a repeated
+// key where it last appears, as a dict built from the text keeps the first
+// place and the last value); nil for anything else.
+func objectKeys(raw json.RawMessage) []string {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil
+	}
+	var keys []string
+	seen := map[string]bool{}
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return keys
+		}
+		k, _ := t.(string)
+		if !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return keys
+		}
+	}
+	return keys
 }
 
 // --- Invariant / Postcondition ----------------------------------------------
@@ -82,11 +125,13 @@ func (i *Invariant) UnmarshalJSON(data []byte) error {
 }
 
 type Postcondition struct {
-	Type        string          `json:"type"`
-	Path        *string         `json:"path"`
-	Expected    *int            `json:"expected"`
-	Min         *float64        `json:"min"`
-	Max         *float64        `json:"max"`
+	Type string  `json:"type"`
+	Path *string `json:"path"`
+	// Expected, Min and Max are ints of any size, kept as their text:
+	// nothing here judges them.
+	Expected    *json.Number    `json:"expected"`
+	Min         *json.Number    `json:"min"`
+	Max         *json.Number    `json:"max"`
 	Description *string         `json:"description"`
 	Expr        json.RawMessage `json:"expr"`
 	Enforce     bool            `json:"enforce"`
@@ -125,19 +170,19 @@ func (f *FallbackStrategy) UnmarshalJSON(data []byte) error {
 // --- Envelope -----------------------------------------------------------------
 
 type Envelope struct {
-	ID                      string          `json:"id"`
-	GeneratedBy             string          `json:"generated_by"`
-	Task                    string          `json:"task"`
-	Permissions             Permission      `json:"permissions"`
-	Invariants              []Invariant     `json:"invariants"`
-	Postconditions          []Postcondition `json:"postconditions"`
-	Fallback                FallbackStrategy `json:"fallback"`
-	ParentEnvelope          *string         `json:"parent_envelope"`
-	TighteningOnly          bool            `json:"tightening_only"`
-	Summary                 *string         `json:"summary"`
-	CacheKey                *string         `json:"cache_key"`
-	Stakes                  string          `json:"stakes"`
-	ShellInterpreterPolicy  string          `json:"shell_interpreter_policy"`
+	ID                     string           `json:"id"`
+	GeneratedBy            string           `json:"generated_by"`
+	Task                   string           `json:"task"`
+	Permissions            Permission       `json:"permissions"`
+	Invariants             []Invariant      `json:"invariants"`
+	Postconditions         []Postcondition  `json:"postconditions"`
+	Fallback               FallbackStrategy `json:"fallback"`
+	ParentEnvelope         *string          `json:"parent_envelope"`
+	TighteningOnly         bool             `json:"tightening_only"`
+	Summary                *string          `json:"summary"`
+	CacheKey               *string          `json:"cache_key"`
+	Stakes                 string           `json:"stakes"`
+	ShellInterpreterPolicy string           `json:"shell_interpreter_policy"`
 }
 
 func DefaultEnvelope() Envelope {
@@ -183,14 +228,23 @@ type Step struct {
 	Type      string
 	DependsOn []string
 	Raw       map[string]interface{}
+	// JointOrder is joint_targets' keys in their JSON order.
+	JointOrder []string
 }
 
 func (s *Step) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
 	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := dec.Decode(&raw); err != nil {
 		return err
 	}
+	floatNumbers(raw)
 	s.Raw = raw
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err == nil {
+		s.JointOrder = objectKeys(fields["joint_targets"])
+	}
 	if t, ok := raw["type"].(string); ok {
 		s.Type = t
 	}
@@ -206,6 +260,28 @@ func (s *Step) UnmarshalJSON(data []byte) error {
 		}
 	}
 	return nil
+}
+
+// floatNumbers makes each number in v a float64, as a plain decode does,
+// in place. A number past the float64 range, which an int of any size can
+// be, stays a json.Number: nothing reads it as a float.
+func floatNumbers(v interface{}) interface{} {
+	switch x := v.(type) {
+	case json.Number:
+		if f, err := strconv.ParseFloat(string(x), 64); err == nil {
+			return f
+		}
+		return x
+	case map[string]interface{}:
+		for k, e := range x {
+			x[k] = floatNumbers(e)
+		}
+	case []interface{}:
+		for i, e := range x {
+			x[i] = floatNumbers(e)
+		}
+	}
+	return v
 }
 
 func (s Step) str(key string) (string, bool) {
@@ -262,16 +338,16 @@ func (s Step) vec3(key string) ([3]float64, bool) {
 
 // Typed accessors used by the permission/z3 stages.
 
-func (s Step) ShellCommand() (string, bool)    { return s.str("command") }
-func (s Step) FilePath() (string, bool)        { return s.str("path") }
+func (s Step) ShellCommand() (string, bool)     { return s.str("command") }
+func (s Step) FilePath() (string, bool)         { return s.str("path") }
 func (s Step) FileWriteContent() (string, bool) { return s.str("content") }
-func (s Step) NetworkURL() (string, bool)      { return s.str("url") }
-func (s Step) NetworkMethod() string           { return s.strDefault("method", "GET") }
-func (s Step) MCPServer() (string, bool)       { return s.str("server") }
-func (s Step) MCPTool() (string, bool)         { return s.str("tool") }
+func (s Step) NetworkURL() (string, bool)       { return s.str("url") }
+func (s Step) NetworkMethod() string            { return s.strDefault("method", "GET") }
+func (s Step) MCPServer() (string, bool)        { return s.str("server") }
+func (s Step) MCPTool() (string, bool)          { return s.str("tool") }
 func (s Step) AgenticWorkspace() (string, bool) { return s.str("workspace") }
-func (s Step) AgenticTools() []string          { return s.stringSlice("tools") }
-func (s Step) PreferredModel() (string, bool)  { return s.str("preferred_model") }
+func (s Step) AgenticTools() []string           { return s.stringSlice("tools") }
+func (s Step) PreferredModel() (string, bool)   { return s.str("preferred_model") }
 
 func (s Step) JointTargets() map[string]float64 {
 	m, ok := s.Raw["joint_targets"].(map[string]interface{})
@@ -336,13 +412,13 @@ type ActionPlan struct {
 // "expect" is deliberately not modeled — the client never needs it, only the
 // differential runner does.
 type Case struct {
-	ID      string          `json:"id"`
-	Kind    string          `json:"kind"`
-	V       int             `json:"v"`
-	Plan    json.RawMessage `json:"plan"`
+	ID       string          `json:"id"`
+	Kind     string          `json:"kind"`
+	V        int             `json:"v"`
+	Plan     json.RawMessage `json:"plan"`
 	Envelope json.RawMessage `json:"envelope"`
-	Options CaseOptions     `json:"options"`
-	Command string          `json:"command"`
+	Options  CaseOptions     `json:"options"`
+	Command  string          `json:"command"`
 }
 
 type CaseOptions struct {
@@ -360,20 +436,24 @@ func (o CaseOptions) Z3Timeout() int {
 // Violation mirrors opendaisugi.models.Violation for the fields the wire
 // protocol treats as normative: Stage and the "step" key of Detail.
 type Violation struct {
-	Stage  string
-	Step   string // "" means null/plan-level
+	Stage   string
+	Step    string // "" means null/plan-level
 	HasStep bool
+	// Message is the violation's message as the oracle words it.
+	Message string
 }
 
-func V(stage string) Violation                { return Violation{Stage: stage} }
-func VStep(stage, step string) Violation       { return Violation{Stage: stage, Step: step, HasStep: true} }
+func V(stage, msg string) Violation { return Violation{Stage: stage, Message: msg} }
+func VStep(stage, step, msg string) Violation {
+	return Violation{Stage: stage, Step: step, HasStep: true, Message: msg}
+}
 
 // VerifyVerdict / DecomposeVerdict are what conform emits on stdout.
 
 type VerifyVerdict struct {
-	ID         string           `json:"id"`
-	OK         bool             `json:"ok"`
-	Violations []ViolationWire  `json:"violations"`
+	ID         string          `json:"id"`
+	OK         bool            `json:"ok"`
+	Violations []ViolationWire `json:"violations"`
 }
 
 type ViolationWire struct {

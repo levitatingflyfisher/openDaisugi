@@ -1,0 +1,10 @@
+{
+  "id": "turn-budget",
+  "kind": "policy",
+  "title": "Turn budget",
+  "about": "It pauses a pane with ctrl-c once it runs past a set number of turns.",
+  "run": "turn-budget.py",
+  "listens": ["state"],
+  "needs": ["pane.send_keys", "floor.note"],
+  "config": {"budget": 40}
+}

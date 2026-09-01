@@ -395,6 +395,19 @@ def price_turn(
     )
 
 
+def _strictly_cheaper(served: str, requested: str, prices: dict) -> bool:
+    """True only when both models have a price and ``served`` costs less on input and output.
+
+    A model with no price in the table gives False, so an estimate never
+    books a saving that the price table cannot show.
+    """
+    if served not in prices or requested not in prices:
+        return False
+    served_in, served_out = prices[served]
+    requested_in, requested_out = prices[requested]
+    return served_in < requested_in and served_out < requested_out
+
+
 def measure_turn(
     decision: RouteDecision,
     usage: dict,

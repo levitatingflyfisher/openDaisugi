@@ -158,3 +158,63 @@ func TestNewAPIModelDefaultsToRealAPI(t *testing.T) {
 		t.Fatalf("with no override, base URL should be the real API, got %q", m.BaseURL)
 	}
 }
+
+// OpenCode Go refuses a Messages call with no x-opencode-session header, so
+// every request carries one id for the whole run, the same on each turn.
+func TestAPIModelSendsOneSessionIDEveryTurn(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	m, err := NewAPIModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	m.httpDo = func(req *http.Request) (*http.Response, error) {
+		got = append(got, req.Header.Get("x-opencode-session"))
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"content":[{"type":"text","text":"ok"}]}`))}, nil
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := m.Next([]Message{{Role: "user", Text: "hi"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got[0] == "" || got[0] != got[1] {
+		t.Fatalf("want one non-empty session id on every turn, got %q", got)
+	}
+}
+
+// SPRIG_MODEL picks the model, so the api backend can drive any model an
+// Anthropic-compatible endpoint serves.
+func TestNewAPIModelHonorsModelOverride(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	t.Setenv("SPRIG_MODEL", "kimi-k3")
+	m, err := NewAPIModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Model != "kimi-k3" {
+		t.Fatalf("SPRIG_MODEL not honored, got %q", m.Model)
+	}
+}
+
+// A turn the provider refused leaves its prompt in the history, so the
+// next prompt follows it. Two user turns in a row go out as one message,
+// since the Messages API wants the roles to alternate.
+func TestBuildMessagesJoinsPromptsInARow(t *testing.T) {
+	msgs := buildMessages([]Message{{Role: "user", Text: "one"}, {Role: "user", Text: "two"}})
+	if len(msgs) != 1 || len(msgs[0].Content) != 2 {
+		t.Fatalf("want one user message with two text blocks, got %+v", msgs)
+	}
+}
+
+// A 400 with no error text is how some providers refuse a request by
+// policy. The error says so, names the model, and names the way out.
+func TestAPIModelNamesARefusalWithNoReason(t *testing.T) {
+	m := &APIModel{APIKey: "k", Model: "kimi-k3", BaseURL: "http://x",
+		httpDo: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 400, Body: io.NopCloser(strings.NewReader(`{"model":"kimi-k3"}`))}, nil
+		}}
+	_, err := m.Next([]Message{{Role: "user", Text: "q"}})
+	if err == nil || !strings.Contains(err.Error(), "kimi-k3 refused this request and gave no reason") || !strings.Contains(err.Error(), "SPRIG_MODEL") {
+		t.Fatalf("error does not explain the refusal: %v", err)
+	}
+}

@@ -20,11 +20,27 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 ENTRY_TYPES = frozenset(
-    {"session", "prompt", "assistant", "tool_call", "verdict", "tool_result", "checkpoint",
-     "compaction", "branch_summary", "label", "note", "head"}
+    {
+        "session",
+        "prompt",
+        "assistant",
+        "tool_call",
+        "verdict",
+        "tool_result",
+        "checkpoint",
+        "compaction",
+        "branch_summary",
+        "label",
+        "note",
+        "head",
+        "state",
+    }
 )
 _RESERVED = frozenset({"session", "head"})
-_NO_MOVE = frozenset({"label", "head", "session"})
+# "state" joins _NO_MOVE in the SAME edit as ENTRY_TYPES: a state entry
+# must never become the tree's head, or the next tool_call/checkpoint
+# mis-parents onto it instead of onto the previous verdict (S3, spec-01).
+_NO_MOVE = frozenset({"label", "head", "session", "state"})
 _META_KEYS = ("type", "id", "parentId", "ts")
 _UNSET = object()  # sentinel: the head cache has not been computed yet
 
@@ -63,8 +79,11 @@ class Entry:
     def from_row(cls, row: dict[str, Any]) -> "Entry":
         data = {k: v for k, v in row.items() if k not in _META_KEYS}
         return cls(
-            type=str(row["type"]), id=row.get("id"), parent_id=row.get("parentId"),
-            ts=float(row.get("ts") or 0.0), data=data,
+            type=str(row["type"]),
+            id=row.get("id"),
+            parent_id=row.get("parentId"),
+            ts=float(row.get("ts") or 0.0),
+            data=data,
         )
 
 
@@ -95,10 +114,18 @@ class SessionTree:
     # --- construction -------------------------------------------------------
     @classmethod
     def create(
-        cls, sessions_dir: Path, *, session_id: str, harness: str, cwd: str,
-        harness_session_id: str | None = None, transcript_path: str | None = None,
-        parent_session: str | None = None, parent_entry: str | None = None,
-        cache_key: str | None = None, clock: Callable[[], float] = time.time,
+        cls,
+        sessions_dir: Path,
+        *,
+        session_id: str,
+        harness: str,
+        cwd: str,
+        harness_session_id: str | None = None,
+        transcript_path: str | None = None,
+        parent_session: str | None = None,
+        parent_entry: str | None = None,
+        cache_key: str | None = None,
+        clock: Callable[[], float] = time.time,
     ) -> "SessionTree":
         sessions_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
@@ -109,11 +136,22 @@ class SessionTree:
         path = sessions_dir / f"{sid}.jsonl"
         if path.exists():
             raise FileExistsError(path)
-        header = Entry("session", sid, None, clock(), {
-            "v": SCHEMA_VERSION, "harness": harness, "cwd": cwd,
-            "harnessSessionId": harness_session_id, "transcriptPath": transcript_path,
-            "parentSession": parent_session, "parentEntry": parent_entry, "cacheKey": cache_key,
-        })
+        header = Entry(
+            "session",
+            sid,
+            None,
+            clock(),
+            {
+                "v": SCHEMA_VERSION,
+                "harness": harness,
+                "cwd": cwd,
+                "harnessSessionId": harness_session_id,
+                "transcriptPath": transcript_path,
+                "parentSession": parent_session,
+                "parentEntry": parent_entry,
+                "cacheKey": cache_key,
+            },
+        )
         tree = cls(path)
         tree._write(header)
         tree._head_cache = None  # a freshly created tree has no leaf yet
@@ -226,7 +264,11 @@ class SessionTree:
         return self._head_cache  # type: ignore[return-value]
 
     def append(
-        self, type: str, data: dict[str, Any], *, parent_id: str | None = "head",
+        self,
+        type: str,
+        data: dict[str, Any],
+        *,
+        parent_id: str | None = "head",
         clock: Callable[[], float] = time.time,
     ) -> Entry:
         if type not in ENTRY_TYPES or type in _RESERVED:
@@ -265,12 +307,14 @@ class SessionTree:
 
     def children(self, entry_id: str | None) -> list[Entry]:
         return [
-            e for e in self.entries()
-            if e.id and e.type not in _NO_MOVE and e.parent_id == entry_id
+            e for e in self.entries() if e.id and e.type not in _NO_MOVE and e.parent_id == entry_id
         ]
 
     def fork(
-        self, at_entry_id: str, *, new_session_id: str | None = None,
+        self,
+        at_entry_id: str,
+        *,
+        new_session_id: str | None = None,
         clock: Callable[[], float] = time.time,
     ) -> "SessionTree":
         """Copy the path root→``at_entry_id`` into a new session that names this one.
@@ -284,11 +328,14 @@ class SessionTree:
         child = SessionTree.create(
             self.path.parent,
             session_id=new_session_id or f"{self.session_id}-{new_id()}",
-            harness=str(meta.get("harness", "")), cwd=str(meta.get("cwd", "")),
+            harness=str(meta.get("harness", "")),
+            cwd=str(meta.get("cwd", "")),
             harness_session_id=meta.get("harnessSessionId"),
             transcript_path=meta.get("transcriptPath"),
-            parent_session=self.session_id, parent_entry=at_entry_id,
-            cache_key=meta.get("cacheKey"), clock=clock,
+            parent_session=self.session_id,
+            parent_entry=at_entry_id,
+            cache_key=meta.get("cacheKey"),
+            clock=clock,
         )
         for e in path:
             child._write(e)
@@ -333,13 +380,30 @@ class SessionIndex:
             meta = {"id": entries[0].id, **entries[0].data}
             last_call = next((e for e in reversed(entries) if e.type == "tool_call"), None)
             last_verdict = next((e for e in reversed(entries) if e.type == "verdict"), None)
-            out.append(SessionSummary(
-                session_id=str(meta["id"]), harness=str(meta.get("harness", "")),
-                cwd=str(meta.get("cwd", "")), harness_session_id=meta.get("harnessSessionId"),
-                transcript_path=meta.get("transcriptPath"), parent_session=meta.get("parentSession"),
-                last_ts=max(e.ts for e in entries), entry_count=len(entries),
-                last_tool_call=(dict(last_call.data, id=last_call.id) if last_call else None),
-                last_verdict=(dict(last_verdict.data, id=last_verdict.id) if last_verdict else None),
-            ))
+            # 'state' entries are bookkeeping, not activity: cockpit.py turns
+            # last_ts into the WORKING/PARKED/DONE grouping, so a session that
+            # reports idle/done via a hook must not look freshly WORKING just
+            # because a state row landed after the real activity. `or entries`
+            # is the fallback for an all-state entry list — unreachable today,
+            # since the guard above already requires entries[0].type ==
+            # "session", but kept explicit rather than relying on that
+            # invariant never changing.
+            live_entries = [e for e in entries if e.type != "state"] or entries
+            out.append(
+                SessionSummary(
+                    session_id=str(meta["id"]),
+                    harness=str(meta.get("harness", "")),
+                    cwd=str(meta.get("cwd", "")),
+                    harness_session_id=meta.get("harnessSessionId"),
+                    transcript_path=meta.get("transcriptPath"),
+                    parent_session=meta.get("parentSession"),
+                    last_ts=max(e.ts for e in live_entries),
+                    entry_count=len(live_entries),
+                    last_tool_call=(dict(last_call.data, id=last_call.id) if last_call else None),
+                    last_verdict=(
+                        dict(last_verdict.data, id=last_verdict.id) if last_verdict else None
+                    ),
+                )
+            )
         out.sort(key=lambda s: s.last_ts, reverse=True)
         return out

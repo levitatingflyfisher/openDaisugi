@@ -35,16 +35,17 @@ def main() -> int:
     ap.add_argument("--show", type=int, default=15)
     args = ap.parse_args()
 
-    lines = [
-        l for l in Path(args.corpus).read_text(encoding="utf-8").splitlines() if l.strip()
-    ]
+    lines = [l for l in Path(args.corpus).read_text(encoding="utf-8").splitlines() if l.strip()]
     if args.limit:
         lines = lines[: args.limit]
     cases = [json.loads(l) for l in lines]
 
     proc = subprocess.run(
-        [args.client], input="".join(l + "\n" for l in lines),
-        capture_output=True, text=True, timeout=600,
+        [args.client],
+        input="".join(l + "\n" for l in lines),
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     if proc.returncode != 0:
         print(f"CLIENT EXITED {proc.returncode}: {proc.stderr[-2000:]}", file=sys.stderr)

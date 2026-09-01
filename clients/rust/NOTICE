@@ -1,0 +1,190 @@
+clients/rust (the Rust verifier client and the daisugi-gate and daisugi binaries)
+is part of openDaisugi and is MIT licensed.
+
+It builds on these crates from crates.io. Each is used under one of the
+licences it offers:
+
+  serde            MIT OR Apache-2.0
+  serde_json       MIT OR Apache-2.0
+  tree-sitter      MIT
+  tree-sitter-bash MIT
+  regex            MIT OR Apache-2.0
+  thiserror        MIT OR Apache-2.0
+  libc             MIT OR Apache-2.0
+  jiter            MIT     (pydantic-core's JSON parser, for envelopes)
+  z3-sys           MIT     (bindings to Z3)
+  z3-src           MIT     (Z3 5.1.0's source, built by z3-sys)
+  rustls           Apache-2.0 OR ISC OR MIT  (TLS for an llm_check and the
+                   distiller's model call over https)
+  rustls-native-certs Apache-2.0 OR ISC OR MIT (the system's root store)
+  rusqlite         MIT     (daisugi's pathway store and trace journal;
+                   Copyright (c) 2014-2021 The rusqlite developers)
+  libsqlite3-sys   MIT     (the same authors; its build script compiles the
+                   SQLite amalgamation it bundles, SQLite 3.45.0, into the
+                   binary. SQLite itself is in the public domain:
+                   https://sqlite.org/copyright.html)
+
+rustls runs on these, each linked into daisugi-gate:
+
+  ring             Apache-2.0 AND ISC (its crypto; carries C and assembly
+                   code, compiled by its build script)
+  rustls-webpki    ISC
+  untrusted        ISC
+  rustls-pki-types MIT OR Apache-2.0
+  zeroize          Apache-2.0 OR MIT
+  openssl-probe    MIT OR Apache-2.0 (finds the system's certificate files;
+                   no OpenSSL code)
+  subtle           BSD-3-Clause (constant-time compares; rustls needs it,
+                   with no feature to leave it out)
+
+The tests alone use rcgen (MIT OR Apache-2.0) and its own crates to make
+a test CA; none of them is in a binary.
+
+Z3 itself (Microsoft Research, MIT licence) is built from the source
+z3-src pins and linked statically, with the C++ standard library of the
+zig toolchain from the native prefix (LLVM libc++ and libc++abi:
+Apache-2.0 WITH LLVM-exception, which asks no notice for a binary). The
+Rust standard library (MIT OR Apache-2.0, used under Apache-2.0,
+Copyright the Rust Project Developers) is linked into every binary. tree-sitter and
+tree-sitter-bash carry C code (the parser runtime and the generated bash
+grammar), compiled into the binaries by their build scripts.
+
+Transitive crates, each under one of the licences it offers: hashlink,
+fallible-iterator, fallible-streaming-iterator, bitflags (for rusqlite),
+ahash, bitvec, funty, hashbrown, indexmap, equivalent, itoa, lexical-parse-float,
+lexical-parse-integer, lexical-util, num-bigint, num-integer, num-traits,
+once_cell, radium, regex-automata, regex-syntax, aho-corasick, memchr,
+smallvec, streaming-iterator, tap, wyz, zerocopy, zmij, getrandom,
+cfg-if, serde_core, tree-sitter-language (MIT, Apache-2.0, Unlicense or
+BSD-2-Clause), and the build-time crates cc, cmake, pkg-config, shlex,
+autocfg, vcpkg, version_check, find-msvc-tools, proc-macro2, quote, syn,
+unicode-ident (also Unicode-3.0), serde_derive, thiserror-impl. The exact
+versions are in Cargo.lock.
+
+Not linked, fetched on first use: daisugi's potion matcher downloads
+minishlab/potion-base-8M (revision bf8b056651a2c21b8d2565580b8569da283cab23,
+three files pinned by sha256 in src/pathways/potion/mod.rs) from Hugging
+Face into $XDG_CACHE_HOME/opendaisugi/models. The model is MIT licensed
+(its model card, https://huggingface.co/minishlab/potion-base-8M).
+
+Notices the licences above ask a binary to carry:
+
+ring, rustls-webpki and untrusted (ISC), each under these terms with its
+own copyright line:
+
+  ring:          Copyright 2015-2025 Brian Smith.
+  rustls-webpki: Copyright 2015 Brian Smith.
+  untrusted:     Copyright 2015-2016 Brian Smith.
+
+  Permission to use, copy, modify, and/or distribute this software for
+  any purpose with or without fee is hereby granted, provided that the
+  above copyright notice and this permission notice appear in all
+  copies.
+
+  THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL
+  WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED
+  WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE
+  AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL
+  DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR
+  PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+  TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+  PERFORMANCE OF THIS SOFTWARE.
+
+ring also holds code from BoringSSL under the Apache License 2.0, which
+asks no notice for a binary beyond this one.
+
+subtle (BSD-3-Clause):
+
+  Copyright (c) 2016-2017 Isis Agora Lovecruft, Henry de Valence. All
+  rights reserved.
+  Copyright (c) 2016-2024 Isis Agora Lovecruft. All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions
+  are met:
+
+  1. Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+
+  2. Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+
+  3. Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+  A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+  HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+  LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+MIT License, for Z3 (Copyright (c) Microsoft Corporation), tree-sitter
+(Copyright (c) 2018 Max Brunsfeld), tree-sitter-bash (Copyright (c) 2017
+Max Brunsfeld), jiter (Copyright (c) 2022 to present Samuel Colvin),
+rusqlite and libsqlite3-sys (Copyright (c) 2014-2021 The rusqlite
+developers), z3-sys and
+z3-src (Copyright their authors, see Cargo.lock for versions), and every
+crate above used under MIT, each with its own copyright line in its
+crate:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The Unicode license, for tree-sitter's Unicode tables:
+
+COPYRIGHT AND PERMISSION NOTICE (ICU 58 and later)
+
+Copyright © 1991-2019 Unicode, Inc. All rights reserved.
+Distributed under the Terms of Use in https://www.unicode.org/copyright.html.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Unicode data files and any associated documentation
+(the "Data Files") or Unicode software and any associated documentation
+(the "Software") to deal in the Data Files or Software
+without restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, and/or sell copies of
+the Data Files or Software, and to permit persons to whom the Data Files
+or Software are furnished to do so, provided that either
+(a) this copyright and permission notice appear with all copies
+of the Data Files or Software, or
+(b) this copyright and permission notice appear in associated
+Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT OF THIRD PARTY RIGHTS.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS
+NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL
+DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THE DATA FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder
+shall not be used in advertising or otherwise to promote the sale,
+use or other dealings in these Data Files or Software without prior
+written authorization of the copyright holder.

@@ -1,0 +1,26 @@
+[
+ {
+  "match": "nemo|guardrails ai",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "Rails around a chat model. Text in, text out. Not a proof about an action."
+ },
+ {
+  "match": "codex",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "Approval modes and a sandbox in the harness itself. The gate sits in front of them through hooks, which fail open, so the gate exits 2 on any error."
+ },
+ {
+  "match": "e2b",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "Isolation instead of verification. Useful beside a gate, not instead of one."
+ },
+ {
+  "match": "little snitch",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "One dialog per connection, with allow once, allow forever, deny. The three tiers of allow have an ancestor."
+ }
+]

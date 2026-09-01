@@ -13,7 +13,6 @@
 
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashMap;
 
 /// `models.SHELL_INTERPRETERS` — names treated as shell interpreters for
 /// policy purposes.
@@ -69,10 +68,27 @@ pub struct Permission {
     pub obstacles: Vec<([f64; 3], [f64; 3])>,
     #[serde(default)]
     pub velocity_limit: Option<f64>,
-    #[serde(default)]
-    pub joint_limits: HashMap<String, (f64, f64)>,
+    /// In the envelope's own order, which the oracle's messages list.
+    #[serde(default, deserialize_with = "ordered_limits")]
+    pub joint_limits: Vec<(String, (f64, f64))>,
     #[serde(default)]
     pub torque_limit: Option<f64>,
+}
+
+/// A JSON object of joint limits, its keys in document order (serde_json
+/// keeps it with `preserve_order`).
+fn ordered_limits<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<(String, (f64, f64))>, D::Error> {
+    let m: serde_json::Map<String, Value> = Deserialize::deserialize(d)?;
+    m.into_iter()
+        .map(|(k, v)| serde_json::from_value::<(f64, f64)>(v).map(|t| (k, t)).map_err(serde::de::Error::custom))
+        .collect()
+}
+
+impl Permission {
+    /// The limits of one joint.
+    pub fn joint_limit(&self, joint: &str) -> Option<(f64, f64)> {
+        self.joint_limits.iter().find(|(k, _)| k == joint).map(|(_, v)| *v)
+    }
 }
 
 impl Default for Permission {
@@ -92,7 +108,7 @@ impl Default for Permission {
             workspace_bounds: None,
             obstacles: vec![],
             velocity_limit: None,
-            joint_limits: HashMap::new(),
+            joint_limits: vec![],
             torque_limit: None,
         }
     }
@@ -189,7 +205,8 @@ pub enum StepKind {
         url: String,
     },
     JointMove {
-        joint_targets: HashMap<String, f64>,
+        /// In the step's own order, which the robotics checks walk.
+        joint_targets: Vec<(String, f64)>,
         duration_s: f64,
         velocity_scale: f64,
     },
@@ -264,12 +281,12 @@ fn parse_vec3_opt(v: &Value) -> Option<(f64, f64, f64)> {
     Some((arr[0].as_f64()?, arr[1].as_f64()?, arr[2].as_f64()?))
 }
 
-fn get_f64_map(v: &Value, key: &str) -> HashMap<String, f64> {
-    let mut out = HashMap::new();
+fn get_f64_map(v: &Value, key: &str) -> Vec<(String, f64)> {
+    let mut out = Vec::new();
     if let Some(obj) = v.get(key).and_then(|x| x.as_object()) {
         for (k, val) in obj {
             if let Some(f) = val.as_f64() {
-                out.insert(k.clone(), f);
+                out.push((k.clone(), f));
             }
         }
     }

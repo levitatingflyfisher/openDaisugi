@@ -2,6 +2,8 @@ package sprig
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,7 +28,10 @@ type APIModel struct {
 	BaseURL   string
 	Timeout   time.Duration
 	MaxTokens int
-	httpDo    func(*http.Request) (*http.Response, error) // overridable for tests
+	// Session is one id for the whole run, sent on every request.
+	// OpenCode Go refuses a call without it; other endpoints ignore it.
+	Session string
+	httpDo  func(*http.Request) (*http.Response, error) // overridable for tests
 }
 
 // apiSystemPrompt is deliberately tiny — the reason E exists.
@@ -47,9 +52,18 @@ func NewAPIModel() (*APIModel, error) {
 	if o := strings.TrimRight(os.Getenv("ANTHROPIC_BASE_URL"), "/"); o != "" {
 		base = o // trailing slash trimmed, or the path becomes //v1/messages
 	}
+	model := "claude-haiku-4-5"
+	if o := os.Getenv("SPRIG_MODEL"); o != "" {
+		model = o
+	}
+	var id [8]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return nil, fmt.Errorf("cannot make a session id: %w", err)
+	}
 	return &APIModel{
 		APIKey:    key,
-		Model:     "claude-haiku-4-5",
+		Model:     model,
+		Session:   "sprig-" + hex.EncodeToString(id[:]),
 		BaseURL:   base,
 		Timeout:   120 * time.Second,
 		MaxTokens: 4096,
@@ -90,6 +104,9 @@ func (m *APIModel) Next(history []Message) (Message, error) {
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("x-api-key", m.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
+	if m.Session != "" {
+		req.Header.Set("x-opencode-session", m.Session)
+	}
 
 	do := m.httpDo
 	if do == nil {
@@ -102,6 +119,9 @@ func (m *APIModel) Next(history []Message) (Message, error) {
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusBadRequest && !hasErrorText(data) {
+			return Message{}, fmt.Errorf("%s refused this request and gave no reason. Some providers refuse topics by policy. Set SPRIG_MODEL to another model and try again", m.Model)
+		}
 		return Message{}, fmt.Errorf("anthropic api %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return parseAPIResponse(data)
@@ -132,7 +152,14 @@ func buildMessages(history []Message) []apiMessage {
 		m := history[i]
 		switch m.Role {
 		case "user":
-			msgs = append(msgs, apiMessage{Role: "user", Content: []apiBlock{{Type: "text", Text: m.Text}}})
+			// A prompt that follows another prompt joins its message, so
+			// the roles still alternate after a turn the provider refused.
+			block := apiBlock{Type: "text", Text: m.Text}
+			if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
+				msgs[n-1].Content = append(msgs[n-1].Content, block)
+			} else {
+				msgs = append(msgs, apiMessage{Role: "user", Content: []apiBlock{block}})
+			}
 			i++
 		case "assistant":
 			var blocks []apiBlock
@@ -164,10 +191,11 @@ func buildMessages(history []Message) []apiMessage {
 // blocks become Calls (keeping the API's own id — a real tool_use id, not one
 // the loop has to mint), the top-level model name is kept, and usage is mapped
 // onto Usage's four buckets so OnAssistant's usage is never a silent zero on
-// this backend (path E is the one place sprig CAN report real token counts —
-// the text-hardened `claude -p` backend genuinely cannot, see loop.go's
-// Message doc). A response with no usage object decodes to zero usage, not
-// an error — an old fixture or a stripping proxy must not break parsing.
+// this backend. The claude-code backend (model_claude.go) gets its usage the
+// same honest way, from its own provider's own accounting. See
+// parseClaudeCLIEnvelope. A response with no usage object decodes to zero
+// usage, not an error: an old fixture or a stripping proxy must not break
+// parsing.
 func parseAPIResponse(data []byte) (Message, error) {
 	var r struct {
 		Model   string `json:"model"`
@@ -232,4 +260,15 @@ func nonNilInput(m map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return m
+}
+
+// hasErrorText reports whether an error body carries a message a person
+// can read, in the Messages API shape {"error":{"message":...}}.
+func hasErrorText(data []byte) bool {
+	var e struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	return json.Unmarshal(data, &e) == nil && strings.TrimSpace(e.Error.Message) != ""
 }

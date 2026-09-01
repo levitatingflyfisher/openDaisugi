@@ -123,3 +123,102 @@ async def test_tend_skips_small_clusters(tmp_path, monkeypatch):
     assert report.created == 0
     assert report.skipped >= 1
     assert store.list_all() == []
+
+
+@pytest.mark.asyncio
+async def test_generalization_failure_warns_in_one_line(tmp_path, monkeypatch):
+    """An instructor retry exception renders its failed attempts as a
+    multi-line dump with fresh response ids; the warning keeps the first
+    cause and the count only."""
+    journal = Journal(data_dir=tmp_path)
+    store = PathwayStore(tmp_path / "pathways.db")
+    for i in range(3):
+        _write_success_trace(journal, f"find stale tmp files run {i}")
+    distiller = Distiller(journal=journal, pathway_store=store, model="test-model", min_traces=3)
+    monkeypatch.setattr(distiller, "_embed_tasks", lambda tasks: np.ones((len(tasks), 4)))
+    monkeypatch.setattr(distiller, "_embed_plan_structures", lambda sigs: np.ones((len(sigs), 4)))
+
+    from opendaisugi import distiller as dist_mod
+
+    class _Attempt:
+        exception = ValueError("bad reply\nsecond line")
+
+    class _RetryError(Exception):
+        failed_attempts = [_Attempt(), _Attempt(), _Attempt()]
+
+        def __str__(self):
+            return "<failed_attempts>\n<completion>chatcmpl-random</completion>"
+
+    async def _fail(**kwargs):
+        raise _RetryError()
+
+    monkeypatch.setattr(dist_mod, "_generalize_template", _fail)
+    report = await distiller.tend()
+    assert report.warnings == ["cluster generalization failed: ValueError: bad reply (3 attempts)"]
+
+
+@pytest.mark.asyncio
+async def test_template_whose_z3_check_timed_out_is_not_stored(tmp_path, monkeypatch):
+    """verify() keeps a Z3 timeout as a warning in lenient mode; nothing
+    proved the template inside its envelope, so it is not stored."""
+    journal = Journal(data_dir=tmp_path)
+    store = PathwayStore(tmp_path / "pathways.db")
+    for i in range(3):
+        _write_success_trace(journal, f"find stale tmp files run {i}")
+    distiller = Distiller(journal=journal, pathway_store=store, model="test-model", min_traces=3)
+    monkeypatch.setattr(distiller, "_embed_tasks", lambda tasks: np.ones((len(tasks), 4)))
+    monkeypatch.setattr(distiller, "_embed_plan_structures", lambda sigs: np.ones((len(sigs), 4)))
+
+    from opendaisugi import distiller as dist_mod
+    import importlib
+
+    verify_mod = importlib.import_module("opendaisugi.verify")
+    from opendaisugi.distiller import GeneralizedTemplate
+
+    plan_tmpl = ActionPlan(source="template", task="T", steps=[ShellStep(id="s1", command="find /tmp")])
+
+    async def _fake_gen(**kwargs):
+        return GeneralizedTemplate(task_description="find stale temp files", plan_template=plan_tmpl)
+
+    def _timed_out(plan, envelope, **kw):
+        return VerificationResult(
+            ok=True, warnings=["Z3 plan-vs-envelope check exceeded 500ms"],
+            envelope_id=envelope.id, plan_id=plan.id, duration_ms=1.0,
+        )
+
+    async def _same(*, envelope, failing_plans, model):
+        return envelope
+
+    monkeypatch.setattr(dist_mod, "_generalize_template", _fake_gen)
+    monkeypatch.setattr(dist_mod, "_improve_envelope", _same)
+    monkeypatch.setattr(dist_mod, "_verify", _timed_out)
+    monkeypatch.setattr(verify_mod, "verify", _timed_out)
+    report = await distiller.tend()
+    assert report.created == 0
+    assert store.list_all() == []
+    assert report.warnings[-1:] == [
+        "distilled plan_template does not verify against its envelope "
+        "(verifier timed out; raise the Z3 timeout); dropping cluster"
+    ]
+
+
+def test_validate_envelope_counts_a_timed_out_plan_as_failing(monkeypatch):
+    from opendaisugi import distiller as dist_mod
+    from opendaisugi.models import Violation
+
+    env = Envelope(generated_by="t", task="T", permissions=Permission(shell=True, shell_allowlist=["ls"]))
+    plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="ls")])
+
+    def _violation(p, e, **kw):
+        v = Violation(stage="z3", message="verifier timed out (plan-vs-envelope check); raise the Z3 timeout",
+                      detail={"reason": "z3_timeout"})
+        return VerificationResult(ok=False, violations=[v], envelope_id=e.id, plan_id=p.id, duration_ms=1.0)
+
+    def _warning(p, e, **kw):
+        return VerificationResult(ok=True, warnings=["Z3 envelope self-consistency check exceeded 500ms"],
+                                  envelope_id=e.id, plan_id=p.id, duration_ms=1.0)
+
+    for fake in (_violation, _warning):
+        monkeypatch.setattr(dist_mod, "_verify", fake)
+        score, failing = dist_mod._validate_envelope(env, [plan])
+        assert (score, failing) == (0.0, [plan])

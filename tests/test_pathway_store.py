@@ -227,3 +227,19 @@ def test_parameters_and_structure_signature_survive_store_round_trip(tmp_path):
     assert got.parameters[0].observed == ["grep -rn TODO src", "grep -rn FIXME src"]
     # and via find()'s row path too (list_all → _row_to_pathway)
     assert store.list_all()[0].parameters[0].field == "command"
+
+
+def test_a_non_finite_row_is_refused_not_read_as_no_limit(tmp_path):
+    """GD-16 at the model level: a stored envelope or plan whose text holds
+    NaN or an infinity raises on read; it never reads as a null limit."""
+    import pytest
+    from pydantic import ValidationError
+
+    store = PathwayStore(tmp_path / "p.db")
+    p = _pathway()
+    p.envelope.permissions.velocity_limit = 1.5
+    store.put(p)
+    with sqlite3.connect(tmp_path / "p.db") as con:
+        con.execute("UPDATE pathways SET envelope_json = replace(envelope_json, '1.5', 'Infinity')")
+    with pytest.raises(ValidationError, match="finite_number"):
+        store.list_all()

@@ -1,0 +1,24 @@
+# The four ACP methods coppice sits beside, in JSON-RPC 2.0 form. PROTOCOL.md
+# names the mapping in its ACP adjacency section. session/new is pane.create,
+# session/prompt is pane.send_text or agent.prompt, session/cancel is
+# pane.send_keys with ctrl+c, and session/request_permission is a blocked
+# state event whose reply is agent.allow or agent.deny. An allow or a deny
+# for an ask the pane never raised is refused. A connection placed as a pane
+# can never allow, so that case comes last: the role holds for the rest of
+# the connection.
+{"jsonrpc":"2.0","id":1,"method":"pane.create","params":{"cwd":"/","cmd_argv":["sh","-c","sleep 30"],"label":"acp","kind":"pty"}}
+{"jsonrpc":"2.0","id":"$id","result":{"pane":"$pane","workspace":"*","tab":"*"}}
+{"jsonrpc":"2.0","id":2,"method":"pane.send_text","params":{"pane":"$pane","text":"hello"}}
+{"jsonrpc":"2.0","id":"$id","result":{"sent":"*"}}
+{"jsonrpc":"2.0","id":3,"method":"agent.prompt","params":{"pane":"$pane","text":"hello"}}
+{"jsonrpc":"2.0","id":"$id","result":{"pane":"$pane","sent":"*"}}
+{"jsonrpc":"2.0","id":4,"method":"pane.send_keys","params":{"pane":"$pane","keys":["ctrl+c"]}}
+{"jsonrpc":"2.0","id":"$id","result":{"sent":1}}
+{"jsonrpc":"2.0","id":5,"method":"agent.deny","params":{"pane":"$pane","ask":"no-such-ask","reason":"acp cancelled"}}
+{"jsonrpc":"2.0","id":"$id","error":{"code":-32000,"message":"*","data":{"code":"bad_request"}}}
+{"jsonrpc":"2.0","id":6,"method":"agent.allow","params":{"pane":"$pane","ask":"no-such-ask"}}
+{"jsonrpc":"2.0","id":"$id","error":{"code":-32000,"message":"*","data":{"code":"bad_request"}}}
+{"jsonrpc":"2.0","id":7,"method":"hello","params":{"role":"pane","pane":"$pane"}}
+{"jsonrpc":"2.0","id":"$id","result":{"role":"pane","allow":false}}
+{"jsonrpc":"2.0","id":8,"method":"agent.allow","params":{"pane":"$pane","ask":"no-such-ask"}}
+{"jsonrpc":"2.0","id":"$id","error":{"code":-32000,"message":"a pane can propose. It cannot allow.","data":{"code":"unauthorized"}}}

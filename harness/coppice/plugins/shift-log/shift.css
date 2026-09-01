@@ -1,0 +1,10 @@
+:root { color-scheme: dark; --bg: #12181a; --fg: #e8eae7; --muted: #98a3a0; --line: #26312f; }
+body { margin: 0; padding: .6rem .8rem; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#shift-status, #shift-legend { color: var(--muted); min-height: 1.2em; margin: 0 0 .4rem; }
+.shift-row { display: grid; grid-template-columns: 10rem repeat(16, minmax(0, 1fr)); gap: 2px; margin: 0 0 2px; }
+.shift-row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.shift-row.head .who, .shift-row.head span { color: var(--muted); font-size: 12px; }
+.shift-row .cell { height: 1.2rem; border-radius: 2px; background: var(--line); }
+.swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: 2px; vertical-align: middle; margin: 0 .3rem 0 .8rem; }
+.shift-row .cell.unknown, .swatch.unknown { background: repeating-linear-gradient(45deg, #26312f 0 3px, #12181a 3px 6px); }

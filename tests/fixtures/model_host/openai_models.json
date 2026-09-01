@@ -1,0 +1,11 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "qwen3-coder:latest",
+      "object": "model",
+      "created": 1715980800,
+      "owned_by": "library"
+    }
+  ]
+}

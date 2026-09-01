@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#12181a">
+<title>coppice</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<header id="bar">
+  <button id="back" class="ghost" hidden>Back</button>
+  <h1 id="title">Floor</h1>
+  <ul id="facts" aria-label="Floor facts" hidden></ul>
+  <span id="new-wrap">
+    <button id="go-new" class="ghost" title="Start the default harness near the selected agent">New</button><button id="new-menu-btn" class="ghost" aria-haspopup="menu" aria-expanded="false" aria-label="New in a project" title="New in a project">&#9662;</button>
+    <div id="new-menu" role="menu" aria-label="New in a project" hidden></div>
+  </span>
+  <button id="go-settings" class="ghost">Settings</button>
+</header>
+
+<div id="status-row"><p id="status" role="status"></p><span id="status-fix" hidden></span></div>
+
+<section id="screen-roster">
+  <div id="rail">
+    <header id="queue-head" hidden>
+      <h2 id="queue-title"></h2>
+      <p id="queue-sub" class="muted"></p>
+    </header>
+    <p id="gate-hint" role="note" hidden></p>
+    <ul id="needs" class="cards" aria-label="Needs you" hidden></ul>
+    <section id="quiet" class="quiet" aria-live="polite" hidden></section>
+    <ul id="roster" class="cards" aria-label="Agents"></ul>
+    <p id="roster-empty" class="empty" hidden>No agents yet. Press New to start one.</p>
+    <details id="recent" hidden>
+      <summary>Recent <span id="recent-count" class="count">0</span></summary>
+      <p class="recent-all">
+        <button id="recent-resume-all" type="button">Resume all</button>
+        <button id="recent-clear" type="button" class="ghost">Clear all</button>
+      </p>
+      <p id="recent-confirm" class="confirm" hidden></p>
+      <ul id="recent-list" aria-label="Ended agents"></ul>
+    </details>
+    <form id="tell" autocomplete="off">
+      <label for="tell-text">Tell the floor</label>
+      <input id="tell-text" type="text" enterkeyhint="send" placeholder="claude, close docs, or a sentence for the foreman">
+      <button id="tell-mic" type="button">Mic</button>
+      <button id="tell-send" type="submit">Send</button>
+    </form>
+    <ul id="view-list" class="views" aria-label="Views" hidden></ul>
+    <footer id="rail-foot" hidden></footer>
+    <iframe id="minimap-frame" title="Minimap" sandbox="allow-scripts" hidden></iframe>
+  </div>
+  <div id="strip" hidden>
+    <iframe id="strip-frame" title="Colony" sandbox="allow-scripts"></iframe>
+    <button id="strip-unpin" type="button" class="ghost" title="Unpin the colony strip">Unpin</button>
+  </div>
+  <section id="overlay" aria-label="View" hidden>
+    <header id="overlay-head">
+      <strong id="overlay-title"></strong>
+      <button id="overlay-pin" type="button" class="ghost" title="Pin the colony as a thin strip above the windows. The strip takes about 50 px of height, which can mean fewer windows." hidden>Pin as a strip</button>
+      <button id="overlay-close" type="button" class="ghost" aria-label="Close" title="Close. Esc closes it too while the rail has the keys.">&#215;</button>
+    </header>
+    <iframe id="view-frame" title="View" sandbox="allow-scripts"></iframe>
+    <div id="journal" hidden></div>
+  </section>
+</section>
+
+
+<button id="sheet-edge" type="button" aria-label="Back to the floor" title="Back to the floor" hidden></button>
+<section id="screen-pane" aria-label="Agent" hidden>
+  <div id="pane-head">
+    <button id="sheet-back" type="button" class="ghost" aria-label="Back to the floor" title="Back to the floor. A swipe right goes back too.">&#8249;</button>
+    <span id="pane-dot" class="dot"></span>
+    <strong id="pane-label"></strong>
+    <span id="pane-gate"></span>
+    <span id="pane-chip" class="chip"></span>
+    <span id="pane-source" class="muted"></span>
+  </div>
+  <div id="pane-stack"></div>
+  <div id="pane-details" hidden></div>
+  <div id="ask" hidden>
+    <p id="ask-summary"></p>
+    <p id="ask-tier" class="tier muted"></p>
+    <button id="deny" class="deny big">Deny</button>
+    <button id="allow" class="allow">Allow</button>
+    <input id="ask-name" class="ask-name" type="text" placeholder="type the pane name" hidden>
+  </div>
+  <div id="trust" hidden>
+    <p id="trust-text">Claude asks to trust this folder.</p>
+    <button id="trust-yes" class="allow" type="button" title="Choose &quot;Yes, I trust this folder&quot; on Claude's screen.">Trust this folder</button>
+    <button id="trust-no" class="deny" type="button" title="Press Esc on Claude's screen. This ends Claude.">Not now</button>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="grid" width="360" height="480"></canvas>
+    <pre id="grid-text" class="visually-hidden" aria-live="off"></pre>
+  </div>
+  <p id="pane-note" class="muted" hidden></p>
+  <div id="keys" role="group" aria-label="Keys" hidden></div>
+  <form id="compose" autocomplete="off">
+    <button id="keys-toggle" type="button" class="ghost" aria-expanded="false" aria-controls="keys" title="Esc, Tab, the arrows, ctrl-c and Enter">Keys</button>
+    <input id="text" type="text" enterkeyhint="done" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Type to the agent" placeholder="Type here" title="Your keyboard's Enter types this into the agent. The Enter button types it and presses Enter.">
+    <button id="record" type="button" title="Speak. The words land in this field.">Mic</button>
+    <button id="send-enter" type="button" title="Type the text, if any, and press Enter">Enter</button>
+  </form>
+</section>
+
+<section id="screen-new" hidden>
+  <label for="new-cwd">Directory</label>
+  <input id="new-cwd" list="recent-cwds" autocomplete="off">
+  <datalist id="recent-cwds"></datalist>
+  <label for="new-label">Label</label>
+  <input id="new-label" autocomplete="off">
+  <label for="new-kind">Kind</label>
+  <select id="new-kind">
+    <option value="pty">pty, the harness UI</option>
+    <option value="headless">headless, supervised</option>
+  </select>
+  <label id="new-command-label" for="new-command">Command</label>
+  <input id="new-command" value="claude" autocomplete="off" placeholder="One word per argument, for example claude --resume. No quoting.">
+  <label id="new-harness-label" for="new-harness">Harness</label>
+  <select id="new-harness">
+    <option value="claude">claude</option>
+    <option value="codex">codex</option>
+    <option value="sprig">sprig</option>
+  </select>
+  <button id="create">Create</button>
+</section>
+
+<section id="screen-settings" hidden>
+  <p class="muted" id="set-origin"></p>
+  <label for="set-token">Token</label>
+  <input id="set-token" autocomplete="off">
+  <button id="save-settings">Save</button>
+  <button id="forget-token" class="ghost">Forget token</button>
+  <button id="test-push">Test push</button>
+  <p class="muted">Push goes through your own ntfy. Web push is not built.</p>
+</section>
+
+</body>
+</html>

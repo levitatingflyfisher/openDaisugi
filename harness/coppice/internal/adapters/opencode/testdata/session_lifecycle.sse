@@ -1,0 +1,74 @@
+: A real capture from opencode serve 1.18.32 on 2026-09-23, one prompt, session
+: ses_f3107821dffeLaGMxGh2BNticC. Local paths are redacted to /work. Only the event types
+: the adapter reads are kept, plus session.diff as one it skips.
+
+data: {"id":"evt_0cef879e5001DC8Ggw5ANBFVHE","type":"server.connected","properties":{}}
+
+data: {"id":"evt_0cef87de5001nPrneoIRr5VlbB","type":"session.created","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","info":{"id":"ses_f3107821dffeLaGMxGh2BNticC","slug":"sunny-tiger","version":"1.18.32","projectID":"47c96b9f697b6f8d92638081d3bc493d3699c163","directory":"/work","path":"work","title":"coppice pane","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790178786787,"updated":1790178786787}}}}
+
+data: {"id":"evt_0cef882030017NPiOqSdoBhfqI","type":"message.part.updated","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","part":{"type":"text","text":"say hi","messageID":"msg_0cef881aa001zZGX1gAD6F2ZcL","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","id":"prt_0cef881dd001UPLsvVU5juHi59"},"time":1790178787843}}
+
+data: {"id":"evt_0cef88217001b3MbLSk7ZoEkao","type":"session.status","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","status":{"type":"busy"}}}
+
+data: {"id":"evt_0cef882a7001dRUXPiuQ4AL0i6","type":"session.diff","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","diff":[]}}
+
+data: {"id":"evt_0cef8856a001v5v82cSkz9Sljr","type":"session.status","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","status":{"type":"busy"}}}
+
+data: {"id":"evt_0cef892a2001N0HcgsKVCeHzeo","type":"message.part.updated","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","part":{"id":"prt_0cef892a2001f8stdgIv61WLKZ","messageID":"msg_0cef8821c001kb2fnJirG30ziW","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","snapshot":"73e1badea43fadb0f19a95bd0c5c2fee20fbe7bb","type":"step-start"},"time":1790178792098}}
+
+data: {"id":"evt_0cef892ee0012o85b1sdHEoSqB","type":"message.part.updated","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","part":{"id":"prt_0cef892ed001bt0zS2WlR46Hbv","messageID":"msg_0cef8821c001kb2fnJirG30ziW","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","type":"reasoning","text":"","time":{"start":1790178792173}},"time":1790178792174}}
+
+data: {"id":"evt_0cef892f3001PFGKc2NiY3LcNr","type":"message.part.delta","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","messageID":"msg_0cef8821c001kb2fnJirG30ziW","partID":"prt_0cef892ed001bt0zS2WlR46Hbv","field":"text","delta":"The"}}
+
+data: {"id":"evt_0cef892f6001i7WnNrhYKUI6QC","type":"message.part.delta","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","messageID":"msg_0cef8821c001kb2fnJirG30ziW","partID":"prt_0cef892ed001bt0zS2WlR46Hbv","field":"text","delta":" user just said \"say hi"}}
+
+data: {"id":"evt_0cef89311001WGmXLddmN0WgM6","type":"message.part.delta","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","messageID":"msg_0cef8821c001kb2fnJirG30ziW","partID":"prt_0cef892ed001bt0zS2WlR46Hbv","field":"text","delta":"\". Simple greeting. I should"}}
+
+data: {"id":"evt_0cef89332001zwXqXgO4ZZrXLN","type":"message.part.delta","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","messageID":"msg_0cef8821c001kb2fnJirG30ziW","partID":"prt_0cef892ed001bt0zS2WlR46Hbv","field":"text","delta":" respond conc"}}
+
+data: {"id":"evt_0cef8936a001gf78SVGhaUSFq0","type":"message.part.delta","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","messageID":"msg_0cef8821c001kb2fnJirG30ziW","partID":"prt_0cef892ed001bt0zS2WlR46Hbv","field":"text","delta":"isely."}}
+
+data: {"id":"evt_0cef893a9001s39UxNCLu2cpDD","type":"message.part.updated","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","part":{"id":"prt_0cef892ed001bt0zS2WlR46Hbv","messageID":"msg_0cef8821c001kb2fnJirG30ziW","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","type":"reasoning","text":"The user just said \"say hi\". Simple greeting. I should respond concisely.","time":{"start":1790178792173,"end":1790178792361}},"time":1790178792361}}
+
+data: {"id":"evt_0cef893ae001t6W3YyuVyxY37u","type":"message.part.updated","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","part":{"id":"prt_0cef893ae001UYzeBW7zlWhHZN","messageID":"msg_0cef8821c001kb2fnJirG30ziW","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","type":"text","text":"","time":{"start":1790178792366}},"time":1790178792366}}
+
+data: {"id":"evt_0cef893b2001PoLQW9UDGW813t","type":"message.part.delta","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","messageID":"msg_0cef8821c001kb2fnJirG30ziW","partID":"prt_0cef893ae001UYzeBW7zlWhHZN","field":"text","delta":"Hi!"}}
+
+data: {"id":"evt_0cef893b4001IUZFoR7i61mGhG","type":"message.part.updated","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","part":{"id":"prt_0cef893ae001UYzeBW7zlWhHZN","messageID":"msg_0cef8821c001kb2fnJirG30ziW","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","type":"text","text":"Hi!","time":{"start":1790178792366,"end":1790178792372}},"time":1790178792372}}
+
+data: {"id":"evt_0cef893dd001201pP6khZBjijh","type":"message.part.updated","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","part":{"id":"prt_0cef893dd0017QI21JvGEfZJEX","reason":"stop","snapshot":"73e1badea43fadb0f19a95bd0c5c2fee20fbe7bb","messageID":"msg_0cef8821c001kb2fnJirG30ziW","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","type":"step-finish","tokens":{"total":10054,"input":8240,"output":22,"reasoning":0,"cache":{"write":0,"read":1792}},"cost":0},"time":1790178792413}}
+
+data: {"id":"evt_0cef89401001sjXRWwSqMqapgo","type":"session.status","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","status":{"type":"busy"}}}
+
+data: {"id":"evt_0cef89404001xRZZuqf5O0BC72","type":"session.status","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","status":{"type":"idle"}}}
+
+data: {"id":"evt_0cef89404002wjkuTZ31n8KwAf","type":"session.idle","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC"}}
+
+data: {"id":"evt_0cef894080014ezYYNfUJGszw6","type":"session.diff","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","diff":[]}}
+
+: The events below are CONSTRUCTED from the /doc schemas in PINS.md. The capture
+: ran no tool, so it has no tool part, permission, question or error event.
+
+data: {"id":"evt_c1","type":"session.status","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","status":{"type":"busy"}}}
+
+data: {"id":"evt_c2","type":"message.part.updated","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","part":{"id":"prt_c2","messageID":"msg_c","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","type":"tool","callID":"call_1","tool":"bash","state":{"status":"pending","input":{},"raw":""}},"time":1}}
+
+data: {"id":"evt_c3","type":"message.part.updated","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","part":{"id":"prt_c2","messageID":"msg_c","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","type":"tool","callID":"call_1","tool":"bash","state":{"status":"running","input":{"command":"rm -rf build"},"time":{"start":1}}},"time":2}}
+
+data: {"id":"evt_c4","type":"message.part.updated","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","part":{"id":"prt_c2","messageID":"msg_c","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","type":"tool","callID":"call_1","tool":"bash","state":{"status":"running","input":{"command":"rm -rf build"},"title":"rm","time":{"start":1}}},"time":3}}
+
+data: {"id":"evt_c5","type":"permission.asked","properties":{"id":"per_1","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","permission":"bash","patterns":["rm -rf build"],"metadata":{},"always":["rm *"],"tool":{"messageID":"msg_c","callID":"call_1"}}}
+
+data: {"id":"evt_c6","type":"permission.replied","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","requestID":"per_1","reply":"once"}}
+
+data: {"id":"evt_c7","type":"question.asked","properties":{"id":"que_1","sessionID":"ses_f3107821dffeLaGMxGh2BNticC","questions":[{"question":"Which branch?","header":"Branch","options":[{"label":"main","description":"the default"}]}]}}
+
+data: {"id":"evt_c8","type":"question.rejected","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","requestID":"que_1"}}
+
+data: {"id":"evt_c9","type":"session.error","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","error":{"name":"UnknownError","data":{"message":"Model not found"}}}}
+
+data: {"id":"evt_c10","type":"session.status","properties":{"sessionID":"ses_f3107821dffeLaGMxGh2BNticC","status":{"type":"idle"}}}
+
+data: {"id":"evt_c11","type":"session.status","properties":{"sessionID":"ses_OTHER_PANE","status":{"type":"busy"}}}
+
+data: {"id":"evt_c12","type":"permission.asked","properties":{"id":"per_other","sessionID":"ses_OTHER_PANE","permission":"bash","patterns":["x"],"metadata":{},"always":[]}}

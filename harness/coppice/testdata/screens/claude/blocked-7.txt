@@ -1,0 +1,9 @@
+#rule: coppice_first_run_security
+ Security notes:
+
+ 1. Claude can make mistakes
+    You should always review Claude's responses, especially when running code.
+
+ 2. Due to prompt injection risks, only use it with code you trust
+
+ Press Enter to continue…

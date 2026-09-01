@@ -15,6 +15,7 @@ import os
 import socket
 import stat
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 SOCK_NAME = "gate.sock"
@@ -52,15 +53,66 @@ def _socket_is_trustworthy(sock_path: Path) -> bool:
     return True
 
 
-def ask_server(sock_path: Path, argv: list[str], raw: bytes, *, timeout_s: float = _SERVER_TIMEOUT_S) -> dict | None:
-    """One round trip. None on any failure; the caller then runs the gate itself."""
+def caller_pane_fields(env: Mapping[str, str]) -> dict[str, str]:
+    """This caller's own coppice/Herdr pane identity, read from ITS OWN
+    environment. This process runs as the actual hook subprocess inside
+    whatever pane started it, so its environment IS the caller's identity.
+    Carried as explicit request fields so the resident gate, a separate
+    long-lived process with no pane environment of its own (gate_server.py's
+    serve() drops COPPICE_SOCK/COPPICE_PANE/HERDR_PANE_ID/HERDR_PANE at
+    start), can still report for THIS caller rather than for itself or for
+    nobody. Empty when this caller has no pane identity to report: a bare
+    COPPICE_PANE with no matching COPPICE_SOCK, or neither, sends nothing
+    for coppice; report_state fails closed on an incomplete pair either way,
+    this just avoids sending one.
+    """
+    fields: dict[str, str] = {}
+    sock = env.get("COPPICE_SOCK")
+    pane = env.get("COPPICE_PANE")
+    if sock and pane:
+        fields["coppice_sock"] = sock
+        fields["coppice_pane"] = pane
+    herdr_pane = env.get("HERDR_PANE_ID") or env.get("HERDR_PANE")
+    if herdr_pane:
+        fields["herdr_pane"] = herdr_pane
+    # The coppice data directory this pane's server keeps its secrets in.
+    # The resident gate guards it as it guards the default one. Only an
+    # absolute path is sent, since coppice always sets one.
+    data_dir = env.get("COPPICE_DATA_DIR")
+    if data_dir and os.path.isabs(data_dir):
+        fields["coppice_data_dir"] = data_dir
+    return fields
+
+
+def ask_server(
+    sock_path: Path,
+    argv: list[str],
+    raw: bytes,
+    *,
+    timeout_s: float = _SERVER_TIMEOUT_S,
+    caller_pane: Mapping[str, str] | None = None,
+) -> dict | None:
+    """One round trip. None on any failure; the caller then runs the gate itself.
+
+    ``caller_pane`` (see ``caller_pane_fields``) rides on the request as
+    extra top-level fields, read by gate_server.py's handler and forwarded
+    to whatever report this call triggers server-side. Omitted, or given as
+    an empty mapping, and the request carries none, same as before this
+    existed.
+    """
     if not _socket_is_trustworthy(sock_path):
         return None
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
             s.settimeout(timeout_s)
             s.connect(str(sock_path))
-            req = {"v": 1, "argv": list(argv), "stdin_b64": base64.b64encode(raw).decode()}
+            req: dict[str, object] = {
+                "v": 1,
+                "argv": list(argv),
+                "stdin_b64": base64.b64encode(raw).decode(),
+            }
+            if caller_pane:
+                req.update(caller_pane)
             s.sendall(json.dumps(req).encode() + b"\n")
             buf = b""
             while not buf.endswith(b"\n"):
@@ -104,7 +156,16 @@ def main(argv: list[str] | None = None) -> int:
     # stale server-side wait as a mismatch (a lost answer, not a security
     # hole — ask.py still denies — but a real usability break). One process,
     # one ask cycle, one nonce.
-    reply = None if _has_ask_flag(argv) else ask_server(_root_from_argv(argv) / SOCK_NAME, argv, raw)
+    reply = (
+        None
+        if _has_ask_flag(argv)
+        else ask_server(
+            _root_from_argv(argv) / SOCK_NAME,
+            argv,
+            raw,
+            caller_pane=caller_pane_fields(os.environ),
+        )
+    )
     if reply is None:
         from opendaisugi.gate import run_argv  # the slow, correct path
 

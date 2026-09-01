@@ -199,7 +199,7 @@ def test_clusters_sorted_by_count_descending() -> None:
 
 def test_real_embedder_clusters_obvious_paraphrases() -> None:
     pytest.importorskip("sentence_transformers")
-    # This box's GPU crashes the embedder; force CPU before the model loads.
+    # A Pascal GPU (sm_61) crashes the embedder; force CPU before the model loads.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
     task_a = "summarize the authentication module"

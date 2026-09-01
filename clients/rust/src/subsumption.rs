@@ -15,7 +15,15 @@ use std::collections::HashSet;
 
 pub struct SubsumptionResult {
     pub holds: bool,
+    /// The final Z3 check answered unknown: the oracle's
+    /// `VerificationTimeout`, not a verdict.
+    pub unknown: bool,
 }
+
+/// A contract envelope with this id makes the final check answer unknown
+/// in a test.
+#[cfg(test)]
+pub const FORCE_UNKNOWN_ID: &str = "test: subsumption answers unknown";
 
 fn freeze_box(b: &([f64; 3], [f64; 3])) -> ((u64, u64, u64), (u64, u64, u64)) {
     let f = |x: f64| x.to_bits();
@@ -55,7 +63,7 @@ fn robot_capability_violation(outer: &Permission, inner: &Permission) -> bool {
         }
     }
     for (joint, (o_lo, o_hi)) in &outer.joint_limits {
-        match inner.joint_limits.get(joint) {
+        match inner.joint_limit(joint).as_ref() {
             None => return true,
             Some((i_lo, i_hi)) => {
                 if i_lo < o_lo || i_hi > o_hi {
@@ -125,7 +133,7 @@ fn glob_to_z3(glob: &str) -> String {
 /// `_patterns_subsume` — true iff there's a subsumption VIOLATION on this
 /// axis (a witness inner admits that outer forbids, or the check couldn't
 /// be proven and so fails closed).
-fn patterns_subsume_violates(inner_patterns: &[String], outer_patterns: &[String]) -> Result<bool, String> {
+fn patterns_subsume_violates(inner_patterns: &[String], outer_patterns: &[String], timeout_ms: Option<u32>) -> Result<bool, String> {
     if inner_patterns.is_empty() {
         return Ok(false); // inner admits nothing on this axis
     }
@@ -133,7 +141,9 @@ fn patterns_subsume_violates(inner_patterns: &[String], outer_patterns: &[String
         return Ok(true); // can't soundly encode outer -> can't prove -> deny
     }
     let mut script = String::new();
-    script.push_str("(set-logic ALL)\n(declare-const v String)\n");
+    script.push_str("(set-logic ALL)\n");
+    script.push_str(&time_limit(timeout_ms));
+    script.push_str("(declare-const v String)\n");
     let inner_ok = format!("(or {})", inner_patterns.iter().map(|g| glob_to_z3(g)).collect::<Vec<_>>().join(" "));
     let outer_ok = if outer_patterns.is_empty() {
         "false".to_string()
@@ -143,6 +153,15 @@ fn patterns_subsume_violates(inner_patterns: &[String], outer_patterns: &[String
     script.push_str(&format!("(assert {inner_ok})\n(assert (not {outer_ok}))\n(check-sat)\n"));
     let result = z3_bridge::check_sat(&script)?;
     Ok(result != "unsat") // sat = witness found; unknown also denies (fail-closed)
+}
+
+/// The SMT-LIB line that gives each check of a script a time limit, as
+/// z3py's `solver.set("timeout", ms)` does.
+fn time_limit(timeout_ms: Option<u32>) -> String {
+    match timeout_ms {
+        Some(ms) => format!("(set-option :timeout {ms})\n"),
+        None => String::new(),
+    }
 }
 
 fn network_scope_violation(outer: &Permission, inner: &Permission) -> bool {
@@ -162,14 +181,14 @@ fn network_scope_violation(outer: &Permission, inner: &Permission) -> bool {
     inner.network_hosts.iter().any(|h| !outer_set.contains(&h.to_lowercase()))
 }
 
-fn permission_scope_violates(outer: &Permission, inner: &Permission) -> Result<bool, String> {
+fn permission_scope_violates(outer: &Permission, inner: &Permission, timeout_ms: Option<u32>) -> Result<bool, String> {
     if inner.shell_allow_decomposition && !outer.shell_allow_decomposition {
         return Ok(true);
     }
     for (inner_p, outer_p) in
         [(&inner.file_read, &outer.file_read), (&inner.file_write, &outer.file_write), (&inner.mcp_allowlist, &outer.mcp_allowlist)]
     {
-        if patterns_subsume_violates(inner_p, outer_p)? {
+        if patterns_subsume_violates(inner_p, outer_p, timeout_ms)? {
             return Ok(true);
         }
     }
@@ -257,17 +276,25 @@ fn compile_invariants(invariants: &[InvariantDecl], scope: &mut Scope, strict: b
 /// `envelope_subsumes(outer, inner)` — proves `outer ⊨ inner`. Returns only
 /// `.holds`; see the module docstring for why the counterexample detail is
 /// dropped.
-pub fn envelope_subsumes(outer: &Envelope, inner: &Envelope, strict: bool) -> Result<SubsumptionResult, String> {
+///
+/// `timeout_ms` is the Z3 time limit of each check, as z3py's
+/// `solver.set("timeout", ms)`; `None` sets none.
+pub fn envelope_subsumes(
+    outer: &Envelope,
+    inner: &Envelope,
+    strict: bool,
+    timeout_ms: Option<u32>,
+) -> Result<SubsumptionResult, String> {
     if robot_capability_violation(&outer.permissions, &inner.permissions) {
-        return Ok(SubsumptionResult { holds: false });
+        return Ok(SubsumptionResult { holds: false, unknown: false });
     }
-    if permission_scope_violates(&outer.permissions, &inner.permissions)? {
-        return Ok(SubsumptionResult { holds: false });
+    if permission_scope_violates(&outer.permissions, &inner.permissions, timeout_ms)? {
+        return Ok(SubsumptionResult { holds: false, unknown: false });
     }
 
     let inner_interpreters = detect_interpreters(&inner.permissions);
     if outer.shell_interpreter_policy == "strict" && !inner_interpreters.is_empty() {
-        return Ok(SubsumptionResult { holds: false });
+        return Ok(SubsumptionResult { holds: false, unknown: false });
     }
 
     let mut scope_inner = Scope::new("ctx");
@@ -282,12 +309,12 @@ pub fn envelope_subsumes(outer: &Envelope, inner: &Envelope, strict: bool) -> Re
     let (outer_inv, _outer_strict_blocking) = compile_invariants(&outer.invariants, &mut scope_outer, strict)?;
 
     if strict && !inner_strict_blocking.is_empty() {
-        return Ok(SubsumptionResult { holds: false });
+        return Ok(SubsumptionResult { holds: false, unknown: false });
     }
 
     let outer_soft_unique = scope_outer.soft.iter().any(|n| !scope_inner.soft.contains(n));
     if outer_soft_unique {
-        return Ok(SubsumptionResult { holds: false });
+        return Ok(SubsumptionResult { holds: false, unknown: false });
     }
 
     let mut combined = Scope::new("ctx");
@@ -296,6 +323,7 @@ pub fn envelope_subsumes(outer: &Envelope, inner: &Envelope, strict: bool) -> Re
 
     let mut script = String::new();
     script.push_str("(set-logic ALL)\n");
+    script.push_str(&time_limit(timeout_ms));
     script.push_str(&z3_bridge::declare_block_pub(&combined));
     for name in &scope_inner.soft {
         script.push_str(&format!("(assert (= {name} true))\n"));
@@ -304,6 +332,44 @@ pub fn envelope_subsumes(outer: &Envelope, inner: &Envelope, strict: bool) -> Re
     script.push_str(&format!("(assert (not (and {outer_shell} {outer_inv})))\n"));
     script.push_str("(check-sat)\n");
 
+    #[cfg(test)]
+    let result = if inner.id == FORCE_UNKNOWN_ID { "unknown".to_string() } else { z3_bridge::check_sat(&script)? };
+    #[cfg(not(test))]
     let result = z3_bridge::check_sat(&script)?;
-    Ok(SubsumptionResult { holds: result == "unsat" })
+    Ok(SubsumptionResult { holds: result == "unsat", unknown: result == "unknown" })
+}
+
+#[cfg(test)]
+mod time_limit_tests {
+    use super::*;
+
+    /// The limit reaches the solver: a check Z3 cannot finish answers
+    /// unknown within it.
+    #[test]
+    fn the_time_limit_reaches_z3() {
+        let hard = "(declare-const x Int)(declare-const y Int)(declare-const z Int)\
+                    (assert (> x 0))(assert (> y 0))(assert (> z 0))\
+                    (assert (= (+ (* x x x) (* y y y)) (* z z z)))(check-sat)\n";
+        let script = format!("(set-logic ALL)\n{}{hard}", time_limit(Some(50)));
+        let t = std::time::Instant::now();
+        assert_eq!(z3_bridge::check_sat(&script).unwrap(), "unknown");
+        assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
+        assert_eq!(time_limit(None), "");
+    }
+
+    #[test]
+    fn a_limited_check_still_decides() {
+        let env: Envelope = serde_json::from_str(
+            r#"{"id":"e","generated_by":"g","task":"t","permissions":{"shell":true,"shell_allowlist":["ls"],"file_read":["/a/**"]}}"#,
+        )
+        .unwrap();
+        let wide: Envelope = serde_json::from_str(
+            r#"{"id":"w","generated_by":"g","task":"t","permissions":{"shell":true,"shell_allowlist":["ls","rm"],"file_read":["/**"]}}"#,
+        )
+        .unwrap();
+        let r = envelope_subsumes(&env, &env, false, Some(500)).unwrap();
+        assert!(r.holds && !r.unknown);
+        let r = envelope_subsumes(&env, &wide, false, Some(500)).unwrap();
+        assert!(!r.holds && !r.unknown);
+    }
 }

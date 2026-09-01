@@ -26,10 +26,11 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+from pydantic import ValidationError
 
 from opendaisugi.pathway import CompiledPathway
 from opendaisugi.pathway_store import PathwayStore
-from opendaisugi.verify import verify
+from opendaisugi.verify import is_z3_timeout_violation, is_z3_timeout_warning, verify
 
 
 def _pkg_version() -> str:
@@ -353,7 +354,12 @@ def parse_bundle(text: str, *, source_path: Path | None = None) -> CompiledPathw
             "SCHEMA_INCOMPATIBLE",
             f"bundle is missing 'pathway' key (source={source_path})",
         )
-    return CompiledPathway.model_validate(raw)
+    try:
+        return CompiledPathway.model_validate(raw)
+    except ValidationError as exc:
+        # A NaN or an infinity in the envelope or plan lands here too
+        # (models.non_finite_error): refused, never stored as null.
+        raise PathwayImportError("SCHEMA_INCOMPATIBLE", f"the pathway is not valid: {exc}") from exc
 
 
 def _extract_frontmatter(text: str) -> dict:
@@ -374,6 +380,54 @@ def _extract_frontmatter(text: str) -> dict:
     return data["daisugi"]
 
 
+_INT64_MAX = 2**63 - 1
+
+
+def _check_storable(pathway: CompiledPathway) -> None:
+    """Refuse a pathway the store cannot write and then read back.
+
+    PathwayStore.put raises part way on some of these (a lone surrogate in
+    a text column, an int past 64 bits, a NaN in a NOT NULL column, nesting
+    past pydantic's serialization depth), after an overwrite has already
+    deleted the old row. Worse, a plan nested deeper than the JSON reader's
+    limit is written, and every later list and find of the store fails.
+    Checked here, before anything is deleted or written.
+    """
+    from opendaisugi.models import ActionPlan, Envelope
+
+    def refuse(why: str) -> None:
+        raise PathwayImportError("UNSTORABLE", f"pathway {pathway.id!r} cannot be stored and read back: {why}")
+
+    for text in (
+        pathway.id,
+        pathway.task_description,
+        pathway.embedding_model,
+        pathway.embedding_model_version,
+        pathway.structure_signature or "",
+    ):
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            refuse("a text holds a lone surrogate")
+    for n in (pathway.version, pathway.hit_count, pathway.failure_count):
+        if not -_INT64_MAX - 1 <= n <= _INT64_MAX:
+            refuse("an integer is past 64 bits")
+    for f in (pathway.distilled_at, pathway.last_activation_at):
+        if f != f:
+            refuse("a time is NaN")
+    for model, cls in ((pathway.envelope, Envelope), (pathway.plan_template, ActionPlan)):
+        try:
+            dumped = model.model_dump_json()
+        except ValueError as exc:
+            if "surrogates not allowed" in str(exc):
+                refuse("a text holds a lone surrogate")
+            refuse("it nests deeper than it can be written")
+        try:
+            cls.model_validate_json(dumped)
+        except ValueError:
+            refuse("it nests deeper than it can be read back")
+
+
 def import_pathway(
     path: str | Path,
     store: PathwayStore,
@@ -385,13 +439,31 @@ def import_pathway(
 
     Re-verifies the plan template against the declared envelope before
     insertion. Raises ``PathwayImportError`` with a stable ``code`` on
-    any failure: SCHEMA_INCOMPATIBLE, VERIFICATION_FAILED, DUPLICATE_ID.
+    any failure: SCHEMA_INCOMPATIBLE, VERIFICATION_TIMEOUT, VERIFICATION_FAILED,
+    UNSTORABLE, DUPLICATE_ID.
     """
     p = Path(path)
     text = p.read_text()
     pathway = parse_bundle(text, source_path=p)
 
     result = verify(pathway.plan_template, pathway.envelope, z3_timeout_ms=z3_timeout_ms)
+    # verify() keeps a Z3 `unknown` as a warning for a low/medium-stakes,
+    # non-strict envelope (its lenient default). For an import that would be
+    # a fail-open: an envelope Z3 could not check in time admitted as if it
+    # were consistent, so this refuses on the warning too. A strict or
+    # physical-stakes envelope instead turns the same timeout into a
+    # Violation (see opendaisugi.verify.is_z3_timeout_violation), checked
+    # here too, before any other outcome, so the stable VERIFICATION_TIMEOUT
+    # code still names it instead of the generic VERIFICATION_FAILED.
+    timeouts = [w for w in result.warnings if is_z3_timeout_warning(w)]
+    timeouts += [
+        v.detail.get("z3_message", v.message) for v in result.violations if is_z3_timeout_violation(v)
+    ]
+    if timeouts:
+        raise PathwayImportError(
+            "VERIFICATION_TIMEOUT",
+            f"verifier timed out ({'; '.join(timeouts)}); raise --z3-timeout-ms",
+        )
     if not result.ok:
         summaries = "; ".join(f"[{v.stage}] {v.message}" for v in result.violations)
         raise PathwayImportError(
@@ -399,6 +471,7 @@ def import_pathway(
             f"plan template does not verify against declared envelope: {summaries}",
         )
 
+    _check_storable(pathway)
     existed = store.delete(pathway.id) if allow_overwrite else False
     if not allow_overwrite:
         if any(p.id == pathway.id for p in store.list_all()):

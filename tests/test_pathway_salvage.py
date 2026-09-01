@@ -186,3 +186,83 @@ async def test_distill_cluster_salvages_divergent_cluster_without_llm(tmp_path, 
     assert isinstance(leaf, AgenticStep)
     assert isinstance(pathway.plan_template.steps[0], ShellStep)
     assert pathway.plan_template.steps[0].command == "git status"
+
+
+# --- the salvaged leaf's workspace ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("file_read", "workspace"),
+    [
+        (["/work/**"], "/work"),
+        (["**"], "."),
+        (["./**"], "."),
+        (["/**"], "/"),
+        (["/work/a/../b/**"], "/work/b"),
+        (["/work/out.txt"], None),
+        (["/work/src/*.py"], None),
+        (["/work/src/*.py", "/work/**"], "/work/src"),
+        (["/work/src/*.py", "/other/**"], "/other"),
+        ([], None),
+    ],
+)
+def test_salvage_workspace_is_the_fixed_prefix_the_globs_admit(file_read, workspace):
+    from opendaisugi.pathway_params import salvage_workspace
+
+    assert salvage_workspace(file_read) == workspace
+
+
+def _cluster_env(file_read: list[str]) -> Envelope:
+    return Envelope(
+        generated_by="test",
+        task="t",
+        stakes="low",
+        permissions=Permission(shell=True, shell_allowlist=["git", "pytest", "cargo"], file_read=file_read),
+    )
+
+
+async def _distill_divergent(tmp_path, monkeypatch, env: Envelope):
+    import numpy as np
+
+    from opendaisugi.distiller import Distiller
+    from opendaisugi.pathway_store import PathwayStore
+
+    records = [
+        SimpleNamespace(plan=_plan(["git status", cmd], task="run the tests"), envelope=env)
+        for cmd in ("pytest -q", "cargo test", "pytest -x")
+    ]
+    metas = [SimpleNamespace(trace_id=f"t{i}", task="run the tests", run_id=None) for i in range(3)]
+    distiller = Distiller(journal=SimpleNamespace(), pathway_store=PathwayStore(tmp_path / "p.db"), min_traces=3)
+    monkeypatch.setattr(distiller, "_load_records", lambda ts, w: [records[i] for i in range(len(ts))])
+
+    async def no_model(*a, **k):
+        raise RuntimeError("no model in this test")
+
+    import opendaisugi.distiller as distiller_module
+
+    monkeypatch.setattr(distiller_module, "_generalize_template", no_model)
+    warnings: list[str] = []
+    try:
+        pathway = await distiller._distill_cluster(metas, np.zeros(4, dtype=np.float32), warnings)
+    except RuntimeError:
+        pathway = None
+    return pathway, warnings
+
+
+@pytest.mark.asyncio
+async def test_salvage_under_an_absolute_glob_uses_its_prefix(tmp_path, monkeypatch):
+    pathway, warnings = await _distill_divergent(tmp_path, monkeypatch, _cluster_env(["/work/**"]))
+    assert pathway is not None, warnings
+    leaf = pathway.plan_template.steps[1]
+    assert isinstance(leaf, AgenticStep)
+    assert leaf.workspace == "/work"
+
+
+@pytest.mark.asyncio
+async def test_salvage_is_skipped_when_no_glob_gives_a_workspace(tmp_path, monkeypatch):
+    pathway, warnings = await _distill_divergent(tmp_path, monkeypatch, _cluster_env(["/work/out.txt"]))
+    assert pathway is None or not any(isinstance(s, AgenticStep) for s in pathway.plan_template.steps)
+    assert (
+        "delegated salvage skipped: no file_read glob gives the leaf a workspace; "
+        "falling back to frozen generalization"
+    ) in warnings

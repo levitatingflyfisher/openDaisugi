@@ -6,7 +6,7 @@
 // Wire it in settings.json, e.g.:
 //
 //	{"hooks":{"PreToolUse":[{"matcher":".*","hooks":[
-//	  {"type":"command","command":"sprig-hook --gate-cmd 'daisugi gate --mode enforce'"}]}]}}
+//	  {"type":"command","command":"sprig-hook --gate-cmd 'daisugi gate check --mode enforce'"}]}]}}
 //
 // It reads the {tool_name, tool_input} payload on stdin and prints the decision.
 package main
@@ -23,7 +23,7 @@ import (
 )
 
 func main() {
-	gateCmd := "python -m opendaisugi.gate --mode enforce"
+	gateCmd := sprig.DefaultGateCmd()
 	// Default 30s (not 10): the gate is import-dominated (Z3) and a cold first call
 	// under load can take several seconds; fail-closed still holds on a real hang.
 	// It's a flag, not a constant, because 30s is right for a cold box and wasteful

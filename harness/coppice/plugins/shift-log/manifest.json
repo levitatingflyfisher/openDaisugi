@@ -1,0 +1,8 @@
+{
+  "id": "shift-log",
+  "kind": "view",
+  "title": "Shift log",
+  "about": "Rows are panes and cells are five minutes of the last eighty: working, an ask, or a deny.",
+  "page": "index.html",
+  "ring": true
+}

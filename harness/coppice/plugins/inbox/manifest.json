@@ -1,0 +1,7 @@
+{
+  "id": "inbox",
+  "kind": "view",
+  "title": "Inbox",
+  "about": "One row per task with a worktree, the ones that need you first, and a live picture of the selected row.",
+  "page": "index.html"
+}

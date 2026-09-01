@@ -21,8 +21,13 @@ from opendaisugi.session_tree import SessionIndex, SessionTree
 GROUPS = ("NEEDS YOU", "WORKING", "PARKED", "DONE")
 WORKING_S = 60.0
 PARKED_S = 3600.0
-_DEFAULT_ALERTS = {"deny": "log", "deny_destructive": "pause", "ask": "pause", "budget": "pause",
-                   "cache_miss": "log"}
+_DEFAULT_ALERTS = {
+    "deny": "log",
+    "deny_destructive": "pause",
+    "ask": "pause",
+    "budget": "pause",
+    "cache_miss": "log",
+}
 # Word-boundary, case-folded matching (not bare substrings): "rm " previously matched
 # inside "confirm "/"perform "/"transform ", and a bare substring check missed
 # "DROP TABLE". Matched against `row.action.casefold()`, so these patterns are
@@ -34,22 +39,25 @@ _DEFAULT_ALERTS = {"deny": "log", "deny_destructive": "pause", "ask": "pause", "
 # see SHELL_TOOL_NAMES and the screen's arm-allow). Over-matching here is safe
 # (it only strengthens a confirmation); a false negative is the danger, so the set
 # leans inclusive.
-_DESTRUCTIVE_RE = tuple(re.compile(p) for p in (
-    r"\brm\b",
-    r"\bgit\s+reset\s+--hard\b",
-    r"\bgit\s+push\s+--force\b",
-    r"\bgit\s+clean\b",                        # -fdx deletes untracked files
-    r"\bdrop\s+table\b",
-    r">\s*/dev/(?!null\b)",                    # redirect over a device (not /dev/null)
-    r"\bdd\b[^\n]*\bof=",                      # dd of=/dev/sda — raw disk write
-    r"\bmkfs\b",                               # mkfs / mkfs.ext4 — format a filesystem
-    r"\bchmod\s+-\w*r",                        # chmod -R … — recursive permission change
-    r"\bchown\s+-\w*r",                        # chown -R … — recursive owner change
-    r"\bfind\b[^\n]*\s-delete\b",              # find / -delete
-    r"\b(?:shutdown|reboot|halt|poweroff)\b",  # power-state changes
-    # a TRUNCATING redirect (single >, not >>) over a sensitive file/dir
-    r"(?<!>)>\s*(?:~|[^\s>]*\.ssh/|/etc/|/boot/|/root/|[^\s>]*authorized_keys)",
-))
+_DESTRUCTIVE_RE = tuple(
+    re.compile(p)
+    for p in (
+        r"\brm\b",
+        r"\bgit\s+reset\s+--hard\b",
+        r"\bgit\s+push\s+--force\b",
+        r"\bgit\s+clean\b",  # -fdx deletes untracked files
+        r"\bdrop\s+table\b",
+        r">\s*/dev/(?!null\b)",  # redirect over a device (not /dev/null)
+        r"\bdd\b[^\n]*\bof=",  # dd of=/dev/sda — raw disk write
+        r"\bmkfs\b",  # mkfs / mkfs.ext4 — format a filesystem
+        r"\bchmod\s+-\w*r",  # chmod -R … — recursive permission change
+        r"\bchown\s+-\w*r",  # chown -R … — recursive owner change
+        r"\bfind\b[^\n]*\s-delete\b",  # find / -delete
+        r"\b(?:shutdown|reboot|halt|poweroff)\b",  # power-state changes
+        # a TRUNCATING redirect (single >, not >>) over a sensitive file/dir
+        r"(?<!>)>\s*(?:~|[^\s>]*\.ssh/|/etc/|/boot/|/root/|[^\s>]*authorized_keys)",
+    )
+)
 
 # Tool names that mean "run an arbitrary shell command" across the harnesses the
 # gate recognizes (claude `Bash`; codex `shell`/`exec_command`/`container.exec`/
@@ -161,18 +169,37 @@ def build_roster(data_dir: Path, *, now: float | None = None) -> Roster:
             usage, agent = _tree_usage(entries), (_tree_model(entries) or s.harness)
         call = s.last_tool_call or {}
         verdict = s.last_verdict or {}
-        group = ("NEEDS YOU" if pending else "WORKING" if age < WORKING_S
-                 else "PARKED" if age < PARKED_S else "DONE")
-        rows.append(SessionRow(
-            session_id=s.session_id, group=group, agent=agent,
-            action=" ".join(x for x in (call.get("name"), call.get("detail")) if x)[:60],
-            verdict=str(verdict.get("decision", "")).upper(), clause=str(verdict.get("clause", "")),
-            steps=sum(1 for e in entries if e.type == "tool_call"),
-            fresh=usage["fresh"], cache_read=usage["cacheRead"], cache_write=usage["cacheWrite"],
-            age_s=age, pending_ask=pending, harness=s.harness, cwd=s.cwd,
-            transcript_path=s.transcript_path, last_verdict=verdict or None, last_tool_call=call or None,
-            harness_session_id=s.harness_session_id,
-        ))
+        group = (
+            "NEEDS YOU"
+            if pending
+            else "WORKING"
+            if age < WORKING_S
+            else "PARKED"
+            if age < PARKED_S
+            else "DONE"
+        )
+        rows.append(
+            SessionRow(
+                session_id=s.session_id,
+                group=group,
+                agent=agent,
+                action=" ".join(x for x in (call.get("name"), call.get("detail")) if x)[:60],
+                verdict=str(verdict.get("decision", "")).upper(),
+                clause=str(verdict.get("clause", "")),
+                steps=sum(1 for e in entries if e.type == "tool_call"),
+                fresh=usage["fresh"],
+                cache_read=usage["cacheRead"],
+                cache_write=usage["cacheWrite"],
+                age_s=age,
+                pending_ask=pending,
+                harness=s.harness,
+                cwd=s.cwd,
+                transcript_path=s.transcript_path,
+                last_verdict=verdict or None,
+                last_tool_call=call or None,
+                harness_session_id=s.harness_session_id,
+            )
+        )
     order = {g: i for i, g in enumerate(GROUPS)}
     rows.sort(key=lambda r: (order[r.group], r.age_s))
     counts = {g: sum(1 for r in rows if r.group == g) for g in GROUPS}
@@ -229,9 +256,14 @@ def header_state(
                 rate, cache_source, is_estimate = summ.cache_hit_rate, "gateway", True
         except Exception:  # noqa: BLE001 — the header must never fail on a store
             pass
-    return HeaderState(gate_mode=mode.upper(), gate_mode_source=source, cache_hit_rate=rate,
-                       cache_source=cache_source, cache_is_estimate=is_estimate,
-                       session_count=len(roster.rows))
+    return HeaderState(
+        gate_mode=mode.upper(),
+        gate_mode_source=source,
+        cache_hit_rate=rate,
+        cache_source=cache_source,
+        cache_is_estimate=is_estimate,
+        session_count=len(roster.rows),
+    )
 
 
 def load_alert_policy(data_dir: Path) -> AlertPolicy:
@@ -241,7 +273,9 @@ def load_alert_policy(data_dir: Path) -> AlertPolicy:
         try:
             raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
             if isinstance(raw, dict):  # a scalar/list YAML document has no .items(); fall back
-                pol.update({str(k): str(v) for k, v in raw.items() if str(v) in ("log", "pause", "modal")})
+                pol.update(
+                    {str(k): str(v) for k, v in raw.items() if str(v) in ("log", "pause", "modal")}
+                )
         except (yaml.YAMLError, OSError):  # unparsable or unreadable (e.g. a directory) — defaults
             pass
     return pol
@@ -277,8 +311,14 @@ def alerts_for(roster: Roster, *, policy: AlertPolicy | None = None) -> list[Ale
     if denies:
         out.append(Alert("deny", len(denies), policy["deny"], [r.session_id for r in denies]))
     if destructive:
-        out.append(Alert("deny_destructive", len(destructive), policy["deny_destructive"],
-                         [r.session_id for r in destructive]))
+        out.append(
+            Alert(
+                "deny_destructive",
+                len(destructive),
+                policy["deny_destructive"],
+                [r.session_id for r in destructive],
+            )
+        )
     if asks:
         out.append(Alert("ask", len(asks), policy["ask"], [r.session_id for r in asks]))
     return out

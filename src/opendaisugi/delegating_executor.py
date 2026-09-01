@@ -163,7 +163,13 @@ class DelegatingExecutor:
         """Synchronous wrapper around the async litellm call. Honors timeout
         and a max-tokens cap derived from the supervisor's max_output_bytes.
         """
-        from litellm import completion
+        try:
+            from litellm import completion
+        except ImportError as exc:
+            raise ImportError(
+                "the litellm backend needs the 'generate' extra: "
+                "uv add 'opendaisugi[generate]'  (or: pip install 'opendaisugi[generate]')"
+            ) from exc
 
         # Direct litellm call (not instructor) — we want the raw text content;
         # response_schema validation runs in our retry loop, not via instructor.

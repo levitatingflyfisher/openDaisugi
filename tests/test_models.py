@@ -309,3 +309,137 @@ def test_envelope_legacy_json_without_cache_key_deserializes():
     )
     env = Envelope.model_validate_json(legacy_json)
     assert env.cache_key is None
+
+
+# ----- GD-16 at the model level: NaN and the infinities -----
+#
+# An Envelope or ActionPlan with NaN, Infinity or -Infinity in any number is
+# invalid wherever it is read. A stored NaN dumps as null, which reads as
+# "no limit", so the value must never get past validation.
+
+_NAN_VELOCITY = (
+    "1 validation error for Envelope\n"
+    "permissions.velocity_limit\n"
+    "  Input should be a finite number [type=finite_number, input_value=nan, input_type=float]\n"
+    "    For further information visit https://errors.pydantic.dev/2.13/v/finite_number"
+)
+
+
+def _env_json(perms: str, extra: str = "") -> str:
+    return '{"task": "t", "generated_by": "g", "permissions": ' + perms + extra + "}"
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999"])
+def test_envelope_json_with_a_non_finite_number_is_invalid(number):
+    from opendaisugi.models import Envelope
+
+    with pytest.raises(ValidationError) as exc:
+        Envelope.model_validate_json(_env_json('{"velocity_limit": ' + number + "}"))
+    errs = exc.value.errors()
+    assert [(e["type"], e["loc"]) for e in errs] == [("finite_number", ("permissions", "velocity_limit"))]
+
+
+def test_envelope_nan_error_text_is_the_gd16_text():
+    from opendaisugi.models import Envelope
+
+    with pytest.raises(ValidationError) as exc:
+        Envelope.model_validate_json(_env_json('{"velocity_limit": NaN}'))
+    assert str(exc.value) == _NAN_VELOCITY
+
+
+@pytest.mark.parametrize("text", ["nan", " inf ", "-Infinity"])
+def test_envelope_non_finite_string_is_invalid(text):
+    from opendaisugi.models import Envelope
+
+    with pytest.raises(ValidationError) as exc:
+        Envelope(task="t", generated_by="g", permissions={"torque_limit": text})
+    assert exc.value.errors()[0]["type"] == "finite_number"
+    assert exc.value.errors()[0]["loc"] == ("permissions", "torque_limit")
+
+
+@pytest.mark.parametrize("value", [".nan", ".inf", "-.inf"])
+def test_envelope_from_yaml_with_a_non_finite_number_is_invalid(value):
+    import yaml
+
+    from opendaisugi.models import Envelope
+
+    raw = yaml.safe_load(
+        f"task: t\ngenerated_by: g\npermissions:\n  workspace_bounds: [[0, 0, 0], [1, {value}, 1]]\n"
+    )
+    with pytest.raises(ValidationError) as exc:
+        Envelope(**raw)
+    assert [e["loc"] for e in exc.value.errors()] == [("permissions", "workspace_bounds", 1, 1)]
+
+
+def test_envelope_non_finite_in_any_typed_expr_is_invalid():
+    from opendaisugi.models import Envelope
+
+    body = _env_json(
+        "{}",
+        ', "invariants": [{"type": "t", "description": "d", '
+        '"expr": {"op": "numeric_range", "path": "x", "min": 0, "max": Infinity}}]',
+    )
+    with pytest.raises(ValidationError) as exc:
+        Envelope.model_validate_json(body)
+    assert [e["loc"] for e in exc.value.errors()] == [("invariants", 0, "expr", "max")]
+
+
+def test_envelope_reports_every_non_finite_number_in_order():
+    from opendaisugi.models import Envelope
+
+    with pytest.raises(ValidationError) as exc:
+        Envelope.model_validate_json(
+            _env_json('{"velocity_limit": NaN, "joint_limits": {"j": [-Infinity, 1]}, "torque_limit": Infinity}')
+        )
+    assert [e["loc"] for e in exc.value.errors()] == [
+        ("permissions", "velocity_limit"),
+        ("permissions", "joint_limits", "j", 0),
+        ("permissions", "torque_limit"),
+    ]
+
+
+def test_finite_envelope_still_validates():
+    from opendaisugi.models import Envelope
+
+    env = Envelope.model_validate_json(_env_json('{"velocity_limit": 2.5, "torque_limit": 1e308}'))
+    assert env.permissions.velocity_limit == 2.5
+
+
+def test_plan_with_a_non_finite_number_in_step_metadata_is_invalid():
+    from opendaisugi.models import ActionPlan
+
+    with pytest.raises(ValidationError) as exc:
+        ActionPlan.model_validate_json(
+            '{"source": "s", "task": "t", "steps": [{"type": "shell", "id": "a", "command": "ls", '
+            '"metadata": {"n": [1, NaN]}}]}'
+        )
+    assert exc.value.title == "ActionPlan"
+    assert [(e["type"], e["loc"]) for e in exc.value.errors()] == [
+        ("finite_number", ("steps", 0, "metadata", "n", 1))
+    ]
+
+
+def test_plan_with_a_non_finite_step_field_is_invalid():
+    from opendaisugi.models import ActionPlan, JointMoveStep
+
+    with pytest.raises(ValidationError) as exc:
+        ActionPlan(source="s", task="t", steps=[JointMoveStep(id="j", joint_targets={"a": float("inf")})])
+    assert [e["loc"] for e in exc.value.errors()] == [("steps", 0, "joint_targets", "a")]
+
+
+def test_nested_envelope_and_plan_carry_the_outer_title_and_place():
+    from opendaisugi.pathway import CompiledPathway
+
+    raw = {
+        "id": "p",
+        "task_description": "t",
+        "task_embedding": [0.1],
+        "envelope": {"task": "t", "generated_by": "g", "permissions": {"velocity_limit": float("nan")}},
+        "plan_template": {"source": "s", "task": "t", "steps": []},
+        "source_trace_ids": [],
+        "distilled_at": 1.0,
+    }
+    with pytest.raises(ValidationError) as exc:
+        CompiledPathway.model_validate(raw)
+    assert exc.value.title == "CompiledPathway"
+    assert [e["loc"] for e in exc.value.errors()] == [("envelope", "permissions", "velocity_limit")]

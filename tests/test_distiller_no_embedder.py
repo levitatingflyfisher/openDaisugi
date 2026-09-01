@@ -31,12 +31,17 @@ def _write_success_trace(journal, task: str):
         permissions=Permission(shell=True, shell_allowlist=["find"]),
     )
     plan = ActionPlan(
-        source="t", task=task,
+        source="t",
+        task=task,
         steps=[ShellStep(id="s1", command="find /tmp -name '*.tmp'")],
     )
     result = VerificationResult(
-        ok=True, violations=[], warnings=[],
-        envelope_id=env.id, plan_id=plan.id, duration_ms=0.1,
+        ok=True,
+        violations=[],
+        warnings=[],
+        envelope_id=env.id,
+        plan_id=plan.id,
+        duration_ms=0.1,
     )
     trace_id = journal.log(task=task, envelope=env, plan=plan, result=result)
     with sqlite3.connect(journal._db_path) as con:
@@ -54,9 +59,7 @@ async def test_tend_without_embedder_degrades_gracefully(tmp_path, monkeypatch):
     for i in range(3):  # >= min_traces, so tend reaches the embed step
         _write_success_trace(journal, f"find stale tmp files run {i}")
 
-    distiller = Distiller(
-        journal=journal, pathway_store=store, model="test-model", min_traces=3
-    )
+    distiller = Distiller(journal=journal, pathway_store=store, model="test-model", min_traces=3)
 
     def _no_embedder(_tasks):
         raise ModuleNotFoundError("No module named 'sentence_transformers'")
@@ -68,5 +71,6 @@ async def test_tend_without_embedder_degrades_gracefully(tmp_path, monkeypatch):
 
     assert report.created == 0
     assert report.pathways == []
-    assert any("embedder" in w.lower() or "sentence-transformers" in w.lower()
-               for w in report.warnings), report.warnings
+    assert any(
+        "embedder" in w.lower() or "sentence-transformers" in w.lower() for w in report.warnings
+    ), report.warnings

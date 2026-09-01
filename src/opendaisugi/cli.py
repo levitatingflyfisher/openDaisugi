@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 from typing import NoReturn
@@ -31,7 +33,6 @@ from opendaisugi.exceptions import EnvelopeGenerationError, TaskTooLongError
 from opendaisugi.executor import DryRunExecutor, default_executors
 from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.parsers import ParseResult, get_parser
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
 from opendaisugi.run_session import RunStatus
 
 app = typer.Typer(
@@ -107,15 +108,9 @@ def _root(
     plain: bool = typer.Option(
         False, "--plain", help="No color, no box drawing; greppable output."
     ),
-    quiet: bool = typer.Option(
-        False, "-q", "--quiet", help="Results only; no progress notes."
-    ),
-    verbose: bool = typer.Option(
-        False, "-v", "--verbose", help="Show tracebacks and detail."
-    ),
-    no_color: bool = typer.Option(
-        False, "--no-color", help="Disable color (same as NO_COLOR=1)."
-    ),
+    quiet: bool = typer.Option(False, "-q", "--quiet", help="Results only; no progress notes."),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Show tracebacks and detail."),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable color (same as NO_COLOR=1)."),
 ) -> None:
     """Runtime assurance for agent actions."""
     from opendaisugi import console
@@ -169,6 +164,7 @@ def help_cmd(
                 for sub_name, sub_cmd in sorted(sub.items()):
                     console.say(f"    {name} {sub_name:<16} {sub_cmd.get_short_help_str(52)}")
         console.say("")
+
 
 journal_app = typer.Typer(
     name="journal",
@@ -313,6 +309,14 @@ gate_app = typer.Typer(
 )
 app.add_typer(gate_app, name="gate", rich_help_panel="Gate")
 
+router_app = typer.Typer(
+    name="router",
+    help="The gateway's model chooser: NVIDIA NeMo Switchyard as a managed child, or the "
+    "built-in rules router.",
+    no_args_is_help=True,
+)
+app.add_typer(router_app, name="router", hidden=True)
+
 registry_app = typer.Typer(
     name="registry",
     help="Git-backed shared pathway registry (v0.25+).",
@@ -335,6 +339,13 @@ batch_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(batch_app, name="batch", hidden=True)
+
+coppice_app = typer.Typer(
+    name="coppice",
+    help="Drive panes on the floor: spawn, read, prompt, wait, close, attach.",
+    no_args_is_help=True,
+)
+app.add_typer(coppice_app, name="coppice", hidden=True)
 
 
 _DECOMPOSE_OPT = typer.Option(
@@ -570,6 +581,14 @@ def hook_record_cmd(
         "--format",
         help="Host runtime stdout contract: claude | codex | hermes | openclaw.",
     ),
+    event: str = typer.Option(
+        "pre_tool_use",
+        "--event",
+        help="Which host hook this is wired to: pre_tool_use (default, records "
+        "the tool call) | stop (session went idle) | notification (a "
+        "permission prompt or an idle-prompt notification) | subagent_start "
+        "| subagent_stop, which report a subagent row under the pane in coppice.",
+    ),
 ) -> None:
     """Read a hook payload from stdin, record it, return the host's continue contract.
 
@@ -578,21 +597,88 @@ def hook_record_cmd(
     that emits JSON to stdin and reads JSON from stdout. Never blocks — even
     malformed input results in the host's allow contract so the runtime is
     never disrupted. ``--format`` selects which allow/continue shape to emit.
+    ``--event stop`` and ``--event notification`` report floor state
+    (idle/blocked) instead of recording a tool call (spec-01).
+    ``--event subagent_start`` and ``--event subagent_stop`` report a
+    subagent to coppice as a read only child row.
     """
+    if event not in ("pre_tool_use", "stop", "notification", "subagent_start", "subagent_stop"):
+        # Whole-branch review, minor 1: any other string used to fall
+        # through silently to the pre_tool_use path (recording nothing
+        # useful, reporting no error) — a typo like --event Stop
+        # (capitalized) looked wired but did nothing.
+        typer.echo(
+            "Error: --event must be one of pre_tool_use, stop, notification, "
+            "subagent_start, subagent_stop.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
     import sys
     import time
 
-    from opendaisugi.hook import maybe_trigger_background_tend, record_and_contract
+    from opendaisugi.hook import (
+        maybe_trigger_background_tend,
+        record_and_contract,
+        record_lifecycle_event,
+    )
 
     try:
         raw = sys.stdin.buffer.read()
     except Exception:
         raw = b""
+    if event in ("stop", "notification", "subagent_start", "subagent_stop"):
+        typer.echo(
+            record_lifecycle_event(
+                raw,
+                event=event,
+                fmt=fmt,
+                sessions_root=captures_root.parent / "sessions",
+            )
+        )
+        return
     # record_and_contract never raises and always returns the host allow contract.
     typer.echo(record_and_contract(raw, root=captures_root, fmt=fmt))
     # No-cron distillation: the contract is already emitted, so this can only
     # add latency, never correctness. Consent-gated, rate-limited, fully detached.
     maybe_trigger_background_tend(captures_root.parent, now=time.time())
+
+
+@hook_app.command("report")
+def hook_report_cmd(
+    pane: str = typer.Option(None, "--pane", help="Pane id to stamp onto the event, if known."),
+    root: Path = typer.Option(
+        Path.home() / ".opendaisugi" / "gate",
+        "--root",
+        help="Gate data root — where the session tree this event appends to lives.",
+    ),
+) -> None:
+    """Read one PaneStateEvent JSON line from stdin and deliver it.
+
+    For a headless adapter or an in-process extension (the pi extension,
+    the OpenCode plugin — specs 04/05) that cannot speak to the gate
+    directly. Downgrades a claimed 'gate' or 'operator' source to
+    'headless' — only the gate process itself may speak as the gate.
+    Exits 0 once stdin parses to a valid event; exits 1 with the
+    validation message on stderr for anything malformed.
+    """
+    import sys
+
+    from opendaisugi._state_report import hook_report_argv
+
+    try:
+        raw = sys.stdin.buffer.read()
+    except Exception:
+        raw = b""
+    argv = ["--root", str(root)]
+    if pane:
+        argv += ["--pane", pane]
+    out = hook_report_argv(argv, raw)
+    if out.stdout:
+        typer.echo(out.stdout)
+    if out.stderr:
+        typer.echo(out.stderr, err=True)
+    raise typer.Exit(code=out.exit_code)
 
 
 @hook_app.command("list")
@@ -768,6 +854,13 @@ def hook_auto_tend_cmd(
     stamp_file.write_text(f"{now}")
 
 
+# What `install --gate --enforce` says when no envelope is registered.
+ENFORCE_NEEDS_POLICY = (
+    "Enforce needs a policy first. Run: daisugi gate init --workspace DIR "
+    "for a starter envelope, then this command again. "
+    "Or install in shadow mode: daisugi install --gate"
+)
+
 _GATE_ROOT_OPT = typer.Option(
     Path.home() / ".opendaisugi" / "gate",
     "--root",
@@ -801,10 +894,13 @@ def gate_init_cmd(
     `daisugi gate report` to tune it.
     """
     from opendaisugi.gate import _envelopes_dir, register_envelope, starter_envelope
+    from opendaisugi.hook import _safe_session_id
 
     decompose = _resolve_decompose(allow_shell_decomposition, root.parent / "config.yaml")
     name = session or "default"
-    target = _envelopes_dir(root) / f"{name}.json"
+    # The file register_envelope writes: the session id made safe, so the
+    # check never looks at one path and the write lands on another.
+    target = _envelopes_dir(root) / f"{_safe_session_id(session) if session else 'default'}.json"
     if target.exists() and not force:
         typer.echo(
             f"an envelope for '{name}' is already registered at {target}; "
@@ -835,7 +931,7 @@ def gate_check_cmd(
     ),
     root: Path = _GATE_ROOT_OPT,
     fmt: str = typer.Option(
-        "claude", "--format", help="Host contract: claude | hermes | openclaw."
+        "claude", "--format", help="Host contract: claude | pi | opencode | hermes | openclaw."
     ),
     verify_timeout: float = typer.Option(
         10.0,
@@ -886,11 +982,22 @@ def gate_register_cmd(
 ) -> None:
     """Register the envelope the gate checks this session's calls against."""
     import yaml
+    from pydantic import ValidationError
 
     from opendaisugi.gate import register_envelope
     from opendaisugi.models import Envelope
 
-    envelope = Envelope(**yaml.safe_load(envelope_path.read_text()))
+    try:
+        envelope = Envelope(**yaml.safe_load(envelope_path.read_text()))
+    except ValidationError as exc:
+        # One line, and nothing is registered. A number that is not finite
+        # (NaN, .inf) is one of these: models.non_finite_error.
+        why = "; ".join(
+            ".".join(str(p) for p in e["loc"]) + ": " + e["msg"] if e["loc"] else e["msg"]
+            for e in exc.errors()
+        )
+        typer.echo(f"not registered: {envelope_path} is not a valid envelope: {why}", err=True)
+        raise typer.Exit(code=1) from exc
     path = register_envelope(envelope, session_id=session, root=root)
     typer.echo(f"registered {'session ' + session if session else 'default'} envelope → {path}")
 
@@ -949,18 +1056,36 @@ def gate_status_cmd(
         mode, source = resolve_gate_mode(None, root=root), "config"
     d = _envelopes_dir(root)
     envelopes = sorted(e.stem for e in d.glob("*.json")) if d.exists() else []
+    # A hook whose program is gone fails on every call: an enforce hook then
+    # denies them all. Say so on stderr, whatever the output format.
+    from opendaisugi.config import missing_hook_programs, missing_hook_warning
+
+    settings_files = [Path.home() / ".claude" / "settings.json"]
+    if cwd / ".claude" / "settings.json" != settings_files[0]:
+        settings_files.append(cwd / ".claude" / "settings.json")
+    gone = [
+        missing_hook_warning(f, prog, hook_mode)
+        for f in settings_files
+        for prog, hook_mode in missing_hook_programs(f)
+    ]
     if json_output:
         typer.echo(
             json.dumps(
                 {"armed": armed, "mode": mode, "mode_source": source, "envelopes": envelopes}
             )
         )
+        for line in gone:
+            typer.echo(line, err=True)
         return
-    typer.echo(f"gate: {'armed' if armed else 'DISARMED'} · mode: {mode} ({source})")
+    # "unknown": a gate hook in a form this CLI does not read. It may enforce.
+    shown = "unknown gate hook" if mode == "unknown" else mode
+    typer.echo(f"gate: {'armed' if armed else 'DISARMED'} · mode: {shown} ({source})")
     if not envelopes:
         typer.echo("no envelopes registered — enforce mode would deny everything")
     for e in envelopes:
         typer.echo(f"  envelope: {e}")
+    for line in gone:
+        typer.echo(line, err=True)
 
 
 @gate_app.command("report")
@@ -1298,6 +1423,227 @@ def _echo_resolved(data_dir: Path) -> None:
     console.note(f"backend: {resolve_backend()} · gate: {gate} · data: {_tilde(data_dir)}")
 
 
+voice_app = typer.Typer(
+    name="voice",
+    help="The voice bridge. Record anywhere, transcribe on this box, land the text in a pane.",
+    no_args_is_help=True,
+)
+app.add_typer(voice_app, name="voice", hidden=True)
+
+
+def _parse_minutes(spec: str) -> float:
+    """Parse a duration like 30m or 2h into a count of minutes.
+
+    A bare number with no letter suffix is read as minutes.
+    """
+    spec = spec.strip().lower()
+    if spec.endswith("m"):
+        return float(spec[:-1])
+    if spec.endswith("h"):
+        return float(spec[:-1]) * 60.0
+    return float(spec)
+
+
+_MAX_ARM_MINUTES = 7 * 24 * 60.0
+
+
+def _validated_arm_minutes(for_: str) -> float:
+    """Parse and bound a --for value, or exit 1 with a plain sentence.
+
+    A value must parse, then must be finite, strictly positive, and at
+    most 7 days. inf, nan, and any value large enough to overflow a wall
+    clock timestamp are all rejected here, before a grant file is ever
+    written.
+    """
+    import math
+
+    try:
+        minutes = _parse_minutes(for_)
+    except ValueError as exc:
+        typer.echo(
+            f"--for must be a number of minutes, or end with m or h, for example 30m "
+            f"or 2h. Got {for_!r}.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    if not math.isfinite(minutes) or not (0 < minutes <= _MAX_ARM_MINUTES):
+        typer.echo(
+            f"--for must be a positive number of minutes, up to 7 days. Got {for_!r}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    return minutes
+
+
+@voice_app.command("serve")
+def voice_serve_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
+    port: int = typer.Option(7477, "--port", help="Bind port."),
+    listen: str = typer.Option(
+        None,
+        "--listen",
+        help="host:port for the tailnet, for example 0.0.0.0:7477. Needs a token file.",
+    ),
+    token_file: Path = typer.Option(
+        None, "--token-file", help="Defaults to the coppice web token file."
+    ),
+    tls_cert: Path = typer.Option(None, "--tls-cert", help="TLS certificate file."),
+    tls_key: Path = typer.Option(None, "--tls-key", help="TLS private key file."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+) -> None:
+    """Run the voice bridge. It answers GET /health, POST /transcribe, and POST /deliver."""
+    from opendaisugi.config import load_config
+    from opendaisugi.exceptions import FloorNotAvailable
+    from opendaisugi.voice import server as voice_server
+    from opendaisugi.voice.engines import EngineUnavailable, UnknownEngine
+
+    if listen:
+        host_part, sep, port_part = listen.partition(":")
+        if not sep or not port_part.isdigit():
+            typer.echo(
+                f"--listen must be host:port, for example 0.0.0.0:7477. Got {listen!r}.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        host, port = host_part, int(port_part)
+    config = load_config(data_dir / "config.yaml").model_copy(update={"data_dir": data_dir})
+    resolved_token_file = (
+        token_file if token_file is not None else voice_server.default_token_file(config)
+    )
+    scheme = "https" if tls_cert is not None else "http"
+
+    def _announce_listening() -> None:
+        # Runs only once the socket is actually bound, through serve's own
+        # on_bound hook, so a port already in use never prints a line
+        # claiming the bridge is listening when it is not.
+        typer.echo(f"opendaisugi voice listening on {scheme}://{host}:{port}")
+
+    try:
+        voice_server.serve(
+            host=host,
+            port=port,
+            config=config,
+            token_file=resolved_token_file,
+            tls_cert=tls_cert,
+            tls_key=tls_key,
+            on_bound=_announce_listening,
+        )
+    except EngineUnavailable as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=3) from exc
+    except UnknownEngine as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except FloorNotAvailable as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=3) from exc
+    except (OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=3) from exc
+    except KeyboardInterrupt:
+        typer.echo("")
+
+
+@voice_app.command("ptt")
+def voice_ptt_cmd(
+    pane: str = typer.Argument(..., help="The pane id to deliver text to."),
+    server: str = typer.Option(
+        None, "--server", help="The voice server URL. Defaults to voice_server_url in config."
+    ),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+) -> None:
+    """Laptop push-to-talk. Tap space to start recording. Tap it again to stop and send."""
+    from urllib.parse import urlsplit
+
+    from opendaisugi.config import load_config
+    from opendaisugi.voice.ptt import main_loop
+
+    config = load_config(data_dir / "config.yaml").model_copy(update={"data_dir": data_dir})
+    server_url = server or config.voice_server_url
+    try:
+        parsed = urlsplit(server_url)
+    except ValueError as exc:
+        typer.echo(
+            f"--server must be an http or https URL with a host. Got {server_url!r}.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        typer.echo(
+            f"--server must be an http or https URL with a host. Got {server_url!r}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    main_loop(pane, server_url=server_url, config=config)
+
+
+@voice_app.command("arm")
+def voice_arm_cmd(
+    pane: str = typer.Argument(..., help="The pane id to grant direct-send to."),
+    for_: str = typer.Option("30m", "--for", help="How long, for example 30m or 2h."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Grant PANE direct send for a time window. Without this, delivered text only previews."""
+    import time
+
+    from opendaisugi.config import load_config
+    from opendaisugi.voice import deliver as voice_deliver
+    from opendaisugi.voice import server as voice_server
+
+    minutes = _validated_arm_minutes(for_)
+    config = load_config(data_dir / "config.yaml").model_copy(update={"data_dir": data_dir})
+    armed_dir = voice_server.default_armed_dir(config)
+    try:
+        entry = voice_deliver.arm(pane, minutes=minutes, armed_dir=armed_dir)
+    except OSError as exc:
+        typer.echo(
+            f"Could not write the grant under {armed_dir}. Check the directory, "
+            "or pass --data-dir.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        typer.echo(json.dumps({"pane": pane, "expires_at": entry.expires_at}))
+        return
+    until = time.strftime("%H:%M:%S", time.localtime(entry.expires_at))
+    typer.echo(f"{pane} armed for {minutes:.0f} minutes, until {until}.")
+
+
+@voice_app.command("disarm")
+def voice_disarm_cmd(
+    pane: str = typer.Argument(..., help="The pane id to revoke direct-send from."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Revoke PANE's direct-send grant. Delivered text goes back to preview only."""
+    from opendaisugi.config import load_config
+    from opendaisugi.voice import deliver as voice_deliver
+    from opendaisugi.voice import server as voice_server
+
+    config = load_config(data_dir / "config.yaml").model_copy(update={"data_dir": data_dir})
+    armed_dir = voice_server.default_armed_dir(config)
+    try:
+        removed = voice_deliver.disarm(pane, armed_dir=armed_dir)
+    except OSError as exc:
+        typer.echo(
+            f"Could not remove the grant under {armed_dir}. Check the directory, "
+            "or pass --data-dir.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        typer.echo(json.dumps({"pane": pane, "removed": removed}))
+        return
+    if removed:
+        typer.echo(f"{pane} disarmed. The grant is gone.")
+    else:
+        typer.echo(f"{pane} had no grant. Nothing changed.")
+
+
 @pathways_app.command("list")
 def pathways_list_cmd(
     data_dir: Path = typer.Option(Path.home() / ".opendaisugi", "--data-dir"),
@@ -1428,7 +1774,13 @@ def pathways_import_cmd(
         "--overwrite",
         help="Replace an existing pathway with the same ID.",
     ),
-    z3_timeout_ms: int = typer.Option(500, "--z3-timeout-ms"),
+    z3_timeout_ms: int = typer.Option(
+        500,
+        "--z3-timeout-ms",
+        min=1,
+        max=2**32 - 1,
+        help="Z3 timeout for the re-verification, in ms (Z3 takes 1 to 4294967295).",
+    ),
 ) -> None:
     """Import a pathway bundle, re-verify, and admit to the PathwayStore."""
     from opendaisugi.pathway_store import PathwayStore
@@ -2046,10 +2398,11 @@ def onboard_cmd(
         "--lookback-days",
         help="How far back to scan ingested traces when distilling (default: all history).",
     ),
-    threshold: float = typer.Option(
-        DEFAULT_PATHWAY_THRESHOLD,
+    threshold: float | None = typer.Option(
+        None,
         "--threshold",
-        help="Pathway clustering/retrieval similarity threshold (0-1).",
+        help="Pathway clustering/retrieval similarity threshold (0-1); "
+        "default: the active backend's (0.55 MiniLM / 0.59 potion / 0.25 lexical).",
     ),
     dry_run: bool = typer.Option(
         False,
@@ -2266,8 +2619,8 @@ def route_cmd(
     frontier_model: str = typer.Option(
         "claude-opus-4-8", "--frontier-model", help="Model recommended for hard tasks."
     ),
-    threshold: float = typer.Option(
-        DEFAULT_PATHWAY_THRESHOLD, "--threshold", help="Pathway-match threshold (0-1)."
+    threshold: float | None = typer.Option(
+        None, "--threshold", help="Pathway-match threshold (0-1); default: active backend's."
     ),
     harness: str = typer.Option(
         "claude-code",
@@ -2351,6 +2704,35 @@ def gateway_cmd(
         help="Model an easy OpenAI-wire turn is routed onto (must be a model the OpenAI "
         "upstream serves). Empty string disables routing on that wire (pure passthrough).",
     ),
+    upstream_kind: str = typer.Option(
+        None,
+        "--upstream-kind",
+        help="The wire --upstream speaks: anthropic for the real API, or ollama, "
+        "openai-compatible, or anthropic-compatible for a self-hosted host. Defaults to "
+        "the kind `daisugi tiers setup --remote` recorded for the host, but only when "
+        "--upstream still points at that same recorded host. Any other --upstream, the default real "
+        "Anthropic API included, defaults to anthropic. A non-anthropic kind makes the "
+        "gateway answer Claude Code's count_tokens preflight itself instead of forwarding "
+        "it. Most self-hosted servers do not implement that route.",
+    ),
+    router: str = typer.Option(
+        None,
+        "--router",
+        help="Who picks the model for each turn: rules, the built-in heuristic; "
+        "switchyard, NVIDIA NeMo Switchyard started as a managed child on loopback, which "
+        "replaces --upstream; or off, which forwards each turn unchanged and only meters "
+        "it. Defaults to gateway_router in config.yaml.",
+    ),
+    switchyard_config: Path = typer.Option(
+        None,
+        "--switchyard-config",
+        help="Your own Switchyard TOML file. The gateway leaves it as it is and reads the "
+        "two tiers of the route switchyard_route_id from it. Without it, the gateway "
+        "writes <data-dir>/switchyard.toml from config.yaml on each start.",
+    ),
+    switchyard_port: int = typer.Option(
+        4000, "--switchyard-port", help="The loopback port of the managed switchyard-server."
+    ),
 ) -> None:
     """Run the token-saving gateway: a local proxy any harness points at via base_url.
 
@@ -2363,16 +2745,75 @@ def gateway_cmd(
 
     The same proxy speaks the OpenAI wire on …/chat/completions, so Codex points at it too
     (config.toml model_providers base_url = "http://127.0.0.1:8787/v1", wire_api = "chat").
+
+    The Anthropic wire follows config.yaml while it runs: a change to the file, a SIGHUP,
+    or a loopback POST /_reload rebuilds the router for the next turn. A --local-model flag
+    outranks the file for the life of the process. The OpenAI wire does not reload; its
+    cheap model is the --openai-cheap-model flag.
+
+    With --router switchyard the gateway starts switchyard-server on loopback,
+    sends each Anthropic-wire turn to its route, and journals the target that
+    served it. It stops the child when it exits. The router choice is read
+    once at start; a change to gateway_router needs a restart.
     """
     from opendaisugi.config import load_config
     from opendaisugi.gateway_asgi import serve_gateway
+    from opendaisugi.model_host import UPSTREAM_KINDS, upstream_kind_for_recorded_host
 
-    if local_model is None:
-        local_model = load_config().gateway_local_model
+    if router is None:
+        router = load_config(data_dir / "config.yaml").gateway_router
+    if router not in _ROUTERS:
+        _fail(
+            f"unknown --router {router!r}.",
+            "the gateway knows three choosers.",
+            f"choose one of: {', '.join(_ROUTERS)}",
+            code=1,
+        )
+
+    # The flag stays None here so the file rung stays live: serve_gateway
+    # re-reads gateway_local_model on every config change, and a flag given
+    # here outranks the file for the life of the process.
+    shown_local_model = local_model or load_config(data_dir / "config.yaml").gateway_local_model
+    if upstream_kind is not None and upstream_kind not in UPSTREAM_KINDS:
+        _fail(
+            f"unknown --upstream-kind {upstream_kind!r}.",
+            "the gateway only knows the wires it can shim count_tokens for.",
+            f"choose one of: {', '.join(UPSTREAM_KINDS)}",
+            code=1,
+        )
+    if upstream_kind is None:
+        # Trust the recorded kind only when --upstream names that same host.
+        # A stale recording plus the default, the real Anthropic API, must
+        # never make this gateway shim a real, working count_tokens call.
+        # A recorded host is self-hosted whatever wire it speaks, so its
+        # kind maps onto the shim's vocabulary and never onto "anthropic".
+        cfg = load_config()
+        upstream_kind = (
+            upstream_kind_for_recorded_host(cfg.llm_host_kind)
+            if cfg.llm_base_url
+            and cfg.llm_host_kind
+            and upstream.rstrip("/") == cfg.llm_base_url.rstrip("/")
+            else "anthropic"
+        )
+    router_mode = {"rules": "rules", "switchyard": "external", "off": "off"}[router]
+    external = None
+    switchyard_child = None
+    if router == "switchyard":
+        external, upstream, switchyard_child = _start_switchyard_for_gateway(
+            data_dir, switchyard_config, switchyard_port
+        )
+        # Switchyard serves /v1/messages/count_tokens through the route, so
+        # the gateway forwards it instead of answering it.
+        upstream_kind = "anthropic"
     typer.echo(f"opendaisugi gateway  →  {upstream}")
-    if local_model:
-        typer.echo(f"  local rung: easy turns → {local_model}")
+    typer.echo(f"  router: {router}")
+    if shown_local_model and router == "rules":
+        typer.echo(f"  local rung: easy turns go to {shown_local_model}")
     typer.echo(f"  listening on http://{host}:{port}  (journal: {data_dir}/gateway/turns.jsonl)")
+    typer.echo(
+        f"  config reload: on change to {data_dir}/config.yaml, on SIGHUP, "
+        f"or POST http://{host}:{port}/_reload from this machine"
+    )
     typer.echo(f"  point your harness at it:  ANTHROPIC_BASE_URL=http://{host}:{port}")
     if openai_cheap_model:
         typer.echo(
@@ -2381,17 +2822,140 @@ def gateway_cmd(
         )
     if capture_answers:
         typer.echo(f"  capturing answers to:      {data_dir}/gateway/answers.jsonl")
-    serve_gateway(
-        host=host,
-        port=port,
-        upstream_base_url=upstream,
-        data_dir=data_dir,
-        local_model=local_model,
-        cheap_model=cheap_model,
-        capture_answers=capture_answers,
-        openai_upstream_base_url=openai_upstream,
-        openai_cheap_model=openai_cheap_model or None,
+    try:
+        serve_gateway(
+            host=host,
+            port=port,
+            upstream_base_url=upstream,
+            upstream_kind=upstream_kind,
+            data_dir=data_dir,
+            local_model=local_model,
+            cheap_model=cheap_model,
+            capture_answers=capture_answers,
+            openai_upstream_base_url=openai_upstream,
+            openai_cheap_model=openai_cheap_model or None,
+            router_mode=router_mode,
+            external=external,
+        )
+    finally:
+        if switchyard_child is not None:
+            from opendaisugi.router_switchyard import stop_own_child
+
+            handle, state_path = switchyard_child
+            typer.echo(f"  switchyard: {stop_own_child(handle, state_path, wait_s=5.0)}")
+
+
+_ROUTERS = ("rules", "switchyard", "off")
+
+
+def _start_switchyard_for_gateway(data_dir: Path, own_config: Path | None, port: int):
+    """Start the managed child for `daisugi gateway --router switchyard`.
+
+    Returns (ExternalRouterConfig, upstream URL, (handle, state file path)). Every
+    failure exits: a missing binary or a child that will not answer with 3,
+    a config it cannot meter with 1. The gateway never runs in switchyard
+    mode without a healthy child and a target pair to meter by.
+    """
+    from opendaisugi.config import load_config
+    from opendaisugi.gateway_pipeline import ExternalRouterConfig
+    from opendaisugi.router_switchyard import (
+        SwitchyardConfigError,
+        check_prerequisite,
+        child_files_for,
+        client_auth_from_toml,
+        client_auth_modes,
+        locate_binary,
+        render_switchyard_toml,
+        route_targets_from_toml,
+        start_switchyard,
+        state_path_for,
+        targets_from_config,
+        write_switchyard_config,
     )
+
+    problem = check_prerequisite()
+    if problem:
+        typer.echo(problem, err=True)
+        raise typer.Exit(code=3)
+    cfg = load_config(data_dir / "config.yaml")
+    prices: dict[str, tuple[float, float]] = {}
+    # The child loads its own per-port copy, so a later install or another
+    # gateway cannot change what it runs or who it bills.
+    files = child_files_for(data_dir, port)
+    copy_name = files["config"].name
+    if own_config is not None:
+        try:
+            own_text = Path(own_config).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            _fail(
+                f"cannot read {own_config}: {exc}",
+                "the gateway copies your Switchyard config before it starts the child.",
+                "check the path you gave to --switchyard-config.",
+                code=1,
+            )
+        config_path = write_switchyard_config(files["config"].parent, own_text, name=copy_name)
+        auth = None
+    else:
+        targets = targets_from_config(cfg)
+        if targets is None:
+            _fail(
+                "no efficient model is set for Switchyard.",
+                "the stage router needs a cheaper tier to choose.",
+                "run: daisugi install --gateway --router switchyard --efficient-model <id>",
+                code=1,
+            )
+        try:
+            text = render_switchyard_toml(targets, route_id=cfg.switchyard_route_id)
+        except ValueError as exc:
+            _fail(
+                f"cannot write the Switchyard config: {exc}",
+                "the values in config.yaml do not make a valid route.",
+                "fix switchyard_* in config.yaml, or run daisugi install again.",
+                code=1,
+            )
+        config_path = write_switchyard_config(files["config"].parent, text, name=copy_name)
+        auth = client_auth_modes(targets)
+        if targets.efficient_local:
+            # A local model spends no provider quota and no dollars.
+            prices[targets.efficient_id] = (0.0, 0.0)
+    try:
+        capable, efficient = route_targets_from_toml(config_path, cfg.switchyard_route_id)
+    except SwitchyardConfigError as exc:
+        _fail(
+            f"cannot meter this Switchyard config: {exc}",
+            "the gateway books each turn by the two tiers of the route it sends.",
+            "name a stage_router route with id switchyard_route_id, or pass a "
+            "--switchyard-config that has one.",
+            code=1,
+        )
+    if auth is None:
+        auth = client_auth_from_toml(config_path, cfg.switchyard_route_id)
+    state_path = state_path_for(data_dir, port)
+    handle, msg = start_switchyard(
+        config_path,
+        port=port,
+        binary=locate_binary(),
+        routing_log_path=files["routing_log"],
+        log_path=files["log"],
+        state_path=state_path,
+        route_id=cfg.switchyard_route_id,
+        auth=auth,
+    )
+    typer.echo(f"  switchyard: {msg}")
+    if handle is None:
+        raise typer.Exit(code=3)
+    typer.echo(f"  switchyard config: {config_path}")
+    typer.echo(f"  capable tier: {capable}   efficient tier: {efficient}")
+    if auth is not None:
+        typer.echo(f"  capable auth: {auth['capable']}")
+        typer.echo(f"  efficient auth: {auth['efficient']}")
+    external = ExternalRouterConfig(
+        route_id=cfg.switchyard_route_id,
+        capable_target=capable,
+        efficient_target=efficient,
+        prices=prices,
+    )
+    return external, handle.base_url, (handle, state_path)
 
 
 @app.command("distill-repeats", hidden=True)
@@ -2466,13 +3030,26 @@ def gateway_report_cmd(
     `distill-repeats` uses to cluster repeats (requires the [search] extra).
     """
     from opendaisugi.gateway_journal import GatewayJournal
-    from opendaisugi.gateway_report import build_report
+    from opendaisugi.gateway_report import (
+        build_report,
+        build_target_share_table,
+        format_target_share_table,
+    )
 
     journal_path = data_dir / "gateway" / "turns.jsonl"
     records = GatewayJournal(path=journal_path).load()
     if not records:
         typer.echo("no turns recorded yet — run `daisugi gateway` to start journaling.")
         return
+
+    # The share table needs no embedder, so it prints before the reuse
+    # sections that do.
+    share = build_target_share_table(records)
+    if share:
+        typer.echo("Switchyard targets, measured. Each turn is booked by the target it names:")
+        for line in format_target_share_table(share):
+            typer.echo(line)
+        typer.echo("")
 
     try:
         report = build_report(records)
@@ -2506,6 +3083,140 @@ def gateway_report_cmd(
         "note: the Reuse and Combined figures are a CEILING, assuming every repeat-after-"
         "the-first is served from a perfect, fresh cache — only Routing above is measured."
     )
+
+
+@router_app.command("status")
+def router_status_cmd(
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Show the router choice, the Switchyard binary, each running child, and recent turns.
+
+    Each child is read from its own state file, <data-dir>/gateway/switchyard-PORT.json.
+    A child whose pid is gone, or is no longer switchyard-server, is shown
+    as a stale state file. Health is probed on the host and port each running
+    child uses. Who pays is the record the gateway wrote at start, from the
+    per-port config copy that child loaded. Recent turns
+    and target shares come from the gateway's own turn journal.
+    """
+    from opendaisugi import router_switchyard as sy
+    from opendaisugi.config import load_config
+    from opendaisugi.gateway_journal import GatewayJournal
+    from opendaisugi.gateway_report import build_target_share_table, format_target_share_table
+
+    cfg = load_config(data_dir / "config.yaml")
+    binary = sy.locate_binary()
+    version = sy.binary_version() if binary else None
+    children = []
+    unreadable = []
+    for path, state in sy.list_states(data_dir):
+        if state is None:
+            unreadable.append(str(path))
+            continue
+        auth = state.get("auth")
+        running = sy.child_is_running(state["pid"])
+        children.append(
+            {
+                "pid": state["pid"],
+                "host": state["host"],
+                "port": state["port"],
+                "running": running,
+                "healthy": running and sy.probe_health(state["host"], state["port"]),
+                "config_path": state.get("config_path"),
+                "route_id": state.get("route_id") or cfg.switchyard_route_id,
+                "auth": auth if isinstance(auth, dict) else None,
+                "state_file": str(path),
+            }
+        )
+    targets = sy.targets_from_config(cfg)
+    next_auth = sy.client_auth_modes(targets) if targets else None
+    records = GatewayJournal(path=data_dir / "gateway" / "turns.jsonl").load()
+    recent = [r for r in records if r.tier == "tier-switchyard"][-10:]
+    share = build_target_share_table(records)
+
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "router": cfg.gateway_router,
+                    "binary": binary,
+                    "version": version,
+                    "children": children,
+                    "unreadable_state_files": unreadable,
+                    "next_start_auth": next_auth,
+                    "targets": [asdict(row) for row in share],
+                    "recent_turns": [
+                        {"task": r.task, "model": r.model, "downgraded": r.downgraded}
+                        for r in recent
+                    ],
+                }
+            )
+        )
+        return
+
+    typer.echo(f"configured router: {cfg.gateway_router}")
+    typer.echo(f"  binary:  {binary or 'not found. Install it with: ' + sy.INSTALL_CMD}")
+    if version:
+        typer.echo(f"  version: {version}")
+    live = [c for c in children if c["running"]]
+    if live:
+        typer.echo("running router: switchyard")
+    for child in children:
+        if not child["running"]:
+            typer.echo(
+                f"  stale state file: {child['state_file']}. Pid {child['pid']} is not a running "
+                "switchyard-server. Clear it with: daisugi router stop"
+            )
+    for child in live:
+        status = "healthy" if child["healthy"] else "not answering"
+        typer.echo(
+            f"  child:   pid {child['pid']} on {child['host']}:{child['port']}, {status}, "
+            f"route {child['route_id']}"
+        )
+        typer.echo(f"    config: {child['config_path']}")
+        if child["auth"]:
+            typer.echo(f"    capable auth:   {child['auth']['capable']}")
+            typer.echo(f"    efficient auth: {child['auth']['efficient']}")
+        else:
+            typer.echo("    auth: not recorded at start")
+    if not live:
+        typer.echo("  child:   not running. Start it with: daisugi gateway --router switchyard")
+        if next_auth:
+            typer.echo(f"  capable auth at next start:   {next_auth['capable']}")
+            typer.echo(f"  efficient auth at next start: {next_auth['efficient']}")
+    for path in unreadable:
+        typer.echo(
+            f"  unreadable state file: {path}. Remove it by hand, or run daisugi router stop."
+        )
+    if share:
+        typer.echo("  targets:")
+        for line in format_target_share_table(share):
+            typer.echo(f"  {line}")
+    typer.echo(f"  recent turns, last {len(recent)}:")
+    for r in recent:
+        label = " ".join(r.task.split())[:60]
+        saved = "saving" if r.downgraded else "no saving"
+        typer.echo(f"    {label!r:62}  {r.model}  {saved}")
+
+
+@router_app.command("stop")
+def router_stop_cmd(
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+) -> None:
+    """Stop every switchyard-server that a gateway started and left running.
+
+    A gateway stops its own child when it exits, and on Linux the kernel stops
+    the child when its gateway is killed. Use this for what is left. A pid
+    gets a signal only when its command line still names switchyard-server.
+    """
+    from opendaisugi.router_switchyard import list_states, stop_switchyard
+
+    states = list_states(data_dir)
+    if not states:
+        typer.echo("no switchyard-server state file; nothing to stop")
+        return
+    for path, _state in states:
+        typer.echo(stop_switchyard(path, wait_s=5.0))
 
 
 @app.command("viz", hidden=True)
@@ -2892,9 +3603,24 @@ def setup_cmd(
         "--endpoint",
         help="OpenAI-compatible local /v1 URL to qualify (e.g. http://localhost:8080/v1).",
     ),
-    model: str = typer.Option(
-        None, "--model", help="Model name served by --endpoint (required with --endpoint)."
+    remote: str = typer.Option(
+        None,
+        "--remote",
+        help="host[:port] of a self-hosted model server to probe and record, on Tailscale "
+        "or the LAN. Example: --remote gpu-box:11434.",
     ),
+    kind: str = typer.Option(
+        "auto",
+        "--kind",
+        help="auto | ollama | openai | anthropic. The wire --remote speaks. "
+        "auto probes in order and stops at the first one that answers.",
+    ),
+    context: int = typer.Option(
+        None,
+        "--context",
+        help="Override the probed context window in tokens. Example: --context 32768.",
+    ),
+    model: str = typer.Option(None, "--model", help="Model name served by --endpoint or --remote."),
     threshold: float = typer.Option(
         0.8, "--threshold", help="Min valid-envelope pass rate to promote."
     ),
@@ -2902,15 +3628,67 @@ def setup_cmd(
     wire: bool = typer.Option(False, "--wire", help="Persist the model as Tier-1 if it qualifies."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
 ) -> None:
-    """Detect hardware, recommend a hardware-appropriate local model, and (optionally) qualify + wire it.
+    """Detect hardware, recommend a local model, and optionally qualify and wire it.
 
-    With no --endpoint: prints the hardware profile, a size-appropriate llamafile
-    recommendation, and the commands to get a local server running. With
-    --endpoint + --model: runs the qualification gate against the live model and,
+    With no --endpoint or --remote: prints the hardware profile, a size-appropriate
+    llamafile recommendation, and the commands to get a local server running. With
+    --endpoint and --model: runs the qualification gate against the live model and,
     with --wire, persists it as Tier-1 only if it clears the pass-rate threshold.
+    With --remote: probes a self-hosted model server and records it as the
+    operator's model host. That has nothing to do with local hardware sizing, so
+    it skips straight to the probe.
     """
     from opendaisugi.hardware import detect_hardware, recommend_model
     from opendaisugi.local_setup import qualify_local_model, write_tier1_config
+
+    if endpoint and remote:
+        _fail(
+            "--endpoint and --remote are mutually exclusive.",
+            "--endpoint qualifies a local /v1 server against the envelope-generation "
+            "gate. --remote probes and records a model host for your harness to point at.",
+            "run one at a time: --endpoint URL --model NAME, or --remote HOST[:PORT].",
+            code=1,
+        )
+
+    if remote:
+        from opendaisugi.exceptions import ModelHostUnknownError
+        from opendaisugi.model_host import describe_host, parse_remote, probe, record
+
+        try:
+            host, port = parse_remote(remote)
+            info = probe(host, port, kind=kind)
+        except ImportError as exc:
+            _fail(
+                str(exc),
+                "the remote probe needs an HTTP client.",
+                "run: uv add 'opendaisugi[gateway]'",
+                code=1,
+            )
+        except ValueError as exc:
+            _fail(
+                str(exc),
+                "--remote takes a bare HOST[:PORT], and --kind takes one of the listed wires.",
+                "run: daisugi tiers setup --remote HOST[:PORT] --kind auto",
+                code=1,
+            )
+        try:
+            cfg = record(
+                info,
+                model=model,
+                context_window=context,
+                config_path=data_dir / "config.yaml",
+            )
+        except ModelHostUnknownError as exc:
+            _fail(
+                str(exc),
+                "nothing was written. A recorded guess would poison the config.",
+                "check that the host is reachable and serves Ollama, an OpenAI-compatible "
+                "/v1, or an Anthropic-compatible /v1/messages. Or pass --kind explicitly.",
+                code=3 if not info.reachable else 1,
+            )
+        for line in describe_host(info, cfg):
+            typer.echo(line)
+        return
 
     if endpoint and not model:
         typer.echo(
@@ -3044,10 +3822,10 @@ def setup_moved_cmd() -> None:
 @app.command("status", rich_help_panel="Start here")
 def status_cmd(
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
-    threshold: float = typer.Option(
-        DEFAULT_PATHWAY_THRESHOLD,
+    threshold: float | None = typer.Option(
+        None,
         "--threshold",
-        help="Pathway retrieval threshold to display.",
+        help="Pathway retrieval threshold to display; default: the active backend's.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
 ) -> None:
@@ -3153,6 +3931,59 @@ def config_cmd(
         typer.echo(f"  unknown keys ignored: {', '.join(unknown)}")
 
 
+@app.command("bench", hidden=True)
+def bench_cmd(
+    layer: str = typer.Argument(..., help="A layer name, or 'pairs', or 'all'."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    corpus: Path = typer.Option(None, "--corpus", help="Read this corpus instead of the default."),
+    live: bool = typer.Option(False, "--live", help="Run the real option, not the recorded one."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Compare the options within one layer over a small committed corpus.
+
+    Every table names the corpus it read and the command that reproduces it. An
+    option that is not installed prints as absent with its install command.
+    """
+    from opendaisugi.bench.corpus import CorpusMissing
+    from opendaisugi.bench.registry import BenchOpts, BenchRefused, layer_names, run_bench
+    from opendaisugi.bench.table import render, to_dict, to_json
+
+    names = layer_names()
+    targets = names if layer == "all" else [layer]
+    if layer != "all" and layer not in names:
+        typer.echo(f"No bench for {layer!r}.", err=True)
+        typer.echo(f"Layers: {', '.join(names)}, all.", err=True)
+        typer.echo("Run `daisugi bench verifier` to see one.", err=True)
+        raise typer.Exit(code=1)
+    tables = []
+    for name in targets:
+        try:
+            if name == "pairs":
+                from opendaisugi.bench.pairs import index_of, run_all
+
+                pair_tables = run_all(BenchOpts(corpus=corpus, live=live, data_dir=data_dir))
+                # `bench pairs` shows the five. `bench all` shows only the
+                # index, so a full sweep stays one screen.
+                tables.extend(pair_tables if layer == "pairs" else [index_of(pair_tables)])
+            else:
+                tables.append(
+                    run_bench(name, BenchOpts(corpus=corpus, live=live, data_dir=data_dir))
+                )
+        except (CorpusMissing, BenchRefused) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+    if json_output:
+        if layer in ("all", "pairs"):
+            typer.echo(json.dumps([to_dict(t) for t in tables], indent=2))
+        else:
+            typer.echo(to_json(tables[0]))
+        return
+    for i, table in enumerate(tables):
+        if i:
+            typer.echo("")
+        typer.echo(render(table))
+
+
 @app.command("modules", hidden=True)
 def modules_cmd(
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
@@ -3221,6 +4052,580 @@ def dashboard_cmd(
         run_live(data_dir, interval=interval)
     except KeyboardInterrupt:
         typer.echo("")  # leave the cursor on a fresh line after Ctrl-C
+
+
+_BACKEND_OPT = typer.Option(None, "--backend", help="Force a backend: coppice, herdr, or tmux.")
+_FLOOR_DATA_DIR_OPT = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory.")
+_SOCKET_OPT = typer.Option(None, "--socket", help="Coppice socket path for this call only.")
+_READ_SOURCES = ("visible", "recent", "detection")
+_VALID_UNTIL = ("idle", "working", "blocked", "done", "any")
+_VALID_KINDS = ("pty", "headless")
+
+
+def _floor_config(data_dir: Path, socket: Path | None = None):
+    """The config the floor reads.
+
+    A loaded Config carries its own data_dir field, independent of the path it was
+    read from, so it is pinned here to what --data-dir named: every backend built
+    from this config agrees with the CLI on where daisugi's data lives. socket,
+    when given, overrides floor.coppice_socket for this call only, on a copy of
+    the config; the loaded config itself is never mutated.
+    """
+    from opendaisugi.config import load_config
+
+    config = load_config(data_dir / "config.yaml").model_copy(update={"data_dir": data_dir})
+    if socket is not None:
+        config = config.model_copy(
+            update={"floor": config.floor.model_copy(update={"coppice_socket": str(socket)})}
+        )
+    return config
+
+
+def _floor_backend(name: str | None, data_dir: Path, socket: Path | None = None):
+    """Pick the backend or exit 3 with the command that installs one.
+
+    Naming coppice is asking for coppice, so an explicit --backend coppice may start
+    the server once. auto never does, and neither does backends.
+    """
+    from opendaisugi.exceptions import FloorNotAvailable
+    from opendaisugi.floor.registry import pick_backend
+
+    try:
+        return pick_backend(_floor_config(data_dir, socket), name=name, autostart=name == "coppice")
+    except FloorNotAvailable as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=3) from exc
+
+
+def _pane_ref(backend, pane: str):
+    from opendaisugi.floor import PaneRef
+
+    return PaneRef(backend.name, pane)
+
+
+def _call_backend(fn, *args, **kwargs):
+    """Call a backend method, turning its failure into a clean exit.
+
+    An OpenDaisugiError already has its own handling in main() and passes through
+    untouched, at exit 1. A CoppiceError is checked first, ahead of that generic
+    pass-through: one whose code is internal and whose message says the server
+    closed the connection, or that its reply was not JSON, is the backend
+    dying mid-call, and one whose code is server_closed is the server
+    answering that it is already shutting down. All three are a dropped
+    connection, an unreachable host, not a user error, so all three exit 3
+    the same way a dropped socket does. Every other CoppiceError
+    (bad_request, no_such_pane, and the rest) is a request the server
+    understood and refused, so it stays at 1. A ValueError or RuntimeError
+    means the backend refused the request: exit 1. Any OSError, including
+    FileNotFoundError, ConnectionError, and TimeoutError, means the backend is
+    unreachable: exit 3. No caller of this function ever sees a raw traceback
+    from tmux or herdr again.
+    """
+    from opendaisugi.exceptions import OpenDaisugiError
+    from opendaisugi.floor.coppice_backend import CoppiceError
+
+    try:
+        return fn(*args, **kwargs)
+    except CoppiceError as exc:
+        dropped_connection = exc.code == "internal" and (
+            "closed the connection" in str(exc) or "is not JSON" in str(exc)
+        )
+        if dropped_connection or exc.code == "server_closed":
+            _fail(
+                str(exc),
+                "The backend is unreachable.",
+                "Check the backend with `daisugi coppice backends`.",
+                code=3,
+            )
+        raise
+    except OpenDaisugiError:
+        raise
+    except (ValueError, RuntimeError) as exc:
+        _fail(
+            str(exc),
+            "The backend refused the request.",
+            "Check the pane id with `daisugi coppice list`.",
+        )
+    except OSError as exc:
+        _fail(
+            str(exc),
+            "The backend is unreachable.",
+            "Check the backend with `daisugi coppice backends`.",
+            code=3,
+        )
+
+
+@coppice_app.command("backends")
+def coppice_backends_cmd(
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Which pane backends this box has, and what to run for the ones it does not.
+
+    Always exits 0. Nothing installed is an answer, not a failure.
+    """
+    from opendaisugi.floor.registry import backend_statuses
+
+    rows = backend_statuses(_floor_config(data_dir, socket))
+    if json_output:
+        typer.echo(json.dumps([asdict(r) for r in rows], indent=2))
+        return
+    typer.echo(f"{'backend':<10}{'available':<12}why")
+    for row in rows:
+        why = "" if row.available else f"{row.why_not}. {row.fix}"
+        typer.echo(f"{row.name:<10}{'yes' if row.available else 'no':<12}{why}")
+
+
+@coppice_app.command("spawn")
+def coppice_spawn_cmd(
+    argv: list[str] = typer.Argument(
+        None, help="The command to run, after --. Omit it to run --harness from the coppice config."
+    ),
+    cwd: Path = typer.Option(
+        None, "--cwd", help="Working directory for the pane. Not needed with --task."
+    ),
+    label: str = typer.Option("", "--label", help="A short name for the pane."),
+    kind: str = typer.Option("pty", "--kind", help="pty or headless."),
+    harness: str = typer.Option(None, "--harness", help="Adapter name for a headless pane."),
+    task: str = typer.Option(None, "--task", help="Task id the pane works for. coppice only."),
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Start a command in a new pane and print its id.
+
+    With no command after --, --harness names a [harness.<name>] table in
+    the coppice config, and its command and args run. With --task the pane
+    works for that task and runs in its worktree, so --cwd may be left out.
+    """
+    if cwd is None and task is None:
+        _fail(
+            "spawn needs --cwd DIR or --task ID.",
+            "A pane runs somewhere: name the directory, or the task whose worktree it is.",
+            "Try: daisugi coppice spawn --cwd . -- claude",
+        )
+    # The hints name the place the caller gave: the directory, or the task.
+    where = f"--task {task}" if cwd is None else f"--cwd {cwd}"
+    if kind not in _VALID_KINDS:
+        _fail(
+            f"no pane kind {kind!r}.",
+            f"The floor spawns one of: {', '.join(_VALID_KINDS)}.",
+            f"Try: daisugi coppice spawn --kind headless {where} -- claude",
+        )
+    cmd = list(argv or [])
+    if not cmd:
+        from opendaisugi.floor.registry import coppice_config_path, harness_command
+
+        if not harness:
+            _fail(
+                "spawn needs a command or --harness NAME.",
+                "Put the command after --.",
+                f"Try: daisugi coppice spawn {where} -- claude",
+            )
+        found = harness_command(harness)
+        if found is None:
+            _fail(
+                f"no harness named {harness!r} in {coppice_config_path()}.",
+                f"Run coppice once to write it, or add [harness.{harness}] "
+                f'with command = "{harness}".',
+                f"Try: daisugi coppice spawn {where} -- {harness}",
+            )
+        cmd = found
+    chosen = _floor_backend(backend, data_dir, socket)
+    # harness is in the master spec's protocol, so every backend takes it. tmux and
+    # herdr ignore it. No except-TypeError retry: that would swallow a real TypeError
+    # raised inside spawn and silently run it again.
+    ref = _call_backend(
+        chosen.spawn,
+        cwd=cwd,
+        cmd=cmd,
+        env={},
+        label=label or (argv[0] if argv else harness),
+        kind=kind,
+        harness=harness or None,
+        task=task or None,
+    )
+    if json_output:
+        typer.echo(json.dumps({"pane": ref.id, "backend": chosen.name}))
+        return
+    typer.echo(f"{ref.id}  backend {chosen.name}")
+
+
+@coppice_app.command("list")
+def coppice_list_cmd(
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Every pane, its label, its state, and where that state came from."""
+    chosen = _floor_backend(backend, data_dir, socket)
+    panes = _call_backend(chosen.list)
+    rows = [
+        {
+            "pane": info.ref.id,
+            "label": info.label,
+            "cwd": info.cwd,
+            "kind": info.kind,
+            "state": info.state.state if info.state else "unknown",
+            "source": info.state.source if info.state else "none",
+        }
+        for info in panes
+    ]
+    if json_output:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        typer.echo("no panes. Start one with `daisugi coppice spawn --cwd . -- claude`.")
+        return
+    typer.echo(f"{'pane':<12}{'label':<18}{'state':<10}{'source':<10}cwd")
+    for row in rows:
+        typer.echo(
+            f"{row['pane']:<12}{row['label'][:17]:<18}{row['state']:<10}"
+            f"{row['source']:<10}{row['cwd']}"
+        )
+
+
+@coppice_app.command("prompt")
+def coppice_prompt_cmd(
+    pane: str = typer.Argument(..., help="Pane id."),
+    text: str = typer.Argument(..., help="The prompt."),
+    wait: bool = typer.Option(False, "--wait", help="Block until the agent answers."),
+    timeout: float = typer.Option(60.0, "--timeout", help="Seconds to wait."),
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Send a prompt. A headless pane gets an agent prompt. A pty pane gets typed text."""
+    from opendaisugi.floor.registry import prompt_pane
+
+    chosen = _floor_backend(backend, data_dir, socket)
+    how = _call_backend(
+        prompt_pane, chosen, _pane_ref(chosen, pane), text, wait=wait, timeout_s=timeout
+    )
+    if json_output:
+        typer.echo(json.dumps({"pane": pane, "how": how}))
+        return
+    typer.echo(f"{how} to {pane}")
+
+
+@coppice_app.command("wait")
+def coppice_wait_cmd(
+    pane: str = typer.Argument(..., help="Pane id."),
+    until: str = typer.Option("idle", "--until", help="idle, working, blocked, done, or any."),
+    timeout: float = typer.Option(60.0, "--timeout", help="Seconds to wait."),
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Block until the pane reaches a state. Exit 1 on timeout, with the state it saw."""
+    from opendaisugi.floor.registry import wait_for_state
+
+    if until not in _VALID_UNTIL:
+        _fail(
+            f"no state {until!r}.",
+            f"The floor waits for one of: {', '.join(_VALID_UNTIL)}.",
+            f"Try: daisugi coppice wait {pane} --until working",
+        )
+    chosen = _floor_backend(backend, data_dir, socket)
+    ref = _pane_ref(chosen, pane)
+    event = _call_backend(wait_for_state, chosen, ref, until=until, timeout_s=timeout)
+    if event is None:
+        infos = {i.ref.id: i for i in _call_backend(chosen.list)}
+        info = infos.get(pane)
+        seen = info.state.state if info and info.state else "unknown"
+        typer.echo(
+            f"timed out after {timeout:g}s waiting for {until}. Last state: {seen}.", err=True
+        )
+        raise typer.Exit(code=1)
+    if json_output:
+        typer.echo(json.dumps({"pane": pane, "state": event.state, "source": event.source}))
+        return
+    typer.echo(f"{pane} is {event.state}, source {event.source}")
+
+
+@coppice_app.command("read")
+def coppice_read_cmd(
+    pane: str = typer.Argument(..., help="Pane id."),
+    source: str = typer.Option("visible", "--source", help="visible, recent, or detection."),
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Print what the pane shows. detection is exactly what the manifests see."""
+    if source not in _READ_SOURCES:
+        _fail(
+            f"no read source {source!r}.",
+            f"The floor reads one of: {', '.join(_READ_SOURCES)}.",
+            f"Try: daisugi coppice read {pane} --source detection",
+        )
+    chosen = _floor_backend(backend, data_dir, socket)
+    text = _call_backend(chosen.read, _pane_ref(chosen, pane), source=source)
+    if json_output:
+        typer.echo(json.dumps({"pane": pane, "source": source, "text": text}))
+        return
+    typer.echo(text, nl=False)
+
+
+@coppice_app.command("send-keys")
+def coppice_send_keys_cmd(
+    pane: str = typer.Argument(..., help="Pane id."),
+    keys: list[str] = typer.Argument(..., help="Key names: enter, ctrl+c, esc, tab, f1, or a."),
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Send key presses to a pane."""
+    chosen = _floor_backend(backend, data_dir, socket)
+    _call_backend(chosen.send_keys, _pane_ref(chosen, pane), list(keys))
+    if json_output:
+        typer.echo(json.dumps({"pane": pane, "keys": list(keys)}))
+        return
+    typer.echo(f"sent {' '.join(keys)} to {pane}")
+
+
+@coppice_app.command("close")
+def coppice_close_cmd(
+    pane: str = typer.Argument(..., help="Pane id."),
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Close a pane."""
+    chosen = _floor_backend(backend, data_dir, socket)
+    _call_backend(chosen.close, _pane_ref(chosen, pane))
+    if json_output:
+        typer.echo(json.dumps({"pane": pane, "closed": True}))
+        return
+    typer.echo(f"closed {pane}")
+
+
+task_app = typer.Typer(
+    name="task",
+    help="Tasks above panes: a name, a worktree, a parent, and the worst state under it.",
+    no_args_is_help=True,
+)
+coppice_app.add_typer(task_app, name="task")
+
+
+def _task_row(info) -> dict:
+    return {
+        "task": info.ref,
+        "label": info.label,
+        "parent": info.parent,
+        "cwd": info.cwd,
+        "worktree": info.worktree,
+        "model": info.model,
+        "state": info.state,
+        "panes": list(info.panes),
+    }
+
+
+@task_app.command("create")
+def coppice_task_create_cmd(
+    label: str = typer.Option(..., "--label", help="The task's name. With --worktree, its branch."),
+    parent: str = typer.Option(None, "--parent", help="Task id to put this task under."),
+    cwd: Path = typer.Option(None, "--cwd", help="Directory the task runs in, or the repo."),
+    worktree: bool = typer.Option(
+        False, "--worktree", help="Add a git worktree beside the repo that holds --cwd."
+    ),
+    model: str = typer.Option(None, "--model", help="Model name for the task, or none."),
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Record a task and print its id. coppice only.
+
+    --cwd is sent as an absolute path, so "." names this shell's directory
+    and never the server's.
+    """
+    chosen = _floor_backend(backend, data_dir, socket)
+    info = _call_backend(
+        chosen.create_task,
+        label,
+        parent=parent,
+        cwd=None if cwd is None else str(cwd.resolve()),
+        worktree=worktree,
+        model=model,
+    )
+    if json_output:
+        typer.echo(json.dumps(_task_row(info)))
+        return
+    line = f"{info.ref}  {info.label}"
+    if info.worktree:
+        line += f"  worktree {info.worktree}"
+    typer.echo(line)
+
+
+@task_app.command("list")
+def coppice_task_list_cmd(
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Every task, its parent, its state, and its panes."""
+    chosen = _floor_backend(backend, data_dir, socket)
+    rows = [_task_row(info) for info in _call_backend(chosen.list_tasks)]
+    if json_output:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        typer.echo("no tasks. Start one with `daisugi coppice task create --label NAME`.")
+        return
+    typer.echo(f"{'task':<6}{'state':<10}{'parent':<8}{'label':<20}{'panes':<6}worktree")
+    for row in rows:
+        typer.echo(
+            f"{row['task']:<6}{row['state'] or '-':<10}{row['parent'] or '-':<8}"
+            f"{row['label'][:19]:<20}{len(row['panes']):<6}{row['worktree'] or '-'}"
+        )
+
+
+@task_app.command("close")
+def coppice_task_close_cmd(
+    task: str = typer.Argument(..., help="Task id."),
+    keep_worktree: bool = typer.Option(
+        False, "--keep-worktree", help="Leave the worktree on disk."
+    ),
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Close a task, its descendants, and every pane under them.
+
+    Without --keep-worktree a worktree with uncommitted changes refuses the
+    whole close and nothing happens.
+    """
+    chosen = _floor_backend(backend, data_dir, socket)
+    _call_backend(chosen.close_task, task, keep_worktree=keep_worktree)
+    if json_output:
+        typer.echo(json.dumps({"task": task, "closed": True}))
+        return
+    typer.echo(f"closed {task}")
+
+
+def _exec_coppice(chosen, tail: list[str]) -> None:
+    """Replace this process with the coppice binary, pointed at the backend's
+    own server, with tail as the arguments after the global options."""
+    if chosen.name != "coppice":
+        if tail:
+            verb = tail[0]
+            typer.echo(f"{verb} is not on the {chosen.name} backend.", err=True)
+            typer.echo(
+                f"Use `{chosen.name} {verb}` for that substrate, or run "
+                f"`coppice server start` and retry with --backend coppice.",
+                err=True,
+            )
+        else:
+            typer.echo(
+                "The floor is the coppice binary. Run `coppice server start` "
+                "and retry with --backend coppice.",
+                err=True,
+            )
+        raise typer.Exit(code=1)
+    # chosen is the CoppiceBackend the CLI just picked. Its own sock_path and
+    # data_dir are the socket and data dir it was built with: --socket, then
+    # floor.coppice_socket, then coppice's own default. The exec must point the
+    # binary at that exact same server.
+    argv = [
+        "coppice",
+        "--socket",
+        str(chosen.sock_path),
+        "--data-dir",
+        str(chosen.data_dir),
+    ] + tail
+    build_hint = (
+        "Build it: cd harness/coppice && mkdir -p build && go build -o build/coppice ./cmd/coppice"
+    )
+    # Resolved here, not left to exec: a missing binary is unreachable, exit
+    # 3, with the build command, and the exec never runs against nothing.
+    exe = shutil.which("coppice")
+    if exe is None:
+        typer.echo("coppice is not on PATH.", err=True)
+        typer.echo(build_hint, err=True)
+        raise typer.Exit(code=3)
+    try:
+        os.execvp(exe, argv)
+    except OSError as exc:
+        typer.echo(f"cannot run the coppice binary: {exc}.", err=True)
+        typer.echo(build_hint, err=True)
+        raise typer.Exit(code=3) from exc
+
+
+@coppice_app.command("attach")
+def coppice_attach_cmd(
+    pane: str = typer.Argument(None, help="Pane id. Omit for the current one."),
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+) -> None:
+    """Take over a pane full screen. Only the coppice backend has its own renderer."""
+    chosen = _floor_backend(backend, data_dir, socket)
+    _exec_coppice(chosen, ["attach"] + ([pane] if pane else []))
+
+
+@coppice_app.command("herdr-bridge")
+def coppice_herdr_bridge_cmd(
+    pane: str = typer.Argument(..., help="The coppice pane id to show in Herdr."),
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+    herdr_config: Path = typer.Option(
+        None, "--herdr-config", help="Herdr's config directory. Default: ~/.config/herdr."
+    ),
+    coppice: str = typer.Option("coppice", "--coppice", help="The coppice program Herdr runs."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Show a coppice pane in Herdr: write the manifest, print the line to run."""
+    from opendaisugi.floor import herdr_bridge
+    from opendaisugi.floor.coppice_backend import default_socket_path
+
+    configured = _floor_config(data_dir, socket).floor.coppice_socket
+    # Herdr runs attach from its own directory, so the path must be absolute.
+    sock = (Path(configured) if configured else default_socket_path()).absolute()
+    cfg_dir = herdr_config if herdr_config is not None else herdr_bridge.default_config_dir()
+    try:
+        path = herdr_bridge.install(cfg_dir)
+    except FileExistsError as exc:
+        _fail(
+            "the Herdr manifest was not written.",
+            str(exc),
+            "Try: move the file away, then run daisugi coppice herdr-bridge again.",
+        )
+    except OSError as exc:
+        _fail(
+            "the Herdr manifest was not written.",
+            f"{cfg_dir}: {exc}",
+            "Try: pass --herdr-config with a directory you can write.",
+        )
+    d = herdr_bridge.agent_definition(pane, sock, coppice)
+    d["manifest_path"] = str(path)
+    if json_output:
+        typer.echo(json.dumps(d))
+        return
+    typer.echo(f"manifest: {path}")
+    typer.echo("run this in the Herdr pane that should show it:")
+    typer.echo("  " + shlex.join(d["herdr_run"]))
+    typer.echo(d["note"])
+
+
+@coppice_app.command("floor")
+def coppice_floor_cmd(
+    backend: str = _BACKEND_OPT,
+    data_dir: Path = _FLOOR_DATA_DIR_OPT,
+    socket: Path = _SOCKET_OPT,
+) -> None:
+    """Open the floor: the roster, a peek on one pane, and attach, from the coppice binary."""
+    chosen = _floor_backend(backend, data_dir, socket)
+    _exec_coppice(chosen, [])
 
 
 @app.command("metrics", hidden=True)
@@ -3545,6 +4950,12 @@ def install_cmd(
     runtime: list[str] = typer.Option(
         None, "--runtime", help="Target named runtime(s) only, e.g. --runtime claude."
     ),
+    harness: list[str] = typer.Option(
+        None,
+        "--harness",
+        help="Install a loop harness's gate extension. Supported: pi, opencode. "
+        "Independent of --runtime.",
+    ),
     gate: bool = typer.Option(
         False,
         "--gate/--no-gate",
@@ -3573,6 +4984,40 @@ def install_cmd(
         "http://127.0.0.1:8787",
         "--base-url",
         help="Gateway base_url to wire in when --gateway is set.",
+    ),
+    report: str = typer.Option(
+        None,
+        "--report",
+        help="Report gate state (idle/working/blocked/done) to a floor host. "
+        "herdr wires Stop + Notification hooks (Claude Code only). coppice "
+        "records the preference in config.yaml. Nothing reports to it yet. "
+        "Only meaningful together with --gate.",
+    ),
+    router: str = typer.Option(
+        None,
+        "--router",
+        help="Who picks the model for each gateway turn: rules, switchyard, or off. "
+        "Saved as gateway_router in config.yaml. Leave it out to keep the current choice. "
+        "Only meaningful together with --gateway.",
+    ),
+    efficient_model: str = typer.Option(
+        None,
+        "--efficient-model",
+        help="The model id of Switchyard's efficient tier: a local model id, or a claude-* "
+        "id on the Anthropic API. Needed with --router switchyard.",
+    ),
+    capable_model: str = typer.Option(
+        None,
+        "--capable-model",
+        help="The model id of Switchyard's capable tier. Default: the value in config.yaml, "
+        "claude-sonnet-5 at first.",
+    ),
+    api_key_env: str = typer.Option(
+        None,
+        "--api-key-env",
+        help="Name an environment variable that holds an Anthropic API key. Every "
+        "Switchyard cloud tier then uses that key, billed per token. Without it, every "
+        "cloud tier forwards your own login. An empty value clears the name.",
     ),
 ) -> None:
     """Wire openDaisugi into every detected agent harness.
@@ -3610,6 +5055,58 @@ def install_cmd(
     )
 
     home = Path.home()
+
+    if harness:
+        from opendaisugi.install import (
+            SUPPORTED_HARNESSES,
+            harness_extension_target,
+            install_harness_extension,
+            uninstall_harness_extension,
+        )
+
+        bad = [h for h in harness if h not in SUPPORTED_HARNESSES]
+        if bad:
+            typer.echo(
+                f"error: unknown harness {bad[0]!r}. Supported: {', '.join(SUPPORTED_HARNESSES)}.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        restart = {
+            "pi": "Restart pi, or run /reload in an interactive session, for it to take effect.",
+            "opencode": "Restart OpenCode for it to take effect.",
+        }
+        label = {"pi": "pi", "opencode": "OpenCode"}
+        if do_uninstall:
+            for h in harness:
+                target = harness_extension_target(h, home=home)
+                if h == "pi":
+                    target = target.parent
+                if dry_run:
+                    typer.echo(f"[{h}] would remove {target}")
+                    continue
+                removed = uninstall_harness_extension(h, home=home)
+                if removed:
+                    typer.echo(f"[{h}] removed {len(removed)} file(s).")
+                else:
+                    typer.echo(f"[{h}] nothing was installed.")
+            return
+        if dry_run:
+            for h in harness:
+                typer.echo(f"[{h}] would write {harness_extension_target(h, home=home)}")
+            return
+        for h in harness:
+            try:
+                install_harness_extension(h, home=home)
+            except ValueError as exc:
+                typer.echo(f"[{h}] error: {exc}", err=True)
+                raise typer.Exit(code=1)
+            typer.echo(f"[{h}] gate extension installed. {restart[h]}")
+        for h in harness:
+            typer.echo(
+                f"{label[h]} asks the gate in-process. The gate only watches until you set "
+                "gate_mode: enforce. Start it with `daisugi start`."
+            )
+        return
     try:
         runtimes = _select_runtimes(runtime) if runtime else detect_runtimes(home=home)
     except ValueError as exc:
@@ -3628,7 +5125,19 @@ def install_cmd(
             typer.echo("\nReverted:")
             for f in result.modified_files:
                 typer.echo(f"  {f}")
+        if result.failures:
+            raise typer.Exit(code=1)
         return
+
+    # With no envelope registered, an enforce hook denies every call, so the
+    # agent can do nothing at all. Refuse before anything is written.
+    if gate and enforce:
+        from opendaisugi.gate import _envelopes_dir
+
+        env_dir = _envelopes_dir(home / ".opendaisugi" / "gate")
+        if not (env_dir.exists() and any(env_dir.glob("*.json"))):
+            typer.echo(ENFORCE_NEEDS_POLICY, err=True)
+            raise typer.Exit(code=1)
 
     selected_layers = set(DEFAULT_LAYERS)
     if gate:
@@ -3647,12 +5156,44 @@ def install_cmd(
     # wasn't wired.
     effective_ask = ask and gate and enforce
 
+    if report is not None and report not in ("herdr", "coppice"):
+        # Global Constraints §Exit codes: 1 = user error, not 2 (gate deny)
+        # — a bad --report value never touched the gate. STE100 (whole-branch
+        # review, minor 10): teach the next command instead of echoing the
+        # bad value back.
+        typer.echo(
+            "Error: --report must be herdr or coppice. Run: daisugi install --gate --report herdr",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if report and not gate:
+        typer.echo("Note: --report needs --gate. This run installs no floor-report hooks.")
+    effective_report = report if gate else None
+
+    # Check the router choice before anything is written, so a bad value
+    # leaves the harness and config.yaml as they were.
+    router_update = _plan_router_update(
+        home,
+        router,
+        gateway=gateway,
+        efficient_model=efficient_model,
+        capable_model=capable_model,
+        api_key_env=api_key_env,
+    )
+
     typer.echo("\nDetected runtimes:")
     for rt in runtimes:
         typer.echo(f"  ✓ {rt.name}")
 
     plans = {
-        rt.name: rt.plan(home, selected_layers, enforce=enforce, ask=effective_ask, base_url=base_url)
+        rt.name: rt.plan(
+            home,
+            selected_layers,
+            enforce=enforce,
+            ask=effective_ask,
+            base_url=base_url,
+            report=effective_report,
+        )
         for rt in runtimes
     }
 
@@ -3689,6 +5230,9 @@ def install_cmd(
             "(add --allow-shell-decomposition to admit `a && b` and pipes).\n"
         )
 
+    if router_update is not None:
+        typer.echo(f"Router: set gateway_router to {router_update['gateway_router']}.")
+
     if dry_run:
         typer.echo("Dry run — no files written.")
         return
@@ -3707,6 +5251,7 @@ def install_cmd(
         enforce=enforce,
         ask=effective_ask,
         base_url=base_url,
+        report=effective_report,
     )
 
     if result.modified_files:
@@ -3714,8 +5259,12 @@ def install_cmd(
         for f in result.modified_files:
             typer.echo(f"  {f}")
         typer.echo("\nRestart your agent session to pick up the changes.")
-    else:
+    elif not result.failures:
         typer.echo("\nAll runtimes were already configured — nothing changed.")
+    # A runtime whose apply raised wrote nothing. Say which, and exit 1 at
+    # the end: never report it as already configured.
+    for failure in result.failures:
+        typer.echo(f"Failed: {failure}. Nothing was written for it.", err=True)
 
     # Persist the compound-shell default. This is the only channel that reaches
     # `hook auto-tend`, which runs from cron and from a detached spawn — no argv
@@ -3736,6 +5285,26 @@ def install_cmd(
             "your data, so it survives --uninstall; edit or delete the file to reset it."
         )
         _warn_if_decomposition_unusable(allow_shell_decomposition)
+
+    if router_update is not None:
+        _apply_router_update(home, router_update)
+
+    if effective_report is not None:
+        # Every --report value is persisted, herdr included (Fix round 1,
+        # Finding 2) — otherwise the field can go stale relative to what's
+        # actually installed (e.g. a later --report herdr leaving a prior
+        # run's "coppice" sitting in config.yaml).
+        from opendaisugi.config import load_config, save_config
+
+        cfg_path = home / ".opendaisugi" / "config.yaml"
+        save_config(
+            load_config(cfg_path).model_copy(update={"floor_report": effective_report}), cfg_path
+        )
+        if effective_report == "coppice":
+            typer.echo(
+                f"Floor report set to coppice. Saved in {cfg_path}. "
+                "The coppice server is built. Nothing reports to it yet."
+            )
 
     # Ask once whether to distil repeated tasks in the background (Phase A).
     # Interactive only; a --yes install leaves consent unasked (opt-in, never
@@ -3763,6 +5332,120 @@ def install_cmd(
                 )
             else:
                 typer.echo("Left OFF — run `daisugi tend` yourself whenever you want it.")
+
+    if result.failures:
+        raise typer.Exit(code=1)
+
+
+def _plan_router_update(
+    home: Path,
+    router: str | None,
+    *,
+    gateway: bool,
+    efficient_model: str | None,
+    capable_model: str | None,
+    api_key_env: str | None = None,
+) -> dict | None:
+    """The config.yaml fields a --router choice sets, checked, or None for no change.
+
+    Every refusal exits with code 1 before anything is written.
+    """
+    if router is None:
+        if efficient_model or capable_model or api_key_env is not None:
+            typer.echo(
+                "Note: --efficient-model, --capable-model and --api-key-env apply with "
+                "--router switchyard."
+            )
+        return None
+    if router not in _ROUTERS:
+        _fail(
+            f"unknown --router {router!r}.",
+            "the gateway knows three choosers.",
+            f"choose one of: {', '.join(_ROUTERS)}",
+            code=1,
+        )
+    if not gateway:
+        typer.echo("Note: --router only applies with --gateway. This run writes no router config.")
+        return None
+    update: dict = {"gateway_router": router}
+    if router != "switchyard":
+        return update
+    from opendaisugi.config import load_config
+    from opendaisugi.router_switchyard import render_switchyard_toml, targets_from_config
+
+    cfg = load_config(home / ".opendaisugi" / "config.yaml")
+    efficient = efficient_model or cfg.switchyard_efficient_model
+    if not efficient:
+        _fail(
+            "--router switchyard needs an efficient model.",
+            "the stage router chooses between a capable tier and a cheaper one.",
+            "add --efficient-model <id>: a local model id, or a claude-* id.",
+            code=1,
+        )
+    update["switchyard_efficient_model"] = efficient
+    update["switchyard_capable_model"] = capable_model or cfg.switchyard_capable_model
+    if api_key_env is not None:
+        update["switchyard_api_key_env"] = api_key_env.strip() or None
+    candidate = cfg.model_copy(update=update)
+    try:
+        # The key variable is checked when the gateway starts, in its own
+        # environment, not in the shell that runs install.
+        render_switchyard_toml(
+            targets_from_config(candidate),
+            route_id=cfg.switchyard_route_id,
+            api_key_present=lambda name: True,
+        )
+    except ValueError as exc:
+        _fail(
+            f"cannot build the Switchyard route: {exc}",
+            "the two tiers must name two different models.",
+            "run again with a different --efficient-model or --capable-model.",
+            code=1,
+        )
+    return update
+
+
+def _apply_router_update(home: Path, update: dict) -> None:
+    """Save the router fields, and for switchyard write the TOML file next to them."""
+    from opendaisugi.config import load_config, save_config
+
+    cfg_path = home / ".opendaisugi" / "config.yaml"
+    cfg = load_config(cfg_path).model_copy(update=update)
+    save_config(cfg, cfg_path)
+    if cfg.gateway_router != "switchyard":
+        typer.echo(
+            f"Gateway router set to {cfg.gateway_router} in {cfg_path}. "
+            "Restart `daisugi gateway` to use it."
+        )
+        return
+    from opendaisugi.router_switchyard import (
+        INSTALL_CMD,
+        client_auth_modes,
+        locate_binary,
+        render_switchyard_toml,
+        targets_from_config,
+        write_switchyard_config,
+    )
+
+    targets = targets_from_config(cfg)
+    toml_path = write_switchyard_config(
+        home / ".opendaisugi",
+        render_switchyard_toml(
+            targets, route_id=cfg.switchyard_route_id, api_key_present=lambda name: True
+        ),
+    )
+    auth = client_auth_modes(targets)
+    typer.echo(f"Switchyard router: wrote {toml_path} and set gateway_router in {cfg_path}.")
+    typer.echo(f"  capable tier {targets.capable_id}: {auth['capable']}")
+    typer.echo(f"  efficient tier {targets.efficient_id}: {auth['efficient']}")
+    if targets.api_key_env and not os.environ.get(targets.api_key_env):
+        typer.echo(
+            f"  {targets.api_key_env} is not set in this shell. The gateway refuses to start "
+            "until it is set in the shell that starts it."
+        )
+    if locate_binary() is None:
+        typer.echo(f"  switchyard-server is not on PATH yet. Install it with: {INSTALL_CMD}")
+    typer.echo("  Start it with: daisugi gateway --router switchyard")
 
 
 @release_app.command("keygen")

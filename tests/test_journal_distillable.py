@@ -127,3 +127,16 @@ def test_list_successful_traces_newest_first(tmp_path):
 
     results = j.list_successful_traces()
     assert [t.task for t in results] == ["second", "first"]
+
+
+def test_same_second_traces_list_newest_insert_first(tmp_path):
+    """created_at has one-second steps; a tie lists the later insert first."""
+    j = Journal(data_dir=tmp_path)
+    with sqlite3.connect(j._db_path) as con:
+        for tid in ("t-b", "t-a", "t-c"):
+            con.execute(
+                "INSERT INTO traces (id, created_at, task, plan_id, envelope_id, ok, duration_ms, "
+                "violations_json) VALUES (?, '2026-01-01T00:00:00Z', 'x', 'p', 'e', 1, 0.1, '[]')",
+                (tid,),
+            )
+    assert [t.trace_id for t in j.list_successful_traces()] == ["t-c", "t-a", "t-b"]

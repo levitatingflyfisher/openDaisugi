@@ -118,6 +118,138 @@ Per-verification cost is sub-millisecond already; the compiled clients' wins
 are process startup (the hook's ~0.5 s round trip is Python interpreter + import
 cost, not verification), embedding (C ABI / wasm), and the long tail.
 
+## Gate cases
+
+A third kind checks a whole gate binary, not a verifier: one hook call in,
+the host contract and every log line out. Unlike the corpus, gate cases
+are synthetic (fake paths such as `/work` and `/home/user`), so they are
+committed: `clients/fixtures/gate/cases.jsonl` with its manifest, written
+by `clients/gate_cases.py` from the Python gate.
+
+```json
+{"kind": "gate", "v": 1, "id": "…", "name": "bash allowlist miss (enforce)",
+ "tags": ["shell"],
+ "argv": ["--mode", "enforce", "--root", "{ROOT}/data/gate", "--format", "claude", …],
+ "stdin": "{\"session_id\": \"s1\", \"tool_name\": \"Bash\", …}",
+ "env": {"CLAUDE_PROJECT_DIR": "/work"}, "coppice": false,
+ "state": {"envelopes": {"default": "<envelope file text>"}, "disarmed": false,
+           "config": null, "sessions": {}},
+ "expect": {"summary": {"exit": 2, "host_verdict": "deny", "allow": false,
+                        "would_deny": true, "tier": "permanent", "reason": "…"},
+            "exit": 2, "stdout": "", "stderr": "…",
+            "shadow": [{"file": "s1.jsonl", "record": {…}}],
+            "tree": {"s1.jsonl": […]}, "captures": {}, "coppice": []}}
+```
+
+- `{ROOT}` is the run's scratch directory, substituted in argv, stdin,
+  env and envelope text; the gate root is `{ROOT}/data/gate`, so the
+  session tree is `{ROOT}/data/sessions` and `config.yaml` is
+  `{ROOT}/data/config.yaml`. `stdin_hex`, when present, replaces `stdin`
+  with raw bytes (for invalid UTF-8).
+- Every run gets `HOME=/home/user` and no `XDG_*`, `COPPICE_*` or `HERDR_*`
+  variables beyond the case's own `env`. With `"coppice": true` the runner
+  listens on `{ROOT}/c.sock` as `COPPICE_SOCK` with `COPPICE_PANE=pane-7`
+  and records each line it receives.
+- Envelope files are stored as text, since their key order is input.
+- Volatile values are normalized on both sides before comparison: times
+  and latencies (`at`, `ts`, `elapsed_ms`, `latencyMs`, `captured_at`)
+  become `"<num>"` (and must have been numbers), `plan_xxxxxxxx` and a
+  generated `env_xxxxxxxx` become `"<plan>"` and `"<env>"`, session-tree
+  ids become `#1`, `#2`, … in order of first appearance, and `{ROOT}`
+  replaces the scratch path.
+- Canonical JSON for the file and the id escapes every non-ASCII
+  character (`ensure_ascii`), because a case may hold a lone surrogate.
+  Otherwise the content addressing is the corpus's.
+
+Comparison is structural, field by field (`clients/gate_compare.py`), and
+each difference is classed by what it does to a host: **fail-open** (the
+binary allowed what the oracle denied; a blocker), **stricter** (it denied
+what the oracle allowed), or **record** (same verdict, a logged field
+differs). All of `expect` is normative for a gate binary: reason text,
+tier and log lines are what an operator reads.
+
+`gate_compare.py --fuzz N --seed S` adds a seeded differential fuzz: N
+single-line compound shell commands, each run as a Bash call against two
+envelopes (decomposition on and off) through the in-process oracle and the
+binary. Only the binary's native answers are compared (a hand-off is
+Python's own answer); the run fails on any fail-open.
+
+## Pathway cases
+
+A fourth kind checks a pathway store and its matchers, not a verifier:
+`clients/fixtures/pathways/`, written by `clients/pathway_cases.py` from
+the Python store, matchers and CLI. They are synthetic and committed.
+
+- `cases.jsonl`: one `daisugi pathways ...` command in a scratch HOME
+  (`{HOME}`). A `pathways.db` in the tree is given as its rows (and
+  `"schema": "legacy"` for the pre-migration table) and laid out by
+  Python's `sqlite3`; `expect` holds the exit code, stdout, stderr (a
+  traceback reduced to its exception's type) and the tree after, each
+  database dumped as its `sqlite_master` SQL and its rows in rowid order
+  (floats as `{"float": repr}`, a stored vector as its length and
+  nonzero entries). `opendaisugi_version` values read `{VERSION}`.
+- `find.jsonl`: rows, a `matcher_model`, the environment, and per query
+  the matched id, its score rounded to 6 places, the stale-embedding
+  warning, and `tie_ids` when rows tie within 1e-12. A client agrees when
+  it picks the same id (or one of the tied ids), within 1e-6 of the
+  score for `lexical` and 1e-5 for `potion`. `go_only` cases hold the
+  refusal of a matcher a client does not carry; `real_potion` cases need
+  `minishlab/potion-base-8M`, which no test downloads.
+- `units.json` and `potion-tiny/`: BLAKE2b digests, lexical tokens and
+  vectors, and a tiny model in model2vec's file format with its token ids
+  and vectors.
+- `verify_messages.jsonl`: plans and envelopes, and each violation
+  `verify()` found as stage, step and message, the text `pathways import`
+  prints in `VERIFICATION_FAILED`. A client checks them in its own tests
+  (Go: `internal/verify/messages_test.go`; Rust:
+  `pathways::verify::tests`); a refused skill delegation's message is the
+  client's own.
+
+`clients/pathway_compare.py` compares a binary on all of them, checks
+that Python reads every database the binary wrote as the binary reads it,
+and with `--fuzz N --seed S` runs seeded random queries against random
+stores through both. It takes the binary (`--binary`) and its find
+instrument (`--probe`), for the Go client (`clients/go/daisugi` and
+`cmd/pathway-probe`) and the Rust client (`clients/rust/target/release/
+daisugi` and `pathway-probe`) alike.
+
+## Garden cases
+
+A fifth kind checks the rest of the pathway life cycle:
+`clients/fixtures/garden/`, written by `clients/garden_cases.py` from the
+Python CLI. They are synthetic and committed.
+
+- `cases.jsonl`: one `daisugi gardener ...`, `tend`, `hook auto-tend` or
+  `distill-repeats` command in a scratch HOME (`{HOME}`). A pathway store
+  is given as its rows and a journal as its traces (written through
+  `Journal.log` with a fixed verification result), with times relative to
+  the moment the tree is laid out. `expect` holds the exit code, stdout,
+  stderr, the tree after (every database dumped whole: each table's
+  schema and rows, its `user_version` and `sqlite_sequence`) and the model
+  requests the run made.
+- `model`: the recorded answers, keyed by the SHA-256 of the exact request
+  (for `claude`, the argv after the program and the stdin; for the
+  Anthropic API, the request body). The run's `claude` is a fake first on
+  PATH and its API a fake server on 127.0.0.1; a request with no answer
+  fails with exit 97 or HTTP 597. A client agrees only if it sends the
+  oracle's request bytes. The fake server checks each credential sent
+  against the case's own (HTTP 596 when it is not) and records only its
+  name, never its value.
+- Output is normalized on both sides before it is compared: a time near
+  the run as its offset from the run's start, a minted pathway, env, plan
+  or trace id by its order of first appearance, and durations hidden.
+  Under `potion` a stored vector agrees within 1e-6.
+
+`clients/garden_compare.py` compares a binary on all of them (stderr on
+every case), checks that Python reads every store and journal the binary
+wrote, and with `--fuzz N --seed S` runs random stores through prune,
+merge, run and status on both sides. It takes the binary (`--binary`),
+the Go client's `clients/go/daisugi` and the Rust client's
+`clients/rust/target/release/daisugi` alike; both answer the same
+request table, so both send the oracle's request bytes. A case the
+binary refuses (exit 2, one line, the tree unchanged) is counted apart;
+`--verbose` lists them, so two binaries' refusals can be compared.
+
 ## Versioning
 
 `v` is the conformance format version (this document). Bump it only for

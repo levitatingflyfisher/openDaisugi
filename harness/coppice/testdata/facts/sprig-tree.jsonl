@@ -1,0 +1,6 @@
+{"type":"session","id":"fake-h","parentId":null,"ts":1.0,"sessionId":"fake-session","cwd":"/fake"}
+{"type":"prompt","id":"fake-1","parentId":"fake-h","ts":1.5,"text":"a fake task"}
+{"type":"assistant","id":"fake-2","parentId":"fake-1","ts":2.0,"model":"sprig-fake-1","text":"fake","usage":{"fresh":4,"cacheRead":40,"cacheWrite":8,"out":2},"toolUses":[{"id":"tu-fake","name":"bash"}]}
+{"type":"tool_call","id":"fake-3","parentId":"fake-2","ts":3.0,"toolUseId":"tu-fake","name":"bash","input":{"command":"ls"},"detail":"ls"}
+{"type":"verdict","id":"fake-4","parentId":"fake-3","ts":4.0,"toolUseId":"tu-fake","decision":"deny","mode":"enforce","reason":"fake clause","clause":"fake clause"}
+{"type":"assistant","id":"fake-5","parentId":"fake-4","ts":5.0,"model":"sprig-fake-2","text":"fake","usage":{"fresh":1,"cacheRead":50,"cacheWrite":0,"out":3},"toolUses":[]}

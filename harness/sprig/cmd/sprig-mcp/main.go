@@ -22,7 +22,7 @@ import (
 
 func main() {
 	gateOn := false
-	gateCmd := "python -m opendaisugi.gate --mode enforce"
+	gateCmd := sprig.DefaultGateCmd()
 	// Default 30s: the gate is import-dominated (Z3); a cold first call under load
 	// can take several seconds. A flag, not a constant, so a warm box can tighten it.
 	gateTimeout := 30 * time.Second

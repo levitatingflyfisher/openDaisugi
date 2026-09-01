@@ -1,0 +1,3 @@
+{"cacheKey":null,"cwd":"/fake","harness":"sprig","harnessSessionId":null,"id":"fake-real","parentEntry":null,"parentSession":null,"transcriptPath":null,"ts":1.0,"type":"session","v":1}
+{"id":"fake-real-1","parentId":null,"text":"a fake task","ts":1.5,"type":"prompt"}
+{"id":"fake-real-2","model":"haiku","parentId":"fake-real-1","text":"done","toolUses":[],"ts":2.0,"type":"assistant","usage":{"cacheRead":22,"cacheWrite":33,"fresh":11,"out":44}}
