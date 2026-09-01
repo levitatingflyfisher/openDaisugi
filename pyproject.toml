@@ -17,6 +17,10 @@ dependencies = [
     "litellm>=1.50,<2",
     "pyyaml>=6.0",
     "typer>=0.12,<1",
+    # v0.44: the clusterer (distiller.py) and pathway store already require numpy
+    # at call time, and the lexical matcher (ADR-0019) needs it too — a zero-extra
+    # `pip install opendaisugi` must still be able to distill pathways.
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -38,13 +42,58 @@ dev = [
     "opendaisugi[sign]",
     "opendaisugi[gateway]",
     "opendaisugi[tui]",
+    "opendaisugi[voice]",
+    # The two torch-free matchers. tests/test_matcher_backend.py needs their
+    # packages to reach the code paths it mocks. See ADR-0018 and ADR-0021.
+    "opendaisugi[potion]",
+    "opendaisugi[int8]",
 ]
 search = [
     "numpy>=1.26",
     "sentence-transformers>=2.7",
 ]
+# v0.45: the torch-free pathway-reuse embedder. model2vec inference needs only
+# numpy + tokenizers (no torch, no transformers — those live in its [distill]/[train]
+# extras), so `matcher_model = potion` runs where [search]'s ~80MB torch slice can't:
+# a GPU torch can't target, a machine too small for torch, or (with a pre-fetched
+# local dir via OPENDAISUGI_POTION_MODEL + HF_HUB_OFFLINE) fully air-gapped. MIT,
+# like the potion models. Absent => selecting potion degrades to a warned 0-pathway
+# tend, exactly as a missing [search] does. See ADR-0018.
+potion = [
+    "numpy>=1.26",
+    "model2vec>=0.9",
+]
+# v0.46: the second torch-free pathway-reuse embedder. MiniLM itself, quantized
+# to int8 and run through onnxruntime, with no torch and no transformers. Needs
+# a CPU with AVX2 or better, or aarch64. On an older CPU it refuses instead of
+# a silent fallback. Fetches about 23MB from the official sentence-transformers
+# repo on first use, pinned by sha256. MIT. When it is absent, selecting int8
+# degrades to a warned lexical fallback, the same as a missing [search] or
+# [potion].
+# See ADR-0021.
+int8 = [
+    "onnxruntime>=1.18",
+    "tokenizers>=0.19",
+    "numpy>=1.26",
+]
+# v0.45: the voice bridge. faster-whisper runs on CTranslate2, not torch, so it
+# runs on a CPU-only box or on a box whose GPU cannot safely take torch workloads.
+# `av` is PyAV, the webm or opus decode fallback for when the `ffmpeg` binary is
+# absent. A WAV already at 16 kHz mono, or a box with ffmpeg present, never needs
+# it. ADR-0019 sets the same torch-free precedent for a different codec.
+voice = [
+    "faster-whisper>=1.1",
+    "sounddevice>=0.5",
+    "numpy>=1.26",
+    "av>=13.0",
+]
 mcp = [
     "mcp>=1.27",
+]
+# v0.45: the opt-in second engine, NeMo Parakeet-TDT via sherpa-onnx. Its model is a
+# roughly 460MB download. The voice bridge never fetches it automatically. See pins.py.
+voice-parakeet = [
+    "sherpa-onnx>=1.10",
 ]
 # v0.44: the token-saving gateway's async transport — an OpenAI/Anthropic-compatible proxy
 # any harness points at via base_url. Pure-Python (httpx); the ASGI app runs under any
@@ -100,6 +149,7 @@ artifacts = [
     "src/opendaisugi/skills/**/*.md",
     "src/opendaisugi/install_assets/**/*",
     "src/opendaisugi/viz_dag_template.html",
+    "src/opendaisugi/harness_pi/**/*",
 ]
 
 [tool.pytest.ini_options]
@@ -109,6 +159,7 @@ asyncio_mode = "auto"
 markers = [
     "calibration: runs against the real LLM API; requires ANTHROPIC_API_KEY",
     "smoke: end-to-end prompt sanity via `claude -p`; requires DAISUGI_SMOKE=1",
+    "voice_live: transcribes with a real speech-to-text engine; requires DAISUGI_VOICE_LIVE=1",
 ]
 
 [tool.ruff]

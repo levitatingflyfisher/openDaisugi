@@ -18,6 +18,25 @@ import yaml
 from pydantic import BaseModel, Field
 
 
+class FloorConfig(BaseModel):
+    """Which pane backend drives the floor, and what runs when a pane blocks.
+
+    ``backend`` is LIVE. The running code reads it on the next pane pick,
+    with no restart. ``auto`` takes the first of coppice, herdr, tmux that
+    answers. A named backend that is not available is refused, never
+    downgraded to a different one.
+
+    ``notify_cmd`` runs with the event JSON on stdin when a pane blocks. It
+    is the operator's own command. openDaisugi ships no relay and no
+    default.
+    """
+
+    backend: str = "auto"  # auto | coppice | herdr | tmux
+    notify_cmd: str | None = None
+    tmux_socket: str | None = None  # tmux -L NAME; None uses the default server
+    coppice_socket: str | None = None  # --socket PATH; None uses coppice's own default
+
+
 class Config(BaseModel):
     """Typed config with sensible defaults for every field."""
 
@@ -74,13 +93,41 @@ class Config(BaseModel):
     # the client you would run for shadow/experimental differential checking.
     verifier_client: str = "python"  # python | rust | go | typescript | lean
 
-    # Preferred pathway-reuse embedder. MiniLM runs today; the alternatives are
-    # under evaluation and change the embedding dimension / threshold calibration.
-    matcher_model: str = "all-MiniLM-L6-v2"  # | potion | int8 | lexical
+    # Pathway-reuse embedder. all-MiniLM-L6-v2 needs torch. potion is
+    # model2vec with no torch, so it runs where torch cannot. lexical is
+    # stdlib and numpy with no model and no download. int8 is MiniLM
+    # quantized, run through onnxruntime with no torch. All four are built.
+    # A missing package for MiniLM, potion, or int8 falls back to lexical,
+    # warned once, rather than silently distilling zero pathways. A switch
+    # of backend changes the embedding space; re-run `tend`. See ADR-0018,
+    # ADR-0019, ADR-0021.
+    matcher_model: str = "all-MiniLM-L6-v2"  # | potion | lexical | int8
 
     # Preferred LLM backend for envelope generation / planning. The running
     # backend is set by OPENDAISUGI_LLM_BACKEND / model; this records intent.
-    llm_backend: str = "claude-code"  # claude-code | anthropic | llamafile | ollama
+    # `daisugi tiers setup --remote` also writes this field, with a second
+    # vocabulary for the same field: the wire a probed remote host speaks.
+    # Both readings answer "what backend does this operator's traffic run
+    # on". The field is a free string with no runtime dispatch on it, so
+    # the overlap is cosmetic, not a collision.
+    llm_backend: str | None = None
+    # None means auto-detect: pick a backend that runs on this box. Otherwise
+    # claude-code | anthropic | llamafile | ollama | openai-compatible | anthropic-compatible
+
+    # The self-hosted model host `daisugi tiers setup --remote` probed and
+    # recorded: any box on the tailnet or the LAN. The local machine stays
+    # the zero-config default. A remote host is a swap, not a requirement.
+    # None means no remote host is recorded. llm_host_kind is the wire the
+    # probe found, never a guess. See opendaisugi.model_host.probe().
+    # llm_host_model is the model name that host serves. It stays separate
+    # from `model` above, which is opendaisugi's own envelope-generation
+    # model id in litellm "provider/model" form. Writing a bare host model
+    # name such as "qwen3-coder" into `model` would break envelope
+    # generation.
+    llm_base_url: str | None = None
+    llm_host_kind: str | None = None  # ollama | openai | anthropic
+    llm_host_model: str | None = None
+    llm_context_window: int | None = None  # tokens; None means the probe could not tell
 
     # Preferred envelope source. evidence-inferred runs zero-LLM; llm-generated
     # needs a configured backend, so the choice is partly derived, not free.
@@ -90,6 +137,34 @@ class Config(BaseModel):
     # git-backed shared registry is a separate opt-in set up with
     # `daisugi registry init` (a repo + signing keys), not a config toggle.
     pathway_store_backend: str = "sqlite"  # sqlite | git
+
+    # Floor-report preference (spec-01/06). Herdr's own liveness is
+    # detected from the installed Stop/Notification hooks, not this field
+    # — it only matters for coppice, which isn't built yet (spec-02):
+    # `daisugi install --gate --report coppice` records the intent here so
+    # `daisugi modules` can show it honestly ahead of the harness existing.
+    floor_report: str | None = None  # None | herdr | coppice
+
+    # The floor's pane backend, nested beside floor_report above. floor_report
+    # names which hook writes state and is CFG. floor.backend names which
+    # backend drives the pane and is LIVE. See FloorConfig.
+    floor: FloorConfig = Field(default_factory=FloorConfig)
+
+    # Voice bridge settings. voice_device stays "cpu" until the operator opts
+    # in. pick_engine() uses CUDA only when this says "cuda" and ctranslate2
+    # reports a visible device. This box's GPU has crashed other torch-based
+    # inference under CUDA before, see ADR-0019. CUDA is opt-in and verified,
+    # never auto-detected.
+    voice_engine: str = "faster-whisper"  # faster-whisper | parakeet
+    voice_model: str = "tiny.en"  # a faster-whisper model id, or for parakeet a local model dir
+    voice_device: str = "cpu"  # cpu | cuda
+    voice_compute_type: str = "int8"
+    # The optional cleanup pass is off by default. It never uses a paid model
+    # unless voice_cleanup_model names one.
+    voice_cleanup: bool = False
+    voice_cleanup_model: str | None = None
+    voice_cleanup_base_url: str | None = None
+    voice_server_url: str = "http://127.0.0.1:7477"
 
 
 def default_config() -> Config:
@@ -180,9 +255,50 @@ def _read_raw(path: Path) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def configured_backend(path: Path | None = None) -> str | None:
+    """``llm_backend`` as the config file sets it, else None.
+
+    None means auto-detect. The field defaults to None, so a file the product
+    wrote without a choice reads as no choice, and a file that names a
+    backend is honoured as written. A missing, unreadable, or malformed file
+    pins nothing.
+    """
+    if path is None:
+        from opendaisugi import DEFAULT_DATA_DIR
+
+        path = DEFAULT_DATA_DIR / "config.yaml"
+    try:
+        value = load_config(path).llm_backend
+    except (OSError, yaml.YAMLError, ValueError):
+        return None
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _unknown_keys(raw: dict, model: type[BaseModel], *, prefix: str = "") -> list[str]:
+    fields = model.model_fields
+    out: list[str] = []
+    for key, value in raw.items():
+        dotted = f"{prefix}{key}"
+        if key not in fields:
+            out.append(dotted)
+            continue
+        annotation = fields[key].annotation
+        if (
+            isinstance(value, dict)
+            and isinstance(annotation, type)
+            and issubclass(annotation, BaseModel)
+        ):
+            out.extend(_unknown_keys(value, annotation, prefix=f"{dotted}."))
+    return out
+
+
 def unknown_config_keys(path: Path) -> list[str]:
-    """Keys in the file that no Config field reads (load_config drops them silently)."""
-    return sorted(k for k in _read_raw(path) if k not in Config.model_fields)
+    """Keys in the file that no Config field reads (load_config drops them
+    silently), including inside a nested group like ``floor:``. A nested
+    key is reported dotted, e.g. ``floor.backnd``, so a misspelling under
+    a group is not silently dropped the same way a misspelled top-level
+    key would be."""
+    return sorted(_unknown_keys(_read_raw(path), Config))
 
 
 def installed_hook_mode(settings_path: Path) -> str | None:
@@ -280,7 +396,7 @@ def resolved_config(
     When both exist, three extra rows spell out what each one is doing and how
     they combine — the honest fact that verdicts are the intersection.
     """
-    from opendaisugi.llm import resolve_backend
+    from opendaisugi.llm import _auto_backend
 
     home = home or Path.home()
     if cwd is None:
@@ -295,16 +411,42 @@ def resolved_config(
     path = path or home / ".opendaisugi" / "config.yaml"
     cfg = load_config(path)
     raw = _read_raw(path)
-    out = [
-        ResolvedField(key, str(getattr(cfg, key)), "file" if key in raw else "default")
-        for key in Config.model_fields
-    ]
+    out: list[ResolvedField] = []
+    for key in Config.model_fields:
+        value = getattr(cfg, key)
+        source = "file" if key in raw else "default"
+        if isinstance(value, BaseModel):
+            # A nested group prints as its leaves. Printing the model itself
+            # would put a pydantic repr on a truth surface, and a repr is
+            # not a setting.
+            nested_raw = raw.get(key) or {}
+            for sub_key in type(value).model_fields:
+                out.append(
+                    ResolvedField(
+                        f"{key}.{sub_key}",
+                        str(getattr(value, sub_key)),
+                        "file" if sub_key in nested_raw else "default",
+                    )
+                )
+            continue
+        if key == "llm_backend" and value is None:
+            value = "auto"
+        out.append(ResolvedField(key, str(value), source))
     backend_env = env.get("OPENDAISUGI_LLM_BACKEND")
+    backend_file = configured_backend(path)
+    if backend_env:
+        backend_source = "env"
+    elif backend_file:
+        backend_source = "file"
+    else:
+        backend_source = "auto"
+    # The fallback reads only the env this call was given, never the process
+    # env or the default data dir, so the value comes from the source the row names.
     out.append(
         ResolvedField(
             "llm_backend (resolved)",
-            backend_env or resolve_backend(),
-            "env" if backend_env else "auto",
+            backend_env or backend_file or _auto_backend(env),
+            backend_source,
         )
     )
     eff = effective_hook_mode(home=home, cwd=cwd)

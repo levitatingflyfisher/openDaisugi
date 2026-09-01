@@ -1,0 +1,83 @@
+[
+ {
+  "slug": "k9s-1",
+  "title": "k9s",
+  "group": "oss",
+  "readme": "derailed/k9s",
+  "source_page": "https://github.com/derailed/k9s",
+  "caption": "k9s: a roster of pods with a command line and a filter, keys printed in the header."
+ },
+ {
+  "slug": "lazygit-1",
+  "title": "lazygit",
+  "group": "oss",
+  "readme": "jesseduffield/lazygit",
+  "source_page": "https://github.com/jesseduffield/lazygit",
+  "caption": "lazygit: panels, a command log that shows the git it ran, keys on screen.",
+  "image_url": "https://raw.githubusercontent.com/jesseduffield/lazygit/assets/demo/commit_and_push-compressed.gif"
+ },
+ {
+  "slug": "lazydocker-1",
+  "title": "lazydocker",
+  "group": "oss",
+  "readme": "jesseduffield/lazydocker",
+  "source_page": "https://github.com/jesseduffield/lazydocker",
+  "caption": "lazydocker: containers on the left, logs and stats on the right, same shape as lazygit."
+ },
+ {
+  "slug": "zellij-1",
+  "title": "zellij",
+  "group": "oss",
+  "readme": "zellij-org/zellij",
+  "source_page": "https://github.com/zellij-org/zellij",
+  "caption": "zellij: a multiplexer whose footer is generated from the live keybindings."
+ },
+ {
+  "slug": "htop-1",
+  "title": "htop",
+  "group": "oss",
+  "readme": "htop-dev/htop",
+  "source_page": "https://github.com/htop-dev/htop",
+  "caption": "htop: gauges on top, a process table under them, F-keys along the bottom.",
+  "pick": 1
+ },
+ {
+  "slug": "btop-1",
+  "title": "btop",
+  "group": "oss",
+  "readme": "aristocratos/btop",
+  "source_page": "https://github.com/aristocratos/btop",
+  "caption": "btop: the same data as htop drawn as a dense instrument panel."
+ },
+ {
+  "slug": "textual-1",
+  "title": "Textual",
+  "group": "oss",
+  "source_page": "https://github.com/Textualize/textual",
+  "caption": "Textual: the Python framework the daisugi dashboard's TUI is built on, in terminal and browser."
+ },
+ {
+  "slug": "grafana-1",
+  "title": "Grafana",
+  "group": "oss",
+  "readme": "grafana/grafana",
+  "source_page": "https://github.com/grafana/grafana",
+  "caption": "Grafana: the dashboard everyone copies, and the pull-based metrics the daisugi exporter already feeds."
+ },
+ {
+  "slug": "glass-cockpit-1",
+  "title": "Glass cockpit",
+  "group": "inspiration",
+  "source_page": "https://en.wikipedia.org/wiki/Glass_cockpit",
+  "caption": "A glass cockpit: more capability, and a worse fatal-error rate for the untrained. Ship the training with the instrument.",
+  "license": "Wikipedia lead image, see file page"
+ },
+ {
+  "slug": "factorio-1",
+  "title": "Factorio",
+  "group": "inspiration",
+  "source_page": "https://en.wikipedia.org/wiki/Factorio",
+  "caption": "Factorio: a production graph you can read at a glance and a radar that shows what you are not looking at.",
+  "license": "Wikipedia lead image, see file page"
+ }
+]

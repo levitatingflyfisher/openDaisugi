@@ -1,0 +1,12 @@
+{"id":"p01","of":"t01","task":"write a unit test that covers shell decomposition"}
+{"id":"p02","of":"t02","task":"upgrade the base image in the dockerfile to bookworm"}
+{"id":"p03","of":"t03","task":"give me a summary of the ten most recent journal traces"}
+{"id":"p04","of":"t04","task":"repair the intermittent failure in the gateway streaming test"}
+{"id":"p05","of":"t05","task":"show the files over ten megabytes inside the build directory"}
+{"id":"p06","of":"t06","task":"draft release notes for the 0.44 release"}
+{"id":"p07","of":"t07","task":"replace the registry signing key with a new one"}
+{"id":"p08","of":"t08","task":"why was 0.59 chosen as the potion reuse threshold"}
+{"id":"p09","of":"t09","task":"make the model download retry with exponential backoff"}
+{"id":"p10","of":"t10","task":"prune pathways that have not been touched in ninety days"}
+{"id":"p11","of":"t11","task":"print the module wiring as machine readable json"}
+{"id":"p12","of":"t12","task":"bring the heredoc handling from the lean parser into the go client"}

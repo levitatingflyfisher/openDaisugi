@@ -1,0 +1,22 @@
+# The pane-create.jsonl cases in JSON-RPC 2.0 form, plus the refusals that
+# only exist on a JSON-RPC connection. The first line switches the framing.
+{"jsonrpc":"2.0","id":1,"method":"server.status"}
+{"jsonrpc":"2.0","id":"$id","result":{"pid":"*","socket":"*","panes":"*","protocol":1}}
+{"jsonrpc":"2.0","id":2,"method":"pane.create","params":{"cwd":"/","cmd_argv":["sh","-c","sleep 30"],"label":"c","kind":"pty"}}
+{"jsonrpc":"2.0","id":"$id","result":{"pane":"$pane"}}
+{"jsonrpc":"2.0","id":3,"method":"pane.create","params":{"cwd":"/","cmd_argv":["no-such-harness-xyz"],"label":"g","kind":"pty"}}
+{"jsonrpc":"2.0","id":"$id","error":{"code":-32000,"message":"*","data":{"code":"spawn_failed"}}}
+{"jsonrpc":"2.0","id":4,"method":"pane.list"}
+{"jsonrpc":"2.0","id":"$id","result":{"panes":"*"}}
+{"jsonrpc":"2.0","id":"five","method":"pane.read","params":{"pane":"$pane","source":"visible"}}
+{"jsonrpc":"2.0","id":"$id","result":{"text":"*","source":"visible"}}
+{"jsonrpc":"2.0","id":6,"method":"pane.read","params":{"pane":"w9:p9"}}
+{"jsonrpc":"2.0","id":"$id","error":{"code":-32000,"message":"*","data":{"code":"no_such_pane"}}}
+{"jsonrpc":"2.0","id":7,"method":"no.such.method"}
+{"jsonrpc":"2.0","id":"$id","error":{"code":-32601,"message":"*","data":{"code":"bad_request"}}}
+{"jsonrpc":"2.0","method":"server.status"}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"coppice does not accept notifications, send an id","data":{"code":"bad_request"}}}
+[{"jsonrpc":"2.0","id":8,"method":"server.status"}]
+{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"*","data":{"code":"bad_request"}}}
+{"id":"9","cmd":"server.status"}
+{"jsonrpc":"2.0","id":"$id","error":{"code":-32600,"message":"*","data":{"code":"bad_request"}}}

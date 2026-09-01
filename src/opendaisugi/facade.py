@@ -18,7 +18,7 @@ from opendaisugi.envelope_cache import EnvelopeCache
 from opendaisugi.gateway_answers import AnswerStore
 from opendaisugi.journal import Journal
 from opendaisugi.models import ActionPlan, Envelope, VerificationResult
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD, PathwayStore
+from opendaisugi.pathway_store import PathwayStore
 from opendaisugi.run_session import RunStatus
 from opendaisugi.thinking import ThinkingBudget
 from opendaisugi.verify import verify as _verify
@@ -57,7 +57,7 @@ class Daisugi:
         cache: bool | EnvelopeCache = True,
         pathway_store: bool | PathwayStore = True,
         answer_store: bool | AnswerStore = True,
-        pathway_threshold: float = DEFAULT_PATHWAY_THRESHOLD,
+        pathway_threshold: float | None = None,
         low_stakes_envelope: Envelope | None = None,
         tier1: "Tier1Provider | None" = None,
         tend_after: int | None = None,
@@ -66,6 +66,13 @@ class Daisugi:
         self.model = model
         self.max_task_chars = max_task_chars
         self.z3_timeout_ms = z3_timeout_ms
+        # None resolves the active backend's reuse threshold once (ADR-0018), so
+        # the facade — the main entry point — honors matcher_model rather than
+        # pinning MiniLM's 0.55 for every consumer it threads it into.
+        if pathway_threshold is None:
+            from opendaisugi._search import active_threshold
+
+            pathway_threshold = active_threshold()
         self._pathway_threshold = pathway_threshold
         # v0.28.3: facade-level strict override. None preserves verify()'s
         # stake-based default. Setting True opts low/medium-stakes envelopes

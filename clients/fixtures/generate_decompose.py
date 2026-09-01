@@ -87,13 +87,15 @@ def main() -> None:
     for label, command, kind in CASES:
         exp = expected(command) if kind == "match" else {"ok": False}
         oracle = expected(command)
-        out.append({
-            "label": label,
-            "command": command,
-            "kind": kind,
-            "expected": exp,
-            "oracle": oracle,  # informative: what the oracle actually returns
-        })
+        out.append(
+            {
+                "label": label,
+                "command": command,
+                "kind": kind,
+                "expected": exp,
+                "oracle": oracle,  # informative: what the oracle actually returns
+            }
+        )
     path = Path(__file__).parent / "decompose.json"
     path.write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n")
     match = sum(1 for c in out if c["kind"] == "match")

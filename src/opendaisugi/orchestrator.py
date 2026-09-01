@@ -47,7 +47,6 @@ from opendaisugi.orchestration_executors import (
     SkillExecutor,
     SkillHandler,
 )
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
 from opendaisugi.supervisor import Supervisor
 from opendaisugi.synthesizer import _DEFAULT_MODEL as _DEFAULT_SYNTH_MODEL
 from opendaisugi.synthesizer import SynthesisResult, synthesize
@@ -194,7 +193,7 @@ class Orchestrator:
         synth_model: str = _DEFAULT_SYNTH_MODEL,
         backend: str | None = None,
         z3_timeout_ms: int = 500,
-        pathway_threshold: float = DEFAULT_PATHWAY_THRESHOLD,
+        pathway_threshold: float | None = None,
         endpoint_overrides: "dict[str, dict[str, Any]] | None" = None,
         step_timeout_s: int = 180,
         max_parallel: int = 1,
@@ -219,6 +218,11 @@ class Orchestrator:
         self.synth_model = synth_model
         self.backend = backend
         self.z3_timeout_ms = z3_timeout_ms
+        # None resolves the active backend's reuse threshold once (ADR-0018).
+        if pathway_threshold is None:
+            from opendaisugi._search import active_threshold
+
+            pathway_threshold = active_threshold()
         self.pathway_threshold = pathway_threshold
         # Per-model litellm kwargs (api_base/api_key) threaded into the task
         # executor so a local rung's model reaches its endpoint.

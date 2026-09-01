@@ -1,8 +1,8 @@
 """The instrument opens on the live work; wiring is a command (or Tab) away.
 
-B1: every query goes through ``app.screen.query_one(...)`` — a pushed screen is
-opaque to ``App.query`` — and the gate-mode indicator must be visible on EVERY
-screen (a safety requirement, not chrome).
+B1: every query goes through ``app.screen.query_one(...)``. A pushed screen is
+opaque to ``App.query``, and the gate-mode indicator must be visible on EVERY
+screen. This is a safety requirement, not chrome.
 """
 
 import asyncio
@@ -62,6 +62,23 @@ def test_tab_cycles_sessions_tree_wiring(tmp_path):
             await pilot.press("tab")
             await pilot.pause()
             assert app.screen.name == "sessions"
+
+    _run(scenario)
+
+
+def test_bare_colon_floor_names_the_coppice_binary(tmp_path):
+    async def scenario():
+        app = DaisugiApp(data_dir=tmp_path, interval=999)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("colon")
+            await pilot.press(*"floor")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.screen.name == "sessions"
+            assert app.status_text == (
+                "The floor lives in the coppice binary. Run: daisugi coppice floor"
+            )
 
     _run(scenario)
 

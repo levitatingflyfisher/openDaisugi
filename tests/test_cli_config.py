@@ -46,8 +46,24 @@ def test_config_reports_a_cwd_scoped_start_hook_not_default(tmp_path, monkeypatc
     monkeypatch.chdir(proj)
     settings = proj / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
-    settings.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
-        {"type": "command", "command": "py -m opendaisugi.gate_client --mode enforce"}]}]}}))
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "py -m opendaisugi.gate_client --mode enforce",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
     res = runner.invoke(app, ["config", "--json"])
     assert res.exit_code == 0, res.output
     body = json.loads(res.output)

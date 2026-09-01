@@ -60,5 +60,5 @@ def test_quiet_model_load_swallows_load_time_warnings():
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         with _quiet_model_load():
-            warnings.warn("sm_61 is not compatible", UserWarning)
+            warnings.warn("sm_61 is not compatible", UserWarning, stacklevel=2)
     assert caught == []

@@ -1,0 +1,2 @@
+#rule: osc_title_working
+#osc_title: ⠋ working

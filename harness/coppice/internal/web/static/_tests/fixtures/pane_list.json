@@ -1,0 +1,36 @@
+{
+  "id": "2",
+  "ok": true,
+  "result": {
+    "panes": [
+      {
+        "id": "w1:p1", "label": "auth fix", "cwd": "/repo", "cmd": ["claude"],
+        "kind": "pty", "harness": "claude-code",
+        "workspace": "w1", "tab": "t1", "closed": false,
+        "cols": 120, "rows": 40,
+        "state": "working", "source": "gate", "detail": "",
+        "ts": 1757300000.0, "session_id": "s1"
+      },
+      {
+        "id": "w1:p2", "label": "db migration", "cwd": "/repo", "cmd": ["codex"],
+        "kind": "headless", "harness": "codex",
+        "workspace": "w1", "tab": "t1", "closed": false,
+        "cols": 120, "rows": 40,
+        "state": "blocked", "source": "gate",
+        "detail": "verdict=deny clause=shell.deny[2]",
+        "ts": 1757300030.0, "session_id": "s2",
+        "ask": {
+          "id": "toolu_01ABC", "tool": "Bash",
+          "summary": "rm -rf build/", "deadline": 1757300090.0
+        }
+      },
+      {
+        "id": "w1:p3", "label": "shell", "cwd": "/repo", "cmd": ["sh"],
+        "kind": "pty", "harness": "shell",
+        "workspace": "w1", "tab": "t1", "closed": false,
+        "cols": 120, "rows": 40,
+        "state": "unknown", "source": null, "detail": ""
+      }
+    ]
+  }
+}

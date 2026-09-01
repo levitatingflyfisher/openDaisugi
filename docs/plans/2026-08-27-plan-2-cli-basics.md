@@ -197,10 +197,42 @@ class OutputMode:
     json: bool = False
 
 
-BOX = {"h": "─", "v": "│", "tl": "┌", "tr": "┐", "bl": "└", "br": "┘", "t": "┬", "b": "┴",
-       "l": "├", "r": "┤", "x": "┼", "on": "●", "avail": "○", "off": "·", "ok": "✓", "no": "✗"}
-ASCII_BOX = {"h": "-", "v": "|", "tl": "+", "tr": "+", "bl": "+", "br": "+", "t": "+", "b": "+",
-             "l": "+", "r": "+", "x": "+", "on": "*", "avail": "o", "off": ".", "ok": "ok", "no": "X"}
+BOX = {
+    "h": "─",
+    "v": "│",
+    "tl": "┌",
+    "tr": "┐",
+    "bl": "└",
+    "br": "┘",
+    "t": "┬",
+    "b": "┴",
+    "l": "├",
+    "r": "┤",
+    "x": "┼",
+    "on": "●",
+    "avail": "○",
+    "off": "·",
+    "ok": "✓",
+    "no": "✗",
+}
+ASCII_BOX = {
+    "h": "-",
+    "v": "|",
+    "tl": "+",
+    "tr": "+",
+    "bl": "+",
+    "br": "+",
+    "t": "+",
+    "b": "+",
+    "l": "+",
+    "r": "+",
+    "x": "+",
+    "on": "*",
+    "avail": "o",
+    "off": ".",
+    "ok": "ok",
+    "no": "X",
+}
 
 
 def resolve_output(
@@ -347,7 +379,10 @@ def _run(*args: str, env_extra: dict | None = None) -> subprocess.CompletedProce
     env = dict(os.environ, **(env_extra or {}))
     return subprocess.run(
         [sys.executable, "-m", "opendaisugi.cli", *args],
-        capture_output=True, text=True, env=env, timeout=60,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
     )
 
 
@@ -388,7 +423,9 @@ def test_quiet_silences_the_state_echo(tmp_path, monkeypatch):
         return _fake_result()
 
     monkeypatch.setattr(Daisugi, "orchestrate", _ok)
-    res = runner.invoke(app, ["-q", "orchestrate", "t", "--llm", "litellm", "--data-dir", str(tmp_path)])
+    res = runner.invoke(
+        app, ["-q", "orchestrate", "t", "--llm", "litellm", "--data-dir", str(tmp_path)]
+    )
     assert res.exit_code == 0, res.output
     assert "backend:" not in res.output
 ```
@@ -405,9 +442,16 @@ In `cli.py` `_root`:
 ```python
 @app.callback()
 def _root(
-    version: bool = typer.Option(False, "--version", callback=_version_callback, is_eager=True,
-                                 help="Show the opendaisugi version and exit."),
-    plain: bool = typer.Option(False, "--plain", help="No color, no box drawing; greppable output."),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the opendaisugi version and exit.",
+    ),
+    plain: bool = typer.Option(
+        False, "--plain", help="No color, no box drawing; greppable output."
+    ),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Results only; no progress notes."),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show tracebacks and detail."),
     no_color: bool = typer.Option(False, "--no-color", help="Disable color (same as NO_COLOR=1)."),
@@ -415,7 +459,9 @@ def _root(
     """Runtime assurance for agent actions."""
     from opendaisugi import console
 
-    console.set_mode(console.resolve_output(plain=plain, quiet=quiet, verbose=verbose, no_color=no_color))
+    console.set_mode(
+        console.resolve_output(plain=plain, quiet=quiet, verbose=verbose, no_color=no_color)
+    )
     if verbose:
         os.environ["DAISUGI_DEBUG"] = "1"
 ```
@@ -471,12 +517,23 @@ from opendaisugi.cli import app
 runner = CliRunner()
 
 READ_COMMANDS = [
-    ["status"], ["config"], ["modules"], ["dashboard"], ["models"],
-    ["gate", "status"], ["gate", "report"], ["gate", "audit"],
+    ["status"],
+    ["config"],
+    ["modules"],
+    ["dashboard"],
+    ["models"],
+    ["gate", "status"],
+    ["gate", "report"],
+    ["gate", "audit"],
     ["hook", "list"],
-    ["pathways", "list"], ["pathways", "show"], ["pathways", "stats"],
-    ["journal", "stats"], ["journal", "search"],
-    ["tiers", "stats"], ["gardener", "status"], ["registry", "status"],
+    ["pathways", "list"],
+    ["pathways", "show"],
+    ["pathways", "stats"],
+    ["journal", "stats"],
+    ["journal", "search"],
+    ["tiers", "stats"],
+    ["gardener", "status"],
+    ["registry", "status"],
 ]
 
 
@@ -540,7 +597,11 @@ def gate_status_cmd(
     d = _envelopes_dir(root)
     envelopes = sorted(e.stem for e in d.glob("*.json")) if d.exists() else []
     if as_json:
-        typer.echo(json.dumps({"armed": armed, "mode": mode, "mode_source": source, "envelopes": envelopes}))
+        typer.echo(
+            json.dumps(
+                {"armed": armed, "mode": mode, "mode_source": source, "envelopes": envelopes}
+            )
+        )
         return
     typer.echo(f"gate: {'armed' if armed else 'DISARMED'} · mode: {mode} ({source})")
     if not envelopes:
@@ -692,6 +753,7 @@ reads `DEFAULT_DATA_DIR`, use:
 ```python
 # scratch: build _LAZY from the current import block
 import ast, pathlib
+
 src = pathlib.Path("src/opendaisugi/__init__.py").read_text()
 tree = ast.parse(src)
 lazy = {}
@@ -855,7 +917,9 @@ def test_orchestrate_prints_a_progress_note_on_a_tty(monkeypatch, tmp_path):
 
     monkeypatch.setattr(Daisugi, "orchestrate", _slow)
     err = _Tty()
-    monkeypatch.setattr(console, "set_mode", lambda mode, err_stream=None: None)  # keep our TTY mode
+    monkeypatch.setattr(
+        console, "set_mode", lambda mode, err_stream=None: None
+    )  # keep our TTY mode
     console._MODE = console.resolve_output(stream=_Tty(), env={})
     console._ERR = err
     res = runner.invoke(app, ["orchestrate", "t", "--llm", "litellm", "--data-dir", str(tmp_path)])
@@ -936,7 +1000,9 @@ from opendaisugi.gate import register_envelope, run_argv, starter_envelope
 from opendaisugi.gate_client import ask_server, main as client_main
 from opendaisugi.gate_server import SOCK_NAME, serve
 
-PAYLOAD = json.dumps({"session_id": "s1", "tool_name": "Read", "tool_input": {"file_path": "README.md"}}).encode()
+PAYLOAD = json.dumps(
+    {"session_id": "s1", "tool_name": "Read", "tool_input": {"file_path": "README.md"}}
+).encode()
 
 
 @pytest.fixture
@@ -950,7 +1016,9 @@ def root(tmp_path: Path) -> Path:
 def server(root: Path):
     ready = threading.Event()
     stop = threading.Event()
-    t = threading.Thread(target=serve, args=(root,), kwargs={"ready": ready, "stop": stop}, daemon=True)
+    t = threading.Thread(
+        target=serve, args=(root,), kwargs={"ready": ready, "stop": stop}, daemon=True
+    )
     t.start()
     assert ready.wait(5), "server did not start"
     yield root / SOCK_NAME
@@ -1064,7 +1132,9 @@ def _build_parser() -> "argparse.ArgumentParser":
     parser.add_argument("--format", dest="fmt", default="claude")
     parser.add_argument("--verify-timeout", type=float, default=_DEFAULT_VERIFY_TIMEOUT_S)
     parser.add_argument("--captures-root", type=Path, default=None)
-    parser.add_argument("--session", default=None, help="Pin the envelope to this registered session.")
+    parser.add_argument(
+        "--session", default=None, help="Pin the envelope to this registered session."
+    )
     return parser
 
 
@@ -1080,19 +1150,28 @@ def run_argv(argv: list[str], raw: bytes) -> GateOutcome:
         args = _build_parser().parse_args(argv)
         mode = resolve_gate_mode(args.mode, root=args.root)
         return gate_and_contract(
-            raw, root=args.root, fmt=args.fmt, mode=mode,
-            verify_timeout_s=args.verify_timeout, captures_root=args.captures_root,
+            raw,
+            root=args.root,
+            fmt=args.fmt,
+            mode=mode,
+            verify_timeout_s=args.verify_timeout,
+            captures_root=args.captures_root,
             pin_session=args.session,
         )
     except BaseException as exc:  # noqa: BLE001 — deny-by-default on any escape
         if mode == "enforce":
             return GateOutcome(
-                stdout="", stderr=f"openDaisugi gate: DENIED (fail-closed on error): {exc}",
+                stdout="",
+                stderr=f"openDaisugi gate: DENIED (fail-closed on error): {exc}",
                 exit_code=2,
                 decision=_deny("enforce", f"gate escape: {exc}", t0=time.monotonic()),
             )
-        return GateOutcome(stdout=stdout_for_format("claude", block=False), stderr="",
-                           exit_code=0, decision=_deny("shadow", f"gate escape: {exc}", t0=time.monotonic()))
+        return GateOutcome(
+            stdout=stdout_for_format("claude", block=False),
+            stderr="",
+            exit_code=0,
+            decision=_deny("shadow", f"gate escape: {exc}", t0=time.monotonic()),
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1150,7 +1229,12 @@ class _Handler(socketserver.StreamRequestHandler):
             argv = [str(a) for a in req["argv"]]
             raw = base64.b64decode(req.get("stdin_b64", ""))
         except Exception:  # noqa: BLE001 — a bad request gets a deny, not a crash
-            reply = {"v": 1, "stdout": "", "stderr": "openDaisugi gate: DENIED — bad request", "exit_code": 2}
+            reply = {
+                "v": 1,
+                "stdout": "",
+                "stderr": "openDaisugi gate: DENIED — bad request",
+                "exit_code": 2,
+            }
         else:
             out = run_argv(argv, raw)
             reply = {"v": 1, "stdout": out.stdout, "stderr": out.stderr, "exit_code": out.exit_code}
@@ -1161,7 +1245,9 @@ class _Server(socketserver.UnixStreamServer):
     allow_reuse_address = True
 
 
-def serve(root: Path, *, ready: threading.Event | None = None, stop: threading.Event | None = None) -> None:
+def serve(
+    root: Path, *, ready: threading.Event | None = None, stop: threading.Event | None = None
+) -> None:
     """Serve gate verdicts on ``<root>/gate.sock`` until ``stop`` is set (or forever).
 
     Sequential on purpose: verdicts take milliseconds and Z3 is not safe to
@@ -1218,7 +1304,9 @@ def _root_from_argv(argv: list[str]) -> Path:
     return _DEFAULT_ROOT
 
 
-def ask_server(sock_path: Path, argv: list[str], raw: bytes, *, timeout_s: float = _SERVER_TIMEOUT_S) -> dict | None:
+def ask_server(
+    sock_path: Path, argv: list[str], raw: bytes, *, timeout_s: float = _SERVER_TIMEOUT_S
+) -> dict | None:
     """One round trip. None on any failure; the caller then runs the gate itself."""
     if not sock_path.exists():
         return None

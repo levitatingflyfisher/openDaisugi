@@ -23,7 +23,9 @@ def test_autodetects_claude_code_when_no_key_but_claude_present(monkeypatch):
     monkeypatch.delenv("OPENDAISUGI_LLM_BACKEND", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
-    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/claude" if name == "claude" else None)
+    monkeypatch.setattr(
+        "shutil.which", lambda name: "/usr/bin/claude" if name == "claude" else None
+    )
     assert resolve_backend() == "claude-code"
 
 
@@ -31,7 +33,9 @@ def test_autodetects_litellm_when_key_present(monkeypatch):
     # A configured key means the API path is intended — unchanged v0.11 behavior.
     monkeypatch.delenv("OPENDAISUGI_LLM_BACKEND", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
-    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/claude" if name == "claude" else None)
+    monkeypatch.setattr(
+        "shutil.which", lambda name: "/usr/bin/claude" if name == "claude" else None
+    )
     assert resolve_backend() == "litellm"
 
 

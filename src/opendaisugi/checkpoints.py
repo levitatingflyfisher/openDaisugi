@@ -421,7 +421,9 @@ def restore(repo: Path, *, ref: str, session_id: str, entry_id: str) -> Checkpoi
     # the same blob two ways (and joined a toplevel name onto a subdir) is
     # gone.
     wanted = set(
-        filter(None, _git(repo, "ls-tree", "-r", "-z", "--name-only", "--full-tree", ref).split("\0"))
+        filter(
+            None, _git(repo, "ls-tree", "-r", "-z", "--name-only", "--full-tree", ref).split("\0")
+        )
     )
     recoverable = _recoverable_paths(repo, rollback.ref)
     endangered = set()
@@ -488,6 +490,9 @@ def restore(repo: Path, *, ref: str, session_id: str, entry_id: str) -> Checkpoi
 
 def list_refs(repo: Path, session_id: str) -> list[str]:
     out = _git(
-        repo, "for-each-ref", "--format=%(refname)", f"refs/daisugi/checkpoints/{_safe(session_id)}/"
+        repo,
+        "for-each-ref",
+        "--format=%(refname)",
+        f"refs/daisugi/checkpoints/{_safe(session_id)}/",
     )
     return out.splitlines() if out else []

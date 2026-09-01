@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loop Field Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..700&family=Instrument+Sans:ital,wght@0,400..700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../_shell/style.css">
+</head>
+<body>
+<div class="wrap">
+<!-- title: Loop Field Board -->
+<header>
+  <div class="kicker">openDaisugi · the loop · field board · 2026-09-12</div>
+  <h1>Rent the loop, <b>own the boundary.</b></h1>
+  <p class="lede">The loop is any agent you already use. The gate sits in front of its tool calls, the floor runs it in a pane, the gateway sits behind its base URL. sprig is our own loop for when none of them fit, and it is the smallest thing that can hold the boundary.</p>
+  <div class="frame">
+    <div><div class="kicker">covered</div><strong>Claude Code, Codex</strong><span>Gated through hooks. Codex hooks fail open, so its gate runs soft. Both drive from a pane today.</span></div>
+    <div><div class="kicker">next</div><strong>pi, OpenCode</strong><span>pi through its RPC mode and an extension that can block. OpenCode through its HTTP and SSE server and a deny-only plugin. Plans 04 and 05.</span></div>
+    <div><div class="kicker">ours</div><strong>sprig</strong><span>A Go harness with one gate interface behind five transports. Hook-gated by default, MCP bridge when it owns exec, text when nothing else is available.</span></div>
+  </div>
+</header>
+
+<section id="field">
+  <div class="sechead">
+    <div><div class="kicker">part one</div><h2>What the field built</h2></div>
+    <p>The harnesses, and one governor.</p>
+  </div>
+  <div class="chips" id="chips">
+    <button class="chip" aria-pressed="true" data-f="all">all</button>
+    <button class="chip" aria-pressed="false" data-f="vendor">vendors</button>
+    <button class="chip" aria-pressed="false" data-f="oss">open source</button>
+    <button class="chip" aria-pressed="false" data-f="inspiration">inspiration</button>
+    <button class="chip" aria-pressed="false" data-f="steal">steal</button>
+  </div>
+  <div class="board" id="board"></div>
+  <p class="empty" id="boardEmpty" hidden>No images matched.</p>
+</section>
+
+<section id="keep">
+  <div class="sechead">
+    <div><div class="kicker">part two</div><h2>What holds</h2></div>
+    <p>From the harness comparison and the cockpit research.</p>
+  </div>
+  <div class="patterns">
+    <div class="pattern"><strong>Auth decides, not language.</strong><span>Native tool use is a wire feature any language speaks. On a subscription, tools come from built-ins and MCP and the gate is a hook. On a key, you pass the tools yourself.</span></div>
+    <div class="pattern"><strong>One gate interface, five transports.</strong><span>In-process, MCP bridge, hook, text, direct API. The boundary is the same object. Only the transport changes.</span></div>
+    <div class="pattern"><strong>Every hook layer fails open, unless it chose not to.</strong><span>Hermes and OpenClaw block on error. pi's tool_call can return a reason. Everyone else lets the action through on a timeout. The gate assumes the worst.</span></div>
+    <div class="pattern"><strong>A harness is a command and its args.</strong><span>Zed's protocol and JetBrains' registry agree. coppice's config is one line per harness, nothing more.</span></div>
+    <div class="pattern"><strong>The transcript is a tree.</strong><span>An id and a parent id on every entry, a movable head, fork copies the path. pi and OpenHands have it. Claude Code stores it and cannot navigate it.</span></div>
+  </div>
+</section>
+
+<section id="ours">
+  <div class="sechead">
+    <div><div class="kicker">part three</div><h2>What ours is, and should be</h2></div>
+  </div>
+
+  <div class="mock">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>sprig</b> · today · the gate holds while claude drives</div>
+      <pre><span class="t-dim">path D · hook-gated · claude's own tools · PreToolUse exits 2</span>
+<span class="t-dim">$</span> sprig run --gate allow  "write hello.txt"
+  claude · Write hello.txt        <span class="t-done">allowed</span>   file on disk
+<span class="t-dim">$</span> sprig run --gate deny   "write hello.txt"
+  claude · Write hello.txt        <span class="t-deny">REFUSED by the gate</span>   no file
+
+<span class="t-dim">path C · MCP bridge · sprig-mcp routes mcp__sprig__write through the Executor</span>
+  deny-gate gives tool_result isError "REFUSED by the gate", no file
+
+<span class="t-dim">battery 9/9 · subscription auth on four of five paths</span></pre>
+    </div>
+    <div class="note">
+      <div class="kicker">today</div>
+      <h3>Proven live, on a subscription.</h3>
+      <p>The table in the harness comparison is the whole story: five ways to drive a model, one boundary. The exposure freeze holds because four paths never need a key.</p>
+    </div>
+  </div>
+
+  <div class="mock flip">
+    <div class="note">
+      <div class="kicker">should be</div>
+      <h3>Two more harnesses, one line each.</h3>
+      <ul>
+        <li><strong>pi.</strong> coppice drives it as a pane over RPC, and an extension returns block and a reason on every tool call. Plan 04.</li>
+        <li><strong>OpenCode.</strong> Headless over HTTP and SSE, gated by a plugin that can only throw. Plan 05.</li>
+        <li><strong>Subagents as child rows.</strong> Claude Code's subagent hooks give the floor read-only children under the parent pane. They become real panes only when spawned through the floor.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice.toml</b> · harnesses</div>
+      <pre>[harness.claude]
+command = "claude"
+state   = "hooks"
+
+[harness.codex]
+command = "codex"
+state   = "hooks"          <span class="t-dim"># fail-open hooks, so the gate runs soft</span>
+
+[harness.pi-llama]
+command = "pi"
+args    = ["--model", "llama-3.3-70b", "--base-url", "http://3090:11434/v1"]
+
+[harness.opencode]
+command = "opencode"
+args    = ["serve"]
+state   = "sse"
+
+[harness.sprig]
+command = "sprig"</pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Screens in part one belong to their makers and are archived here for study. Part three is original work for openDaisugi. Claims trace to docs/harness/harness-comparison.md and docs/research/cockpit-gate-garden-research-2026-08-27.md.</p>
+</footer>
+
+</div>
+<script>window.ITEMS = [{"slug": "claude-code-1", "title": "Claude Code", "group": "vendor", "source_page": "https://github.com/anthropics/claude-code", "caption": "Claude Code in a terminal, the harness most of the floor's panes run.", "file": "img/claude-code-1.gif", "image_url": "https://raw.githubusercontent.com/anthropics/claude-code/HEAD/demo.gif", "fetched": "2026-09-12", "width": 1552, "height": 992, "verdict": "steal", "verdict_label": "steal", "note": "The two harnesses the gate already covers through hooks. Codex hooks fail open, so its gate runs soft."}, {"slug": "codex-cli-1", "title": "Codex CLI", "group": "vendor", "source_page": "https://github.com/openai/codex", "caption": "OpenAI's Codex CLI, the second harness the gate covers.", "file": "img/codex-cli-1.png", "image_url": "https://raw.githubusercontent.com/openai/codex/main/.github/codex-cli-splash.png", "fetched": "2026-09-12", "width": 1600, "height": 1003, "verdict": "steal", "verdict_label": "steal", "note": "The two harnesses the gate already covers through hooks. Codex hooks fail open, so its gate runs soft."}, {"slug": "aider-1", "title": "Aider", "group": "oss", "source_page": "https://github.com/Aider-AI/aider", "caption": "Aider, the pair-programming loop that commits as it goes.", "file": "img/aider-1.png", "image_url": "https://repository-images.githubusercontent.com/638629097/1d3d6251-f8be-4d11-bbb1-4e44b7364b74", "fetched": "2026-09-12", "width": 1600, "height": 781, "verdict": "reference", "verdict_label": "reference", "note": "Harnesses the gate does not cover yet. Each is a command and its args away."}, {"slug": "cline-1", "title": "Cline", "group": "oss", "source_page": "https://github.com/cline/cline", "caption": "Cline in VS Code, with checkpoints and a plan-act split.", "file": "img/cline-1.png", "image_url": "https://opengraph.githubassets.com/135fd3591fd051d7bbfcd689855b10df367eaaec7f201a0a8f9688687cbd163a/cline/cline", "fetched": "2026-09-12", "width": 1200, "height": 600, "verdict": "reference", "verdict_label": "reference", "note": "Harnesses the gate does not cover yet. Each is a command and its args away."}, {"slug": "goose-1", "title": "Goose", "group": "oss", "source_page": "https://github.com/block/goose", "caption": "Block's Goose, an extensible agent that runs on any model.", "file": "img/goose-1.png", "image_url": "https://opengraph.githubassets.com/20891781e474dc04d73eaf2d70619a9074ecf2115128a82f1d5302a0c01d8d05/aaif-goose/goose", "fetched": "2026-09-12", "width": 1200, "height": 600, "verdict": "reference", "verdict_label": "reference", "note": "Harnesses the gate does not cover yet. Each is a command and its args away."}, {"slug": "hermes-1", "title": "Hermes Agent", "group": "oss", "source_page": "https://github.com/NousResearch/hermes-agent", "caption": "Nous Research's Hermes Agent, whose pre-tool-call hook can actually block.", "file": "img/hermes-1.png", "image_url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/HEAD/assets/banner.png", "fetched": "2026-09-12", "width": 1145, "height": 196, "verdict": "steal", "verdict_label": "steal", "note": "A pre-tool-call hook that actually blocks. Proof that fail-open is a choice."}, {"slug": "opencode-1", "title": "OpenCode", "group": "oss", "source_page": "https://github.com/sst/opencode", "caption": "OpenCode's terminal UI. It serves an HTTP and SSE API that coppice can drive headless.", "file": "img/opencode-1.png", "image_url": "https://raw.githubusercontent.com/sst/opencode/HEAD/packages/web/src/assets/lander/screenshot.png", "fetched": "2026-09-12", "width": 1600, "height": 1305, "verdict": "steal", "verdict_label": "steal", "note": "An HTTP and SSE server the floor can drive headless. Plan 05."}, {"slug": "openhands-1", "title": "OpenHands", "group": "oss", "source_page": "https://github.com/All-Hands-AI/OpenHands", "caption": "OpenHands, the sandboxed agent platform with a V1 SDK that keeps an event tree.", "file": "img/openhands-1.png", "image_url": "https://assets.openhands.dev/screenshot/automation-preview.png", "fetched": "2026-09-12", "width": 1600, "height": 900, "verdict": "reference", "verdict_label": "reference", "note": "Harnesses the gate does not cover yet. Each is a command and its args away."}, {"slug": "pi-1", "title": "pi", "group": "oss", "source_page": "https://github.com/badlogic/pi-mono", "caption": "pi, the small coding agent with an id and parent-id transcript tree and an RPC mode.", "file": "img/pi-1.png", "image_url": "https://raw.githubusercontent.com/badlogic/pi-mono/HEAD/packages/coding-agent/docs/images/exy.png", "fetched": "2026-09-12", "width": 1025, "height": 847, "verdict": "steal", "verdict_label": "steal", "note": "An id and parent-id transcript tree and an RPC mode. Plan 04."}, {"slug": "governor-1", "title": "Centrifugal governor", "group": "inspiration", "source_page": "https://en.wikipedia.org/wiki/Centrifugal_governor", "caption": "Watt's governor: the machine's own speed closes the valve. A loop with the limit built into the metal.", "file": "img/governor-1.png", "image_url": "https://upload.wikimedia.org/wikipedia/commons/1/1e/Centrifugal_governor.png?utm_source=en.wikipedia.org&amp;utm_campaign=index&amp;utm_content=thumbnail_unscaled", "fetched": "2026-09-12", "width": 1016, "height": 845, "license": "Wikipedia lead image, see file page", "verdict": "reference", "verdict_label": "reference"}];</script>
+<script src="../_shell/board.js"></script>
+</body>
+</html>

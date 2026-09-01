@@ -354,7 +354,10 @@ def test_gate_proposals_lists_a_recorded_proposal(tmp_path):
 
     root = tmp_path / "gateroot"
     propose(
-        root, kind="widen-allowlist", scope="shell", expires_at=time.time() + 3600,
+        root,
+        kind="widen-allowlist",
+        scope="shell",
+        expires_at=time.time() + 3600,
         body={"note": "operator asked to widen curl"},
     )
     res = runner.invoke(app, ["gate", "proposals", "--root", str(root)])

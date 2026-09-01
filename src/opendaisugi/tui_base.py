@@ -22,7 +22,7 @@ from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Input, Static
 
-_CMD_PLACEHOLDER = "sessions · tree <id> · wiring · gate enforce|shadow"
+_CMD_PLACEHOLDER = "sessions · tree <id> · wiring · gate enforce|shadow · floor <backend>"
 _STATUS_DEFAULT = "Tab next view · : command · ? keys · q quit"
 
 

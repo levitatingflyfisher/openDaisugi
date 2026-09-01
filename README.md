@@ -148,10 +148,10 @@ from opendaisugi import Daisugi
 dai = Daisugi()
 result = await dai.orchestrate(
     "summarize the open PRs and draft a standup note",
-    budget_tokens=20_000,          # gates routing DURING the run, not after
+    budget_tokens=20_000,  # gates routing DURING the run, not after
 )
 print(result.final_answer)
-for s in result.sizings:           # per-step: difficulty → the model it ran on
+for s in result.sizings:  # per-step: difficulty → the model it ran on
     print(s.step_id, s.difficulty, s.tier, s.model)
 print(result.budget.spent, "tokens")
 ```

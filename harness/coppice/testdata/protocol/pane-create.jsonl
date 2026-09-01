@@ -1,0 +1,8 @@
+{"id":"1","cmd":"server.status"}
+{"id":"$id","ok":true,"result":{"pid":"*","socket":"*","panes":"*"}}
+{"id":"2","cmd":"pane.create","cwd":"/","cmd_argv":["sh","-c","sleep 30"],"label":"c","kind":"pty"}
+{"id":"$id","ok":true,"result":{"pane":"*"}}
+{"id":"3","cmd":"pane.create","cwd":"/","cmd_argv":["no-such-harness-xyz"],"label":"g","kind":"pty"}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"*"}}
+{"id":"4","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":"*"}}

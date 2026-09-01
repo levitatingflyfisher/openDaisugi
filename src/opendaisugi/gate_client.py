@@ -52,7 +52,9 @@ def _socket_is_trustworthy(sock_path: Path) -> bool:
     return True
 
 
-def ask_server(sock_path: Path, argv: list[str], raw: bytes, *, timeout_s: float = _SERVER_TIMEOUT_S) -> dict | None:
+def ask_server(
+    sock_path: Path, argv: list[str], raw: bytes, *, timeout_s: float = _SERVER_TIMEOUT_S
+) -> dict | None:
     """One round trip. None on any failure; the caller then runs the gate itself."""
     if not _socket_is_trustworthy(sock_path):
         return None
@@ -104,7 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     # stale server-side wait as a mismatch (a lost answer, not a security
     # hole — ask.py still denies — but a real usability break). One process,
     # one ask cycle, one nonce.
-    reply = None if _has_ask_flag(argv) else ask_server(_root_from_argv(argv) / SOCK_NAME, argv, raw)
+    reply = (
+        None if _has_ask_flag(argv) else ask_server(_root_from_argv(argv) / SOCK_NAME, argv, raw)
+    )
     if reply is None:
         from opendaisugi.gate import run_argv  # the slow, correct path
 

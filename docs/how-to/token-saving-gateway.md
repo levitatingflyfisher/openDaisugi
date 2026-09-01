@@ -96,10 +96,11 @@ request against your rate limit — so this path is a safe fallback, not a no-op
 
 ```python
 from opendaisugi.gateway_journal import GatewayJournal
+
 s = GatewayJournal(path="~/.opendaisugi/gateway/turns.jsonl").summary()
-print(s.frontier_tokens_saved)   # frontier-quota tokens preserved (the binding constraint)
-print(s.dollars_saved, s.blended_multiplier)   # and how cheap those tokens were
-print(s.repeats)                 # asks you made more than once
+print(s.frontier_tokens_saved)  # frontier-quota tokens preserved (the binding constraint)
+print(s.dollars_saved, s.blended_multiplier)  # and how cheap those tokens were
+print(s.repeats)  # asks you made more than once
 ```
 
 Two currencies, because they answer different questions. On a subscription plan

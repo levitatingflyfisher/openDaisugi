@@ -18,7 +18,7 @@ class _RetryExc(Exception):
     """Shape of instructor.core.exceptions.InstructorRetryException."""
 
     def __init__(self, attempts: list[_Attempt]) -> None:
-        super().__init__("<failed_attempts>\n<generation number=\"1\">...</failed_attempts>")
+        super().__init__('<failed_attempts>\n<generation number="1">...</failed_attempts>')
         self.failed_attempts = attempts
 
 

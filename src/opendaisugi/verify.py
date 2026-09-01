@@ -726,9 +726,7 @@ def verify(
     carrying an alias registry are skipped (a registry is process state, so
     the case would not be self-contained).
     """
-    result = _verify(
-        plan, envelope, z3_timeout_ms=z3_timeout_ms, strict=strict, aliases=aliases
-    )
+    result = _verify(plan, envelope, z3_timeout_ms=z3_timeout_ms, strict=strict, aliases=aliases)
     if aliases is None:
         conformance.record_verify(
             plan, envelope, {"strict": strict, "z3_timeout_ms": z3_timeout_ms}, result

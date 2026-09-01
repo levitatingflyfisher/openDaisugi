@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- **The floor is the coppice binary.** `coppice` with no arguments opens the
+  roster, peek, and attach from the Go binary. `daisugi coppice floor` execs
+  it. The Textual floor screen is gone.
+
+- **The voice bridge: `daisugi voice serve`, `ptt`, `arm`, and `disarm`.** A
+  recording from a phone or a laptop becomes text in a chosen pane,
+  transcribed on this box by faster-whisper, CPU by default, CUDA only when
+  it is opted in and actually visible, or, opt-in, Parakeet through
+  sherpa-onnx. `daisugi voice serve` answers GET /health, POST /transcribe,
+  and POST /deliver. Delivered text always previews in the pane first. A
+  pane only takes text directly once `daisugi voice arm PANE --for 30m`
+  grants it a time-boxed window; `daisugi voice disarm PANE` revokes it
+  early. `daisugi voice ptt PANE` is the laptop client: tap space to start
+  recording, tap it again to stop and send. An optional cleanup pass fixes
+  punctuation on one fixed-prompt model call and never changes what was
+  said, and never loses the raw words if that call fails. See
+  `docs/how-to/voice.md`.
+
+- **The phone: a PWA coppice-server serves, and ntfy push.** `coppice web serve`
+  puts the floor on a phone over a tailnet or a LAN. One websocket per browser
+  is one unix-socket connection to coppice-server, so the phone speaks exactly
+  the protocol the terminal speaks. A bearer token guards `/ws` and `/api`, and
+  three bad tokens from one address buy that address a minute of silence. TLS
+  comes from `tailscale cert`, from a local CA the box generates and a QR
+  installs on the phone, or from explicit files. Push goes through a
+  self-hosted ntfy on each merged transition to `blocked`, with one pane
+  quiet for five seconds after it buzzes. Web Push is not built; `--web-push`
+  says so and names ntfy. See `docs/how-to/phone.md`.
+
+- **The `lexical` matcher: a zero-model, zero-download pathway embedder**
+  ([ADR-0019](docs/adr/0019-lexical-matcher-zero-model-floor.md)). ADR-0018's
+  `potion` backend is torch-free but still downloads a ~30MB model on first
+  use — a fresh, extras-free `pip install opendaisugi` on an offline machine
+  still distilled zero pathways. `lexical` closes that gap: signed feature
+  hashing over unigrams, pure stdlib + numpy, never touches the network.
+  Threshold 0.25, FPR-matched to MiniLM@0.55 (0.70 paraphrase recall on the
+  measured labeled set). It is also now the honest fallback when the
+  configured `all-MiniLM-L6-v2`/`potion` package is not installed (warned
+  once per process) — identity, threshold, and the loaded model always
+  agree, and a potion model that merely fails to *load* still refuses rather
+  than silently falling back.
+
 - **Codex compatibility, all three pillars.** (1) *Onboarding*: a Codex rollout
   parser (`parsers/codex.py`) translates `~/.codex/sessions` rollout JSONL —
   `function_call` shell items (JSON-string arguments, `bash -lc` unwrapped),

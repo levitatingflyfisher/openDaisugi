@@ -1,0 +1,26 @@
+[
+ {
+  "match": "k9s|lazygit|lazydocker|zellij",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "Keys printed on screen, a command line for the fast path, a log of what the tool actually ran."
+ },
+ {
+  "match": "htop|btop",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "Gauges above, a table below, refreshed in place without reflow."
+ },
+ {
+  "match": "textual",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "What the dashboard's TUI is built on today. Single maintainer, forkable."
+ },
+ {
+  "match": "grafana",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "The exporter already speaks Prometheus, so this is a free view, not a build."
+ }
+]

@@ -19,8 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
-
 if TYPE_CHECKING:
     from opendaisugi.ingest import IngestSummary
     from opendaisugi.parsers import ParseResult
@@ -154,13 +152,19 @@ class StatusReport:
         return self.journal_total > 0
 
 
-def gather_status(data_dir: Path, *, threshold: float = DEFAULT_PATHWAY_THRESHOLD) -> StatusReport:
+def gather_status(data_dir: Path, *, threshold: float | None = None) -> StatusReport:
     """Read pathway-store + journal state under ``data_dir`` into a StatusReport.
 
     Read-only and resilient: a missing store or journal reports zeros rather
     than raising, so ``daisugi status`` works before the first ``onboard``.
+    ``threshold=None`` displays the active backend's threshold (ADR-0018).
     """
     import importlib.util
+
+    if threshold is None:
+        from opendaisugi._search import active_threshold
+
+        threshold = active_threshold()
 
     search_installed = importlib.util.find_spec("sentence_transformers") is not None
 

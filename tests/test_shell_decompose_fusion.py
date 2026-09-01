@@ -87,9 +87,7 @@ def test_compound_spanning_fusion_fails_closed_not_wrong():
     # When tree-sitter fuses across an if/then/else boundary, rewriting the
     # bare newlines to ';' yields invalid shell ('then;'/'else;'), so we fail
     # CLOSED rather than emit a bogus 'else' head. Safe, not silently wrong.
-    d = decompose_command(
-        'if [ -d x ]; then\ngrep a b | c | d\ne > f\nelse\ng\nfi'
-    )
+    d = decompose_command("if [ -d x ]; then\ngrep a b | c | d\ne > f\nelse\ng\nfi")
     if not d.ok:
         assert "fusion" in d.reason or "malformed" in d.reason
     else:

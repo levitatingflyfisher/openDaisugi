@@ -1,0 +1,703 @@
+<!-- title: Coppice Floor Board -->
+
+<header>
+  <div class="kicker">openDaisugi · coppice · design time · 2026-09-12</div>
+  <h1>A floor you can <b>talk to.</b></h1>
+  <p class="lede">coppice runs the panes. The gate decides what is allowed. You say what you want in plain words. The floor tells you when it needs you, and stays quiet the rest of the time.</p>
+  <div class="frame">
+    <div><div class="kicker">layer</div><strong>The gate</strong><span>An envelope the model cannot argue with. It proposes. The verifier decides. Fail closed.</span></div>
+    <div><div class="kicker">floor</div><strong>coppice</strong><span>One Go server that owns every pane, its state, and one socket. Every screen is a client.</span></div>
+    <div><div class="kicker">loop</div><strong>Any harness</strong><span>claude, codex, pi, sprig, OpenCode. A command and its args in one config line.</span></div>
+  </div>
+</header>
+
+<section id="field">
+  <div class="sechead">
+    <div><div class="kicker">part one</div><h2>What the field built</h2></div>
+    <p>Real screens from the tools in the landscape report. Tags say what the report concluded: steal the idea, avoid it, or treat it as unverified. Click a tag to filter.</p>
+  </div>
+  <div class="chips" id="chips">
+    <button class="chip" aria-pressed="true" data-f="all">all</button>
+    <button class="chip" aria-pressed="false" data-f="vendor">vendors</button>
+    <button class="chip" aria-pressed="false" data-f="oss">open source</button>
+    <button class="chip" aria-pressed="false" data-f="protocol">protocols</button>
+    <button class="chip" aria-pressed="false" data-f="inspiration">inspiration</button>
+    <button class="chip" aria-pressed="false" data-f="steal">steal</button>
+    <button class="chip" aria-pressed="false" data-f="avoid">avoid</button>
+  </div>
+  <div class="board" id="board"></div>
+  <p class="empty" id="boardEmpty" hidden>No images matched. The image hunt missed this group; the report carries the notes.</p>
+</section>
+
+<section id="keep">
+  <div class="sechead">
+    <div><div class="kicker">part two</div><h2>What the survivors share</h2></div>
+    <p>Five patterns that came through three-vote verification. They are the brief for every mockup below.</p>
+  </div>
+  <div class="patterns">
+    <div class="pattern"><strong>One roster, sorted by whether you are needed.</strong><span>Needs you on top. Working under it. Done at the bottom. The row shows the question, not the log.</span></div>
+    <div class="pattern"><strong>The unit of work sits above the pane.</strong><span>A task has a label, a worktree, and one or more panes. Panes come and go. The task stays.</span></div>
+    <div class="pattern"><strong>Counts and jumps, never interrupts.</strong><span>A number in the tab title. One key to the next thing that needs you. No modal ever steals the screen.</span></div>
+    <div class="pattern"><strong>New work starts in plain words.</strong><span>An input line is the front door. Say what you want. The floor spawns, waits, and reports.</span></div>
+    <div class="pattern"><strong>Three to five in hand. Any number live.</strong><span>People steer a few at a time and let the rest run. Blast off sixteen, focus on two, move on. The floor is what makes the other fourteen safe to ignore.</span></div>
+  </div>
+</section>
+
+<section id="keys">
+  <div class="sechead">
+    <div><div class="kicker">the whole vocabulary</div><h2>Six keys. Three you already know.</h2></div>
+    <p>No prefix. No chords to learn. Everything else you type is words to the floor. The mouse works too, on every row, tab, and tile.</p>
+  </div>
+  <div class="keys">
+    <div class="key"><kbd>ctrl</kbd> <kbd>t</kbd><div>Talk. Brings the floor and its prompt from anywhere. New work starts here.</div></div>
+    <div class="key"><kbd>shift</kbd> <kbd>tab</kbd><div>Next one that needs you. Cycles in attention order, not screen order.</div></div>
+    <div class="key"><kbd>ctrl</kbd> <kbd>w</kbd><div>Close what you are looking at. The task keeps its worktree.</div></div>
+    <div class="key"><kbd>space</kbd><div>Peek. Shows the last lines and the ask without leaving the roster.</div></div>
+    <div class="key"><kbd>enter</kbd><div>Go in. Attach to the pane. Your keys belong to the harness now.</div></div>
+    <div class="key"><kbd>esc</kbd><div>Zoom out. Peek closes. Roster returns to the line.</div></div>
+  </div>
+</section>
+
+<section id="coppice">
+  <div class="sechead">
+    <div><div class="kicker">part three</div><h2>What coppice should be</h2></div>
+    <p>Twelve views of one floor. Same socket, same verbs, different porcelain. Each note says what the view does and what it refuses to do.</p>
+  </div>
+  <div class="walk" id="walk">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b><span id="wTitle"></span><span class="right" id="wRight"></span></div>
+      <div id="wPre"></div>
+      <div class="foot" id="wFoot"></div>
+    </div>
+    <div class="ctl">
+      <button id="wPrev">back</button><button id="wPlay">pause</button><button id="wNext">next</button>
+      <div class="dots" id="wDots"></div>
+      <div class="cap" id="wCap"></div>
+    </div>
+  </div>
+  <div class="toc">
+    <a href="#m-cold">cold start</a><a href="#m-roster">roster</a><a href="#m-peek">peek</a><a href="#m-attached">attached</a><a href="#m-foreman">the foreman</a><a href="#m-alt">zoom</a><a href="#m-laptop">laptop floor</a><a href="#m-phone">phone</a><a href="#m-tiers">three tiers of allow</a><a href="#m-task">tasks and trees</a><a href="#m-wire">one socket</a><a href="#m-plugins">plugins</a>
+  </div>
+
+  <!-- 1 cold start -->
+  <div class="mock" id="m-cold">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b></div>
+      <pre><span class="t-dim">$</span> coppice
+<span class="t-dim">Nothing is running. Say what you want.</span>
+
+<span class="t-done">›</span> <span class="t-ink">open claude on the gate refactor, pi on the self-hosted llama for the docs,
+  and codex on the flaky socket test</span>
+
+<span class="t-dim">Three tasks. One worktree each.</span>
+  <span class="t-work">●</span> gate-refactor   claude    wt/gate-refactor    <span class="t-dim">starting</span>
+  <span class="t-work">●</span> docs            pi        wt/docs             <span class="t-dim">starting · llama on the 3090</span>
+  <span class="t-work">●</span> flaky-socket    codex     wt/flaky-socket     <span class="t-dim">starting</span>
+<span class="t-dim">I will say when one needs you. shift-tab jumps there.</span></pre>
+      <div class="prompt"><span>›</span><em>say what you want</em><i></i></div>
+    </div>
+    <div class="note">
+      <div class="kicker">command line · cold start</div>
+      <h3>Type the name. Then talk.</h3>
+      <p>The first screen is a sentence and a prompt. No dashboard, no config, no empty grid. One line per task after you speak, with the harness and the worktree, because those are the two facts you will need next.</p>
+      <ul>
+        <li>Works before it is configured. Harnesses found on PATH are the harnesses.</li>
+        <li>Output is plain text on stdout. Pipe it and it stays readable.</li>
+        <li>The floor never asks a question here that it can answer itself.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 2 roster -->
+  <div class="mock flip" id="m-roster">
+    <div class="note">
+      <div class="kicker">tui · the roster</div>
+      <h3>Sorted by whether you are needed.</h3>
+      <p>This is the attention queue. It is also the only list. Rows carry the question, not the last log line. The tab title and every footer carry the count, so you can leave and still know.</p>
+      <ul>
+        <li>The <em>unknown</em> state is not allowed to exist on this screen. If the floor cannot tell, it says <em>quiet</em> and shows how long.</li>
+        <li>Sixteen live panes is fine. When more than a few need you at once, the header says so in words, and the queue is the order to take them in.</li>
+        <li>The prompt line never leaves the bottom.</li>
+        <li>In a wide terminal the selected pane shows live on the right, the lazygit shape. Rows are clickable. The keys are the fast path, not the only path.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b><span class="right">2 need you</span></div>
+      <pre><span class="t-dim">NEEDS YOU</span>
+<span class="t-hl">  <span class="t-need">●</span> gate-refactor   claude   <span class="t-ink">wants</span> git push --force origin master   <span class="t-deny">outside envelope</span>   2m</span>
+  <span class="t-need">●</span> docs            pi       <span class="t-ink">asks</span> which page should the tutorial link to?                 6m
+
+<span class="t-dim">WORKING</span>
+  <span class="t-work">●</span> flaky-socket    codex    running go test -p 1 ./internal/server/...                 41s
+  <span class="t-work">●</span> review          claude   reading the diff for gate-refactor                          3m
+  <span class="t-idle">●</span> scratch         sprig    quiet for 14m
+
+<span class="t-dim">DONE</span>
+  <span class="t-done">●</span> changelog       pi       branch pushed, PR #412 open                                 18m</pre>
+      <div class="foot"><b>space</b> peek <b>enter</b> go in <b>shift-tab</b> next that needs you <b>ctrl-t</b> talk <b>ctrl-w</b> close</div>
+      <div class="prompt"><span>›</span><em>say what you want</em><i></i></div>
+    </div>
+  </div>
+
+  <!-- 3 peek -->
+  <div class="mock" id="m-peek">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b> · gate-refactor · peek<span class="right">2 need you</span></div>
+      <pre><span class="t-dim">last 8 lines · wt/gate-refactor · claude · 14 commits ahead of master</span>
+<span class="t-box">┌──────────────────────────────────────────────────────────────────────┐</span>
+<span class="t-box">│</span> ✓ 41 tests pass                                                      <span class="t-box">│</span>
+<span class="t-box">│</span> The branch has diverged from origin. I will force push to fix it.    <span class="t-box">│</span>
+<span class="t-box">│</span>                                                                      <span class="t-box">│</span>
+<span class="t-box">│</span> <span class="t-dim">$</span> git push --force origin master                                    <span class="t-box">│</span>
+<span class="t-box">└──────────────────────────────────────────────────────────────────────┘</span>
+
+<span class="t-need">■ The gate says no.</span>  <span class="t-dim">envelope rule 3: nothing pushes to master, nothing force pushes</span>
+<span class="t-dim">Deny is the default. Allowing this needs the pane name typed, because it cannot be undone.</span>
+
+  <span class="t-ink">n</span> deny and tell it why      <span class="t-ink">r</span> reply in words      <span class="t-ink">enter</span> go in      <span class="t-ink">esc</span> back</pre>
+      <div class="prompt"><span>›</span><span class="t-ink">no. open a PR from the branch instead and wait for green</span><i></i></div>
+    </div>
+    <div class="note">
+      <div class="kicker">tui · peek</div>
+      <h3>Look without going in.</h3>
+      <p>Space opens the last lines and the ask. The gate's verdict is its own line, in its own colour, with the rule that fired. You answer in words or with one key. The pane never sees your keystrokes.</p>
+      <ul>
+        <li>The verdict comes from the envelope, not from the model. The model only proposed.</li>
+        <li>Deny is one key. Allow is graded by blast radius. See three tiers below.</li>
+        <li>Esc returns you exactly where you were in the roster.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 4 attached -->
+  <div class="mock flip" id="m-attached">
+    <div class="note">
+      <div class="kicker">tui · attached</div>
+      <h3>One thin line of chrome.</h3>
+      <p>Inside a pane the harness owns the screen. coppice keeps one footer line: where you are, how many need you, and the one key that leaves. Nothing else. The count is the same number that sits in the tab title.</p>
+      <ul>
+        <li>No status bar with clocks, load, or battery. Your terminal already has one.</li>
+        <li>The footer turns amber when someone new needs you. It does not pop anything.</li>
+        <li>shift-tab leaves for the next one that needs you. ctrl-t leaves for the prompt.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b> · flaky-socket<span class="right">2 need you</span></div>
+      <pre><span class="t-dim">codex · wt/flaky-socket</span>
+
+I ran the test 20 times with -p 1 and it failed 3 times, always on
+the second accept. The listener is closed before the client's second
+dial. Fix: wait on the accept goroutine before returning from Close.
+
+<span class="t-dim">Editing internal/server/listen.go</span>
+  <span class="t-deny">-</span>  return l.ln.Close()
+  <span class="t-done">+</span>  err := l.ln.Close()
+  <span class="t-done">+</span>  l.wg.Wait()
+  <span class="t-done">+</span>  return err
+
+<span class="t-dim">Running</span> go test -p 1 -count=20 ./internal/server/...
+<span class="t-done">ok</span>   internal/server   38.2s</pre>
+      <div class="foot"><span class="t-need"><b>2 need you</b></span> · gate-refactor waits on a push · <b>shift-tab</b> go there · <b>ctrl-t</b> talk</div>
+    </div>
+  </div>
+
+  <!-- 5 foreman -->
+  <div class="mock" id="m-foreman">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b> · talk<span class="right">1 needs you</span></div>
+      <pre><span class="t-done">›</span> <span class="t-ink">when flaky-socket is green, have review look at it too, then merge both if review is happy</span>
+
+<span class="t-dim">  floor.wait        flaky-socket  until done</span>
+<span class="t-dim">  floor.prompt      review        "read wt/flaky-socket; say ship or fix"</span>
+<span class="t-dim">  floor.wait        review        until done</span>
+
+Waiting on flaky-socket. Review already has gate-refactor; I queued
+the second read behind it. Merging needs the gate to allow a push to
+master, and rule 3 says it will not. I can open two PRs instead and
+merge them when checks pass. Shall I?
+
+<span class="t-done">›</span> <span class="t-ink">yes</span>
+
+<span class="t-dim">  floor.spawn       merge-both    sprig   wt/merge-both</span>
+Opened merge-both. It will open the PRs and watch the checks.
+I will only come back if a check fails or the gate asks.</pre>
+      <div class="prompt"><span>›</span><em>say what you want</em><i></i></div>
+    </div>
+    <div class="note">
+      <div class="kicker">tui · the foreman</div>
+      <h3>A normal pane, promoted.</h3>
+      <p>The thing you talk to is a frontier model in your harness of choice. It is promoted by one page: the coppice commands it already has in its shell, no tool schema. It spawns, waits, prompts, and reads. It cannot allow. The gate is outside it.</p>
+      <ul>
+        <li>Every tool call it makes is printed in dim, one line each. No hidden hands.</li>
+        <li>It plans in words and asks once when the plan needs a person.</li>
+        <li>Not a small local model. Judging when to escalate is the whole job.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 6 altitudes -->
+  <div class="mock flip" id="m-alt">
+    <div class="note">
+      <div class="kicker">tui · three zoom levels</div>
+      <h3>The line, the roster, the pane.</h3>
+      <p>Zoom in with Enter, zoom out with Esc. The same count travels through all three levels, so you always know what you are not looking at.</p>
+      <ul>
+        <li>The line is what the tab title, the shell prompt, and the phone banner show.</li>
+        <li>Nothing lives between these three. No dashboards of dashboards.</li>
+      </ul>
+    </div>
+    <div class="alt">
+      <div class="lvl"><div class="kicker">high · the line</div><div class="term"><pre><span class="t-need">2 need you</span> · 3 working · 1 done · 6 panes · <span class="t-dim">quiet 41s</span></pre></div></div>
+      <div class="hop">enter goes down · esc goes up</div>
+      <div class="lvl"><div class="kicker">medium · the roster</div><div class="term"><pre><span class="t-need">●</span> gate-refactor  wants git push --force   <span class="t-deny">outside envelope</span>
+<span class="t-need">●</span> docs           asks which page to link
+<span class="t-work">●</span> flaky-socket   running go test -p 1
+<span class="t-done">●</span> changelog      PR #412 open</pre></div></div>
+      <div class="hop">enter goes down · esc goes up</div>
+      <div class="lvl"><div class="kicker">low · the pane</div><div class="term"><pre>I ran the test 20 times with -p 1 and it failed 3 times,
+always on the second accept.
+<span class="t-dim">Running</span> go test -p 1 -count=20 ./internal/server/...</pre><div class="foot"><span class="t-need"><b>2 need you</b></span> · <b>shift-tab</b> next · <b>ctrl-t</b> talk</div></div></div>
+    </div>
+  </div>
+
+  <!-- 7 laptop floor -->
+  <div class="mock" id="m-laptop" style="grid-template-columns:1fr">
+    <div class="laptop">
+      <div class="top"><span class="tab"><b>2</b> · coppice</span><span>localhost:7070/floor</span></div>
+      <div class="floor">
+        <div class="rail">
+          <div class="grp">needs you</div>
+          <div class="it on"><i class="dot need"></i>gate-refactor<small>2m</small></div>
+          <div class="it"><i class="dot need"></i>docs<small>6m</small></div>
+          <div class="grp">working</div>
+          <div class="it on"><i class="dot work"></i>flaky-socket<small>41s</small></div>
+          <div class="it on"><i class="dot work"></i>review<small>3m</small></div>
+          <div class="it"><i class="dot"></i>scratch<small>14m</small></div>
+          <div class="grp">done</div>
+          <div class="it"><i class="dot done"></i>changelog<small>18m</small></div>
+          <div class="grp" style="margin-top:auto">tree</div>
+          <svg viewBox="0 0 160 70" style="width:100%;height:auto" aria-label="Minimap of the task tree with one dot per node coloured by state">
+            <path d="M14 35 H40 M40 35 V12 H66 M40 35 V58 H66 M40 35 H66 M66 12 H92 M92 12 V4 H118 M92 12 V20 H118 M66 35 H118 M66 58 H118" fill="none" stroke="var(--line2)" stroke-width="1.2"/>
+            <circle cx="14" cy="35" r="4" fill="var(--idle)"/>
+            <circle cx="66" cy="12" r="4" fill="var(--need)"/><circle cx="118" cy="4" r="3.5" fill="var(--need)"/><circle cx="118" cy="20" r="3.5" fill="var(--work)"/>
+            <circle cx="66" cy="35" r="4" fill="var(--need)"/><circle cx="118" cy="35" r="3.5" fill="var(--need)"/>
+            <circle cx="66" cy="58" r="4" fill="var(--work)"/><circle cx="118" cy="58" r="3.5" fill="var(--work)"/>
+            <circle cx="140" cy="58" r="3.5" fill="var(--done)"/><path d="M118 58 H140" fill="none" stroke="var(--line2)" stroke-width="1.2"/>
+          </svg>
+        <div>
+          <div class="tiles">
+            <div class="tile">
+              <div class="th"><i class="dot need"></i><b>gate-refactor</b> claude · wt/gate-refactor</div>
+              <pre>✓ 41 tests pass
+The branch has diverged from origin. I will force push to fix it.
+
+$ git push --force origin master</pre>
+              <div class="askbar"><b>Gate says no.</b> rule 3, nothing pushes to master <span class="k">n deny</span><span class="k">r reply</span></div>
+            </div>
+            <div class="tile">
+              <div class="th"><i class="dot work"></i><b>flaky-socket</b> codex · wt/flaky-socket</div>
+              <pre>Fix: wait on the accept goroutine before returning from Close.
+
+-  return l.ln.Close()
++  err := l.ln.Close()
++  l.wg.Wait()
++  return err
+
+Running go test -p 1 -count=20 ./internal/server/...</pre>
+            </div>
+            <div class="tile">
+              <div class="th"><i class="dot work"></i><b>review</b> claude · reading gate-refactor</div>
+              <pre>Reading 14 commits.
+
+The envelope generator moved into its own package. Good. The verifier still imports floor.state. That breaks the layer-alone rule. I will flag it as fix, not ship.</pre>
+            </div>
+          </div>
+          <div class="say2"><span>›</span>say what you want<span style="margin-left:auto;color:var(--dim);font-family:var(--sans)">three in hand. the rail holds the rest. click a row to swap one in.</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="note" style="max-width:66ch">
+      <div class="kicker">laptop · the floor page</div>
+      <h3>Three tiles, one rail, one prompt.</h3>
+      <p>The web view is the same shape as the terminal: the roster, plus as many live panes as the width allows. Here that is three. A minimap of the tree sits at the bottom of the rail, one dot per node, colour is state, click to jump. Three tiles are the ones in your hands. The rail holds the other thirteen, sorted by who needs you, so the count of live panes never has to be small. Swapping a tile in is a click on the rail. The ask sits in an amber bar on the tile, never in a dialog.</p>
+    </div>
+  </div>
+
+  <!-- 8 phone -->
+  <div class="mock" id="m-phone" style="grid-template-columns:1fr">
+    <div class="phones">
+      <div class="phone">
+        <div class="status"><span>9:41</span><span>tailnet</span></div>
+        <div class="screen">
+          <h4>2 need you</h4>
+          <div class="sub">3 working · 1 done</div>
+          <div class="ask">
+            <div class="who"><i class="dot need"></i>gate-refactor · claude · 2m</div>
+            <div class="q">Wants to run <code>git push --force origin master</code></div>
+            <div class="why">Gate says no. Rule 3: nothing pushes to master. Allowing needs the pane name typed.</div>
+            <div class="btns"><div class="btn deny">Deny</div><div class="btn quiet">Look</div><div class="btn quiet">Reply</div></div>
+          </div>
+          <div class="ask">
+            <div class="who"><i class="dot need"></i>docs · pi · 6m</div>
+            <div class="q">Which page should the tutorial link to?</div>
+            <div class="btns"><div class="btn">Reply</div><div class="btn quiet">Look</div></div>
+          </div>
+          <div class="rows">
+            <div class="row2"><i class="dot work"></i><span class="name">flaky-socket</span><span class="what">go test -p 1 -count=20</span></div>
+            <div class="row2"><i class="dot work"></i><span class="name">review</span><span class="what">reading gate-refactor</span></div>
+            <div class="row2"><i class="dot done"></i><span class="name">changelog</span><span class="what">PR #412 open</span></div>
+          </div>
+          <div class="say">Tell the floor<b>●</b></div>
+        </div>
+      </div>
+      <div class="phone">
+        <div class="status"><span>9:58</span><span>tailnet</span></div>
+        <div class="screen">
+          <div class="quiet">
+            <i class="dot done" style="width:14px;height:14px"></i>
+            <h4>Nothing needs you.</h4>
+            <p>3 working. I will ping when one asks.</p>
+            <p style="font-family:var(--mono);font-size:12px">last ask 17 min ago</p>
+          </div>
+          <div class="say">Tell the floor<b>●</b></div>
+        </div>
+      </div>
+      <div class="lock">
+        <div class="time">10:14</div>
+        <div class="date">Saturday 12 September</div>
+        <div class="notif">
+          <div class="app"><span>coppice</span><span>now</span></div>
+          <div><b>gate-refactor needs you.</b> Wants to run <code style="font-family:var(--mono);font-size:12px">git push --force origin master</code>. Gate says no.</div>
+          <div class="btns"><div class="btn">Deny</div><div class="btn">Look</div></div>
+        </div>
+        <div class="notif" style="opacity:.7">
+          <div class="app"><span>coppice</span><span>17m</span></div>
+          <div>changelog is done. PR #412 open.</div>
+        </div>
+      </div>
+    </div>
+    <div class="note" style="max-width:66ch">
+      <div class="kicker">phone · the attention queue, the quiet screen, the lock screen</div>
+      <h3>Thumb sized. Deny is the big one.</h3>
+      <p>The phone shows the same queue with two facts per ask: what it wants and what the gate said. Deny is always one tap. The quiet screen is a real screen, not an empty list, because most of the time the honest answer is that nothing needs you. The lock screen card carries the same two facts and the same two buttons.</p>
+    </div>
+  </div>
+
+  <!-- 9 tiers -->
+  <div class="mock flip" id="m-tiers">
+    <div class="note">
+      <div class="kicker">every surface · three tiers of allow</div>
+      <h3>The guard matches the blast radius.</h3>
+      <p>Confirmation boxes wear out. A person answers the same box the same way after the fifth time. So coppice does not use one box. It uses three tiers, and each looks different.</p>
+      <ul>
+        <li><strong>Inside the envelope.</strong> Nothing is asked. It runs. The roster shows a dim line so you can see it happened.</li>
+        <li><strong>Outside, but undoable.</strong> One key or one tap. The rule that fired is on the same line.</li>
+        <li><strong>Outside and permanent.</strong> Type the pane's name. Deny is still one key.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b> · three asks, three shapes</div>
+      <pre><span class="t-dim">inside the envelope · not asked · logged</span>
+  <span class="t-done">·</span> docs           ran   uv run --no-sync pytest tests/docs   <span class="t-dim">allowed by rule 1</span>
+
+<span class="t-dim">outside, undoable · one key</span>
+  <span class="t-need">●</span> flaky-socket   wants to write .github/workflows/ci.yml   <span class="t-dim">rule 5: workflows are yours</span>
+                 <span class="t-ink">y</span> allow once   <span class="t-ink">t</span> allow for this task   <span class="t-ink">n</span> deny
+
+<span class="t-dim">outside, permanent · type the name</span>
+  <span class="t-need">●</span> gate-refactor  wants git push --force origin master         <span class="t-deny">rule 3: never</span>
+                 <span class="t-ink">n</span> deny   <span class="t-dim">to allow, type</span> <span class="t-ink">gate-refactor</span> <span class="t-dim">and enter</span>
+                 <span class="t-dim">allow: </span><span class="t-ink">gate-ref</span><i style="display:inline-block;width:8px;height:14px;background:#D6DAD1;vertical-align:-2px"></i></pre>
+    </div>
+  </div>
+
+  <!-- 10 tasks and trees -->
+  <div class="mock" id="m-task">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>coppice</b> · tasks</div>
+      <pre><span class="t-dim">master</span> <span class="t-box">──┬──</span> <span class="t-ink">gate-refactor</span>   wt/gate-refactor   <span class="t-need">● needs you</span>   14 ahead
+       <span class="t-box">│</span>     <span class="t-box">├─</span> claude    working the refactor        <span class="t-need">● wants a push</span>
+       <span class="t-box">│</span>     <span class="t-box">└─</span> review    reading the diff            <span class="t-work">● working</span>
+       <span class="t-box">│</span>
+       <span class="t-box">├──</span> <span class="t-ink">docs</span>            wt/docs            <span class="t-need">● needs you</span>    3 ahead
+       <span class="t-box">│</span>     <span class="t-box">└─</span> pi        llama on the 3090           <span class="t-need">● asks a question</span>
+       <span class="t-box">│</span>
+       <span class="t-box">├──</span> <span class="t-ink">flaky-socket</span>    wt/flaky-socket    <span class="t-work">● working</span>     1 ahead
+       <span class="t-box">│</span>     <span class="t-box">└─</span> codex     go test -p 1 -count=20      <span class="t-work">● working</span>
+       <span class="t-box">│</span>
+       <span class="t-box">└──</span> <span class="t-ink">changelog</span>       wt/changelog       <span class="t-done">● done</span>        PR #412 · checks green
+             <span class="t-box">└─</span> <span class="t-dim">pi        closed 18m ago · worktree kept</span></pre>
+      <div class="foot"><b>enter</b> open the task's roster <b>ctrl-w</b> close a pane, keep the tree <b>space</b> peek</div>
+    </div>
+    <div class="note">
+      <div class="kicker">tui · tasks and trees</div>
+      <h3>The task is the unit. The pane is a hand.</h3>
+      <p>A task has a name, a worktree, and however many panes it needs. Closing a pane does not lose the branch. This is the git tree view the roster folds away by default, one key from the roster.</p>
+      <ul>
+        <li>Ahead and behind counts come from git, not from the model's memory.</li>
+        <li>A task's state is the worst state of its panes. Needs you beats working.</li>
+        <li>Worktrees live beside the repo on real disk, never in a RAM tmp.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 11 one socket -->
+  <div class="mock" id="m-wire" style="grid-template-columns:1fr">
+    <div class="diagram">
+      <svg viewBox="0 0 1040 340" role="img" aria-label="Harnesses on the left, the coppice server in the middle with the gate under it, and porcelains on the right, all joined by one socket.">
+        <text x="20" y="24" class="lab">LOOPS · any harness · a command and its args</text>
+        <rect x="20" y="40" width="190" height="34" rx="8" class="b"/><text x="34" y="62">claude</text>
+        <rect x="20" y="84" width="190" height="34" rx="8" class="b"/><text x="34" y="106">codex</text>
+        <rect x="20" y="128" width="190" height="34" rx="8" class="b"/><text x="34" y="150">pi · llama on the 3090</text>
+        <rect x="20" y="172" width="190" height="34" rx="8" class="b"/><text x="34" y="194">sprig</text>
+        <rect x="20" y="216" width="190" height="34" rx="8" class="b"/><text x="34" y="238">opencode</text>
+        <path d="M210 57 H250 M210 101 H250 M210 145 H250 M210 189 H250 M210 233 H250" class="wire"/>
+        <text x="20" y="286" class="lab">pty or headless · state from hooks when installed</text>
+        <text x="20" y="302" class="lab">otherwise quiet, never unknown</text>
+
+        <rect x="250" y="40" width="310" height="210" rx="12" class="b core"/>
+        <text x="268" y="66" style="font-weight:600">coppice server</text>
+        <text x="268" y="90" class="lab">owns every pane and its grid</text>
+        <text x="268" y="108" class="lab">one state per pane · never unknown</text>
+        <text x="268" y="126" class="lab">tasks above panes · one worktree each</text>
+        <text x="268" y="144" class="lab">verbs: spawn list read prompt wait</text>
+        <text x="268" y="162" class="lab">       allow deny close attach</text>
+        <text x="268" y="196" style="font-weight:500">one socket · uid checked · 0600</text>
+        <text x="268" y="214" class="lab">newline JSON-RPC · async notify stream</text>
+        <text x="268" y="232" class="lab">stable opaque ids · per-pane flow control</text>
+
+        <path d="M405 250 V270" class="wire"/>
+        <rect x="250" y="270" width="310" height="52" rx="12" class="b gate"/>
+        <text x="268" y="291" style="font-weight:600">the gate · outside every porcelain</text>
+        <text x="268" y="309" class="lab">the model proposes · the envelope decides</text>
+
+        <path d="M560 80 H620 M560 124 H620 M560 168 H620 M560 212 H620 M560 145 H590 V300 H620" class="wire core"/>
+        <text x="620" y="24" class="lab">PORCELAINS · every screen is a client · swap any</text>
+        <rect x="620" y="62" width="400" height="34" rx="8" class="b"/><text x="634" y="84">coppice tui · roster, peek, attach, talk</text>
+        <rect x="620" y="106" width="400" height="34" rx="8" class="b"/><text x="634" y="128">floor page · three tiles and a rail</text>
+        <rect x="620" y="150" width="400" height="34" rx="8" class="b"/><text x="634" y="172">phone · queue, quiet screen, ntfy on the tailnet</text>
+        <rect x="620" y="194" width="400" height="34" rx="8" class="b"/><text x="634" y="216">the foreman · a frontier pane with the verbs</text>
+        <rect x="620" y="282" width="400" height="34" rx="8" class="b"/><text x="634" y="304">yours · a plugin, a script, an ACP client, tmux</text>
+      </svg>
+    </div>
+    <div class="two">
+      <pre class="code"><span class="c"># plumbing stays scriptable. this is the same roster, for machines.</span>
+$ coppice list --json | jq '.panes[] | select(.state=="needs_you") | .name'
+<span class="s">"gate-refactor"</span>
+<span class="s">"docs"</span>
+
+$ coppice read docs --lines 3
+which page should the tutorial link to?
+
+$ coppice prompt docs <span class="s">"link docs/tutorials/first-gate.md"</span>
+<span class="c">ok · docs is working</span></pre>
+      <pre class="code"><span class="c"># one line on the wire. any language can speak it.</span>
+{<span class="k">"jsonrpc"</span>:<span class="s">"2.0"</span>,<span class="k">"id"</span>:<span class="n">7</span>,<span class="k">"method"</span>:<span class="s">"floor.wait"</span>,
+ <span class="k">"params"</span>:{<span class="k">"pane"</span>:<span class="s">"p_9f2c"</span>,<span class="k">"until"</span>:<span class="s">"done"</span>}}
+
+<span class="c"># notifications arrive on their own, in order, per pane.</span>
+{<span class="k">"jsonrpc"</span>:<span class="s">"2.0"</span>,<span class="k">"method"</span>:<span class="s">"floor.state"</span>,
+ <span class="k">"params"</span>:{<span class="k">"pane"</span>:<span class="s">"p_9f2c"</span>,<span class="k">"state"</span>:<span class="s">"needs_you"</span>,
+           <span class="k">"source"</span>:<span class="s">"hook"</span>,<span class="k">"ask"</span>:<span class="s">"git push --force origin master"</span>,
+           <span class="k">"gate"</span>:{<span class="k">"verdict"</span>:<span class="s">"deny"</span>,<span class="k">"rule"</span>:<span class="n">3</span>,<span class="k">"tier"</span>:<span class="s">"permanent"</span>}}}</pre>
+    </div>
+    <div class="note" style="max-width:66ch;margin-top:18px">
+      <div class="kicker">plumbing · one socket, many faces</div>
+      <h3>Every screen above is a client. So is yours.</h3>
+      <p>The server does not know which porcelain is looking. The TUI, the floor page, the phone, and the foreman all speak the same nine verbs over the same socket and listen to the same notification stream. The gate sits beside the server, not inside any client, so no porcelain can talk its way past it.</p>
+    </div>
+  </div>
+
+  <!-- 12 plugins -->
+  <div class="mock" id="m-plugins" style="grid-template-columns:1fr">
+    <div class="two">
+      <pre class="code"><span class="c"># ~/.config/coppice/coppice.toml · the whole config</span>
+[harness.claude]
+command = <span class="s">"claude"</span>
+state   = <span class="s">"hooks"</span>          <span class="c"># authoritative</span>
+
+[harness.pi-llama]
+command = <span class="s">"pi"</span>
+args    = [<span class="s">"--model"</span>, <span class="s">"llama-3.3-70b"</span>, <span class="s">"--base-url"</span>, <span class="s">"http://3090:11434/v1"</span>]
+
+[harness.sprig]
+command = <span class="s">"sprig"</span>
+
+plugins = [<span class="s">"tree"</span>, <span class="s">"minimap"</span>, <span class="s">"kanban"</span>, <span class="s">"colony"</span>, <span class="s">"shift-log"</span>, <span class="s">"merge-on-green"</span>]</pre>
+      <pre class="code"><span class="c"># ~/.config/coppice/plugins/merge-on-green/manifest.json</span>
+{
+  <span class="k">"id"</span>: <span class="s">"merge-on-green"</span>,
+  <span class="k">"kind"</span>: <span class="s">"policy"</span>,
+  <span class="k">"listens"</span>: [<span class="s">"floor.state"</span>],
+  <span class="k">"needs"</span>: [<span class="s">"floor.read"</span>, <span class="s">"floor.prompt"</span>],
+  <span class="k">"run"</span>: <span class="s">"./merge-on-green.py"</span>
+}
+
+<span class="c"># a view plugin is the same shape with "kind": "view"
+# and a "page": "kanban.html" served at /plugins/kanban.
+# the coppice. namespace is reserved. everything else is yours.
+# a policy can prompt and wait. it can never allow.
+# every view ships on. one rule: every mark means a state the socket reports.</span></pre>
+    </div>
+    <div class="gallery" style="margin-top:16px">
+      <div class="gitem">
+        <div class="kanban">
+          <div class="col"><h5>inbox</h5><div class="kc"><i class="dot"></i>int8 matcher</div><div class="kc"><i class="dot"></i>voice cleanup</div></div>
+          <div class="col"><h5>working</h5><div class="kc"><i class="dot work"></i>flaky-socket</div><div class="kc"><i class="dot work"></i>review</div></div>
+          <div class="col"><h5>needs you</h5><div class="kc"><i class="dot need"></i>gate-refactor</div><div class="kc"><i class="dot need"></i>docs</div></div>
+          <div class="col"><h5>done</h5><div class="kc"><i class="dot done"></i>changelog</div></div>
+        </div>
+        <div class="cap"><b>Kanban · a view plugin, on by default</b>Some people think in columns. The columns are the same four states. The kanban layer is the part of Vibe Kanban that died, so this one never owns a task, it only shows them.</div>
+      </div>
+      <div class="gitem">
+        <div class="peons">
+          <div class="peon work" style="left:14%;top:22%"><i></i>flaky-socket<div class="bar"><s style="width:70%"></s></div></div>
+          <div class="peon need sel" style="left:44%;top:14%"><i></i>gate-refactor<div class="bar"><s style="width:20%"></s></div></div>
+          <div class="peon need sel" style="left:70%;top:30%"><i></i>docs<div class="bar"><s style="width:40%"></s></div></div>
+          <div class="peon work" style="left:28%;top:56%"><i></i>review<div class="bar"><s style="width:55%"></s></div></div>
+          <div class="peon done" style="left:60%;top:60%"><i></i>changelog<div class="bar"><s style="width:100%"></s></div></div>
+          <div class="peon" style="left:82%;top:66%"><i></i>scratch<div class="bar"><s style="width:5%"></s></div></div>
+          <div class="cmd">2 selected · say what they should do next</div>
+        </div>
+        <div class="cap"><b>Colony · a view plugin, on by default</b>Workers on a field, foragers out on tasks. Drag a box, select a few, say one thing to all of them. Drop one forager on another and they join a team, a real change in the tree. The bar is time since last output, because that is a fact. Distance means nothing and the view does not pretend it does.</div>
+      </div>
+      <div class="gitem">
+        <div class="heat">
+          <table>
+            <tr><th></th><td class="l1"></td><td class="l2"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="ask"></td><td></td><td></td><td class="l1"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l1"></td><td class="deny"></td><td></td><td></td></tr>
+            <tr><th>gate-refactor</th><td class="l1"></td><td class="l2"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="ask"></td><td></td><td></td><td class="l1"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l1"></td><td class="deny"></td><td></td><td></td></tr>
+            <tr><th>docs</th><td class="l2"></td><td class="l2"></td><td class="l1"></td><td></td><td class="l1"></td><td class="l2"></td><td class="l3"></td><td class="l2"></td><td class="l1"></td><td class="ask"></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><th>flaky-socket</th><td></td><td></td><td class="l1"></td><td class="l3"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l3"></td><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l3"></td><td class="l3"></td></tr>
+            <tr><th>review</th><td></td><td></td><td></td><td></td><td></td><td></td><td class="l1"></td><td class="l2"></td><td class="l2"></td><td class="l2"></td><td class="l1"></td><td class="l2"></td><td class="l2"></td><td class="l1"></td><td class="l2"></td><td class="l2"></td></tr>
+            <tr><th>changelog</th><td class="l3"></td><td class="l3"></td><td class="l2"></td><td class="l3"></td><td class="l2"></td><td class="l1"></td><td class="ask"></td><td class="l2"></td><td class="l3"></td><td class="l1"></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><th>scratch</th><td class="l1"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+          </table>
+          <div class="leg"><span><i class="l3" style="background:#5F9C6B"></i>output</span><span><i style="background:var(--need)"></i>asked you</span><span><i style="background:var(--deny)"></i>gate denied</span><span>one cell is five minutes · last 80 minutes</span></div>
+        </div>
+        <div class="cap"><b>Shift log · a view plugin, on by default</b>Rows are panes, cells are five minutes, colour is output. Amber is an ask, red is a deny. It answers one question honestly: where did the hour go.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Screens in part one belong to their makers and are here for study. Part three is original work for openDaisugi. Every claim about the field traces to docs/research/multi-agent-management-landscape-2026-09-12.md. The refuted list in that report is what none of this draws from. Two screens are missing: the Codex app sits behind a bot wall, and VibeCraft publishes no picture of its product.</p>
+</footer>
+
+<script>
+
+  const FRAMES = [
+    { t:' · first run', r:'', cap:'First run. It looks at PATH and asks one question, only because it found two.',
+      pre:`<span class="t-dim">$</span> coppice
+<span class="t-dim">Found claude and pi. Which opens when you press Enter?</span>
+  <span class="t-ink">1</span> claude
+  <span class="t-ink">2</span> pi
+<span class="t-done">›</span> <span class="t-ink">1</span>
+
+<span class="t-dim">claude is your default. Enter opens it here.
+space peeks. shift-tab goes to whoever needs you. Type words to talk.</span>`, foot:'<b>enter</b> open claude here' },
+    { t:'', r:'', cap:'Every run after that. Nothing running, one key to a working agent.',
+      pre:`<span class="t-dim">Nothing running. Enter opens claude here.</span>`, foot:'<b>enter</b> open claude here <b>ctrl-t</b> talk' },
+    { t:' · gate-refactor', r:'0 need you', cap:'Attached. The harness owns the screen. coppice keeps one footer line and steals one key to leave.',
+      pre:`<span class="t-dim">claude · wt/gate-refactor</span>
+
+<span class="t-done">›</span> move the envelope generator into its own package and keep the tests green
+
+Reading internal/gate/... 12 files.
+I will move generator.go and its tests to internal/envelope and fix the
+imports. Running go test -p 1 ./... after each step.`, foot:'<span class="t-dim"><b>0 need you</b></span> · <b>ctrl-]</b> leave' },
+    { t:' · talk', r:'0 need you', cap:'ctrl-t and a sentence. No foreman yet, so the floor asks once whether claude may run it.',
+      pre:`<span class="t-done">›</span> <span class="t-ink">open pi on the docs and codex on the flaky socket test, and tell me when either needs me</span>
+
+<span class="t-dim">No foreman yet. Let claude run the floor?</span>  <span class="t-ink">y</span> yes  <span class="t-ink">n</span> not now
+<span class="t-done">›</span> <span class="t-ink">y</span>
+
+<span class="t-dim">  floor.spawn      docs           pi      wt/docs
+  floor.spawn      flaky-socket   codex   wt/flaky-socket
+  floor.wait       docs, flaky-socket   until needs_you</span>
+Opened two. I will say when either needs you.`, foot:'<b>esc</b> roster' },
+    { t:'', r:'0 need you', cap:'The roster on the left, the selected pane live on the right. Three working, nobody asking. Go make tea.',
+      pre:`<span class="t-dim">WORKING</span>
+<span class="t-hl"> <span class="t-work">●</span> gate-refactor  claude
+   moving generator.go             2m</span>
+ <span class="t-work">●</span> docs           pi
+   reading docs/tutorials         40s
+ <span class="t-work">●</span> flaky-socket   codex
+   go test -p 1 -count=20         38s`,
+      side:`<span class="t-dim">gate-refactor · claude · wt/gate-refactor</span>
+
+Moved generator.go and generator_test.go to
+internal/envelope. Fixing 6 imports.
+
+<span class="t-dim">Running</span> go test -p 1 ./internal/...
+<span class="t-done">ok</span>   internal/envelope   1.8s
+<span class="t-done">ok</span>   internal/gate       4.1s`, foot:'<b>space</b> peek <b>enter</b> go in <b>shift-tab</b> next that needs you <b>ctrl-t</b> talk' },
+    { t:'', r:'2 need you', cap:'Twelve minutes later. Two asks move to the top, and the selected pane shows the one that asked.',
+      pre:`<span class="t-dim">NEEDS YOU</span>
+<span class="t-hl"> <span class="t-need">●</span> gate-refactor  claude
+   <span class="t-ink">wants</span> git push --force        1m
+   <span class="t-deny">outside envelope</span></span>
+ <span class="t-need">●</span> docs           pi
+   <span class="t-ink">asks</span> which page to link       3m
+
+<span class="t-dim">WORKING</span>
+ <span class="t-work">●</span> flaky-socket   codex
+   go test -p 1 -count=20         12m`,
+      side:`<span class="t-dim">gate-refactor · claude · wt/gate-refactor</span>
+
+✓ 41 tests pass. The branch diverged from
+origin. I will force push to fix it.
+
+<span class="t-dim">$</span> git push --force origin master
+
+<span class="t-need">■ The gate says no.</span> <span class="t-dim">rule 3</span>
+<span class="t-dim">space to answer</span>`, foot:'<b>space</b> peek <b>enter</b> go in <b>shift-tab</b> next that needs you' },
+    { t:' · gate-refactor · peek', r:'2 need you', cap:'Space. The gate already said no. One key to deny, and you tell it why in words.',
+      pre:`<span class="t-box">│</span> ✓ 41 tests pass. The branch diverged from origin, I will force push.
+<span class="t-box">│</span> <span class="t-dim">$</span> git push --force origin master
+
+<span class="t-need">■ The gate says no.</span>  <span class="t-dim">rule 3: nothing pushes to master, nothing force pushes</span>
+
+  <span class="t-ink">n</span> deny and tell it why    <span class="t-ink">r</span> reply    <span class="t-ink">enter</span> go in    <span class="t-ink">esc</span> back
+<span class="t-done">›</span> <span class="t-ink">no. open a PR from the branch and wait for green</span>`, foot:'<b>esc</b> back' },
+    { t:' · docs · peek', r:'1 needs you', cap:'shift-tab jumps to the next one. A question, answered in a line.',
+      pre:`<span class="t-box">│</span> The tutorial needs a first link. Which page should it point to?
+
+  <span class="t-ink">r</span> reply    <span class="t-ink">enter</span> go in    <span class="t-ink">esc</span> back
+<span class="t-done">›</span> <span class="t-ink">docs/tutorials/first-gate.md</span>`, foot:'<b>esc</b> back' },
+    { t:'', r:'0 need you', cap:'Back to quiet. The count in the title is the same one on your phone.',
+      pre:`<span class="t-dim">WORKING</span>
+<span class="t-hl"> <span class="t-work">●</span> gate-refactor  claude
+   opening PR                     20s</span>
+ <span class="t-work">●</span> docs           pi
+   writing the tutorial link       8s
+ <span class="t-work">●</span> flaky-socket   codex
+   go test -p 1 -count=20         14m
+
+<span class="t-dim">Nothing needs you.</span>`,
+      side:`<span class="t-dim">gate-refactor · claude · wt/gate-refactor</span>
+
+Understood. Opening a PR from the branch
+and waiting for checks.
+
+<span class="t-dim">$</span> gh pr create --fill --base master
+<span class="t-done">https://github.com/.../pull/413</span>
+Waiting for checks.`, foot:'<b>space</b> peek <b>enter</b> go in <b>ctrl-t</b> talk' },
+  ];
+  let wi = 0, playing = !matchMedia('(prefers-reduced-motion: reduce)').matches, timer = null;
+  const wPre = document.getElementById('wPre'), wCap = document.getElementById('wCap'), wFoot = document.getElementById('wFoot');
+  const wTitle = document.getElementById('wTitle'), wRight = document.getElementById('wRight'), wDots = document.getElementById('wDots');
+  wDots.innerHTML = FRAMES.map((_, i) => `<i data-i="${i}"></i>`).join('');
+  function show(i){
+    wi = (i + FRAMES.length) % FRAMES.length; const f = FRAMES[wi];
+    wPre.innerHTML = f.side ? `<div class="split"><pre>${f.pre}</pre><pre>${f.side}</pre></div>` : `<pre>${f.pre}</pre>`; wCap.textContent = f.cap; wFoot.innerHTML = f.foot; wTitle.textContent = f.t; wRight.textContent = f.r;
+    wDots.querySelectorAll('i').forEach((d, j) => d.classList.toggle('on', j === wi));
+  }
+  function tick(){ if (playing) show(wi + 1); }
+  function setPlay(p){ playing = p; document.getElementById('wPlay').textContent = p ? 'pause' : 'play'; clearInterval(timer); if (p) timer = setInterval(tick, 4200); }
+  document.getElementById('wPrev').onclick = () => { setPlay(false); show(wi - 1); };
+  document.getElementById('wNext').onclick = () => { setPlay(false); show(wi + 1); };
+  document.getElementById('wPlay').onclick = () => setPlay(!playing);
+  wDots.onclick = e => { if (e.target.dataset.i) { setPlay(false); show(+e.target.dataset.i); } };
+  show(0); setPlay(playing);
+</script>

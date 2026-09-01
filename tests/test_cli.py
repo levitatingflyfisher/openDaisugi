@@ -43,9 +43,13 @@ def test_generate_envelope_prints_yaml_by_default(tmp_path):
             app, ["generate-envelope", "Read /tmp/demo.csv", "--data-dir", str(tmp_path)]
         )
     assert result.exit_code == 0
-    # `_echo_resolved` (v0.41) prints one stderr line first; CliRunner merges
-    # stdout+stderr, so drop that line before parsing.
-    loaded = yaml.safe_load(result.stdout.split("\n", 1)[1])
+    # `_echo_resolved` (v0.41) prints one stderr line first. Click < 8.2's
+    # CliRunner merged it into ``stdout``; Click >= 8.2 keeps stderr separate.
+    # Parse whichever shape this Click produced rather than pinning one.
+    text = result.stdout
+    loaded = yaml.safe_load(text)
+    if not isinstance(loaded, dict) or "id" not in loaded:
+        loaded = yaml.safe_load(text.split("\n", 1)[1])
     assert loaded["id"] == "env_cli0001"
     assert loaded["permissions"]["file_read"] == ["/tmp/demo.csv"]
 

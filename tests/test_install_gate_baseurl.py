@@ -160,16 +160,19 @@ def test_claude_gate_upgrade_rewrites_old_module_to_resident_client(tmp_path):
     (tmp_path / ".claude").mkdir()
     from opendaisugi.gate import gate_settings_json
 
-    new_command = json.loads(gate_settings_json(mode="shadow"))["hooks"]["PreToolUse"][0]["hooks"][0][
-        "command"
-    ]
+    new_command = json.loads(gate_settings_json(mode="shadow"))["hooks"]["PreToolUse"][0]["hooks"][
+        0
+    ]["command"]
     old_command = new_command.replace("opendaisugi.gate_client", "opendaisugi.gate", 1)
     assert old_command != new_command  # sanity: the fixture actually differs
 
     pre_existing = {
         "hooks": {
             "PreToolUse": [
-                {"matcher": "*", "hooks": [{"type": "command", "command": old_command, "timeout": 30}]}
+                {
+                    "matcher": "*",
+                    "hooks": [{"type": "command", "command": old_command, "timeout": 30}],
+                }
             ]
         }
     }

@@ -71,8 +71,12 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 # --- presence -------------------------------------------------------------
-def write_presence(root: Path, *, pid: int | None = None, clock: Callable[[], float] = time.time) -> Path:
-    return _write_json(root / PRESENCE, {"pid": pid if pid is not None else os.getpid(), "at": clock()})
+def write_presence(
+    root: Path, *, pid: int | None = None, clock: Callable[[], float] = time.time
+) -> Path:
+    return _write_json(
+        root / PRESENCE, {"pid": pid if pid is not None else os.getpid(), "at": clock()}
+    )
 
 
 def clear_presence(root: Path) -> None:
@@ -150,8 +154,14 @@ def _sweep_expired(root: Path, *, now: float) -> None:
                     pass
 
 
-def post_ask(root: Path, *, tool_use_id: str, question: dict[str, Any], deadline: float,
-             clock: Callable[[], float] = time.time) -> Path:
+def post_ask(
+    root: Path,
+    *,
+    tool_use_id: str,
+    question: dict[str, Any],
+    deadline: float,
+    clock: Callable[[], float] = time.time,
+) -> Path:
     """Post an ask for a present operator, minting a fresh nonce for it.
 
     Sweeps other expired asks first (never this one — it doesn't exist yet).
@@ -167,8 +177,14 @@ def post_ask(root: Path, *, tool_use_id: str, question: dict[str, Any], deadline
     return _write_json(root / ASKS / f"{_safe(tool_use_id)}.json", body)
 
 
-def answer(root: Path, *, tool_use_id: str, decision: str, reason: str = "",
-           updated_input: dict[str, Any] | None = None) -> Path:
+def answer(
+    root: Path,
+    *,
+    tool_use_id: str,
+    decision: str,
+    reason: str = "",
+    updated_input: dict[str, Any] | None = None,
+) -> Path:
     """Record an operator's decision for a pending ask.
 
     Automatically echoes the nonce of whatever ask is currently live for this
@@ -201,9 +217,15 @@ def _consume(root: Path, tool_use_id: str) -> None:
             pass
 
 
-def wait_answer(root: Path, *, tool_use_id: str, timeout_s: float, poll_s: float = 0.2,
-                sleep: Callable[[float], None] = time.sleep,
-                clock: Callable[[], float] = time.monotonic) -> dict[str, Any] | None:
+def wait_answer(
+    root: Path,
+    *,
+    tool_use_id: str,
+    timeout_s: float,
+    poll_s: float = 0.2,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, Any] | None:
     """Poll for the answer file until ``timeout_s`` has passed.
 
     An answer is honored ONLY when: it is well-formed JSON with
@@ -268,12 +290,27 @@ def pending_asks(root: Path, *, now: float | None = None) -> list[dict[str, Any]
 
 
 # --- proposals -------------------------------------------------------------
-def propose(root: Path, *, kind: str, scope: str, expires_at: float, body: dict[str, Any],
-            clock: Callable[[], float] = time.time) -> Path:
+def propose(
+    root: Path,
+    *,
+    kind: str,
+    scope: str,
+    expires_at: float,
+    body: dict[str, Any],
+    clock: Callable[[], float] = time.time,
+) -> Path:
     """Record a proposed envelope edit. Nothing applies it; `daisugi gate proposals` lists them."""
     from opendaisugi.session_tree import new_id
 
     pid = new_id()
-    return _write_json(root / PROPOSALS / f"{pid}.json",
-                       {"id": pid, "kind": kind, "scope": scope, "expiresAt": expires_at,
-                        "createdAt": clock(), **body})
+    return _write_json(
+        root / PROPOSALS / f"{pid}.json",
+        {
+            "id": pid,
+            "kind": kind,
+            "scope": scope,
+            "expiresAt": expires_at,
+            "createdAt": clock(),
+            **body,
+        },
+    )

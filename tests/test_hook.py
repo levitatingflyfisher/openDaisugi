@@ -176,18 +176,34 @@ def test_journal_tracks_session_conversion(tmp_path: Path):
 
 def test_record_keeps_the_join_keys(tmp_path: Path):
     payload = {
-        "session_id": "sess1", "tool_name": "Bash", "tool_input": {"command": "ls"},
-        "tool_use_id": "toolu_01", "agent_id": "ag1", "agent_type": "Explore",
-        "cwd": "/w", "transcript_path": "/t/sess1.jsonl", "hook_event_name": "PreToolUse",
+        "session_id": "sess1",
+        "tool_name": "Bash",
+        "tool_input": {"command": "ls"},
+        "tool_use_id": "toolu_01",
+        "agent_id": "ag1",
+        "agent_type": "Explore",
+        "cwd": "/w",
+        "transcript_path": "/t/sess1.jsonl",
+        "hook_event_name": "PreToolUse",
         "permission_mode": "default",
     }
     p = record_call(payload, root=tmp_path)
     rec = json.loads(p.read_text().splitlines()[0])
-    for k in ("tool_use_id", "agent_id", "agent_type", "cwd", "transcript_path", "hook_event_name", "permission_mode"):
+    for k in (
+        "tool_use_id",
+        "agent_id",
+        "agent_type",
+        "cwd",
+        "transcript_path",
+        "hook_event_name",
+        "permission_mode",
+    ):
         assert rec[k] == payload[k]
 
 
 def test_missing_join_keys_are_absent_not_null(tmp_path: Path):
-    p = record_call({"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}}, root=tmp_path)
+    p = record_call(
+        {"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}}, root=tmp_path
+    )
     rec = json.loads(p.read_text().splitlines()[0])
     assert "tool_use_id" not in rec

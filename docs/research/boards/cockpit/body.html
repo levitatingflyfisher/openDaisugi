@@ -1,0 +1,106 @@
+<!-- title: Cockpit Field Board -->
+<header>
+  <div class="kicker">openDaisugi · the cockpit · field board · 2026-09-12</div>
+  <h1>Honesty <b>by glyph.</b></h1>
+  <p class="lede">One instrument, three views over one store: the sessions roster, the tree, the garden. The dashboard today is the module map with live gauges. The floor board takes the roster from here. This board keeps the rules that made it.</p>
+  <div class="frame">
+    <div><div class="kicker">today</div><strong>daisugi dashboard</strong><span>A pure-stdlib live frame that refreshes in place. A JSON superset for machines. A Textual TUI with click-to-swap, served locally to a browser.</span></div>
+    <div><div class="kicker">today</div><strong>daisugi modules</strong><span>The wiring map. Filled, hollow, and dotted glyphs say active, available, planned. It fails on nothing found, or it would be theatre.</span></div>
+    <div><div class="kicker">today</div><strong>The exporter</strong><span>A zero-dependency metrics endpoint any Grafana can pull. Meter from counters, never estimates.</span></div>
+  </div>
+</header>
+
+<section id="field">
+  <div class="sechead">
+    <div><div class="kicker">part one</div><h2>What the field built</h2></div>
+    <p>The terminal instruments the cockpit research studied, and the cockpit that named the doctrine.</p>
+  </div>
+  <div class="chips" id="chips">
+    <button class="chip" aria-pressed="true" data-f="all">all</button>
+    <button class="chip" aria-pressed="false" data-f="oss">open source</button>
+    <button class="chip" aria-pressed="false" data-f="inspiration">inspiration</button>
+    <button class="chip" aria-pressed="false" data-f="steal">steal</button>
+  </div>
+  <div class="board" id="board"></div>
+  <p class="empty" id="boardEmpty" hidden>No images matched.</p>
+</section>
+
+<section id="keep">
+  <div class="sechead">
+    <div><div class="kicker">part two</div><h2>What holds</h2></div>
+    <p>Six of the ten laws from the cockpit research of 2026-08-27. The other four moved to the gate and gateway boards.</p>
+  </div>
+  <div class="patterns">
+    <div class="pattern"><strong>Roster first, transcript second.</strong><span>The default screen lists agents by what you must do, needs input on top. This was the fix for "it felt like a settings page".</span></div>
+    <div class="pattern"><strong>The transcript is an append-only tree.</strong><span>Every entry has an id and a parent id. Rewind moves the head. Fork copies the path. Nothing is deleted.</span></div>
+    <div class="pattern"><strong>Rewind has two axes.</strong><span>Conversation and workspace restore independently, and the screen says which one did not.</span></div>
+    <div class="pattern"><strong>Keys on screen, generated from the bindings.</strong><span>zellij's footer, lazygit's panel hints, k9s's header. The ramp is printed, never memorized.</span></div>
+    <div class="pattern"><strong>Redraw on events, diffed in place.</strong><span>No timer repaint, no reflow under the eye. htop's discipline.</span></div>
+    <div class="pattern"><strong>Alerts by class, honesty by glyph.</strong><span>Most verdicts scroll. A curated class pauses and zooms. Stale numbers dim, estimates carry a question mark, dead controls are labelled.</span></div>
+  </div>
+</section>
+
+<section id="ours">
+  <div class="sechead">
+    <div><div class="kicker">part three</div><h2>What ours is, and should be</h2></div>
+  </div>
+
+  <div class="mock">
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>daisugi modules</b> · today · real output, cut short</div>
+      <pre><span class="t-dim">openDaisugi · module wiring</span>
+
++- gate (call-time) ---------------------------------- [cfg] +
+| checks each proposed action BEFORE it runs; fail-closed    |
+|   . claude PreToolUse   o codex hooks.json   o shadow / off|
++------------------------------------------------------------+
+        |
++- matcher / embedder (pathway reuse) ---------------- [cfg] +
+|   o all-MiniLM-L6-v2   * potion static   . int8 / fp16    |
++------------------------------------------------------------+
+        |
++- pane backend ------------------------------------- [live] +
+| drives the harness inside a real pane                      |
+|   * coppice   . herdr   o tmux                             |
++------------------------------------------------------------+
+
+<span class="t-dim">legend:  * active   o available (swap in)   . possible / planned
+         3 live · 8 need a restart/reinstall · 2 planned</span></pre>
+    </div>
+    <div class="note">
+      <div class="kicker">today</div>
+      <h3>The map that admits what is not wired.</h3>
+      <p>Three glyphs, three truths. The dashboard puts live gauges on the same boxes. This is the infant tier and it stays.</p>
+    </div>
+  </div>
+
+  <div class="mock flip">
+    <div class="note">
+      <div class="kicker">should be</div>
+      <h3>The roster moves to the floor. The rules come with it.</h3>
+      <ul>
+        <li><strong>The sessions view is the coppice roster now.</strong> One shape in terminal and browser, from the floor board. The cockpit stops being a second place to look.</li>
+        <li><strong>Tree and garden become view plugins</strong> over the floor's socket, in the same rail as kanban and colony.</li>
+        <li><strong>Wiring becomes a command,</strong> reachable, not the default screen.</li>
+        <li><strong>The tree store stays as specified:</strong> one append-only JSONL per session with ids, parents, verdicts, checkpoints, and a head.</li>
+      </ul>
+    </div>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><b>tree</b> · one session · a view plugin</div>
+      <pre><span class="t-dim">gate-refactor · claude · head at 8f2c</span>
+  a1b0  prompt     move the envelope generator into its own package
+  b7e4  assistant  reading internal/gate, 12 files            <span class="t-dim">fresh 2.1k ⟳118k</span>
+  c390  tool_call  Edit internal/envelope/generator.go        <span class="t-done">allow</span> files.write §2
+  d55a  tool_call  Bash go test -p 1 ./internal/...           <span class="t-done">allow</span> shell.test
+  e1c2  checkpoint refs/daisugi/checkpoints/gate-refactor/e1c2
+  ├─ f0a9  tool_call  Bash git push --force origin master   <span class="t-deny">deny</span> rule 3 · z3#a91f
+  └─ <span class="t-hl">8f2c  prompt     no. open a PR from the branch and wait for green</span>
+
+  <span class="t-ink">r</span> rewind to a node   <span class="t-ink">f</span> fork from here   <span class="t-ink">c</span> restore workspace only   <span class="t-ink">esc</span> back</pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Screens in part one belong to their makers and are archived here for study. Part three is original work for openDaisugi. Claims trace to docs/research/cockpit-gate-garden-research-2026-08-27.md and docs/research/tool-ui-design-bimodal.md.</p>
+</footer>

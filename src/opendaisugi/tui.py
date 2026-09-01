@@ -1,9 +1,10 @@
 """The operator's instrument: three screens over one store.
 
 ``sessions`` (default): every session, its action, verdict, cost, and what the
-operator must do. ``tree``: one session's prompt tree. ``wiring``: the module map
-and swap knobs (yesterday's dashboard), reachable by ``:wiring`` or Tab, never
-first.
+operator must do. ``tree``: one session's prompt tree. ``wiring``: the module
+map and swap knobs (yesterday's dashboard), reachable by ``:wiring`` or Tab,
+never first. The floor, every pane and its state with a live attach, is the
+coppice binary: ``daisugi coppice floor`` execs it.
 
 B1: the header / gate-mode indicator / status / ``:`` command line are composed
 on each SCREEN via :class:`~opendaisugi.tui_base.CockpitScreen`, not on the App —
@@ -35,17 +36,30 @@ class TextualNotInstalled(RuntimeError):
 
 
 if _HAVE_TEXTUAL:
+    from textual.actions import SkipAction
+
     from opendaisugi.tui_sessions import SessionsScreen
     from opendaisugi.tui_tree import TreeScreen
     from opendaisugi.tui_wiring import WiringScreen, swap_confirmation
 
     _ORDER = ("sessions", "tree", "wiring")
 
+    # `:floor <option>` is an alias for the `floor_backend` swap stage. `:floor`
+    # alone, with no option, names the coppice binary, where the floor lives now.
+    # `:gate <option>` keeps its own stage key, unchanged.
+    _COMMAND_STAGE_ALIAS = {"gate": "gate", "floor": "floor_backend"}
+
+    FLOOR_MOVED = "The floor lives in the coppice binary. Run: daisugi coppice floor"
+
     class DaisugiApp(App):
         """The multi-session view: three screens, keyed switching, one store."""
 
         TITLE = "daisugi"
-        SCREENS = {"sessions": SessionsScreen, "tree": TreeScreen, "wiring": WiringScreen}
+        SCREENS = {
+            "sessions": SessionsScreen,
+            "tree": TreeScreen,
+            "wiring": WiringScreen,
+        }
         CSS = """
         #hdr    { dock: top; height: 1; padding: 0 1; background: $panel; }
         #status { dock: bottom; height: 1; padding: 0 1; background: $panel; }
@@ -99,13 +113,30 @@ if _HAVE_TEXTUAL:
                 screen.refresh_header(roster=roster)
 
         # --- view switching ------------------------------------------------
+        def _passthrough(self) -> bool:
+            """True while a screen owns every key, e.g. full-screen attach.
+
+            The App's `tab` binding is priority=True, so it fires BEFORE the screen's,
+            and `App._dispatch_action` counts an action as handled the moment it is
+            invoked: a plain `return` still eats the key. Every caller therefore
+            raises `SkipAction`, which is the one signal that makes the dispatcher
+            report the key unhandled and let it reach the screen. Verified on textual
+            8.2.8: with `return`, `AttachScreen.on_key` sees `['q', 'colon',
+            'question_mark', 'h']`; with `SkipAction`, it sees `tab` as well.
+            """
+            return bool(getattr(self.screen, "passthrough", False))
+
         def action_cycle(self) -> None:
+            if self._passthrough():
+                raise SkipAction()
             cur = self.screen.name or "sessions"
             nxt = _ORDER[(_ORDER.index(cur) + 1) % len(_ORDER)] if cur in _ORDER else "sessions"
             self.switch_screen(nxt)
 
         # --- the command line ----------------------------------------------
         def action_cmd(self) -> None:
+            if self._passthrough():
+                raise SkipAction()
             self.open_cmd()
 
         def open_cmd(self, prefill: str = "") -> None:
@@ -125,12 +156,17 @@ if _HAVE_TEXTUAL:
                 self.screen.clear_prefill()
 
         def action_help(self) -> None:
+            if self._passthrough():
+                raise SkipAction()
             keys = ", ".join(
-                f"{b.key}={b.description}"
-                for b in self.screen.BINDINGS
-                if getattr(b, "show", True)
+                f"{b.key}={b.description}" for b in self.screen.BINDINGS if getattr(b, "show", True)
             )
             self.set_status(f"keys: {keys} · Tab next view · : command · q quit")
+
+        def action_quit(self) -> None:
+            if self._passthrough():
+                raise SkipAction()
+            self.exit()
 
         def on_input_submitted(self, event: "Input.Submitted") -> None:
             if event.input.id != "cmd":
@@ -147,20 +183,25 @@ if _HAVE_TEXTUAL:
             if not parts:
                 return
             verb, args = parts[0], parts[1:]
-            if verb in _ORDER:
-                if verb == "tree" and args:
-                    self.selected_session = args[0]
-                self.switch_screen(verb)
-                self.set_status(f"view: {verb}")
-            elif verb == "gate" and args:
+            stage_key = _COMMAND_STAGE_ALIAS.get(verb)
+            # `floor` is a swap alias with an option, as in floor tmux. Bare,
+            # it points at the coppice binary, where the floor screen lives.
+            if verb == "floor" and not args:
+                self.set_status(FLOOR_MOVED)
+            elif stage_key and args:
                 from opendaisugi.swap import resolve_command
 
                 try:
-                    stage, label = resolve_command(f"gate {args[0]}")
+                    stage, label = resolve_command(f"{stage_key} {args[0]}")
                     self.set_status(swap_confirmation(stage, label, config_path=self.config_path))
                 except ValueError as e:
                     self.set_status(f"✗ {e}")
                 self.refresh_header()
+            elif verb in _ORDER:
+                if verb == "tree" and args:
+                    self.selected_session = args[0]
+                self.switch_screen(verb)
+                self.set_status(f"view: {verb}")
             elif verb in ("q", "quit"):
                 self.exit()
             else:
@@ -189,7 +230,9 @@ def run_tui(data_dir: Path, *, interval: float = 2.0) -> None:
     DaisugiApp(data_dir=Path(data_dir), interval=interval).run()
 
 
-def serve(data_dir: Path, *, host: str = "127.0.0.1", port: int = 8000, interval: float = 2.0) -> None:
+def serve(
+    data_dir: Path, *, host: str = "127.0.0.1", port: int = 8000, interval: float = 2.0
+) -> None:
     """Serve the same app to a browser via local textual-serve (no external relay)."""
     if not _HAVE_TEXTUAL:
         raise TextualNotInstalled(

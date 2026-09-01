@@ -40,6 +40,8 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Integrations](integrations.md)** — wire it into a harness (per-harness adapters).
 - **[Hook integration](hook-integration.md)** — the passive-hook path.
 - **[Gate a live session](how-to/gate.md)** — the call-time gate: shadow → report → enforce → disarm.
+- **[Use the phone](how-to/phone.md)**: the PWA coppice serves, both certificate paths, the token QR, and ntfy push.
+- **[Record anywhere, land it in a pane](how-to/voice.md)**: `daisugi voice serve|ptt|arm|disarm`, previewed by default, direct send only when a pane is armed.
 - **[Let `a && b` through](how-to/compound-shell.md)** — the compound-shell opt-in: what it admits, what stays rejected, what it recovers.
 - **[π0 / VLA integration](pi-vla-integration.md)** — the robotics integration path.
 - Agent-guidance for working *in* this repo: **[AGENTS.md](../AGENTS.md)**.
@@ -58,6 +60,11 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - The public API is the `opendaisugi` package surface (`Daisugi`, `verify`,
   `generate_envelope`, `orchestrate`) — see the docstrings and the
   [architecture module map](architecture/OVERVIEW.md#module-map-where-to-look).
+- **[coppice](../harness/coppice/README.md)**, the Go floor daemon: panes, harness
+  processes and merged pane state over a uid-checked unix socket. Its own
+  [PINS.md](../harness/coppice/PINS.md) names what it depends on and why.
+- **[Harness research](harness/)** — the comparison, design and synthesis notes
+  from choosing coppice's and sprig's own shape.
 
 ## Explanation
 *Understanding-oriented — help me understand the ideas and the why.*

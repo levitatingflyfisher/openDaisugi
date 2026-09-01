@@ -28,9 +28,19 @@ class _Handler(socketserver.StreamRequestHandler):
             argv = [str(a) for a in req["argv"]]
             raw = base64.b64decode(req.get("stdin_b64", ""))
         except Exception:  # noqa: BLE001 — a bad request gets a deny, not a crash
-            reply = {"v": 1, "stdout": "", "stderr": "openDaisugi gate: DENIED — bad request", "exit_code": 2}
+            reply = {
+                "v": 1,
+                "stdout": "",
+                "stderr": "openDaisugi gate: DENIED — bad request",
+                "exit_code": 2,
+            }
         else:
-            out = run_argv(argv, raw)
+            if argv[:2] == ["hook", "report"]:
+                from opendaisugi._state_report import hook_report_argv
+
+                out = hook_report_argv(argv[2:], raw)
+            else:
+                out = run_argv(argv, raw)
             reply = {"v": 1, "stdout": out.stdout, "stderr": out.stderr, "exit_code": out.exit_code}
         self.wfile.write(json.dumps(reply).encode() + b"\n")
 
@@ -43,7 +53,9 @@ class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
 
-def serve(root: Path, *, ready: threading.Event | None = None, stop: threading.Event | None = None) -> None:
+def serve(
+    root: Path, *, ready: threading.Event | None = None, stop: threading.Event | None = None
+) -> None:
     """Serve gate verdicts on ``<root>/gate.sock`` until ``stop`` is set (or forever).
 
     Thread-per-connection (``ThreadingMixIn``): a later plan blocks a gate

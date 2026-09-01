@@ -61,9 +61,7 @@ def main() -> int:
     ap.add_argument("--skip-bench", action="store_true")
     args = ap.parse_args()
 
-    clients: dict[str, list[str]] = {
-        "python": [sys.executable, "-m", "opendaisugi.conformance"]
-    }
+    clients: dict[str, list[str]] = {"python": [sys.executable, "-m", "opendaisugi.conformance"]}
     for spec in args.client:
         name, _, cmd = spec.partition("=")
         clients[name] = shlex.split(cmd)
@@ -91,15 +89,15 @@ def main() -> int:
         entry["matched"] = report.matched
         entry["total"] = report.total
         entry["mismatches_by_kind"] = dict(by_kind)
-        entry["matched_by_kind"] = {
-            k: kind_totals[k] - by_kind.get(k, 0) for k in kind_totals
-        }
+        entry["matched_by_kind"] = {k: kind_totals[k] - by_kind.get(k, 0) for k in kind_totals}
         entry["mismatch_ids"] = [m.case_id for m in report.mismatches[:MISMATCH_CAP]]
         entry["startup_ms"] = round(_measure_startup(cmd, probe), 1)
         if not args.skip_bench:
             b = bench_corpus(args.corpus, client_cmd=cmd)
             entry["bench"] = {
-                "p50_ms": b.p50_ms, "p95_ms": b.p95_ms, "p99_ms": b.p99_ms,
+                "p50_ms": b.p50_ms,
+                "p95_ms": b.p95_ms,
+                "p99_ms": b.p99_ms,
                 "cases_per_s": round(b.cases_per_s, 1),
             }
         results["clients"][name] = entry
@@ -123,7 +121,10 @@ def main() -> int:
         proc = subprocess.run(  # noqa: S603 — caller's own client binaries
             cmd,
             input="".join(canonical_json(c) + "\n" for c in cases),
-            capture_output=True, text=True, timeout=600, check=False,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
         )
         d: dict[str, tuple] = {}
         for line in proc.stdout.splitlines():
@@ -154,7 +155,8 @@ def main() -> int:
             if len(vs) == 1:  # the dissenters all agree with each other
                 consensus.append({"id": cid, "kind": kind_by_id[cid], "clients": dissenters})
     results["independent_consensus_against_oracle"] = {
-        "count": len(consensus), "cases": consensus[:MISMATCH_CAP],
+        "count": len(consensus),
+        "cases": consensus[:MISMATCH_CAP],
     }
 
     args.out.write_text(json.dumps(results, indent=1, sort_keys=True) + "\n")

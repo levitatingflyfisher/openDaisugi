@@ -126,28 +126,63 @@ from tests.test_claude_transcript import ROWS
 NOW = 1_000_000.0
 
 
-def _claude_session(data_dir: Path, sid: str, *, last_ts: float, tool_use_id: str, decision: str) -> None:
+def _claude_session(
+    data_dir: Path, sid: str, *, last_ts: float, tool_use_id: str, decision: str
+) -> None:
     t = data_dir / f"{sid}.transcript.jsonl"
     t.write_text("\n".join(json.dumps(r) for r in ROWS) + "\n")
-    tree = SessionTree.create(data_dir / "sessions", session_id=sid, harness="claude-code", cwd="/w",
-                              harness_session_id=sid, transcript_path=str(t), clock=lambda: last_ts - 2)
-    c = tree.append("tool_call", {"toolUseId": tool_use_id, "name": "Bash", "detail": "rm -rf build/"},
-                    clock=lambda: last_ts - 1)
-    tree.append("verdict", {"toolUseId": tool_use_id, "decision": decision, "mode": "enforce",
-                            "clause": "shell: no delete outside tmp", "reason": "x"},
-                parent_id=c.id, clock=lambda: last_ts)
+    tree = SessionTree.create(
+        data_dir / "sessions",
+        session_id=sid,
+        harness="claude-code",
+        cwd="/w",
+        harness_session_id=sid,
+        transcript_path=str(t),
+        clock=lambda: last_ts - 2,
+    )
+    c = tree.append(
+        "tool_call",
+        {"toolUseId": tool_use_id, "name": "Bash", "detail": "rm -rf build/"},
+        clock=lambda: last_ts - 1,
+    )
+    tree.append(
+        "verdict",
+        {
+            "toolUseId": tool_use_id,
+            "decision": decision,
+            "mode": "enforce",
+            "clause": "shell: no delete outside tmp",
+            "reason": "x",
+        },
+        parent_id=c.id,
+        clock=lambda: last_ts,
+    )
 
 
 def _sprig_session(data_dir: Path, sid: str, *, last_ts: float) -> None:
-    tree = SessionTree.create(data_dir / "sessions", session_id=sid, harness="sprig", cwd="/e", clock=lambda: last_ts - 3)
+    tree = SessionTree.create(
+        data_dir / "sessions", session_id=sid, harness="sprig", cwd="/e", clock=lambda: last_ts - 3
+    )
     tree.append("prompt", {"text": "hi"}, clock=lambda: last_ts - 2)
-    tree.append("assistant", {"model": "claude-sonnet-4", "text": "ok",
-                              "usage": {"fresh": 100, "cacheRead": 900, "cacheWrite": 0, "out": 10}}, clock=lambda: last_ts)
+    tree.append(
+        "assistant",
+        {
+            "model": "claude-sonnet-4",
+            "text": "ok",
+            "usage": {"fresh": 100, "cacheRead": 900, "cacheWrite": 0, "out": 10},
+        },
+        clock=lambda: last_ts,
+    )
 
 
 def test_groups_and_order(tmp_path: Path):
     _claude_session(tmp_path, "needs", last_ts=NOW - 5, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1", question={"sessionId": "needs", "toolName": "Bash"}, deadline=NOW + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={"sessionId": "needs", "toolName": "Bash"},
+        deadline=NOW + 60,
+    )
     _claude_session(tmp_path, "working", last_ts=NOW - 10, tool_use_id="t2", decision="allow")
     _sprig_session(tmp_path, "parked", last_ts=NOW - 600)
     _sprig_session(tmp_path, "done", last_ts=NOW - 7200)
@@ -178,7 +213,12 @@ def test_row_fields_for_a_sprig_session_use_tree_usage(tmp_path: Path):
 
 def test_pending_ask_is_attached_to_its_row(tmp_path: Path):
     _claude_session(tmp_path, "s1", last_ts=NOW - 5, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1", question={"sessionId": "s1", "toolName": "Bash"}, deadline=NOW + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={"sessionId": "s1", "toolName": "Bash"},
+        deadline=NOW + 60,
+    )
     row = build_roster(tmp_path, now=NOW).rows[0]
     assert row.group == "NEEDS YOU" and row.pending_ask["toolUseId"] == "t1"
 
@@ -188,8 +228,24 @@ def test_header_mode_sources(tmp_path: Path):
     (home / ".claude").mkdir(parents=True)
     h = header_state(tmp_path, home=home)
     assert h.gate_mode == "SHADOW" and h.gate_mode_source == "config"
-    (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
-        {"type": "command", "command": "py -m opendaisugi.gate_client --mode enforce"}]}]}}))
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "py -m opendaisugi.gate_client --mode enforce",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
     h = header_state(tmp_path, home=home)
     assert h.gate_mode == "ENFORCE" and h.gate_mode_source == "hook"
     (tmp_path / "gate").mkdir(exist_ok=True)
@@ -200,7 +256,9 @@ def test_header_mode_sources(tmp_path: Path):
 def test_header_cache_from_live_transcripts_else_gateway(tmp_path: Path):
     _claude_session(tmp_path, "s1", last_ts=NOW - 5, tool_use_id="t1", decision="allow")
     h = header_state(tmp_path, home=tmp_path, roster=build_roster(tmp_path, now=NOW))
-    assert h.cache_source == "transcripts" and round(h.cache_hit_rate, 2) == round(2100 / (17 + 2100 + 50), 2)
+    assert h.cache_source == "transcripts" and round(h.cache_hit_rate, 2) == round(
+        2100 / (17 + 2100 + 50), 2
+    )
     assert h.session_count == 1
     empty = header_state(tmp_path / "none", home=tmp_path)
     assert empty.cache_hit_rate is None and empty.cache_source == "none"
@@ -216,7 +274,9 @@ def test_alert_policy_defaults_and_file(tmp_path: Path):
 def test_alerts_count_by_class(tmp_path: Path):
     _claude_session(tmp_path, "s1", last_ts=NOW - 5, tool_use_id="t1", decision="deny")
     _claude_session(tmp_path, "s2", last_ts=NOW - 6, tool_use_id="t2", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t2", question={"sessionId": "s2"}, deadline=NOW + 60)
+    ask.post_ask(
+        tmp_path / "gate", tool_use_id="t2", question={"sessionId": "s2"}, deadline=NOW + 60
+    )
     alerts = alerts_for(build_roster(tmp_path, now=NOW))
     by_class = {a.klass: a for a in alerts}
     assert by_class["deny"].count == 2 and set(by_class["deny"].sessions) == {"s1", "s2"}
@@ -254,8 +314,13 @@ from opendaisugi.session_tree import SessionIndex, SessionTree
 GROUPS = ("NEEDS YOU", "WORKING", "PARKED", "DONE")
 WORKING_S = 60.0
 PARKED_S = 3600.0
-_DEFAULT_ALERTS = {"deny": "log", "deny_destructive": "pause", "ask": "pause", "budget": "pause",
-                   "cache_miss": "log"}
+_DEFAULT_ALERTS = {
+    "deny": "log",
+    "deny_destructive": "pause",
+    "ask": "pause",
+    "budget": "pause",
+    "cache_miss": "log",
+}
 _DESTRUCTIVE = ("rm ", "rm -", "git reset --hard", "git push --force", "drop table", "> /dev/")
 
 
@@ -330,7 +395,9 @@ def build_roster(data_dir: Path, *, now: float | None = None) -> Roster:
     rows: list[SessionRow] = []
     for s in SessionIndex(data_dir / "sessions").list():
         entries = SessionTree.open(data_dir / "sessions", s.session_id).entries()
-        pending = asks_by_session.get(s.harness_session_id or "") or asks_by_session.get(s.session_id)
+        pending = asks_by_session.get(s.harness_session_id or "") or asks_by_session.get(
+            s.session_id
+        )
         age = max(0.0, now - s.last_ts)
         if s.transcript_path and Path(s.transcript_path).exists():
             turns = read_turns(Path(s.transcript_path))
@@ -339,24 +406,45 @@ def build_roster(data_dir: Path, *, now: float | None = None) -> Roster:
             usage, agent = _tree_usage(entries), (_tree_model(entries) or s.harness)
         call = s.last_tool_call or {}
         verdict = s.last_verdict or {}
-        group = ("NEEDS YOU" if pending else "WORKING" if age < WORKING_S
-                 else "PARKED" if age < PARKED_S else "DONE")
-        rows.append(SessionRow(
-            session_id=s.session_id, group=group, agent=agent,
-            action=" ".join(x for x in (call.get("name"), call.get("detail")) if x)[:60],
-            verdict=str(verdict.get("decision", "")).upper(), clause=str(verdict.get("clause", "")),
-            steps=sum(1 for e in entries if e.type == "tool_call"),
-            fresh=usage["fresh"], cache_read=usage["cacheRead"], cache_write=usage["cacheWrite"],
-            age_s=age, pending_ask=pending, harness=s.harness, cwd=s.cwd,
-            transcript_path=s.transcript_path, last_verdict=verdict or None, last_tool_call=call or None,
-        ))
+        group = (
+            "NEEDS YOU"
+            if pending
+            else "WORKING"
+            if age < WORKING_S
+            else "PARKED"
+            if age < PARKED_S
+            else "DONE"
+        )
+        rows.append(
+            SessionRow(
+                session_id=s.session_id,
+                group=group,
+                agent=agent,
+                action=" ".join(x for x in (call.get("name"), call.get("detail")) if x)[:60],
+                verdict=str(verdict.get("decision", "")).upper(),
+                clause=str(verdict.get("clause", "")),
+                steps=sum(1 for e in entries if e.type == "tool_call"),
+                fresh=usage["fresh"],
+                cache_read=usage["cacheRead"],
+                cache_write=usage["cacheWrite"],
+                age_s=age,
+                pending_ask=pending,
+                harness=s.harness,
+                cwd=s.cwd,
+                transcript_path=s.transcript_path,
+                last_verdict=verdict or None,
+                last_tool_call=call or None,
+            )
+        )
     order = {g: i for i, g in enumerate(GROUPS)}
     rows.sort(key=lambda r: (order[r.group], r.age_s))
     counts = {g: sum(1 for r in rows if r.group == g) for g in GROUPS}
     return Roster(rows=rows, counts=counts)
 
 
-def header_state(data_dir: Path, *, home: Path | None = None, roster: Roster | None = None) -> HeaderState:
+def header_state(
+    data_dir: Path, *, home: Path | None = None, roster: Roster | None = None
+) -> HeaderState:
     from opendaisugi.config import installed_hook_mode
     from opendaisugi.gate import is_disarmed, resolve_gate_mode
 
@@ -382,8 +470,13 @@ def header_state(data_dir: Path, *, home: Path | None = None, roster: Roster | N
                 rate, cache_source = summ.cache_hit_rate, "gateway"
         except Exception:  # noqa: BLE001 — the header must never fail on a store
             pass
-    return HeaderState(gate_mode=mode.upper(), gate_mode_source=source, cache_hit_rate=rate,
-                       cache_source=cache_source, session_count=len(roster.rows))
+    return HeaderState(
+        gate_mode=mode.upper(),
+        gate_mode_source=source,
+        cache_hit_rate=rate,
+        cache_source=cache_source,
+        session_count=len(roster.rows),
+    )
 
 
 def load_alert_policy(data_dir: Path) -> dict[str, str]:
@@ -392,7 +485,9 @@ def load_alert_policy(data_dir: Path) -> dict[str, str]:
     if p.exists():
         try:
             raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-            pol.update({str(k): str(v) for k, v in raw.items() if str(v) in ("log", "pause", "modal")})
+            pol.update(
+                {str(k): str(v) for k, v in raw.items() if str(v) in ("log", "pause", "modal")}
+            )
         except yaml.YAMLError:
             pass
     return pol
@@ -407,8 +502,14 @@ def alerts_for(roster: Roster, *, policy: dict[str, str] | None = None) -> list[
     if denies:
         out.append(Alert("deny", len(denies), policy["deny"], [r.session_id for r in denies]))
     if destructive:
-        out.append(Alert("deny_destructive", len(destructive), policy["deny_destructive"],
-                         [r.session_id for r in destructive]))
+        out.append(
+            Alert(
+                "deny_destructive",
+                len(destructive),
+                policy["deny_destructive"],
+                [r.session_id for r in destructive],
+            )
+        )
     if asks:
         out.append(Alert("ask", len(asks), policy["ask"], [r.session_id for r in asks]))
     return out
@@ -467,6 +568,7 @@ def test_app_opens_on_the_sessions_screen(tmp_path):
             assert app.screen.name == "sessions"
             assert app.query("#roster"), "roster table did not render"
             assert "gate:" in app.query_one("#hdr").renderable.__str__()
+
     _run(scenario)
 
 
@@ -487,6 +589,7 @@ def test_colon_wiring_and_tab_cycle(tmp_path):
             await pilot.press("tab")
             await pilot.pause()
             assert app.screen.name == "sessions"
+
     _run(scenario)
 
 
@@ -500,6 +603,7 @@ def test_unknown_command_says_so(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert "unknown command" in app.status_text
+
     _run(scenario)
 ```
 
@@ -534,11 +638,16 @@ from textual.widgets import DataTable, Static
 
 
 class SessionsScreen(Screen):
-    BINDINGS = [Binding("down,j", "cursor_down", "▼", show=True), Binding("up,k", "cursor_up", "▲", show=True)]
+    BINDINGS = [
+        Binding("down,j", "cursor_down", "▼", show=True),
+        Binding("up,k", "cursor_up", "▲", show=True),
+    ]
 
     def compose(self) -> ComposeResult:
         table = DataTable(id="roster", cursor_type="row", zebra_stripes=False)
-        table.add_columns("session", "action", "verdict", "clause", "steps", "↑fresh", "⟳read", "✎write", "age")
+        table.add_columns(
+            "session", "action", "verdict", "clause", "steps", "↑fresh", "⟳read", "✎write", "age"
+        )
         yield table
         yield Static("", id="peek")
 
@@ -633,7 +742,11 @@ if _HAVE_TEXTUAL:
 
             roster = build_roster(self.data_dir)
             h = header_state(self.data_dir, roster=roster)
-            cache = "cache —" if h.cache_hit_rate is None else f"cache {h.cache_hit_rate:.0%} hit ({h.cache_source})"
+            cache = (
+                "cache —"
+                if h.cache_hit_rate is None
+                else f"cache {h.cache_hit_rate:.0%} hit ({h.cache_source})"
+            )
             name = self.screen.name if self.screen is not None else "sessions"
             self.query_one("#hdr", Static).update(
                 f" daisugi · {name:<9} gate: {h.gate_mode} ({h.gate_mode_source})   {cache}   {h.session_count} sessions"
@@ -656,7 +769,9 @@ if _HAVE_TEXTUAL:
             self.query_one("#cmd", Input).display = False
 
         def action_help(self) -> None:
-            keys = ", ".join(f"{b.key}={b.description}" for b in self.screen.BINDINGS if getattr(b, "show", True))
+            keys = ", ".join(
+                f"{b.key}={b.description}" for b in self.screen.BINDINGS if getattr(b, "show", True)
+            )
             self.set_status(f"keys: {keys} · Tab next view · : command · q quit")
 
         def on_input_submitted(self, event: "Input.Submitted") -> None:
@@ -682,7 +797,9 @@ if _HAVE_TEXTUAL:
             elif verb in ("q", "quit"):
                 self.exit()
             else:
-                self.set_status(f"unknown command: {line!r} · try sessions, tree <id>, wiring, gate enforce")
+                self.set_status(
+                    f"unknown command: {line!r} · try sessions, tree <id>, wiring, gate enforce"
+                )
 
         def set_status(self, text: str) -> None:
             self.status_text = text
@@ -697,13 +814,17 @@ def run_tui(data_dir: Path, *, interval: float = 2.0) -> None:
     DaisugiApp(data_dir=data_dir, interval=interval).run()
 
 
-def serve(data_dir: Path, *, host: str = "127.0.0.1", port: int = 8000, interval: float = 2.0) -> None:
+def serve(
+    data_dir: Path, *, host: str = "127.0.0.1", port: int = 8000, interval: float = 2.0
+) -> None:
     if not _HAVE_TEXTUAL:
         raise TextualNotInstalled("The GUI needs the tui extra: uv pip install 'opendaisugi[tui]'")
     from textual_serve.server import Server
 
-    command = (f"{shlex.quote(sys.executable)} -m opendaisugi.cli dashboard --tui "
-               f"--data-dir {shlex.quote(str(data_dir))} --interval {interval}")
+    command = (
+        f"{shlex.quote(sys.executable)} -m opendaisugi.cli dashboard --tui "
+        f"--data-dir {shlex.quote(str(data_dir))} --interval {interval}"
+    )
     Server(command, host=host, port=port, title="daisugi").serve()
 ```
 
@@ -777,6 +898,7 @@ def test_roster_shows_groups_and_rows(tmp_path):
             assert "s1" in first_col[1]
             assert any(c.startswith("PARKED (1)") for c in first_col)
             assert "DENY" in rows[1][2] and "rm -rf build/" in rows[1][1]
+
     _run(scenario)
 
 
@@ -793,6 +915,7 @@ def test_peek_shows_verdict_clause_and_keys(tmp_path):
             peek = str(app.query_one("#peek", Static).renderable)
             assert "s1" in peek and "DENY" in peek and "shell: no delete outside tmp" in peek
             assert "a allow" in peek and "d deny" in peek and "t tree" in peek
+
     _run(scenario)
 
 
@@ -809,7 +932,11 @@ def test_cell_updates_are_in_place_and_new_sessions_rebuild_once(tmp_path):
             # a new verdict on the same session: cells update, no rebuild
             tree = SessionTree.open(tmp_path / "sessions", "s1")
             c = tree.append("tool_call", {"toolUseId": "t9", "name": "Read", "detail": "x.py"})
-            tree.append("verdict", {"toolUseId": "t9", "decision": "deny", "clause": "files: no"}, parent_id=c.id)
+            tree.append(
+                "verdict",
+                {"toolUseId": "t9", "decision": "deny", "clause": "files: no"},
+                parent_id=c.id,
+            )
             app.screen._poll()
             await pilot.pause()
             assert app.screen._table_generation == gen
@@ -821,6 +948,7 @@ def test_cell_updates_are_in_place_and_new_sessions_rebuild_once(tmp_path):
             await pilot.pause()
             assert table.row_count == before + 2  # the PARKED header + the row
             assert app.screen._table_generation == gen + 1
+
     _run(scenario)
 ```
 
@@ -861,8 +989,17 @@ def _k(n: int) -> str:
 
 
 def _cells(r: SessionRow) -> list[str]:
-    return [f"  {r.session_id[:14]}", r.action[:36], r.verdict, r.clause[:30], str(r.steps),
-            _k(r.fresh), _k(r.cache_read), _k(r.cache_write), _age(r.age_s)]
+    return [
+        f"  {r.session_id[:14]}",
+        r.action[:36],
+        r.verdict,
+        r.clause[:30],
+        str(r.steps),
+        _k(r.fresh),
+        _k(r.cache_read),
+        _k(r.cache_write),
+        _age(r.age_s),
+    ]
 
 
 class SessionsScreen(Screen):
@@ -912,7 +1049,9 @@ class SessionsScreen(Screen):
         table = self.query_one("#roster", DataTable)
         new_ids = [r.session_id for r in roster.rows]
         old_ids = [r.session_id for r in (self._roster.rows if self._roster else [])]
-        groups_changed = [r.group for r in roster.rows] != [self._rows[i].group for i in old_ids if i in self._rows]
+        groups_changed = [r.group for r in roster.rows] != [
+            self._rows[i].group for i in old_ids if i in self._rows
+        ]
         if force or new_ids != old_ids or groups_changed:
             self._rebuild(table, roster)
         else:
@@ -948,7 +1087,9 @@ class SessionsScreen(Screen):
         delta = time.time() - self._roster_at
         for r in self._roster.rows:
             age = r.age_s + delta
-            crossed = (r.group == "WORKING" and age >= WORKING_S) or (r.group == "PARKED" and age >= PARKED_S)
+            crossed = (r.group == "WORKING" and age >= WORKING_S) or (
+                r.group == "PARKED" and age >= PARKED_S
+            )
             if crossed and not r.pending_ask:
                 self.reload()  # a row changed group with no file change: regroup once
                 return
@@ -975,23 +1116,33 @@ class SessionsScreen(Screen):
             peek.update("select a session row · j/k move")
             return
         v = row.last_verdict or {}
-        lines = [f"{row.session_id} · {row.agent} · {row.harness} · {row.cwd}",
-                 f"proposes {row.action or '(nothing yet)'}",
-                 f"verdict {row.verdict or '—'} · clause {row.clause or '—'} · "
-                 f"envelope {v.get('envelopeId') or '—'} · {v.get('latencyMs', '—')} ms"]
+        lines = [
+            f"{row.session_id} · {row.agent} · {row.harness} · {row.cwd}",
+            f"proposes {row.action or '(nothing yet)'}",
+            f"verdict {row.verdict or '—'} · clause {row.clause or '—'} · "
+            f"envelope {v.get('envelopeId') or '—'} · {v.get('latencyMs', '—')} ms",
+        ]
         if v.get("counterexample"):
             lines.append(f"counterexample: {v['counterexample']}")
         if row.pending_ask:
             left = int(float(row.pending_ask.get("deadline", 0)) - time.time())
-            lines.append(f"ASK pending · {max(left, 0)}s left · reason: {row.pending_ask.get('reason', '')}")
+            lines.append(
+                f"ASK pending · {max(left, 0)}s left · reason: {row.pending_ask.get('reason', '')}"
+            )
         steer = "s steer" if row.harness == "sprig" else "s steer (not on this path)"
-        lines.append(f"a allow (then ⏎)  d deny  e edit input  r remember…  {steer}  t tree  ⏎ attach")
+        lines.append(
+            f"a allow (then ⏎)  d deny  e edit input  r remember…  {steer}  t tree  ⏎ attach"
+        )
         peek.update("\n".join(lines))
 
     def _render_alerts(self) -> None:
         from opendaisugi.cockpit import alerts_for, load_alert_policy
 
-        alerts = alerts_for(self._roster, policy=load_alert_policy(self.app.data_dir)) if self._roster else []
+        alerts = (
+            alerts_for(self._roster, policy=load_alert_policy(self.app.data_dir))
+            if self._roster
+            else []
+        )
         text = "   ".join(f"{a.count}× {a.klass} ({', '.join(a.sessions[:3])})" for a in alerts)
         self.query_one("#alerts", Static).update(f"ALERTS  {text}" if text else "ALERTS  none")
 
@@ -1010,7 +1161,9 @@ class SessionsScreen(Screen):
         self.app.switch_screen("tree")
         self.app.refresh_header()
 
-    def action_confirm(self) -> None:  # Enter: filled in by Task 4 (allow confirm) and Task 5 (attach)
+    def action_confirm(
+        self,
+    ) -> None:  # Enter: filled in by Task 4 (allow confirm) and Task 5 (attach)
         self.app.set_status("nothing armed · a then ⏎ to allow")
 ```
 
@@ -1066,9 +1219,12 @@ def _run(coro_fn):
 def _seed(tmp_path):
     now = time.time()
     _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1",
-                 question={"sessionId": "s1", "toolName": "Bash", "toolInput": {"command": "rm -rf build/"}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={"sessionId": "s1", "toolName": "Bash", "toolInput": {"command": "rm -rf build/"}},
+        deadline=now + 60,
+    )
 
 
 def test_allow_needs_a_then_enter(tmp_path):
@@ -1094,6 +1250,7 @@ def test_allow_needs_a_then_enter(tmp_path):
             body = json.loads((tmp_path / "gate" / "answers" / "t1.json").read_text())
             assert body["decision"] == "allow"
             assert "allowed t1" in app.status_text
+
     _run(scenario)
 
 
@@ -1109,6 +1266,7 @@ def test_deny_is_one_key(tmp_path):
             await pilot.pause()
             body = json.loads((tmp_path / "gate" / "answers" / "t1.json").read_text())
             assert body["decision"] == "deny"
+
     _run(scenario)
 
 
@@ -1128,7 +1286,10 @@ def test_edit_input_writes_updated_input(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             body = json.loads((tmp_path / "gate" / "answers" / "t1.json").read_text())
-            assert body["decision"] == "allow" and body["updatedInput"] == {"command": "rm -rf build/tmp"}
+            assert body["decision"] == "allow" and body["updatedInput"] == {
+                "command": "rm -rf build/tmp"
+            }
+
     _run(scenario)
 
 
@@ -1149,6 +1310,7 @@ def test_remember_writes_a_proposal_not_an_envelope(tmp_path):
             body = json.loads(files[0].read_text())
             assert body["scope"] == "project" and body["kind"] == "allow-pattern"
             assert not list((tmp_path / "gate" / "envelopes").glob("*.json"))  # nothing applied
+
     _run(scenario)
 
 
@@ -1159,6 +1321,7 @@ def test_presence_while_running_and_gone_after(tmp_path):
             await pilot.pause()
             assert ask.operator_present(tmp_path / "gate")
         assert not (tmp_path / "gate" / "operator.json").exists()
+
     _run(scenario)
 ```
 
@@ -1172,97 +1335,131 @@ Expected: FAIL (no answer files; no presence).
 In `SessionsScreen.BINDINGS` add:
 
 ```python
-        Binding("a", "arm_allow", "a allow", show=True),
-        Binding("d", "deny", "d deny", show=True),
-        Binding("e", "edit_input", "e edit", show=True),
-        Binding("r", "remember", "r remember", show=True),
+(Binding("a", "arm_allow", "a allow", show=True),)
+(Binding("d", "deny", "d deny", show=True),)
+(Binding("e", "edit_input", "e edit", show=True),)
+(Binding("r", "remember", "r remember", show=True),)
 ```
 
 Methods:
 
 ```python
-    def _pending(self) -> tuple[SessionRow, str] | None:
-        row = self.selected_row
-        if row is None or not row.pending_ask:
-            self.app.set_status("no pending ask on this row")
-            return None
-        return row, str(row.pending_ask["toolUseId"])
+def _pending(self) -> tuple[SessionRow, str] | None:
+    row = self.selected_row
+    if row is None or not row.pending_ask:
+        self.app.set_status("no pending ask on this row")
+        return None
+    return row, str(row.pending_ask["toolUseId"])
 
-    def action_arm_allow(self) -> None:
-        p = self._pending()
-        if p:
-            self._armed = p[1]
-            self.app.set_status(f"allow {p[1]}? ⏎ to confirm allow · move the cursor to cancel")
 
-    def action_confirm(self) -> None:
-        if self._armed and self.selected_row and self.selected_row.pending_ask \
-                and str(self.selected_row.pending_ask["toolUseId"]) == self._armed:
-            from opendaisugi import ask as _ask
+def action_arm_allow(self) -> None:
+    p = self._pending()
+    if p:
+        self._armed = p[1]
+        self.app.set_status(f"allow {p[1]}? ⏎ to confirm allow · move the cursor to cancel")
 
-            _ask.answer(self.app.data_dir / "gate", tool_use_id=self._armed, decision="allow",
-                        reason="operator allowed from the sessions view")
-            self.app.set_status(f"allowed {self._armed}")
-            self._armed = None
-            self.reload()
-            return
-        self._armed = None
-        self.action_attach()  # Task 5
 
-    def action_deny(self) -> None:
-        p = self._pending()
-        if p:
-            from opendaisugi import ask as _ask
-
-            _ask.answer(self.app.data_dir / "gate", tool_use_id=p[1], decision="deny",
-                        reason="operator denied from the sessions view")
-            self.app.set_status(f"denied {p[1]}")
-            self.reload()
-
-    def action_edit_input(self) -> None:
-        p = self._pending()
-        if not p:
-            return
-        row, tid = p
-        tool_input = row.pending_ask.get("toolInput") or {}
-        key = next((k for k in ("command", "file_path", "path", "url") if k in tool_input), None)
-        if key is None:
-            self.app.set_status("this input has no editable field")
-            return
-        self._editing = (tid, key)
-        self.app.open_cmd(prefill=str(tool_input[key]))
-
-    def on_cmd_submitted(self, value: str) -> bool:
-        """The app calls this before its own command parser; True means handled."""
-        editing = getattr(self, "_editing", None)
-        if editing:
-            from opendaisugi import ask as _ask
-
-            tid, key = editing
-            self._editing = None
-            _ask.answer(self.app.data_dir / "gate", tool_use_id=tid, decision="allow",
-                        reason="operator edited the input", updated_input={key: value})
-            self.app.set_status(f"allowed {tid} with edited {key}")
-            self.reload()
-            return True
-        return False
-
-    def action_remember(self) -> None:
-        p = self._pending()
-        if p:
-            row, tid = p
-            self.app.push_screen(RememberScope(), callback=lambda scope: self._propose(row, tid, scope))
-
-    def _propose(self, row: SessionRow, tid: str, scope: str | None) -> None:
-        if scope is None:
-            self.app.set_status("remember cancelled")
-            return
+def action_confirm(self) -> None:
+    if (
+        self._armed
+        and self.selected_row
+        and self.selected_row.pending_ask
+        and str(self.selected_row.pending_ask["toolUseId"]) == self._armed
+    ):
         from opendaisugi import ask as _ask
 
-        _ask.propose(self.app.data_dir / "gate", kind="allow-pattern", scope=scope,
-                     expires_at=time.time() + 30 * 86400,
-                     body={"sessionId": row.session_id, "toolUseId": tid,
-                           "toolInput": (row.pending_ask or {}).get("toolInput"), "clause": row.clause})
-        self.app.set_status(f"proposal written (scope {scope}) · apply it with `daisugi gate proposals`")
+        _ask.answer(
+            self.app.data_dir / "gate",
+            tool_use_id=self._armed,
+            decision="allow",
+            reason="operator allowed from the sessions view",
+        )
+        self.app.set_status(f"allowed {self._armed}")
+        self._armed = None
+        self.reload()
+        return
+    self._armed = None
+    self.action_attach()  # Task 5
+
+
+def action_deny(self) -> None:
+    p = self._pending()
+    if p:
+        from opendaisugi import ask as _ask
+
+        _ask.answer(
+            self.app.data_dir / "gate",
+            tool_use_id=p[1],
+            decision="deny",
+            reason="operator denied from the sessions view",
+        )
+        self.app.set_status(f"denied {p[1]}")
+        self.reload()
+
+
+def action_edit_input(self) -> None:
+    p = self._pending()
+    if not p:
+        return
+    row, tid = p
+    tool_input = row.pending_ask.get("toolInput") or {}
+    key = next((k for k in ("command", "file_path", "path", "url") if k in tool_input), None)
+    if key is None:
+        self.app.set_status("this input has no editable field")
+        return
+    self._editing = (tid, key)
+    self.app.open_cmd(prefill=str(tool_input[key]))
+
+
+def on_cmd_submitted(self, value: str) -> bool:
+    """The app calls this before its own command parser; True means handled."""
+    editing = getattr(self, "_editing", None)
+    if editing:
+        from opendaisugi import ask as _ask
+
+        tid, key = editing
+        self._editing = None
+        _ask.answer(
+            self.app.data_dir / "gate",
+            tool_use_id=tid,
+            decision="allow",
+            reason="operator edited the input",
+            updated_input={key: value},
+        )
+        self.app.set_status(f"allowed {tid} with edited {key}")
+        self.reload()
+        return True
+    return False
+
+
+def action_remember(self) -> None:
+    p = self._pending()
+    if p:
+        row, tid = p
+        self.app.push_screen(RememberScope(), callback=lambda scope: self._propose(row, tid, scope))
+
+
+def _propose(self, row: SessionRow, tid: str, scope: str | None) -> None:
+    if scope is None:
+        self.app.set_status("remember cancelled")
+        return
+    from opendaisugi import ask as _ask
+
+    _ask.propose(
+        self.app.data_dir / "gate",
+        kind="allow-pattern",
+        scope=scope,
+        expires_at=time.time() + 30 * 86400,
+        body={
+            "sessionId": row.session_id,
+            "toolUseId": tid,
+            "toolInput": (row.pending_ask or {}).get("toolInput"),
+            "clause": row.clause,
+        },
+    )
+    self.app.set_status(
+        f"proposal written (scope {scope}) · apply it with `daisugi gate proposals`"
+    )
 ```
 
 The scope picker is a modal so the keys cannot leak into the table (and the two-step
@@ -1273,12 +1470,19 @@ from textual.screen import ModalScreen
 
 
 class RememberScope(ModalScreen[str | None]):
-    BINDINGS = [Binding("o", "pick('once')", "o once"), Binding("s", "pick('session')", "s session"),
-                Binding("p", "pick('project')", "p project"), Binding("g", "pick('global')", "g global"),
-                Binding("escape", "pick_none", "Esc cancel")]
+    BINDINGS = [
+        Binding("o", "pick('once')", "o once"),
+        Binding("s", "pick('session')", "s session"),
+        Binding("p", "pick('project')", "p project"),
+        Binding("g", "pick('global')", "g global"),
+        Binding("escape", "pick_none", "Esc cancel"),
+    ]
 
     def compose(self) -> ComposeResult:
-        yield Static("remember this allow for:  o once   s session   p project   g global   Esc cancel", id="scope")
+        yield Static(
+            "remember this allow for:  o once   s session   p project   g global   Esc cancel",
+            id="scope",
+        )
 
     def action_pick(self, scope: str) -> None:
         self.dismiss(scope)
@@ -1341,8 +1545,24 @@ def _run(coro_fn):
 def test_header_shows_enforce_from_the_installed_hook(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
-    (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
-        {"type": "command", "command": "py -m opendaisugi.gate_client --mode enforce"}]}]}}))
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "py -m opendaisugi.gate_client --mode enforce",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
     monkeypatch.setattr("pathlib.Path.home", lambda: home)
 
     async def scenario():
@@ -1350,6 +1570,7 @@ def test_header_shows_enforce_from_the_installed_hook(tmp_path, monkeypatch):
         async with app.run_test() as pilot:
             await pilot.pause()
             assert "gate: ENFORCE (hook)" in str(app.query_one("#hdr", Static).renderable)
+
     _run(scenario)
 
 
@@ -1362,11 +1583,14 @@ def test_header_shows_disarmed(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             assert "gate: DISARMED" in str(app.query_one("#hdr", Static).renderable)
+
     _run(scenario)
 
 
 def test_attach_on_claude_path_shows_the_resume_command(tmp_path):
-    _claude_session(tmp_path, "abc-123", last_ts=time.time() - 1, tool_use_id="t1", decision="allow")
+    _claude_session(
+        tmp_path, "abc-123", last_ts=time.time() - 1, tool_use_id="t1", decision="allow"
+    )
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)
@@ -1376,6 +1600,7 @@ def test_attach_on_claude_path_shows_the_resume_command(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert "claude --resume abc-123" in app.status_text
+
     _run(scenario)
 
 
@@ -1394,6 +1619,7 @@ def test_steer_is_marked_not_on_this_path_for_claude_and_live_for_sprig(tmp_path
             await pilot.pause()
             peek = str(app.query_one("#peek", Static).renderable)
             assert "s steer" in peek and "not on this path" not in peek
+
     _run(scenario)
 
 
@@ -1405,6 +1631,7 @@ def test_wiring_keeps_its_effect_tags(tmp_path):
             app.switch_screen("wiring")
             await pilot.pause()
             assert app.query("#effnote-verifier"), "planned stages must still say so"
+
     _run(scenario)
 ```
 
@@ -1418,20 +1645,22 @@ Expected: FAIL on `attach` (status unchanged).
 In `SessionsScreen`:
 
 ```python
-    def action_attach(self) -> None:
-        row = self.selected_row
-        if row is None:
-            self.app.set_status("no session selected")
-            return
-        if row.harness == "claude-code":
-            sid = row.session_id
-            cmd = f"claude --resume {sid}"
-            self.app.copy_to_clipboard(cmd)
-            self.app.set_status(f"attach: run `{cmd}` in {row.cwd or 'its directory'} (copied)")
-        elif row.harness == "sprig":
-            self.app.set_status(f"attach: `sprig --resume {row.session_id} --session-dir {self.app.data_dir / 'sessions'}`")
-        else:
-            self.app.set_status(f"attach: not on this path ({row.harness})")
+def action_attach(self) -> None:
+    row = self.selected_row
+    if row is None:
+        self.app.set_status("no session selected")
+        return
+    if row.harness == "claude-code":
+        sid = row.session_id
+        cmd = f"claude --resume {sid}"
+        self.app.copy_to_clipboard(cmd)
+        self.app.set_status(f"attach: run `{cmd}` in {row.cwd or 'its directory'} (copied)")
+    elif row.harness == "sprig":
+        self.app.set_status(
+            f"attach: `sprig --resume {row.session_id} --session-dir {self.app.data_dir / 'sessions'}`"
+        )
+    else:
+        self.app.set_status(f"attach: not on this path ({row.harness})")
 ```
 
 `s` (steer) on a sprig row writes a `note` entry `{"from": "operator", "text": ...}` through
@@ -1489,10 +1718,21 @@ def _run(coro_fn):
 
 
 def _sprig_tree(tmp_path):
-    t = SessionTree.create(tmp_path / "sessions", session_id="e1", harness="sprig", cwd=str(tmp_path))
+    t = SessionTree.create(
+        tmp_path / "sessions", session_id="e1", harness="sprig", cwd=str(tmp_path)
+    )
     p = t.append("prompt", {"text": "write hello"})
-    a = t.append("assistant", {"text": "ok", "model": "m", "usage": {"fresh": 1, "cacheRead": 0, "cacheWrite": 0, "out": 1}})
-    c = t.append("tool_call", {"toolUseId": "x1", "name": "write", "detail": "hi.txt"}, parent_id=a.id)
+    a = t.append(
+        "assistant",
+        {
+            "text": "ok",
+            "model": "m",
+            "usage": {"fresh": 1, "cacheRead": 0, "cacheWrite": 0, "out": 1},
+        },
+    )
+    c = t.append(
+        "tool_call", {"toolUseId": "x1", "name": "write", "detail": "hi.txt"}, parent_id=a.id
+    )
     t.append("verdict", {"toolUseId": "x1", "decision": "allow", "clause": "ok"}, parent_id=c.id)
     return t, p, a, c
 
@@ -1527,11 +1767,14 @@ def test_tree_renders_a_sprig_session_and_filters(tmp_path):
             labels = _labels(app.query_one("#tree", Tree))
             assert not any("write hi.txt" in x for x in labels)
             assert "filter: no tools" in app.status_text
+
     _run(scenario)
 
 
 def test_tree_renders_a_claude_session_from_its_transcript(tmp_path):
-    _claude_session(tmp_path, "c1", last_ts=time.time() - 1, tool_use_id="toolu_01", decision="allow")
+    _claude_session(
+        tmp_path, "c1", last_ts=time.time() - 1, tool_use_id="toolu_01", decision="allow"
+    )
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)
@@ -1544,6 +1787,7 @@ def test_tree_renders_a_claude_session_from_its_transcript(tmp_path):
             assert any("list files" in x for x in labels)
             assert any("try again" in x for x in labels)  # the branch from a1
             assert any("allow" in x.lower() and "toolu_01" in x for x in labels)  # joined verdict
+
     _run(scenario)
 
 
@@ -1566,6 +1810,7 @@ def test_label_writes_a_label_entry(tmp_path):
             await pilot.pause()
             labels = [e for e in t.entries() if e.type == "label"]
             assert labels and labels[0].data == {"target": p.id, "label": "good start"}
+
     _run(scenario)
 
 
@@ -1584,13 +1829,16 @@ def test_fork_here_creates_a_child_session(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert app.screen.name != "tree"  # the rewind menu is up
-            assert "Restore workspace" not in str(app.screen.query_one("#menu").renderable)  # no checkpoint
+            assert "Restore workspace" not in str(
+                app.screen.query_one("#menu").renderable
+            )  # no checkpoint
             await pilot.press("f")
             await pilot.pause()
             ids = [s.session_id for s in SessionIndex(tmp_path / "sessions").list()]
             child = next(i for i in ids if i.startswith("e1-"))
             assert SessionTree.open(tmp_path / "sessions", child).meta()["parentEntry"] == a.id
             assert "forked" in app.status_text and child in app.status_text
+
     _run(scenario)
 
 
@@ -1612,11 +1860,14 @@ def test_restore_conversation_moves_the_head(tmp_path):
             await pilot.pause()
             assert t.head() == p.id
             assert "workspace not restored" in app.status_text
+
     _run(scenario)
 
 
 def test_rewind_menu_on_claude_session_offers_fork_command(tmp_path):
-    _claude_session(tmp_path, "c1", last_ts=time.time() - 1, tool_use_id="toolu_01", decision="allow")
+    _claude_session(
+        tmp_path, "c1", last_ts=time.time() - 1, tool_use_id="toolu_01", decision="allow"
+    )
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)
@@ -1633,6 +1884,7 @@ def test_rewind_menu_on_claude_session_offers_fork_command(tmp_path):
             await pilot.pause()
             assert "claude --resume c1 --fork-session" in app.status_text
             assert "rewind inside Claude with Esc Esc" in app.status_text
+
     _run(scenario)
 ```
 
@@ -1674,13 +1926,17 @@ class Node:
 
 
 def nodes_for_sprig(tree: SessionTree) -> list[Node]:
-    labels = {e.data.get("target"): e.data.get("label") for e in tree.entries() if e.type == "label"}
+    labels = {
+        e.data.get("target"): e.data.get("label") for e in tree.entries() if e.type == "label"
+    }
     cps = {e.parent_id for e in tree.entries() if e.type == "checkpoint"}
     out = []
     for e in tree.entries():
         if not e.id or e.type in ("session", "label", "head", "checkpoint"):
             continue
-        text = e.data.get("text") or " ".join(str(e.data.get(k, "")) for k in ("name", "detail") if e.data.get(k))
+        text = e.data.get("text") or " ".join(
+            str(e.data.get(k, "")) for k in ("name", "detail") if e.data.get(k)
+        )
         if e.type == "verdict":
             text = f"{e.data.get('decision', '')} {e.data.get('toolUseId', '')} · {e.data.get('clause', '')}"
         tag = f" [{labels[e.id]}]" if e.id in labels else ""
@@ -1700,15 +1956,23 @@ def nodes_for_claude(transcript: Path, tree: SessionTree | None) -> list[Node]:
         out.append(Node(t.uuid, t.parent_uuid, kind, f"{kind}: {t.text[:60]}"))
         for u in t.tool_uses:
             v = verdicts.get(u["id"])
-            vtxt = f"{v.get('decision')} {u['id']} · {v.get('clause', '')}" if v else "(no verdict recorded)"
+            vtxt = (
+                f"{v.get('decision')} {u['id']} · {v.get('clause', '')}"
+                if v
+                else "(no verdict recorded)"
+            )
             out.append(Node(f"{t.uuid}/{u['id']}", t.uuid, "verdict", f"{u['name']} → {vtxt}"))
     return out
 
 
 class RewindMenu(ModalScreen[str]):
-    BINDINGS = [Binding("c", "pick('conversation')", "c conversation"), Binding("w", "pick('workspace')", "w workspace"),
-                Binding("b", "pick('both')", "b both"), Binding("f", "pick('fork')", "f fork"),
-                Binding("escape,n", "pick('never')", "n never mind")]
+    BINDINGS = [
+        Binding("c", "pick('conversation')", "c conversation"),
+        Binding("w", "pick('workspace')", "w workspace"),
+        Binding("b", "pick('both')", "b both"),
+        Binding("f", "pick('fork')", "f fork"),
+        Binding("escape,n", "pick('never')", "n never mind"),
+    ]
 
     def __init__(self, node: Node, *, workspace_ok: bool, skipped: list[str]) -> None:
         super().__init__()
@@ -1728,9 +1992,11 @@ class RewindMenu(ModalScreen[str]):
 
 
 class TreeScreen(Screen):
-    BINDINGS = [Binding("ctrl+o", "cycle_filter", "^O filter", show=True),
-                Binding("L", "label", "L label", show=True),
-                Binding("enter", "rewind", "⏎ rewind/fork", show=True)]
+    BINDINGS = [
+        Binding("ctrl+o", "cycle_filter", "^O filter", show=True),
+        Binding("L", "label", "L label", show=True),
+        Binding("enter", "rewind", "⏎ rewind/fork", show=True),
+    ]
 
     def __init__(self) -> None:
         super().__init__()
@@ -1764,7 +2030,9 @@ class TreeScreen(Screen):
             self.query_one("#tree-title", Static).update("no session selected · press t on a row")
             return
         meta = st.meta()
-        self.query_one("#tree-title", Static).update(f"{st.session_id} · {meta.get('harness')} · filter: {FILTERS[self._filter]}")
+        self.query_one("#tree-title", Static).update(
+            f"{st.session_id} · {meta.get('harness')} · filter: {FILTERS[self._filter]}"
+        )
         if meta.get("harness") == "claude-code" and meta.get("transcriptPath"):
             self._nodes = nodes_for_claude(Path(meta["transcriptPath"]), st)
         else:
@@ -1772,7 +2040,9 @@ class TreeScreen(Screen):
         shown = [n for n in self._nodes if self._visible(n)]
         by_parent: dict[str | None, list[Node]] = {}
         for n in shown:
-            by_parent.setdefault(n.parent if any(m.id == n.parent for m in shown) else None, []).append(n)
+            by_parent.setdefault(
+                n.parent if any(m.id == n.parent for m in shown) else None, []
+            ).append(n)
 
         def add(parent_widget, pid):
             for n in by_parent.get(pid, []):
@@ -1784,9 +2054,13 @@ class TreeScreen(Screen):
 
     def _visible(self, n: Node) -> bool:
         f = FILTERS[self._filter]
-        return (f == "all" or (f == "no tools" and n.kind not in _TOOL_TYPES)
-                or (f == "prompts" and n.kind == "prompt") or (f == "labeled" and n.label.endswith("]"))
-                or (f == "verdicts" and n.kind == "verdict"))
+        return (
+            f == "all"
+            or (f == "no tools" and n.kind not in _TOOL_TYPES)
+            or (f == "prompts" and n.kind == "prompt")
+            or (f == "labeled" and n.label.endswith("]"))
+            or (f == "verdicts" and n.kind == "verdict")
+        )
 
     # --- actions ------------------------------------------------------------
     def action_cycle_filter(self) -> None:
@@ -1817,7 +2091,9 @@ class TreeScreen(Screen):
             self.app.set_status(f"labeled {n.id}: {value}")
             self.reload()
         else:
-            self.app.set_status("labels on Claude transcript rows are kept in daisugi only (not yet)")
+            self.app.set_status(
+                "labels on Claude transcript rows are kept in daisugi only (not yet)"
+            )
         return True
 
     def action_rewind(self) -> None:
@@ -1826,11 +2102,20 @@ class TreeScreen(Screen):
         if n is None or st is None:
             return
         cps = [e for e in st.entries() if e.type == "checkpoint"]
-        on_path = [e for e in cps if "/" not in n.id and e.parent_id in {x.id for x in st.path_to(n.id)}] \
-            if st.meta().get("harness") != "claude-code" else cps
+        on_path = (
+            [e for e in cps if "/" not in n.id and e.parent_id in {x.id for x in st.path_to(n.id)}]
+            if st.meta().get("harness") != "claude-code"
+            else cps
+        )
         cp = on_path[-1] if on_path else None
-        self.app.push_screen(RewindMenu(n, workspace_ok=cp is not None, skipped=list((cp.data.get("skipped") if cp else []) or [])),
-                             callback=lambda choice: self._apply(choice, n, cp))
+        self.app.push_screen(
+            RewindMenu(
+                n,
+                workspace_ok=cp is not None,
+                skipped=list((cp.data.get("skipped") if cp else []) or []),
+            ),
+            callback=lambda choice: self._apply(choice, n, cp),
+        )
 
     def _apply(self, choice: str, n: Node, cp) -> None:
         st = self._session()
@@ -1840,26 +2125,36 @@ class TreeScreen(Screen):
         if meta.get("harness") == "claude-code":
             if choice == "fork":
                 head = st.head()
-                child = st.fork(head) if head else None  # daisugi's own entries; Claude owns the prompts
-                self.app.set_status(f"fork: run `claude --resume {st.session_id} --fork-session` "
-                                    f"(daisugi registered {child.session_id if child else 'no child'}); "
-                                    "rewind inside Claude with Esc Esc")
+                child = (
+                    st.fork(head) if head else None
+                )  # daisugi's own entries; Claude owns the prompts
+                self.app.set_status(
+                    f"fork: run `claude --resume {st.session_id} --fork-session` "
+                    f"(daisugi registered {child.session_id if child else 'no child'}); "
+                    "rewind inside Claude with Esc Esc"
+                )
             else:
-                self.app.set_status("rewind inside Claude with Esc Esc; daisugi sees the new head on the next tool call")
+                self.app.set_status(
+                    "rewind inside Claude with Esc Esc; daisugi sees the new head on the next tool call"
+                )
             return
         if choice in ("conversation", "both"):
             st.set_head(n.id)
         if choice in ("workspace", "both") and cp is not None:
             from opendaisugi.checkpoints import restore
 
-            rb = restore(Path(meta["cwd"]), ref=cp.data["ref"], session_id=st.session_id, entry_id=n.id)
+            rb = restore(
+                Path(meta["cwd"]), ref=cp.data["ref"], session_id=st.session_id, entry_id=n.id
+            )
             self.app.set_status(f"workspace restored to {cp.data['ref']} · rollback at {rb.ref}")
         if choice == "conversation":
             self.app.set_status(f"head moved to {n.id} · workspace not restored")
         if choice == "fork":
             child = st.fork(n.id)
-            self.app.set_status(f"forked {st.session_id} at {n.id} → {child.session_id} · "
-                                f"resume with `sprig --resume {child.session_id}`")
+            self.app.set_status(
+                f"forked {st.session_id} at {n.id} → {child.session_id} · "
+                f"resume with `sprig --resume {child.session_id}`"
+            )
         self.reload()
 ```
 

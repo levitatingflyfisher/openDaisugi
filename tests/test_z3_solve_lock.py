@@ -144,6 +144,4 @@ def test_check_vacuity_blocks_while_lock_is_held(monkeypatch):
     # a cache hit would return without ever touching Z3_SOLVE_LOCK.
     vacuity.clear_vacuity_cache()
     expr = Equals(path="command", value="echo hi")
-    _assert_blocks_until_released(
-        monkeypatch, lambda: vacuity.check_vacuity(expr, timeout_ms=2000)
-    )
+    _assert_blocks_until_released(monkeypatch, lambda: vacuity.check_vacuity(expr, timeout_ms=2000))

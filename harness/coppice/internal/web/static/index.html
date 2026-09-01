@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12181a">
+<title>coppice</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<header id="bar">
+  <button id="back" class="ghost" hidden>Back</button>
+  <h1 id="title">Floor</h1>
+  <button id="go-new" class="ghost">New</button>
+  <button id="go-settings" class="ghost">Settings</button>
+</header>
+
+<p id="status" role="status"></p>
+
+<section id="screen-roster">
+  <ul id="roster" class="cards"></ul>
+  <p id="roster-empty" class="empty" hidden>No panes yet. Tap New to start one.</p>
+</section>
+
+<section id="screen-pane" hidden>
+  <div id="pane-head">
+    <span id="pane-label"></span>
+    <span id="pane-chip" class="chip"></span>
+    <span id="pane-source" class="muted"></span>
+  </div>
+  <div id="ask" hidden>
+    <p id="ask-summary"></p>
+    <button id="allow">Allow</button>
+    <button id="deny">Deny</button>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="grid" width="360" height="480"></canvas>
+    <pre id="grid-text" class="visually-hidden" aria-live="off"></pre>
+  </div>
+  <div id="compose">
+    <textarea id="text" rows="2" placeholder="Type, then Prompt or Steer"></textarea>
+    <button id="prompt">Prompt</button>
+    <button id="steer">Steer</button>
+    <button id="record">Record</button>
+    <button id="keys-toggle" class="ghost">Keys</button>
+  </div>
+  <div id="keys" hidden></div>
+</section>
+
+<section id="screen-new" hidden>
+  <label for="new-cwd">Directory</label>
+  <input id="new-cwd" list="recent-cwds" autocomplete="off">
+  <datalist id="recent-cwds"></datalist>
+  <label for="new-label">Label</label>
+  <input id="new-label" autocomplete="off">
+  <label for="new-kind">Kind</label>
+  <select id="new-kind">
+    <option value="pty">pty, the harness UI</option>
+    <option value="headless">headless, supervised</option>
+  </select>
+  <label id="new-command-label" for="new-command">Command</label>
+  <input id="new-command" value="claude" autocomplete="off" placeholder="One word per argument, for example claude --resume. No quoting.">
+  <label id="new-harness-label" for="new-harness">Harness</label>
+  <select id="new-harness">
+    <option value="claude">claude</option>
+    <option value="codex">codex</option>
+    <option value="sprig">sprig</option>
+  </select>
+  <button id="create">Create</button>
+</section>
+
+<section id="screen-settings" hidden>
+  <p class="muted" id="set-origin"></p>
+  <label for="set-token">Token</label>
+  <input id="set-token" autocomplete="off">
+  <button id="save-settings">Save</button>
+  <button id="forget-token" class="ghost">Forget token</button>
+  <button id="test-push">Test push</button>
+  <p class="muted">Push goes through your own ntfy. Web push is not built.</p>
+</section>
+</body>
+</html>

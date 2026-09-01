@@ -592,6 +592,23 @@ class VerificationResult(BaseModel):
     envelope_id: str
     plan_id: str
     duration_ms: float
+    client: str = Field(
+        default="python",
+        description="Which verifier client was dispatched beside the oracle. "
+        "python means no client was dispatched and the oracle decided alone.",
+    )
+    fallback: str | None = Field(
+        default=None,
+        description="Set to 'python' when the dispatched client failed and the "
+        "oracle's verdict stands alone. None means the client answered.",
+    )
+    client_verdict: bool | None = Field(
+        default=None,
+        description="What the dispatched client alone said, kept for attribution. "
+        "The verdict in `ok` is the conjunction of this and the oracle's: a client "
+        "may tighten an allow into a deny, never the reverse. None when the client "
+        "failed or none was dispatched.",
+    )
 
 
 class ReversalHandle(BaseModel):

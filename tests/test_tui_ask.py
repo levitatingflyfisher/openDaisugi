@@ -24,18 +24,23 @@ def _seed_lowblast(tmp_path):
     is a harmless Read — S2 must classify off the ask, so this is low-blast."""
     now = time.time()
     _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1",
-                 question={"sessionId": "s1", "toolName": "Read", "toolInput": {"file_path": "x.py"}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={"sessionId": "s1", "toolName": "Read", "toolInput": {"file_path": "x.py"}},
+        deadline=now + 60,
+    )
 
 
 def _seed_destructive(tmp_path):
     now = time.time()
     _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1",
-                 question={"sessionId": "s1", "toolName": "Bash",
-                           "toolInput": {"command": "rm -rf build/"}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={"sessionId": "s1", "toolName": "Bash", "toolInput": {"command": "rm -rf build/"}},
+        deadline=now + 60,
+    )
 
 
 def _answer(tmp_path):
@@ -107,9 +112,12 @@ def test_destructive_allow_requires_a_typed_token(tmp_path):
 def _seed_shell(tmp_path, command):
     now = time.time()
     _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1",
-                 question={"sessionId": "s1", "toolName": "Bash", "toolInput": {"command": command}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={"sessionId": "s1", "toolName": "Bash", "toolInput": {"command": command}},
+        deadline=now + 60,
+    )
 
 
 def test_a_non_rm_destructive_shell_command_demands_the_token(tmp_path):
@@ -166,13 +174,19 @@ def test_confirm_rechecks_the_armed_id_against_the_selected_row(tmp_path):
     # re-check in action_confirm is removed.
     now = time.time()
     _claude_session(tmp_path, "sa", last_ts=now - 1, tool_use_id="ta", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="ta",
-                 question={"sessionId": "sa", "toolName": "Read", "toolInput": {"file_path": "a.py"}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="ta",
+        question={"sessionId": "sa", "toolName": "Read", "toolInput": {"file_path": "a.py"}},
+        deadline=now + 60,
+    )
     _claude_session(tmp_path, "sb", last_ts=now - 5, tool_use_id="tb", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="tb",
-                 question={"sessionId": "sb", "toolName": "Read", "toolInput": {"file_path": "b.py"}},
-                 deadline=now + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="tb",
+        question={"sessionId": "sb", "toolName": "Read", "toolInput": {"file_path": "b.py"}},
+        deadline=now + 60,
+    )
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)

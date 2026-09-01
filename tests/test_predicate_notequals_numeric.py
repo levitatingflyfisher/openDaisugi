@@ -7,7 +7,6 @@ numeric not_equals therefore raised a Z3 sort mismatch: swallowed as
 verify() on the skill-subsumption path. These tests pin the fixed behavior.
 """
 
-import pytest
 import z3
 
 from opendaisugi.models import ActionPlan, Envelope, Invariant, Permission, SkillStep, TaskStep
@@ -64,8 +63,6 @@ def test_skill_subsumption_with_numeric_not_equals_never_raises():
         task="t",
         steps=[SkillStep(id="k1", skill_id="sk", contract_envelope=contract_env)],
     )
-    caller = Envelope(
-        generated_by="test", task="t", stakes="low", permissions=Permission()
-    )
+    caller = Envelope(generated_by="test", task="t", stakes="low", permissions=Permission())
     result = verify(plan, caller)  # must return a result, never raise Z3ExceptionObj
     assert result is not None

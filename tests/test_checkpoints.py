@@ -424,7 +424,9 @@ def test_restore_from_a_subdir_does_not_destroy_a_namespace_shifted_gitignored_f
     is never touched."""
     sub = repo / "sub"
     sub.mkdir()
-    (sub / "gone.txt").write_text("g\n")  # keeps `sub` non-empty so the checkpoint has a wanted path
+    (sub / "gone.txt").write_text(
+        "g\n"
+    )  # keeps `sub` non-empty so the checkpoint has a wanted path
     cp = snapshot(sub, session_id="s1", entry_id="e1")
 
     # Now shift the world: ignore sub/sub, drop the wanted path from disk, and

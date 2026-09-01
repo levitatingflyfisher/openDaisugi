@@ -42,7 +42,9 @@ def test_orchestrate_prints_a_progress_note_on_a_tty(monkeypatch, tmp_path):
 
     monkeypatch.setattr(Daisugi, "orchestrate", _slow)
     err = _Tty()
-    monkeypatch.setattr(console, "set_mode", lambda mode, err_stream=None: None)  # keep our TTY mode
+    monkeypatch.setattr(
+        console, "set_mode", lambda mode, err_stream=None: None
+    )  # keep our TTY mode
     console._MODE = console.resolve_output(stream=_Tty(), env={})
     console._ERR = err
     res = runner.invoke(app, ["orchestrate", "t", "--llm", "litellm", "--data-dir", str(tmp_path)])

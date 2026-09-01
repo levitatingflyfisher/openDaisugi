@@ -1,0 +1,16 @@
+# A view-only attach on one connection: frames flow, writes are refused.
+# A plain attach on the same pane clears the view-only mark.
+{"id":"1","cmd":"pane.create","cwd":"/","cmd_argv":["sh","-c","sleep 30"],"label":"view","kind":"pty","cols":20,"rows":6}
+{"id":"$id","ok":true,"result":{"pane":"$p"}}
+{"id":"2","cmd":"pane.attach","pane":"$p","view_only":true}
+{"id":"$id","ok":true,"result":{"pane":"*","attached":true}}
+{"id":"3","cmd":"pane.send_text","pane":"$p","text":""}
+{"id":"$id","ok":false,"error":{"code":"not_attached","message":"*"}}
+{"id":"4","cmd":"pane.resize","pane":"$p","cols":10,"rows":4}
+{"id":"$id","ok":false,"error":{"code":"not_attached","message":"*"}}
+{"id":"5","cmd":"pane.attach","pane":"$p","cols":20,"rows":6}
+{"id":"$id","ok":true,"result":{"pane":"*","attached":true}}
+{"id":"6","cmd":"pane.send_text","pane":"$p","text":""}
+{"id":"$id","ok":true,"result":{"sent":"*"}}
+{"id":"7","cmd":"pane.detach","pane":"$p"}
+{"id":"$id","ok":true,"result":{"pane":"*","attached":false}}

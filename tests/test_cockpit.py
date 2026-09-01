@@ -23,23 +23,53 @@ from tests.test_claude_transcript import ROWS
 NOW = 1_000_000.0
 
 
-def _claude_session(data_dir: Path, sid: str, *, last_ts: float, tool_use_id: str, decision: str) -> None:
+def _claude_session(
+    data_dir: Path, sid: str, *, last_ts: float, tool_use_id: str, decision: str
+) -> None:
     t = data_dir / f"{sid}.transcript.jsonl"
     t.write_text("\n".join(json.dumps(r) for r in ROWS) + "\n")
-    tree = SessionTree.create(data_dir / "sessions", session_id=sid, harness="claude-code", cwd="/w",
-                              harness_session_id=sid, transcript_path=str(t), clock=lambda: last_ts - 2)
-    c = tree.append("tool_call", {"toolUseId": tool_use_id, "name": "Bash", "detail": "rm -rf build/"},
-                    clock=lambda: last_ts - 1)
-    tree.append("verdict", {"toolUseId": tool_use_id, "decision": decision, "mode": "enforce",
-                            "clause": "shell: no delete outside tmp", "reason": "x"},
-                parent_id=c.id, clock=lambda: last_ts)
+    tree = SessionTree.create(
+        data_dir / "sessions",
+        session_id=sid,
+        harness="claude-code",
+        cwd="/w",
+        harness_session_id=sid,
+        transcript_path=str(t),
+        clock=lambda: last_ts - 2,
+    )
+    c = tree.append(
+        "tool_call",
+        {"toolUseId": tool_use_id, "name": "Bash", "detail": "rm -rf build/"},
+        clock=lambda: last_ts - 1,
+    )
+    tree.append(
+        "verdict",
+        {
+            "toolUseId": tool_use_id,
+            "decision": decision,
+            "mode": "enforce",
+            "clause": "shell: no delete outside tmp",
+            "reason": "x",
+        },
+        parent_id=c.id,
+        clock=lambda: last_ts,
+    )
 
 
 def _sprig_session(data_dir: Path, sid: str, *, last_ts: float) -> None:
-    tree = SessionTree.create(data_dir / "sessions", session_id=sid, harness="sprig", cwd="/e", clock=lambda: last_ts - 3)
+    tree = SessionTree.create(
+        data_dir / "sessions", session_id=sid, harness="sprig", cwd="/e", clock=lambda: last_ts - 3
+    )
     tree.append("prompt", {"text": "hi"}, clock=lambda: last_ts - 2)
-    tree.append("assistant", {"model": "claude-sonnet-4", "text": "ok",
-                              "usage": {"fresh": 100, "cacheRead": 900, "cacheWrite": 0, "out": 10}}, clock=lambda: last_ts)
+    tree.append(
+        "assistant",
+        {
+            "model": "claude-sonnet-4",
+            "text": "ok",
+            "usage": {"fresh": 100, "cacheRead": 900, "cacheWrite": 0, "out": 10},
+        },
+        clock=lambda: last_ts,
+    )
 
 
 def _gateway_record(**overrides) -> GatewayTurnRecord:
@@ -50,26 +80,63 @@ def _gateway_record(**overrides) -> GatewayTurnRecord:
     # never from this unrelated field — setting it False here and still expecting
     # cache_is_estimate True is what proves the source, not the field, drives it.
     base = dict(
-        created_at="2026-08-27T00:00:00Z", signature="", task="x", tier="tier1-cloud",
-        requested_model="claude-sonnet-4", model="claude-sonnet-4", difficulty=0.1,
-        downgraded=False, estimated=False, input_tokens=100, output_tokens=10,
-        frontier_tokens_saved=0, actual_dollars=0.01, counterfactual_dollars=0.02,
-        cache_read_tokens=900, cache_creation_tokens=0,
+        created_at="2026-08-27T00:00:00Z",
+        signature="",
+        task="x",
+        tier="tier1-cloud",
+        requested_model="claude-sonnet-4",
+        model="claude-sonnet-4",
+        difficulty=0.1,
+        downgraded=False,
+        estimated=False,
+        input_tokens=100,
+        output_tokens=10,
+        frontier_tokens_saved=0,
+        actual_dollars=0.01,
+        counterfactual_dollars=0.02,
+        cache_read_tokens=900,
+        cache_creation_tokens=0,
     )
     base.update(overrides)
     return GatewayTurnRecord(**base)
 
 
-def _row(session_id: str, *, verdict: str = "", action: str = "", pending_ask=None,
-         group: str = "WORKING", harness: str = "claude-code") -> SessionRow:
-    return SessionRow(session_id=session_id, group=group, agent="a", action=action, verdict=verdict,
-                      clause="", steps=0, fresh=0, cache_read=0, cache_write=0, age_s=0.0,
-                      pending_ask=pending_ask, harness=harness, cwd="/w", transcript_path=None)
+def _row(
+    session_id: str,
+    *,
+    verdict: str = "",
+    action: str = "",
+    pending_ask=None,
+    group: str = "WORKING",
+    harness: str = "claude-code",
+) -> SessionRow:
+    return SessionRow(
+        session_id=session_id,
+        group=group,
+        agent="a",
+        action=action,
+        verdict=verdict,
+        clause="",
+        steps=0,
+        fresh=0,
+        cache_read=0,
+        cache_write=0,
+        age_s=0.0,
+        pending_ask=pending_ask,
+        harness=harness,
+        cwd="/w",
+        transcript_path=None,
+    )
 
 
 def test_groups_and_order(tmp_path: Path):
     _claude_session(tmp_path, "needs", last_ts=NOW - 5, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1", question={"sessionId": "needs", "toolName": "Bash"}, deadline=NOW + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={"sessionId": "needs", "toolName": "Bash"},
+        deadline=NOW + 60,
+    )
     _claude_session(tmp_path, "working", last_ts=NOW - 10, tool_use_id="t2", decision="allow")
     _sprig_session(tmp_path, "parked", last_ts=NOW - 600)
     _sprig_session(tmp_path, "done", last_ts=NOW - 7200)
@@ -100,7 +167,12 @@ def test_row_fields_for_a_sprig_session_use_tree_usage(tmp_path: Path):
 
 def test_pending_ask_is_attached_to_its_row(tmp_path: Path):
     _claude_session(tmp_path, "s1", last_ts=NOW - 5, tool_use_id="t1", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1", question={"sessionId": "s1", "toolName": "Bash"}, deadline=NOW + 60)
+    ask.post_ask(
+        tmp_path / "gate",
+        tool_use_id="t1",
+        question={"sessionId": "s1", "toolName": "Bash"},
+        deadline=NOW + 60,
+    )
     row = build_roster(tmp_path, now=NOW).rows[0]
     assert row.group == "NEEDS YOU" and row.pending_ask["toolUseId"] == "t1"
 
@@ -112,7 +184,9 @@ def test_an_anonymous_ask_is_not_cross_attached_to_every_id_less_session(tmp_pat
     # into NEEDS YOU with a pending_ask that isn't theirs.
     _sprig_session(tmp_path, "e1", last_ts=NOW - 1)
     _sprig_session(tmp_path, "e2", last_ts=NOW - 2)
-    ask.post_ask(tmp_path / "gate", tool_use_id="tX", question={"toolName": "Bash"}, deadline=NOW + 60)
+    ask.post_ask(
+        tmp_path / "gate", tool_use_id="tX", question={"toolName": "Bash"}, deadline=NOW + 60
+    )
     roster = build_roster(tmp_path, now=NOW)
     assert {r.session_id for r in roster.rows} == {"e1", "e2"}
     assert all(r.pending_ask is None for r in roster.rows)
@@ -132,8 +206,24 @@ def test_row_marks_controls_not_live_on_the_claude_path(tmp_path: Path):
 
 def _write_hook(settings_path: Path, mode: str) -> None:
     settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
-        {"type": "command", "command": f"py -m opendaisugi.gate_client --mode {mode}"}]}]}}))
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": f"py -m opendaisugi.gate_client --mode {mode}",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
 
 
 def test_header_mode_sources(tmp_path: Path):
@@ -193,7 +283,9 @@ def test_header_survives_a_deleted_cwd(tmp_path: Path, monkeypatch):
 def test_header_cache_from_live_transcripts_else_gateway(tmp_path: Path):
     _claude_session(tmp_path, "s1", last_ts=NOW - 5, tool_use_id="t1", decision="allow")
     h = header_state(tmp_path, home=tmp_path, roster=build_roster(tmp_path, now=NOW))
-    assert h.cache_source == "transcripts" and round(h.cache_hit_rate, 2) == round(2100 / (17 + 2100 + 50), 2)
+    assert h.cache_source == "transcripts" and round(h.cache_hit_rate, 2) == round(
+        2100 / (17 + 2100 + 50), 2
+    )
     assert h.session_count == 1
     assert h.cache_is_estimate is False  # live transcript numbers, not an estimate
     empty = header_state(tmp_path / "none", home=tmp_path)
@@ -224,7 +316,9 @@ def test_alert_policy_defaults_and_file(tmp_path: Path):
 def test_alerts_count_by_class(tmp_path: Path):
     _claude_session(tmp_path, "s1", last_ts=NOW - 5, tool_use_id="t1", decision="deny")
     _claude_session(tmp_path, "s2", last_ts=NOW - 6, tool_use_id="t2", decision="deny")
-    ask.post_ask(tmp_path / "gate", tool_use_id="t2", question={"sessionId": "s2"}, deadline=NOW + 60)
+    ask.post_ask(
+        tmp_path / "gate", tool_use_id="t2", question={"sessionId": "s2"}, deadline=NOW + 60
+    )
     alerts = alerts_for(build_roster(tmp_path, now=NOW))
     by_class = {a.klass: a for a in alerts}
     assert by_class["deny"].count == 2 and set(by_class["deny"].sessions) == {"s1", "s2"}
@@ -266,7 +360,9 @@ def test_destructive_alert_matching_is_word_bounded_and_case_insensitive(tmp_pat
     by_class = {a.klass: a for a in alerts}
     destructive = set(by_class["deny_destructive"].sessions)
     assert destructive == {"false_neg", "true_pos"}
-    assert "false_pos" not in destructive  # "rm " no longer matches inside con-firm/per-form/trans-form
+    assert (
+        "false_pos" not in destructive
+    )  # "rm " no longer matches inside con-firm/per-form/trans-form
     assert "harmless_redirect" not in destructive  # "> /dev/null" is not "> /dev/<something>"
 
 
@@ -298,10 +394,10 @@ def test_is_destructive_action_covers_the_wider_destructive_class():
         assert is_destructive_action(cmd), cmd
     # still no false positives on the benign lookalikes
     for cmd in (
-        "Bash echo done >> build.log",   # append, not truncate
-        "Bash echo hi > out.txt",        # ordinary file
-        "Bash echo hi > /dev/null",      # the harmless sink
-        "Bash chmod 644 file",           # not recursive
-        "Read authorized_keys",          # no redirect
+        "Bash echo done >> build.log",  # append, not truncate
+        "Bash echo hi > out.txt",  # ordinary file
+        "Bash echo hi > /dev/null",  # the harmless sink
+        "Bash chmod 644 file",  # not recursive
+        "Read authorized_keys",  # no redirect
     ):
         assert not is_destructive_action(cmd), cmd

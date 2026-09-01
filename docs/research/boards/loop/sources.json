@@ -1,0 +1,84 @@
+[
+ {
+  "slug": "claude-code-1",
+  "title": "Claude Code",
+  "group": "vendor",
+  "readme": "anthropics/claude-code",
+  "source_page": "https://github.com/anthropics/claude-code",
+  "caption": "Claude Code in a terminal, the harness most of the floor's panes run."
+ },
+ {
+  "slug": "codex-cli-1",
+  "title": "Codex CLI",
+  "group": "vendor",
+  "readme": "openai/codex",
+  "source_page": "https://github.com/openai/codex",
+  "caption": "OpenAI's Codex CLI, the second harness the gate covers.",
+  "image_url": "https://raw.githubusercontent.com/openai/codex/main/.github/codex-cli-splash.png"
+ },
+ {
+  "slug": "pi-1",
+  "title": "pi",
+  "group": "oss",
+  "readme": "badlogic/pi-mono",
+  "source_page": "https://github.com/badlogic/pi-mono",
+  "caption": "pi, the small coding agent with an id and parent-id transcript tree and an RPC mode."
+ },
+ {
+  "slug": "opencode-1",
+  "title": "OpenCode",
+  "group": "oss",
+  "readme": "sst/opencode",
+  "source_page": "https://github.com/sst/opencode",
+  "caption": "OpenCode's terminal UI. It serves an HTTP and SSE API that coppice can drive headless."
+ },
+ {
+  "slug": "aider-1",
+  "title": "Aider",
+  "group": "oss",
+  "readme": "Aider-AI/aider",
+  "source_page": "https://github.com/Aider-AI/aider",
+  "caption": "Aider, the pair-programming loop that commits as it goes."
+ },
+ {
+  "slug": "goose-1",
+  "title": "Goose",
+  "group": "oss",
+  "readme": "block/goose",
+  "source_page": "https://github.com/block/goose",
+  "caption": "Block's Goose, an extensible agent that runs on any model."
+ },
+ {
+  "slug": "openhands-1",
+  "title": "OpenHands",
+  "group": "oss",
+  "readme": "All-Hands-AI/OpenHands",
+  "source_page": "https://github.com/All-Hands-AI/OpenHands",
+  "caption": "OpenHands, the sandboxed agent platform with a V1 SDK that keeps an event tree."
+ },
+ {
+  "slug": "cline-1",
+  "title": "Cline",
+  "group": "oss",
+  "readme": "cline/cline",
+  "source_page": "https://github.com/cline/cline",
+  "caption": "Cline in VS Code, with checkpoints and a plan-act split.",
+  "pick": 1
+ },
+ {
+  "slug": "hermes-1",
+  "title": "Hermes Agent",
+  "group": "oss",
+  "readme": "NousResearch/hermes-agent",
+  "source_page": "https://github.com/NousResearch/hermes-agent",
+  "caption": "Nous Research's Hermes Agent, whose pre-tool-call hook can actually block."
+ },
+ {
+  "slug": "governor-1",
+  "title": "Centrifugal governor",
+  "group": "inspiration",
+  "source_page": "https://en.wikipedia.org/wiki/Centrifugal_governor",
+  "caption": "Watt's governor: the machine's own speed closes the valve. A loop with the limit built into the metal.",
+  "license": "Wikipedia lead image, see file page"
+ }
+]

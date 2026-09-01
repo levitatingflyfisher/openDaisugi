@@ -53,6 +53,25 @@ The lineage is **Runtime Assurance (RTA)** from aerospace control — Simplex
 never has been: LLM agents and robot foundation models. We didn't invent the
 architecture. We're the first to point it at these black boxes.
 
+## Three parts
+
+openDaisugi is three parts, not one program. Each has its own owner and its
+own promise:
+
+| Part | What it is | Who owns the code | What must stay true |
+|---|---|---|---|
+| **The layer** | gate + verifier + journal + garden. `verify(plan ⊆ envelope)`, fail-closed. | ours, forever | importable alone; imports nothing above it |
+| **The floor** | *coppice*: panes, state, prompt, steer, phone, voice. The shop floor. | ours, built to compete with Herdr and to *drive* Herdr | every state it shows is sourced, never guessed when a source exists |
+| **The loop** | the harness in a pane: sprig, Claude Code, Codex, pi, OpenCode. | rented, except sprig | every tool call passes the gate; an unreachable gate blocks |
+
+**The name.** A coppice is a stand of trees cut back so each stump sends up
+straight shoots. Daisugi is a coppicing technique. The multiplexer of sprigs
+is a coppice. (`garden` was taken by the pathway store; `grove` by the sprig
+line.)
+
+See [ADR-0020](docs/adr/0020-layer-floor-loop.md) for the reasoning, and
+`tests/test_layer_boundary.py` for the test that enforces it.
+
 ## The invariants (do not break these)
 
 These are the load-bearing beliefs. Breaking one is a design regression, not a
@@ -70,9 +89,9 @@ feature. Each is enforced in tests and recorded as an ADR.
    untrusted source as the "decided" plan. If one LLM writes both the plan *and*
    its envelope, you've proven consistency, not safety — that's why envelopes carry
    a human-or-more-trusted parent and can only *tighten*, never loosen.
-5. **Layer, not harness.** openDaisugi gates actions; it does not drive the model.
-   The moment it grows a chat loop it's competing with the harnesses it should
-   plug into. ([ADR-0004](docs/adr/0004-layer-not-harness.md))
+5. **The layer stays importable alone.** openDaisugi may host a floor and own a
+   loop, but the gate, verifier, journal, and garden import nothing above them
+   and run in any harness without them. ([ADR-0020](docs/adr/0020-layer-floor-loop.md))
 6. **Verify actions, not understanding.** An envelope can prove the arm stayed
    under 5N. It can *never* prove the model understood you wanted the fork and not
    the knife. This gap doesn't close — it gets bounded. Don't claim otherwise.

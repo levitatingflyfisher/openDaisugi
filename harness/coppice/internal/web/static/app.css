@@ -1,0 +1,67 @@
+:root {
+  color-scheme: dark;
+  --bg: #12181a; --fg: #e8eae7; --muted: #98a3a0; --line: #26312f;
+  --blocked: #d98b4a; --working: #8fb996; --idle: #7f8c8a; --done: #5d6a68; --unknown: #b06868;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#bar { display: flex; gap: .5rem; align-items: center; padding: .6rem .8rem;
+  border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); }
+#bar h1 { font-size: 1rem; margin: 0; flex: 1; }
+button { min-height: 44px; min-width: 44px; padding: 0 .8rem; border: 1px solid var(--line);
+  background: #1b2422; color: var(--fg); border-radius: 6px; font: inherit; }
+button.ghost { background: transparent; }
+#status { margin: .4rem .8rem; color: var(--muted); min-height: 1.2em; }
+.cards { list-style: none; margin: 0; padding: .4rem .8rem; display: grid; gap: .5rem; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; }
+.card .row { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+.card .ask { color: var(--blocked); margin: .3rem 0 0; }
+.chip { border-radius: 999px; padding: .1rem .5rem; font-size: .8rem; border: 1px solid currentColor; }
+.chip-blocked { color: var(--blocked); } .chip-working { color: var(--working); }
+.chip-idle { color: var(--idle); } .chip-done { color: var(--done); } .chip-unknown { color: var(--unknown); }
+.muted { color: var(--muted); }
+.empty { padding: 2rem .8rem; color: var(--muted); }
+/* The floor: the rail above the tiles on a phone, beside them from 900 px. */
+#screen-roster { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; }
+#screen-roster[hidden] { display: none; }
+#floor { padding: .4rem .8rem; min-width: 0; }
+#floor-controls { display: flex; gap: .5rem; align-items: center; margin-bottom: .5rem; }
+#floor-controls label { margin: 0; color: var(--muted); }
+#floor-controls select { width: auto; margin: 0; }
+#tiles { --tiles: 1; display: grid; grid-template-columns: repeat(var(--tiles), 1fr); gap: .5rem; }
+#tiles[data-tiles="2"] { --tiles: 2; }
+#tiles[data-tiles="3"] { --tiles: 3; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; min-width: 0; overflow: hidden; }
+.tile.focused { border-color: var(--fg); }
+.tile.empty { color: var(--muted); }
+.tile .head { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+.tile .note { color: var(--muted); margin: .3rem 0 0; }
+.tile-body { overflow: hidden; background: #0b0f10; margin-top: .4rem; }
+.tile canvas { display: block; max-width: 100%; height: auto; }
+.dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--unknown); }
+.dot-blocked { background: var(--blocked); } .dot-working { background: var(--working); }
+.dot-idle { background: var(--idle); } .dot-done { background: var(--done); } .dot-unknown { background: var(--unknown); }
+.askbar { background: var(--blocked); color: #12181a; padding: .5rem .6rem; border-radius: 6px; margin: .4rem 0 0; }
+.askbar p { margin: 0 0 .3rem; }
+.askbar .verdict { font-weight: bold; }
+.askbar button { margin-right: .4rem; }
+@media (min-width: 900px) {
+  #screen-roster { grid-template-columns: 18rem minmax(0, 1fr); align-items: start; }
+  #roster, #roster-empty { grid-column: 1; }
+  #floor { grid-column: 2; grid-row: 1 / span 2; }
+}
+#canvas-wrap { overflow: hidden; touch-action: none; background: #0b0f10; }
+canvas { display: block; }
+#compose { display: grid; grid-template-columns: repeat(4, 1fr); gap: .4rem; padding: .5rem .8rem; }
+#compose textarea { grid-column: 1 / -1; background: #1b2422; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; font: inherit; padding: .4rem; }
+#keys { display: flex; gap: .4rem; padding: 0 .8rem .6rem; flex-wrap: wrap; }
+#ask { padding: .6rem .8rem; border-bottom: 1px solid var(--line); }
+#pane-head { display: flex; gap: .5rem; align-items: baseline; padding: .5rem .8rem; flex-wrap: wrap; }
+section label { display: block; margin: .8rem .8rem .2rem; color: var(--muted); }
+section label[hidden], #keys[hidden] { display: none; }
+section input, section select { width: calc(100% - 1.6rem); margin: 0 .8rem; min-height: 44px;
+  background: #1b2422; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; font: inherit; padding: 0 .5rem; }
+section > button { margin: .8rem; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

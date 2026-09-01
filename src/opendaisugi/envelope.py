@@ -36,7 +36,6 @@ from opendaisugi.exceptions import (
 )
 from opendaisugi.inheritance import EnvelopeInheritanceError, verify_inheritance
 from opendaisugi.models import Envelope
-from opendaisugi.pathway_store import DEFAULT_PATHWAY_THRESHOLD
 from opendaisugi.thinking import ThinkingBudget, thinking_kwargs
 from opendaisugi.z3_checks import check_envelope_self_consistency
 
@@ -316,7 +315,7 @@ async def generate_envelope(
     summarize: bool = False,
     cache: EnvelopeCache | None = None,
     pathway_store: "PathwayStore | None" = None,
-    pathway_threshold: float = DEFAULT_PATHWAY_THRESHOLD,
+    pathway_threshold: float | None = None,
     journal: "Journal | None" = None,
     stakes: Literal["low", "medium", "high"] = "medium",
     low_stakes_envelope: Envelope | None = None,

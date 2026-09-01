@@ -352,9 +352,7 @@ def _decompose(command: str, _depth: int = 0) -> Decomposition:
                 "fusion-repair recursion exceeded; a rewrite re-fused, which "
                 "should be impossible (each pass replaces newlines with ';')"
             )
-        rewritten = _rewrite_fused_newlines(
-            src, fused, frozenset(_comment_end_offsets(root))
-        )
+        rewritten = _rewrite_fused_newlines(src, fused, frozenset(_comment_end_offsets(root)))
         if rewritten == src:
             # Every fused newline terminates a comment; none can be rewritten to
             # ``;`` without burying the following statement in the comment. The

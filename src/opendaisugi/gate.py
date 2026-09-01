@@ -33,7 +33,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import argparse
 
+    from opendaisugi.session_tree import SessionTree
+
 from opendaisugi.hook import (
+    EXIT_CODE_FORMATS,
+    STDOUT_BLOCK_FORMATS,
     _payload_to_record,
     _records_to_steps,
     _safe_session_id,
@@ -135,8 +139,15 @@ def _deny(
 
 
 def _maybe_ask(
-    root: Path, payload: dict[str, Any], decision: GateDecision, *, timeout_s: float,
-    sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+    root: Path,
+    payload: dict[str, Any],
+    decision: GateDecision,
+    *,
+    timeout_s: float,
+    session_id: str | None = None,
+    fmt: str = "claude",
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
 ) -> GateDecision:
     """Hand a would-deny to a present operator for at most ``timeout_s``.
 
@@ -157,22 +168,326 @@ def _maybe_ask(
     if not tool_use_id or not _ask.operator_present(root):
         return decision
     tid = str(tool_use_id)
-    _ask.post_ask(root, tool_use_id=tid, question={
-        "sessionId": payload.get("session_id"), "toolName": decision.tool_name,
-        "detail": decision.detail, "reason": decision.reason, "clause": decision.clause,
-        "counterexample": decision.counterexample, "toolInput": payload.get("tool_input"),
-    }, deadline=time.time() + timeout_s)
-    reply = _ask.wait_answer(root, tool_use_id=tid, timeout_s=timeout_s, sleep=sleep, clock=clock)
+    deadline = time.time() + timeout_s
+    _ask.post_ask(
+        root,
+        tool_use_id=tid,
+        question={
+            "sessionId": payload.get("session_id"),
+            "toolName": decision.tool_name,
+            "detail": decision.detail,
+            "reason": decision.reason,
+            "clause": decision.clause,
+            "counterexample": decision.counterexample,
+            "toolInput": payload.get("tool_input"),
+        },
+        deadline=deadline,
+    )
+    try:
+        _report_blocked(
+            root,
+            payload,
+            decision,
+            session_id=session_id,
+            fmt=fmt,
+            tool_use_id=tid,
+            deadline=deadline,
+        )
+    except Exception:  # noqa: BLE001 — must never skip wait_answer below
+        pass
+    # wait_answer starts its OWN clock here, not when `deadline` above was
+    # computed — post_ask's file write and _report_blocked's own (bounded)
+    # network call both cost real wall-clock time first. Deriving the
+    # wait's timeout from the SAME `deadline` (as a remaining duration,
+    # measured right before the call) keeps the floor's already-reported
+    # ask.deadline consistent with when the operator's window actually
+    # closes, instead of advertising a deadline the real wait outlives (S6).
+    remaining = max(0.0, deadline - time.time())
+    reply = _ask.wait_answer(root, tool_use_id=tid, timeout_s=remaining, sleep=sleep, clock=clock)
     if reply and reply.get("decision") == "allow":
         why = reply.get("reason") or "no reason given"
-        return replace(decision, allow=True, ask=True, reason=f"allowed by operator: {why}",
-                       updated_input=reply.get("updatedInput") or None)
+        return replace(
+            decision,
+            allow=True,
+            ask=True,
+            reason=f"allowed by operator: {why}",
+            updated_input=reply.get("updatedInput") or None,
+        )
     why = "operator denied" if reply else f"operator did not answer within {int(timeout_s)} s"
     return replace(decision, ask=bool(reply), reason=f"{decision.reason} ({why})")
 
 
-def _verify_with_timeout(plan: ActionPlan, envelope: Envelope, timeout_s: float):
-    """Run verify() in a worker thread with an inner deny-on-timeout.
+_PANE_ENV_VARS: tuple[str, ...] = ("COPPICE_PANE", "HERDR_PANE_ID", "HERDR_PANE", "TMUX_PANE")
+
+
+def _string_harness_session_id(payload: dict[str, Any]) -> str | None:
+    """The payload's own session_id, kept only when it is actually a string.
+
+    A hook payload is untrusted input: session_id can arrive as anything
+    JSON allows. harness_session_id ends up in a PaneStateEvent and in the
+    session tree's own header, both of which expect a string or nothing,
+    so a non-string value is dropped here rather than carried through.
+    """
+    raw = payload.get("session_id")
+    return raw if isinstance(raw, str) else None
+
+
+def _pane_from_env() -> str | None:
+    """The running pane's id, read straight from the environment.
+
+    Checked in order: COPPICE_PANE, then HERDR_PANE_ID, then HERDR_PANE,
+    then TMUX_PANE. None when none of the four is set. Reads os.environ
+    only, no injected mapping: this module is part of the layer and may
+    not import opendaisugi.floor, which owns the PaneStateEvent contract
+    this value ends up in.
+    """
+    for name in _PANE_ENV_VARS:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
+
+
+def _report_and_append_state(
+    root: Path,
+    *,
+    session_id: str,
+    harness: str,
+    cwd: str,
+    harness_session_id: str | None,
+    transcript_path: str | None,
+    state: str,
+    detail: str,
+    ask: dict[str, Any] | None = None,
+    tree: "SessionTree | None" = None,
+) -> None:
+    """Build one PaneStateEvent, deliver it, and mirror it into the session
+    tree — three INDEPENDENT best-effort steps (spec-01): a socket failure
+    must not also swallow the purely-local tree write, and neither may
+    ever change a verdict.
+
+    Shared by the live 'blocked' report (posted inside _maybe_ask, before
+    the wait — there is no already-open tree to reuse there) and the final
+    'working' report (posted once gate_and_contract's pipeline is done —
+    _log_tree already opened one). ``tree``, when given, is reused instead
+    of reopening the session tree file and rescanning it for its head a
+    second time on the SAME gate call (S4, spec-01) — SessionTree.append's
+    only expensive path (session_tree.py's head()/_compute_head) is a full
+    ``path.read_text()``.
+
+    ALL of the exception boundaries below matter: this is called (directly,
+    for the blocked report; via _maybe_report_state, for the final report)
+    from inside _maybe_ask/gate_and_contract's flow, where an escape must
+    never propagate — for the blocked report specifically, it sits between
+    post_ask and wait_answer, and an escape there would skip the wait
+    entirely, leaving an operator's ask posted but never honored.
+    """
+    try:
+        from opendaisugi._state_report import build_event
+
+        ev_json = build_event(
+            session_id=session_id,
+            harness=harness,
+            state=state,
+            source="gate",
+            harness_session_id=harness_session_id,
+            pane=_pane_from_env(),
+            detail=detail,
+            ask=ask,
+        )
+    except Exception:  # noqa: BLE001 — best-effort by contract
+        return
+    try:
+        from opendaisugi._state_report import report_state
+
+        report_state(ev_json)
+    except Exception:  # noqa: BLE001 — best-effort by contract
+        pass
+    try:
+        from opendaisugi.session_tree import SessionTree
+
+        t = tree
+        if t is None:
+            t = SessionTree.open_or_create(
+                root.parent / "sessions",
+                session_id=session_id,
+                harness=harness,
+                cwd=cwd,
+                harness_session_id=harness_session_id,
+                transcript_path=transcript_path,
+            )
+        t.append("state", json.loads(ev_json))
+    except Exception:  # noqa: BLE001 — best-effort by contract
+        pass
+
+
+def _report_blocked(
+    root: Path,
+    payload: dict[str, Any],
+    decision: GateDecision,
+    *,
+    session_id: str | None,
+    fmt: str,
+    tool_use_id: str,
+    deadline: float,
+) -> None:
+    """Live-report 'blocked' the moment an ask is posted to a present
+    operator — before the wait, not after. That is the only point this
+    state is actually true, and the only point a floor watching gate.sock
+    can show a countdown against the ask's deadline.
+
+    The whole body is wrapped, matching _log_tree/_maybe_checkpoint's own
+    pattern: this sits BETWEEN post_ask and wait_answer (_maybe_ask), so
+    an escape here must never propagate on its own — it would skip
+    wait_answer entirely, leaving a posted ask nobody ever waits on.
+    _maybe_ask ALSO wraps its call to this function as a second line of
+    defense (spec-01).
+    """
+    try:
+        sid = _safe_session_id(session_id or payload.get("session_id"))
+        _report_and_append_state(
+            root,
+            session_id=sid,
+            harness=_HARNESS_BY_FMT.get(fmt, fmt),
+            cwd=str(payload.get("cwd") or ""),
+            harness_session_id=_string_harness_session_id(payload),
+            transcript_path=payload.get("transcript_path"),
+            state="blocked",
+            detail=f"awaiting operator: {decision.reason}"[:200],
+            ask={
+                "id": tool_use_id,
+                "tool": str(decision.tool_name or "unknown"),
+                "summary": decision.detail,
+                "deadline": deadline,
+            },
+        )
+    except Exception:  # noqa: BLE001 — best-effort by contract; the wait must still happen
+        pass
+
+
+def _maybe_report_state(
+    root: Path,
+    payload: dict[str, Any] | None,
+    decision: GateDecision,
+    *,
+    session_id: str | None,
+    fmt: str,
+    tree: "SessionTree | None",
+) -> None:
+    """Best-effort: tell whatever floor is listening the call resolved.
+
+    Runs once the verdict, the tree write, and any checkpoint are all final
+    (spec-01) — mirrors _log_tree's own placement and contract. Any ask
+    this call triggered is already resolved by the time this runs
+    (_maybe_ask blocks synchronously), so the state reported here is
+    always 'working': allow vs deny shows up in DETAIL, not in floor
+    STATE — 'blocked' means waiting on a human, never 'was denied'.
+
+    ``tree`` is the SessionTree `_log_tree` already opened for this same
+    call (or `None` if that failed) — passed through so the state entry
+    lands in the SAME tree object right after the verdict entry (S4/S5:
+    no second file open+scan, and the file order is guaranteed
+    tool_call → verdict → state by construction). The whole body is
+    wrapped so a failure in this preamble (session-id sanitizing, the
+    detail format string, the harness lookup) cannot escape either — its
+    call site in gate_and_contract wraps it again, matching the pattern
+    _report_blocked/`_maybe_ask` use (B4, spec-01).
+
+    A non-dict ``payload`` (unparseable hook stdin — no tool call ever
+    happened) reports nothing, mirroring ``_log_tree``'s own guard: there
+    is no real call to say "resolved" about, and reporting one would create
+    a session-tree directory for a session_id that only exists because a
+    fallback filled it in (regression: ``test_no_payload_writes_nothing``).
+    """
+    if not isinstance(payload, dict):
+        return
+    try:
+        p = payload
+        sid = _safe_session_id(session_id or p.get("session_id"))
+        detail = "verdict=allow" if decision.allow else f"verdict=deny clause={decision.clause}"
+        _report_and_append_state(
+            root,
+            session_id=sid,
+            harness=_HARNESS_BY_FMT.get(fmt, fmt),
+            cwd=str(p.get("cwd") or ""),
+            harness_session_id=_string_harness_session_id(p),
+            transcript_path=p.get("transcript_path"),
+            state="working",
+            detail=detail[:200],
+            tree=tree,
+        )
+    except Exception:  # noqa: BLE001 — best-effort by contract
+        pass
+
+
+# A dispatched verification gets this fraction of the gate's inner budget as
+# the bound on the whole verify_via call, oracle included. The rest is slack
+# so the join in _verify_with_timeout always sees a verdict. Without the
+# split one hung client turns every tool call into a permanent "gate internal
+# error" deny with no clue which client did it.
+_DISPATCH_BUDGET_FRACTION = 0.5
+
+
+def _gate_root(root: Path | None) -> Path:
+    """The gate root in force: the one given, else the data dir's ``gate``."""
+    from opendaisugi import DEFAULT_DATA_DIR
+
+    return Path(root) if root is not None else DEFAULT_DATA_DIR / "gate"
+
+
+def _configured_verifier_client(root: Path | None = None) -> tuple[Path, str]:
+    """The gate root and the verifier_client named beside it, read now.
+
+    The config file is ``root.parent / "config.yaml"``, the same file
+    ``resolve_gate_mode`` reads, so a hook run with ``--root /srv/x/gate``
+    takes both its mode and its verifier from ``/srv/x/config.yaml``. A
+    config that cannot be read names python, so verification never skips.
+    """
+    from opendaisugi.config import load_config
+
+    gate_root = _gate_root(root)
+    try:
+        client = load_config(gate_root.parent / "config.yaml").verifier_client
+    except Exception:  # noqa: BLE001 - a broken config must not skip verification
+        client = "python"
+    return gate_root, str(client or "python")
+
+
+def _dispatch_verify(
+    plan: ActionPlan, envelope: Envelope, *, timeout_s: float, root: Path | None = None
+):
+    """Verify with the client this gate's config names, right now.
+
+    The choice is read per call, which is what makes the verifier stage live:
+    the resident gate is long-lived, so a cached choice would need a restart.
+    verify_via runs the oracle too and returns the conjunction, so a dispatch
+    failure costs a warning and never an allow; anything that still escapes is
+    caught by evaluate_record's fail-closed except.
+
+    The choice comes from ``root.parent / "config.yaml"`` and the dispatch
+    record is written under ``root``, so ``daisugi modules`` for that data dir
+    sees the dispatch. With no root the gate lives under the data dir, so a
+    test that points the data dir at a temp directory never writes to the
+    operator's home.
+    """
+    gate_root, client = _configured_verifier_client(root)
+    if client == "python":
+        return verify(plan, envelope, strict=None)
+    from opendaisugi.verifier_dispatch import verify_via
+
+    return verify_via(
+        client,
+        plan,
+        envelope,
+        timeout_s=timeout_s * _DISPATCH_BUDGET_FRACTION,
+        root=gate_root,
+    )
+
+
+def _verify_with_timeout(
+    plan: ActionPlan, envelope: Envelope, timeout_s: float, root: Path | None = None
+):
+    """Run the configured verifier in a worker thread with an inner deny-on-timeout.
 
     Returns the VerificationResult, or raises TimeoutError when the verifier
     outlives the budget. The worker is a daemon thread — a hung Z3 query
@@ -183,7 +498,7 @@ def _verify_with_timeout(plan: ActionPlan, envelope: Envelope, timeout_s: float)
 
     def _run() -> None:
         try:
-            box.append(verify(plan, envelope, strict=None))
+            box.append(_dispatch_verify(plan, envelope, timeout_s=timeout_s, root=root))
         except BaseException as exc:  # noqa: BLE001 — re-raised on the caller side
             err.append(exc)
 
@@ -203,11 +518,13 @@ def evaluate_record(
     *,
     mode: str = "shadow",
     verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+    root: Path | None = None,
 ) -> GateDecision:
     """Decide one already-normalized capture record against an envelope.
 
     Deny-by-default: every failure path inside this function resolves to a
-    deny decision, never an exception to the caller.
+    deny decision, never an exception to the caller. ``root`` is the gate
+    root whose config names the verifier client; None means the data dir's.
     """
     t0 = time.monotonic()
     tool_name = record.get("tool_name")
@@ -225,7 +542,7 @@ def evaluate_record(
                 t0=t0,
             )
         plan = ActionPlan(source="call-time-gate", task=envelope.task, steps=steps)
-        result = _verify_with_timeout(plan, envelope, verify_timeout_s)
+        result = _verify_with_timeout(plan, envelope, verify_timeout_s, root)
         if result.ok:
             return GateDecision(
                 allow=True,
@@ -244,14 +561,30 @@ def evaluate_record(
             "; ".join(f"{v.stage}: {v.message}" for v in result.violations) or "verification failed"
         )
         return _deny(
-            mode, summary, tool_name=tool_name, step_type=step_type, detail=detail, t0=t0,
+            mode,
+            summary,
+            tool_name=tool_name,
+            step_type=step_type,
+            detail=detail,
+            t0=t0,
             violations=[v.model_dump(mode="json") for v in result.violations],
-            envelope_id=result.envelope_id, plan_id=result.plan_id,
+            envelope_id=result.envelope_id,
+            plan_id=result.plan_id,
         )
     except Exception as exc:  # noqa: BLE001 — fail-closed: any error denies
+        try:
+            chosen = _configured_verifier_client(root)[1]
+        except Exception:  # noqa: BLE001 - the deny must not depend on the config
+            chosen = "python"
+        via = "" if chosen == "python" else f" with verifier_client={chosen}"
+        hint = (
+            ""
+            if chosen == "python"
+            else " Set verifier_client: python in config.yaml to rule out the client."
+        )
         return _deny(
             mode,
-            f"gate internal error (denied fail-closed): {exc}",
+            f"gate internal error{via} (denied fail-closed): {exc}.{hint}",
             tool_name=tool_name,
             step_type=step_type,
             detail=detail,
@@ -265,12 +598,16 @@ def evaluate_call(
     *,
     mode: str = "shadow",
     verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+    fmt: str = "claude",
+    root: Path | None = None,
 ) -> GateDecision:
     """Decide one raw hook payload against an envelope. Deny-by-default.
 
     Never raises: malformed payloads, unknown tools, verifier errors, and
     verifier timeouts all come back as deny decisions (allowed-but-flagged
-    in shadow mode).
+    in shadow mode). ``fmt`` selects the host-specific tool-name
+    classification in hook's ``_payload_to_record``. It does not change
+    verification itself.
     """
     t0 = time.monotonic()
     try:
@@ -279,7 +616,7 @@ def evaluate_call(
         tool_name = payload.get("tool_name") or payload.get("tool") or payload.get("name")
         if not tool_name:
             return _deny(mode, "no tool name in hook payload", t0=t0)
-        record = _payload_to_record(payload)
+        record = _payload_to_record(payload, fmt=fmt)
         if record is None:
             return _deny(
                 mode,
@@ -293,6 +630,7 @@ def evaluate_call(
             envelope,
             mode=mode,
             verify_timeout_s=verify_timeout_s,
+            root=root,
         )
     except Exception as exc:  # noqa: BLE001 — fail-closed: any error denies
         return _deny(mode, f"gate internal error (denied fail-closed): {exc}", t0=t0)
@@ -465,7 +803,7 @@ def _outcome(decision: GateDecision, fmt: str) -> GateOutcome:
     # still show what enforce would have denied) while ``allow`` is True.
     # ``allow`` is the one field that must drive the host contract.
     deny_now = not decision.allow
-    if fmt == "claude":
+    if fmt in EXIT_CODE_FORMATS:
         if deny_now:
             return GateOutcome(
                 stdout="",
@@ -474,47 +812,75 @@ def _outcome(decision: GateDecision, fmt: str) -> GateOutcome:
                 decision=decision,
             )
         if decision.updated_input:
-            # The operator edited the call before allowing it (Task 8):
-            # Claude Code's PreToolUse contract for a modified-but-allowed
-            # call is hookSpecificOutput.updatedInput, not plain {"continue":true}.
-            stdout = json.dumps({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "allow",
-                    "permissionDecisionReason": decision.reason,
-                    "updatedInput": decision.updated_input,
-                }
-            })
-            return GateOutcome(stdout=stdout, stderr="", exit_code=0, decision=decision)
+            if fmt == "claude":
+                # The operator edited the call before allowing it. Claude
+                # Code's PreToolUse contract for a modified-but-allowed call
+                # is hookSpecificOutput.updatedInput, not {"continue":true}.
+                stdout = json.dumps(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "allow",
+                            "permissionDecisionReason": decision.reason,
+                            "updatedInput": decision.updated_input,
+                        }
+                    }
+                )
+                return GateOutcome(stdout=stdout, stderr="", exit_code=0, decision=decision)
+            # An exit-code-only host has no channel that carries an operator
+            # edit. Deny fail-closed rather than run the original input,
+            # which was already denied.
+            return GateOutcome(
+                stdout="",
+                stderr=(
+                    f"openDaisugi gate: DENIED: {decision.reason}. The operator edit "
+                    f"cannot be carried on the {fmt!r} format. It has no updatedInput "
+                    "channel. Denied fail-closed rather than running the original input."
+                ),
+                exit_code=2,
+                decision=decision,
+            )
         return GateOutcome(
-            stdout=stdout_for_format("claude", block=False),
+            stdout=stdout_for_format(fmt, block=False),
             stderr="",
             exit_code=0,
             decision=decision,
         )
-    if decision.updated_input and fmt != "claude":
-        # An operator edited the call before allowing it (Task 8), but only
-        # the claude contract (hookSpecificOutput.updatedInput, above) has a
-        # channel to carry an edit through to the host. Emitting a plain
-        # allow here would silently drop the edit and let the ORIGINAL
-        # (denied) input run instead of what the operator actually
-        # approved — deny fail-closed instead.
+    if fmt in STDOUT_BLOCK_FORMATS:
+        if decision.updated_input:
+            # An operator edited the call before allowing it, but only the
+            # claude contract above has a channel that carries an edit to
+            # the host. A plain allow here would drop the edit and run the
+            # original, denied input. Deny fail-closed instead.
+            return GateOutcome(
+                stdout=stdout_for_format(
+                    fmt,
+                    block=True,
+                    reason=f"{decision.reason}. The operator edit cannot be carried on the "
+                    f"{fmt!r} format. It has no updatedInput channel. Denied fail-closed "
+                    "rather than running the original input",
+                ),
+                stderr="",
+                exit_code=0,
+                decision=decision,
+            )
         return GateOutcome(
-            stdout=stdout_for_format(
-                fmt,
-                block=True,
-                reason=f"{decision.reason} — operator edit cannot be carried on the "
-                f"{fmt!r} format (no updatedInput channel); denied fail-closed rather "
-                "than running the original input",
-            ),
+            stdout=stdout_for_format(fmt, block=deny_now, reason=decision.reason),
             stderr="",
             exit_code=0,
             decision=decision,
         )
+    # fmt is in neither set. --format is an unrestricted string, so a typo or
+    # a host with no wired contract reaches here. stdout_for_format's default
+    # body is an allow at exit 0, which could carry a real deny. Fail closed
+    # instead of guessing how an unknown host reads a body it never learned.
     return GateOutcome(
-        stdout=stdout_for_format(fmt, block=deny_now, reason=decision.reason),
-        stderr="",
-        exit_code=0,
+        stdout="",
+        stderr=(
+            f"openDaisugi gate: DENIED: unknown host format {fmt!r}. "
+            "Use --format claude, pi, opencode, hermes, or openclaw."
+        ),
+        exit_code=2,
         decision=decision,
     )
 
@@ -566,45 +932,80 @@ def _log_shadow(
         pass
 
 
-_HARNESS_BY_FMT = {"claude": "claude-code", "codex": "codex", "hermes": "hermes", "openclaw": "openclaw"}
+_HARNESS_BY_FMT = {
+    "claude": "claude-code",
+    "codex": "codex",
+    "hermes": "hermes",
+    "openclaw": "openclaw",
+    "pi": "pi",
+}
 
 
 def _log_tree(
-    root: Path, payload: dict[str, Any] | None, decision: GateDecision, *,
-    session_id: str | None, fmt: str,
-) -> None:
+    root: Path,
+    payload: dict[str, Any] | None,
+    decision: GateDecision,
+    *,
+    session_id: str | None,
+    fmt: str,
+) -> "SessionTree | None":
     """Best-effort mirror of the call and its verdict into the session tree.
 
-    The multi-session view reads this. Never raises; a store failure must not
-    change a verdict (same contract as ``_log_shadow``).
+    The multi-session view reads this. Never raises; a store failure must
+    not change a verdict (same contract as ``_log_shadow``). Returns the
+    ``SessionTree`` it opened on success, ``None`` on any failure or a
+    non-dict payload — the caller (``_maybe_report_state``, via
+    ``gate_and_contract``) reuses this SAME tree for the final 'working'
+    state entry instead of reopening the file and rescanning it for its
+    head a second time (S4, spec-01); every prior caller already ignored
+    the return value, so this is additive.
     """
     if not isinstance(payload, dict):
-        return
+        return None
     try:
         from opendaisugi.session_tree import SessionTree
 
         sid = _safe_session_id(session_id or payload.get("session_id"))
         tree = SessionTree.open_or_create(
-            root.parent / "sessions", session_id=sid, harness=_HARNESS_BY_FMT.get(fmt, fmt),
-            cwd=str(payload.get("cwd") or ""), harness_session_id=payload.get("session_id"),
+            root.parent / "sessions",
+            session_id=sid,
+            harness=_HARNESS_BY_FMT.get(fmt, fmt),
+            cwd=str(payload.get("cwd") or ""),
+            harness_session_id=_string_harness_session_id(payload),
             transcript_path=payload.get("transcript_path"),
         )
         tool_use_id = payload.get("tool_use_id")
-        call = tree.append("tool_call", {
-            "toolUseId": tool_use_id, "name": decision.tool_name or payload.get("tool_name"),
-            "stepType": decision.step_type, "detail": decision.detail,
-            "agentId": payload.get("agent_id"), "agentType": payload.get("agent_type"),
-        })
-        tree.append("verdict", {
-            "toolUseId": tool_use_id, "decision": "allow" if decision.allow else "deny",
-            "wouldDeny": decision.would_deny, "mode": decision.mode, "reason": decision.reason,
-            "clause": decision.clause, "counterexample": decision.counterexample,
-            "envelopeId": decision.envelope_id, "planId": decision.plan_id,
-            "latencyMs": round(decision.elapsed_ms, 3),
-            "answeredBy": "operator" if decision.ask else None,
-        }, parent_id=call.id)
+        call = tree.append(
+            "tool_call",
+            {
+                "toolUseId": tool_use_id,
+                "name": decision.tool_name or payload.get("tool_name"),
+                "stepType": decision.step_type,
+                "detail": decision.detail,
+                "agentId": payload.get("agent_id"),
+                "agentType": payload.get("agent_type"),
+            },
+        )
+        tree.append(
+            "verdict",
+            {
+                "toolUseId": tool_use_id,
+                "decision": "allow" if decision.allow else "deny",
+                "wouldDeny": decision.would_deny,
+                "mode": decision.mode,
+                "reason": decision.reason,
+                "clause": decision.clause,
+                "counterexample": decision.counterexample,
+                "envelopeId": decision.envelope_id,
+                "planId": decision.plan_id,
+                "latencyMs": round(decision.elapsed_ms, 3),
+                "answeredBy": "operator" if decision.ask else None,
+            },
+            parent_id=call.id,
+        )
+        return tree
     except Exception:  # noqa: BLE001 — logging is best-effort by contract
-        pass
+        return None
 
 
 _SKIPPED_INLINE_BYTE_BUDGET = 1500  # keeps the WHOLE checkpoint line comfortably under PIPE_BUF
@@ -667,11 +1068,17 @@ def _maybe_checkpoint(root: Path, payload: dict[str, Any], *, session_id: str | 
         tree = SessionTree.open(root.parent / "sessions", sid)
         entry_id = tree.head() or "root"
         cp = snapshot(Path(cwd), session_id=sid, entry_id=entry_id)
-        tree.append("checkpoint", {
-            "ref": cp.ref, "commit": cp.commit, "coversCount": len(cp.covers),
-            "skipped": _cap_skipped_for_line(cp.skipped), "skippedCount": len(cp.skipped),
-            "promptUuid": prompt,
-        })
+        tree.append(
+            "checkpoint",
+            {
+                "ref": cp.ref,
+                "commit": cp.commit,
+                "coversCount": len(cp.covers),
+                "skipped": _cap_skipped_for_line(cp.skipped),
+                "skippedCount": len(cp.skipped),
+                "promptUuid": prompt,
+            },
+        )
         _mkdir_private(state.parent)
         state.write_text(json.dumps({"prompt": prompt}))
         try:
@@ -765,12 +1172,16 @@ def gate_and_contract(
                 envelope,
                 mode=mode,
                 verify_timeout_s=verify_timeout_s,
+                fmt=fmt,
+                root=root,
             )
             if ask and mode == "enforce" and decision.would_deny and isinstance(payload, dict):
-                decision = _maybe_ask(root, payload, decision, timeout_s=ask_timeout_s)
+                decision = _maybe_ask(
+                    root, payload, decision, timeout_s=ask_timeout_s, session_id=session_id, fmt=fmt
+                )
         join = join_keys(payload) if isinstance(payload, dict) else {}
         _log_shadow(root, session_id, decision, payload_session_id=payload_session, join=join)
-        _log_tree(root, payload, decision, session_id=session_id, fmt=fmt)
+        tree = _log_tree(root, payload, decision, session_id=session_id, fmt=fmt)
         if checkpoints and decision.allow and isinstance(payload, dict):
             _maybe_checkpoint(root, payload, session_id=session_id)
         if captures_root is not None and decision.allow and isinstance(payload, dict):
@@ -780,6 +1191,10 @@ def gate_and_contract(
                 record_call(payload, root=captures_root)
             except Exception:  # noqa: BLE001 — mirroring is best-effort
                 pass
+        try:
+            _maybe_report_state(root, payload, decision, session_id=session_id, fmt=fmt, tree=tree)
+        except Exception:  # noqa: BLE001 — reporting is best-effort by contract (B4, spec-01)
+            pass
         return _outcome(decision, fmt)
     except Exception as exc:  # noqa: BLE001 — mode-selected failure policy
         decision = _deny(mode, f"gate I/O error (denied fail-closed): {exc}", t0=t0)
@@ -866,6 +1281,7 @@ def replay_captures(
     envelope: Envelope,
     *,
     verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+    root: Path | None = None,
 ) -> dict[str, Any]:
     """Run a passively captured session back through the gate, offline.
 
@@ -888,6 +1304,7 @@ def replay_captures(
             envelope,
             mode="shadow",
             verify_timeout_s=verify_timeout_s,
+            root=root,
         )
         records.append(
             {
@@ -1045,11 +1462,27 @@ def _build_parser() -> "argparse.ArgumentParser":
     return parser
 
 
-def _escape_outcome(mode: str, exc: BaseException) -> "GateOutcome":
+def _fmt_from_argv(argv: list[str]) -> str:
+    """Best-effort --format recovery for the escape path.
+
+    Full argparse parsing has already failed by the time this runs, so
+    ``args.fmt`` was never bound. Defaults to "claude" when the flag is
+    absent or unreadable.
+    """
+    for i, a in enumerate(argv):
+        if a == "--format" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--format="):
+            return a.split("=", 1)[1]
+    return "claude"
+
+
+def _escape_outcome(mode: str, exc: BaseException, fmt: str = "claude") -> "GateOutcome":
     """Build the fail-closed GateOutcome for an escape from run_argv's try.
 
     enforce denies (exit 2); shadow has nothing to protect, so it allows —
-    the same posture main()'s own try/except already used.
+    the same posture main()'s own try/except already used. ``fmt`` shapes
+    only the shadow-mode stdout body. enforce's body is always empty.
     """
     t0 = time.monotonic()
     if mode == "enforce":
@@ -1060,7 +1493,7 @@ def _escape_outcome(mode: str, exc: BaseException) -> "GateOutcome":
             decision=_deny("enforce", f"gate escape: {exc}", t0=t0),
         )
     return GateOutcome(
-        stdout=stdout_for_format("claude", block=False),
+        stdout=stdout_for_format(fmt, block=False),
         stderr="",
         exit_code=0,
         decision=_deny("shadow", f"gate escape: {exc}", t0=t0),
@@ -1098,9 +1531,9 @@ def run_argv(argv: list[str], raw: bytes) -> GateOutcome:
     except SystemExit as exc:
         if exc.code == 0:  # --help, --version, etc.: a real, intentional exit
             raise
-        return _escape_outcome(mode, exc)
+        return _escape_outcome(mode, exc, fmt=_fmt_from_argv(argv))
     except BaseException as exc:  # noqa: BLE001 — deny-by-default on any escape
-        return _escape_outcome(mode, exc)
+        return _escape_outcome(mode, exc, fmt=_fmt_from_argv(argv))
 
 
 def main(argv: list[str] | None = None) -> int:

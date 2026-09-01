@@ -1,0 +1,32 @@
+[
+ {
+  "match": "claude code|codex",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "The two harnesses the gate already covers through hooks. Codex hooks fail open, so its gate runs soft."
+ },
+ {
+  "match": "^pi|pi pi",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "An id and parent-id transcript tree and an RPC mode. Plan 04."
+ },
+ {
+  "match": "opencode",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "An HTTP and SSE server the floor can drive headless. Plan 05."
+ },
+ {
+  "match": "hermes",
+  "verdict": "steal",
+  "label": "steal",
+  "note": "A pre-tool-call hook that actually blocks. Proof that fail-open is a choice."
+ },
+ {
+  "match": "aider|goose|openhands|cline",
+  "verdict": "reference",
+  "label": "reference",
+  "note": "Harnesses the gate does not cover yet. Each is a command and its args away."
+ }
+]

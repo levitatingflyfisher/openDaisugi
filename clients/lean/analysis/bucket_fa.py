@@ -20,6 +20,7 @@ cited.
 
 Usage: CUDA_VISIBLE_DEVICES="" .venv/bin/python3 clients/lean/analysis/bucket_fa.py
 """
+
 from __future__ import annotations
 
 import json
@@ -40,8 +41,13 @@ def is_supersequence(big: tuple, small: tuple) -> bool:
 def main() -> int:
     lines = [l for l in CORPUS.read_text(encoding="utf-8").splitlines() if l.strip()]
     cases = [json.loads(l) for l in lines]
-    proc = subprocess.run([str(CLIENT)], input="".join(l + "\n" for l in lines),
-                           capture_output=True, text=True, timeout=600)
+    proc = subprocess.run(
+        [str(CLIENT)],
+        input="".join(l + "\n" for l in lines),
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
     verdicts: dict[str, dict] = {}
     for line in proc.stdout.splitlines():
         if line.strip():
@@ -62,10 +68,16 @@ def main() -> int:
         exp_ok = bool(exp["ok"])
         got_ok = bool(got.get("ok"))
         if exp_ok and got_ok:
-            exp_t = (tuple(exp.get("heads", [])), tuple(sorted(exp.get("reads", []))),
-                      tuple(sorted(exp.get("writes", []))))
-            got_t = (tuple(got.get("heads", [])), tuple(sorted(got.get("reads", []))),
-                      tuple(sorted(got.get("writes", []))))
+            exp_t = (
+                tuple(exp.get("heads", [])),
+                tuple(sorted(exp.get("reads", []))),
+                tuple(sorted(exp.get("writes", []))),
+            )
+            got_t = (
+                tuple(got.get("heads", [])),
+                tuple(sorted(got.get("reads", []))),
+                tuple(sorted(got.get("writes", []))),
+            )
             if exp_t != got_t:
                 fa_cases.append((case, got))
                 if exp_t[1:] == got_t[1:] and is_supersequence(got_t[0], exp_t[0]):
