@@ -3,6 +3,7 @@ package delegate
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -77,5 +78,37 @@ func TestMeasureFile(t *testing.T) {
 	}
 	if _, why := MeasureFile("/tmp/a\x00b"); why != "the file cannot be opened" {
 		t.Fatalf("nul: %q", why)
+	}
+}
+
+func TestApplyDiffReadsLinesNotNumbers(t *testing.T) {
+	text := "def a():\n    return 1\n\n\ndef b():\n    return 2\n"
+	got := ApplyDiff("--- a/x.py\n+++ b/x.py\n@@ -90,2 +90,2 @@\n def b():\n-    return 2\n+    return 3\n", text)
+	if !got.Applies || got.Text != strings.Replace(text, "return 2", "return 3", 1) {
+		t.Fatalf("got %+v", got)
+	}
+	for diff, why := range map[string]string{
+		"":                       "the diff has no hunk",
+		"hello\n@@\n def a():\n": "line 1 before the first hunk is not a diff header",
+		"@@\n def c():\n":        "hunk 1 does not match the file",
+		"@@\n+new\n":             "hunk 1 has no context or removed lines, so it has no place in the file",
+		"@@\n-\n":                "hunk 1 matches 3 places in the file",
+		"@@\n def a():\n*bad\n":  "line 3 is not a context, removed or added line",
+	} {
+		if got := ApplyDiff(diff, text); got.Applies || got.Why != why {
+			t.Errorf("%q: got %+v", diff, got)
+		}
+	}
+}
+
+func TestFenceOutrunsTheBackticks(t *testing.T) {
+	for _, c := range [][3]string{
+		{"x\n", "", "```\nx\n```"},
+		{"x", "diff", "```diff\nx\n```"},
+		{"a ``` b\n", "", "````\na ``` b\n````"},
+	} {
+		if got := Fence(c[0], c[1]); got != c[2] {
+			t.Errorf("%q: got %q", c[0], got)
+		}
 	}
 }

@@ -135,6 +135,10 @@
   [
    "voice_server_url",
    "<class 'str'>"
+  ],
+  [
+   "agent_profiles",
+   "typing.Any"
   ]
  ],
  "floor": [

@@ -1,0 +1,84 @@
+# The foreman's spawn tool in chat mode (FM-R-6, FM-R-28, FM-R-30). A spawn
+# for a project with no envelope file is refused with one line that names
+# where to write it; a project that is not pinned or recent is refused with
+# the list. With the envelope, spawn returns "started <label>" at once and a
+# thread makes the project's root once (daisugi tree root) and runs daisugi
+# tree run in the project with the request on stdin. The fake daisugi
+# (cases/chat/fixtures/fake-daisugi.py) answers ran, refused or asked by the
+# brief, once the case has read the turn's reply and written the fake's go
+# file (FR-R-6), and each end is one work message. status lists the workers (each
+# date as DATE in the fake's reply), and zoom with a label reads the end of
+# the worker's own session file.
+#!config projects = ["{WORK}/proj"]
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_TURN_DIR={WORK}/turns
+#!env FAKE_TREE_LOG={WORK}/tree.log
+#!env FAKE_TREE_GO={WORK}/go
+{"id":"w1","write":"{WORK}/proj/README","text":"a project\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"floor.talk","text":"spawn proj ran"}
+{"id":"$id","ok":true,"result":{"message":"log/0"}}
+#!retry 20000
+{"id":"2","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/0"},{"id":"log/1","role":"agent","tool":"spawn"},{"id":"log/2","role":"agent","text":"tools zoom,date,spawn,status; spawn gave error=True: no envelope for the project proj. Write one at {HOME}/.config/coppice/envelopes/proj.json: {\"envelope\": {...}, \"tokens\": N, \"turns\": N}"}]}}
+{"id":"3","cmd":"floor.talk","text":"spawn elsewhere ran"}
+{"id":"$id","ok":true,"result":{"message":"log/3"}}
+#!retry 20000
+{"id":"4","cmd":"floor.chat","since":"log/3"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/4","tool":"spawn"},{"id":"log/5","text":"tools zoom,date,spawn,status; spawn gave error=True: \"elsewhere\" is not one of the operator's projects. They are: proj"}]}}
+{"id":"w2","write":"{HOME}/.config/coppice/envelopes/proj.json","text":"{\"envelope\": {\"tools\": [\"read\"], \"paths\": [\"<repo>\"]}, \"tokens\": 5000, \"turns\": 3}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"5","cmd":"floor.talk","text":"spawn proj ran"}
+{"id":"$id","ok":true,"result":{"message":"log/6"}}
+#!retry 20000
+{"id":"6","cmd":"floor.chat","since":"log/6"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/7","tool":"spawn"},{"id":"log/8","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-1"}]}}
+{"id":"w6","write":"{WORK}/go/ran","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"6b","cmd":"floor.chat","since":"log/6"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/7","tool":"spawn"},{"id":"log/8","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-1"},{"id":"log/9","role":"work","text":"[proj-1] report\nall done"}]}}
+{"id":"7","cmd":"floor.talk","text":"spawn proj refuse"}
+{"id":"$id","ok":true,"result":{"message":"log/10"}}
+#!retry 20000
+{"id":"8","cmd":"floor.chat","since":"log/10"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/11","tool":"spawn"},{"id":"log/12","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-2"}]}}
+{"id":"w8","write":"{WORK}/go/refuse","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"8b","cmd":"floor.chat","since":"log/10"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/11","tool":"spawn"},{"id":"log/12","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-2"},{"id":"log/13","role":"work","text":"[proj-2] refused: no-net; no-push"}]}}
+{"id":"9","cmd":"floor.talk","text":"spawn proj ask"}
+{"id":"$id","ok":true,"result":{"message":"log/14"}}
+#!retry 20000
+{"id":"10","cmd":"floor.chat","since":"log/14"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/15","tool":"spawn"},{"id":"log/16","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-3"}]}}
+{"id":"w10","write":"{WORK}/go/ask","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"10b","cmd":"floor.chat","since":"log/14"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/15","tool":"spawn"},{"id":"log/16","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-3"},{"id":"log/17","role":"work","text":"[proj-3] sent to the operator as ask a-1. needs a look"}]}}
+{"id":"11","cmd":"floor.talk","text":"status"}
+{"id":"$id","ok":true,"result":{"message":"log/18"}}
+#!retry 20000
+{"id":"12","cmd":"floor.chat","since":"log/18"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/19","tool":"status"},{"id":"log/20","text":"*"}]}}
+{"id":"13","cmd":"floor.talk","text":"label proj-1"}
+{"id":"$id","ok":true,"result":{"message":"log/21"}}
+#!retry 20000
+{"id":"14","cmd":"floor.chat","since":"log/21"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/22","tool":"zoom"},{"id":"log/23","text":"tools zoom,date,spawn,status; zoom gave error=False: {\"type\":\"session\",\"id\":\"s-ran\"}\n{\"type\":\"assistant\",\"text\":\"all done\"}"}]}}
+{"id":"15","cmd":"floor.talk","text":"label proj-9"}
+{"id":"$id","ok":true,"result":{"message":"log/24"}}
+#!retry 20000
+{"id":"16","cmd":"floor.chat","since":"log/24"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/25","tool":"zoom"},{"id":"log/26","text":"tools zoom,date,spawn,status; zoom gave error=True: no worker is named \"proj-9\". The workers are proj-1, proj-2, proj-3"}]}}
+{"id":"17","file":"{WORK}/tree.log"}
+{"id":"$id","ok":true,"result":{"text":"*","mode":"*"}}
+{"id":"18","file":"{DATA}/foreman/work/workers.json","count":"\"state\":\"ran\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"19","file":"{DATA}/foreman/work/workers.json","count":"\"next\":{\"proj\":3}"}
+{"id":"$id","ok":true,"result":{"count":1}}

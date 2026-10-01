@@ -40,13 +40,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from opendaisugi.datahome import data_home
+
 STATES = ("idle", "working", "blocked", "done", "unknown")
 SOURCES = ("operator", "gate", "headless", "process", "manifest")
 
 HERDR_PANE_ENV_CANDIDATES: tuple[str, ...] = ("HERDR_PANE_ID", "HERDR_PANE")
 
 _DETAIL_MAX = 200
-_DEFAULT_ROOT = Path.home() / ".opendaisugi" / "gate"  # mirrors opendaisugi.gate.DEFAULT_GATE_ROOT
+_DEFAULT_ROOT = data_home() / "gate"  # mirrors opendaisugi.gate.DEFAULT_GATE_ROOT
 _HERDR_STATE_MAP = {"working": "working", "blocked": "blocked", "idle": "idle", "done": "idle"}
 
 # coppice's own pane id shape (harness/coppice/internal/layout/layout.go: a

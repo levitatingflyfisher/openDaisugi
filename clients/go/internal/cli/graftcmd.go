@@ -153,7 +153,7 @@ func graftRefusal(r rivalHook) string {
 }
 
 func (e *Env) graftDataDir(p *parsed) string {
-	return gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	return gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 }
 
 func (e *Env) graftIDOK(p *parsed) (string, error) {
@@ -199,9 +199,10 @@ func (e *Env) graftInstall(args []string) error {
 	opts := []opt{
 		{names: []string{"--data-dir"}, value: true, metavar: "PATH", help: "Daisugi data directory."},
 		{names: []string{"--id"}, value: true, metavar: "TEXT", help: "The rule's id and file name."},
-		{names: []string{"--state"}, value: true, metavar: "TEXT", help: "audit (only records) or active."},
+		{names: []string{"--state"}, value: true, metavar: "TEXT", help: "audit (only records), trial (acts in the seeded graft arm of sessions) or active."},
 		{names: []string{"--file-lines-over"}, value: true, metavar: "INTEGER", help: "Redirect reads of more lines."},
 		{names: []string{"--allow-remote"}, help: "Let the router pick a remote worker the envelope grants."},
+		{names: []string{"--seed"}, value: true, metavar: "INTEGER", help: "With --state trial: the seed that splits sessions (default 0)."},
 	}
 	p, err := parseArgs(args, opts, 0)
 	if err != nil {
@@ -214,13 +215,26 @@ func (e *Env) graftInstall(args []string) error {
 	if err != nil {
 		return e.usage(cmd, err)
 	}
+	seed, err := clickInt(p, "--seed", 0)
+	if err != nil {
+		return e.usage(cmd, err)
+	}
+	hasSeed := p.has("--seed")
 	id, err := e.graftIDOK(p)
 	if err != nil {
 		return err
 	}
 	state := p.str("--state", "audit")
-	if state != "audit" && state != "active" {
-		e.echoErr("Error: --state must be audit or active.\n")
+	if state != "audit" && state != "trial" && state != "active" {
+		e.echoErr("Error: --state must be audit, trial or active.\n")
+		return exit(2)
+	}
+	if hasSeed && state != "trial" {
+		e.echoErr("Error: --seed needs --state trial.\n")
+		return exit(2)
+	}
+	if hasSeed && (seed < 0 || seed > 1<<53) {
+		e.echoErr("Error: --seed must be from 0 to 2**53.\n")
 		return exit(2)
 	}
 	if lines < 1 {
@@ -245,6 +259,11 @@ func (e *Env) graftInstall(args []string) error {
 		Set("match", pyjson.NewObject().Set("tool", "Read").Set("file_lines_over", pyjson.Int{Text: fmt.Sprint(lines)})).
 		Set("redirect", pyjson.NewObject().Set("tool", "delegate")).
 		Set("worker", pyjson.NewObject().Set("choose", "router").Set("allow_remote", p.flag("--allow-remote")))
+	shown := state
+	if state == "trial" {
+		rule.Set("trial", pyjson.NewObject().Set("seed", pyjson.Int{Text: fmt.Sprint(seed)}))
+		shown = fmt.Sprintf("trial, seed %d", seed)
+	}
 	if err := os.MkdirAll(dir, 0o777); err != nil {
 		return e.fail(cmd, err)
 	}
@@ -255,7 +274,7 @@ func (e *Env) graftInstall(args []string) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return e.fail(cmd, err)
 	}
-	e.echo("Installed graft rule %s (version %s, state %s, reads over %d lines): %s\n", id, version.String(), state, lines, path)
+	e.echo("Installed graft rule %s (version %s, state %s, reads over %d lines): %s\n", id, version.String(), shown, lines, path)
 	return nil
 }
 
@@ -300,7 +319,7 @@ func (e *Env) graftStatus(args []string) error {
 		}
 		outRules = append(outRules, pyjson.NewObject().Set("file", r.File).Set("id", r.ID).
 			Set("version", r.Version).Set("state", r.State).Set("file_lines_over", r.MinLines).
-			Set("allow_remote", r.AllowRemote).Set("in_force", r == acting).Set("why", why))
+			Set("allow_remote", r.AllowRemote).Set("trial_seed", trialSeed(r)).Set("in_force", r == acting).Set("why", why))
 	}
 	unused := []any{}
 	for _, b := range bad {
@@ -331,8 +350,12 @@ func (e *Env) graftStatus(args []string) error {
 				tail = "not in force: " + acting.File + " acts first"
 			}
 		}
+		state := r.State
+		if r.State == "trial" {
+			state += fmt.Sprintf(" (seed %d)", r.Seed)
+		}
 		text += fmt.Sprintf("  %s: %s v%s, state %s, reads over %s lines, %s\n", r.File, r.ID, r.Version.Text,
-			r.State, r.MinLines.Text, tail)
+			state, r.MinLines.Text, tail)
 	}
 	for _, b := range bad {
 		text += fmt.Sprintf("  %s: not used: %s\n", b.File, b.Why)
@@ -347,6 +370,15 @@ func (e *Env) graftStatus(args []string) error {
 	}
 	e.echo("%s", text)
 	return nil
+}
+
+// trialSeed is a status row's trial_seed: the seed of a trial rule, else
+// null.
+func trialSeed(r *delegate.Rule) any {
+	if r.State != "trial" {
+		return nil
+	}
+	return pyjson.Int{Text: fmt.Sprint(r.Seed)}
 }
 
 func (e *Env) graftRemove(args []string) error {

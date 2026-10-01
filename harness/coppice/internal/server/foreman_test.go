@@ -323,6 +323,26 @@ func TestAForemanThatKeepsDrawingWhileIdleStillGetsThePage(t *testing.T) {
 	res := talk(t, s, "WORD-TICK")
 	id, _ := res["pane"].(string)
 	t.Cleanup(func() { closePane(t, s, id) })
+	// The hook's idle comes after the process fact says working, as it
+	// does for a real harness. A gate idle that came first would be
+	// replaced by the tick's working a moment later, and that pane never
+	// reads idle again while it draws.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		lp, ok := s.Live(id)
+		if ok {
+			lp.procMu.Lock()
+			st := lp.procState
+			lp.procMu.Unlock()
+			if st == proto.StateWorking {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the process fact never said working")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	gateIdle(t, s, id)
 	time.Sleep(500 * time.Millisecond)
 	got := waitFile(t, in, "WORD-TICK", 10*time.Second)
@@ -595,4 +615,39 @@ func TestResumingAnOldForemanAfterANewOneStartsIsNotTheForeman(t *testing.T) {
 	if tracked != fresh {
 		t.Fatalf("tracked foreman = %q, want the new %q", tracked, fresh)
 	}
+}
+
+// A page's turn that starts and ends between two polls of the talk queue
+// still counts as the turn: the words go after it at once, not after
+// foremanWait (30 s). A fake foreman whose hook says working and then idle
+// within a millisecond did this in chat/read.jsonl, and the queue waited
+// the whole 30 s for a turn it had missed.
+func TestAPageTurnShorterThanAPollStillLetsTheWordsGo(t *testing.T) {
+	toolchain.RequireOrSkip(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	in := filepath.Join(t.TempDir(), "in")
+	script := `stty -echo; printf '\033[?2004h'; echo ready; ` +
+		`while IFS= read -r l; do printf '%s\n' "$l" >> '` + in + `'; done`
+	if err := config.Save(config.Config{Default: "fakeh", Harness: map[string]config.Harness{
+		"fakeh": {Command: "sh", Args: []string{"-c", script}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(t)
+	// The process source reads the pane as quiet from the start, so only
+	// the hook's events below make a turn.
+	s.clockSkew.Store(int64(2 * processQuiet))
+	res := talk(t, s, "WORD-QUICK")
+	id, _ := res["pane"].(string)
+	t.Cleanup(func() { closePane(t, s, id) })
+	gateIdle(t, s, id)
+	// The end of the paste comes with the page's Enter.
+	waitFile(t, in, "\x1b[201~", 10*time.Second)
+	for _, st := range []string{proto.StateWorking, proto.StateIdle} {
+		s.ApplyState(id, proto.PaneStateEvent{
+			V: 1, TS: nowSeconds(), SessionID: id, Harness: "fakeh", Pane: &id,
+			State: st, Source: proto.SrcGate,
+		})
+	}
+	waitFile(t, in, "WORD-QUICK", 10*time.Second)
 }

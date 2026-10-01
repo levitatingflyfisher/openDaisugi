@@ -41,7 +41,7 @@ impl Env {
             self.check_restate(&update)?;
             return Ok(Some(update));
         }
-        let cfg = self.load_cfg("install", &format!("{}/.opendaisugi/config.yaml", self.home))?;
+        let cfg = self.load_cfg("install", &super::gateroot::join(&self.data_home(), "config.yaml"))?;
         if efficient.is_empty() {
             if let Some(e) = &cfg.switchyard_efficient_model {
                 efficient = e.clone();
@@ -92,9 +92,9 @@ impl Env {
     /// cannot write back the way save_config would. A file pydantic rejects
     /// is left to fail where Python fails, after the harness writes.
     fn check_restate(&mut self, update: &Update) -> Result<(), Stop> {
-        let path = format!("{}/.opendaisugi/config.yaml", self.home);
+        let path = super::gateroot::join(&self.data_home(), "config.yaml");
         match config::dump(&path, &self.home, update) {
-            Ok(_) | Err(ConfigErr::Invalid) => Ok(()),
+            Ok(_) | Err(ConfigErr::Invalid | ConfigErr::Yaml(_)) => Ok(()),
             Err(e) => Err(self.refuse("install", &format!("config.yaml is not one this binary rewrites: {e}")).unwrap_err()),
         }
     }
@@ -102,10 +102,10 @@ impl Env {
     /// `cli._apply_router_update`: the router fields saved, and for
     /// switchyard the TOML file written beside them.
     pub(super) fn apply_router_update(&mut self, update: &Update) -> Result<(), Stop> {
-        let cfg_path = format!("{}/.opendaisugi/config.yaml", self.home);
+        let cfg_path = super::gateroot::join(&self.data_home(), "config.yaml");
         match config::save(&cfg_path, &self.home, update) {
             Ok(()) => {}
-            Err(SaveErr::Config(ConfigErr::Invalid)) => {
+            Err(SaveErr::Config(ConfigErr::Invalid | ConfigErr::Yaml(_))) => {
                 self.errf(&format!("daisugi install: pydantic_core._pydantic_core.ValidationError: {cfg_path} does not validate\n"));
                 return Err(Stop::Exit(1));
             }
@@ -130,7 +130,7 @@ impl Env {
             Ok(t) => t,
             Err(why) => return Err(self.fail("install", &why).unwrap_err()),
         };
-        let toml_path = match sy::write_config(&format!("{}/.opendaisugi", self.home), &text, "switchyard.toml") {
+        let toml_path = match sy::write_config(&self.data_home(), &text, "switchyard.toml") {
             Ok(p) => p,
             Err(e) => return Err(self.fail("install", &e.to_string()).unwrap_err()),
         };

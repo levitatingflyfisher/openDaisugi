@@ -1,0 +1,6 @@
+# A port that is not digits is no address: the browser speaks, as in Go.
+#!config [voice]
+#!config enabled = false
+#!config speak_url = "http://127.0.0.1:abc"
+{"id":"s0","cmd":"speech.status"}
+{"id":"$id","ok":true,"result":{"mode":"browser","line":"[voice] speak_url is not an http:// or https:// address with no user name, password or query, so the browser's own voice speaks. Fix speak_url in coppice.toml, then start the coppice server again."}}

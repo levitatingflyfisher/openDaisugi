@@ -101,7 +101,7 @@ func (s *Server) recordRecentDir(dir string) {
 	if len(out) > maxRecentDirs {
 		out = out[:maxRecentDirs]
 	}
-	_ = saveRecentDirs(s.cfg.DataDir, out)
+	s.writeData(func() { _ = saveRecentDirs(s.cfg.DataDir, out) })
 }
 
 // pinnedProjects reads coppice.toml's projects list. A missing or
@@ -120,6 +120,77 @@ func pinnedProjects() []string {
 // RegisterPaneCommands.
 func (s *Server) RegisterProjectCommands() {
 	_ = s.Handle("project.list", s.handleProjectList)
+	_ = s.Handle("project.remove", s.handleProjectRemove)
+}
+
+// handleProjectRemove takes one directory out of the project list: the
+// pinned list in coppice.toml, and the recent list. It is how a row marked
+// missing goes away. A path in neither list is refused by name. The role
+// check is in operatorVerbs: only the operator edits the list. A named
+// web token may not edit the config either, the same as floor.chat.
+func (s *Server) handleProjectRemove(c *Client, r *proto.Request) proto.Response {
+	if c.tokenNamed() {
+		return proto.ErrResp(r.ID, proto.ErrUnauthorized, ConfigRefusal)
+	}
+	path, _ := r.Str("path")
+	if path == "" {
+		return proto.ErrResp(r.ID, proto.ErrBadRequest,
+			"project.remove needs path. Pass the project directory.")
+	}
+	if !filepath.IsAbs(path) {
+		return proto.ErrResp(r.ID, proto.ErrBadRequest,
+			"project.remove needs an absolute path. Pass the full project directory.")
+	}
+	given := filepath.Clean(path)
+	resolved := given
+	if x, err := filepath.EvalSymlinks(given); err == nil {
+		resolved = x
+	}
+	// The raw string as sent matches too, so a hand-edited "/src/x/" pin
+	// can be removed.
+	same := func(p string) bool { return p == path || p == given || p == resolved }
+	found := false
+	cfg, ok, err := config.Load()
+	if err != nil {
+		return proto.ErrResp(r.ID, proto.ErrInternal,
+			"cannot read "+config.Path()+": "+err.Error())
+	}
+	if ok {
+		kept := make([]string, 0, len(cfg.Projects))
+		for _, p := range cfg.Projects {
+			if same(p) {
+				found = true
+				continue
+			}
+			kept = append(kept, p)
+		}
+		if found {
+			cfg.Projects = kept
+			if err := config.Save(cfg); err != nil {
+				return proto.ErrResp(r.ID, proto.ErrInternal,
+					"cannot write "+config.Path()+": "+err.Error())
+			}
+		}
+	}
+	s.recentMu.Lock()
+	dirs := loadRecentDirs(s.cfg.DataDir)
+	left := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if same(d) {
+			found = true
+			continue
+		}
+		left = append(left, d)
+	}
+	if len(left) != len(dirs) {
+		s.writeData(func() { _ = saveRecentDirs(s.cfg.DataDir, left) })
+	}
+	s.recentMu.Unlock()
+	if !found {
+		return proto.ErrResp(r.ID, proto.ErrBadRequest,
+			resolved+" is not a project. Run: coppice project list")
+	}
+	return proto.OKResp(r.ID, map[string]any{"removed": resolved})
 }
 
 // handleProjectList answers the operator's pinned projects first, then the
@@ -169,7 +240,8 @@ func recentNotPinned(dataDir string, pinned []string) []string {
 }
 
 func projectRow(path string, pinned bool) map[string]any {
-	return map[string]any{"path": path, "name": filepath.Base(path), "pinned": pinned}
+	return map[string]any{"path": path, "name": filepath.Base(path), "pinned": pinned,
+		"missing": !dirExists(path)}
 }
 
 // defaultCwd resolves the order a pane.create with no cwd and no cmd_argv
@@ -181,25 +253,27 @@ func projectRow(path string, pinned bool) map[string]any {
 // falls through to the next recent one before pinned projects are ever
 // considered; then the pinned projects, in file order, the first that
 // still exists; then this server's own start directory. It answers "" only
-// when nothing at all resolves.
-func (s *Server) defaultCwd(nearCwd string) string {
+// when nothing at all resolves. why names the step that chose the directory:
+// near, recent, pinned or start. The New reply carries it, so the screen can
+// say where an agent started and why.
+func (s *Server) defaultCwd(nearCwd string) (dir, why string) {
 	if nearCwd != "" && dirExists(nearCwd) && !s.isForemanDir(nearCwd) {
-		return nearCwd
+		return nearCwd, "near"
 	}
 	for _, d := range loadRecentDirs(s.cfg.DataDir) {
 		if dirExists(d) {
-			return d
+			return d, "recent"
 		}
 	}
 	for _, p := range pinnedProjects() {
 		if dirExists(p) {
-			return p
+			return p, "pinned"
 		}
 	}
 	if dirExists(s.cfg.StartDir) {
-		return s.cfg.StartDir
+		return s.cfg.StartDir, "start"
 	}
-	return ""
+	return "", ""
 }
 
 // dirExists is a plain, symlink-following directory check: empty, missing

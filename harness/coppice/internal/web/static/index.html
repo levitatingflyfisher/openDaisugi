@@ -14,15 +14,17 @@
 <header id="bar">
   <button id="back" class="ghost" hidden>Back</button>
   <h1 id="title">Floor</h1>
+  <button id="strip-dots" type="button" class="ghost" aria-label="Colony" title="Colony. One dot per agent. Click to open the colony." hidden></button>
   <ul id="facts" aria-label="Floor facts" hidden></ul>
   <span id="new-wrap">
     <button id="go-new" class="ghost" title="Start the default harness near the selected agent">New</button><button id="new-menu-btn" class="ghost" aria-haspopup="menu" aria-expanded="false" aria-label="New in a project" title="New in a project">&#9662;</button>
     <div id="new-menu" role="menu" aria-label="New in a project" hidden></div>
   </span>
+  <button id="go-machines" class="ghost" aria-controls="machines" title="The boxes on the tailnet, and the profiles that point at them">Machines</button>
   <button id="go-settings" class="ghost">Settings</button>
 </header>
 
-<div id="status-row"><p id="status" role="status"></p><span id="status-fix" hidden></span></div>
+<div id="status-row"><p id="status" role="status"></p><span id="status-fix" hidden></span><button id="speech-stop" type="button" class="ghost" hidden title="Stop reading aloud. A mic press stops it too.">Stop</button></div>
 
 <section id="screen-roster">
   <div id="rail">
@@ -33,8 +35,20 @@
     <p id="gate-hint" role="note" hidden></p>
     <ul id="needs" class="cards" aria-label="Needs you" hidden></ul>
     <section id="quiet" class="quiet" aria-live="polite" hidden></section>
-    <ul id="roster" class="cards" aria-label="Agents"></ul>
-    <p id="roster-empty" class="empty" hidden>No agents yet. Press New to start one.</p>
+    <button id="agents-fold" type="button" class="ghost" aria-controls="agents" aria-expanded="false">&#9656; No agents yet</button>
+    <section id="agents">
+      <ul id="roster" class="cards" aria-label="Agents"></ul>
+      <p id="roster-empty" class="empty" hidden>No agents yet. Press New to start one.</p>
+    </section>
+    <section id="chat" aria-label="Chat with the foreman">
+      <ol id="chat-list" aria-live="polite"></ol>
+    </section>
+    <form id="tell" autocomplete="off">
+      <label for="tell-text">Tell the foreman</label>
+      <input id="tell-text" type="text" enterkeyhint="send" placeholder="Tell the foreman…" title="A sentence goes to the foreman. To open or close an agent, start with a slash: /claude, /close NAME.">
+      <button id="tell-mic" type="button">Mic</button>
+      <button id="tell-send" type="submit">Send</button>
+    </form>
     <details id="recent" hidden>
       <summary>Recent <span id="recent-count" class="count">0</span></summary>
       <p class="recent-all">
@@ -44,12 +58,6 @@
       <p id="recent-confirm" class="confirm" hidden></p>
       <ul id="recent-list" aria-label="Ended agents"></ul>
     </details>
-    <form id="tell" autocomplete="off">
-      <label for="tell-text">Tell the floor</label>
-      <input id="tell-text" type="text" enterkeyhint="send" placeholder="claude, close docs, or a sentence for the foreman">
-      <button id="tell-mic" type="button">Mic</button>
-      <button id="tell-send" type="submit">Send</button>
-    </form>
     <ul id="view-list" class="views" aria-label="Views" hidden></ul>
     <footer id="rail-foot" hidden></footer>
     <iframe id="minimap-frame" title="Minimap" sandbox="allow-scripts" hidden></iframe>
@@ -66,6 +74,58 @@
     </header>
     <iframe id="view-frame" title="View" sandbox="allow-scripts"></iframe>
     <div id="journal" hidden></div>
+  </section>
+  <section id="screen-new" class="panel" aria-label="New agent" hidden>
+    <header class="panel-head">
+      <strong>New agent</strong>
+      <button type="button" id="new-close" class="ghost panel-close" aria-label="Close" title="Close. Esc closes it too.">&#215;</button>
+    </header>
+    <label for="new-cwd">Directory</label>
+    <input id="new-cwd" list="recent-cwds" autocomplete="off">
+    <datalist id="recent-cwds"></datalist>
+    <label for="new-label">Label</label>
+    <input id="new-label" autocomplete="off">
+    <label for="new-kind">Kind</label>
+    <select id="new-kind">
+      <option value="pty">pty, the harness UI</option>
+      <option value="headless">headless, supervised</option>
+    </select>
+    <label id="new-command-label" for="new-command">Command</label>
+    <input id="new-command" value="claude" autocomplete="off" placeholder="One word per argument, for example claude --resume. No quoting.">
+    <label id="new-harness-label" for="new-harness">Harness</label>
+    <select id="new-harness">
+      <option value="claude">claude</option>
+      <option value="codex">codex</option>
+      <option value="sprig">sprig</option>
+    </select>
+    <button id="create">Create</button>
+  </section>
+
+  <section id="screen-settings" class="panel" aria-label="Settings" hidden>
+    <header class="panel-head">
+      <strong>Settings</strong>
+      <button type="button" id="settings-close" class="ghost panel-close" aria-label="Close" title="Close. Esc closes it too.">&#215;</button>
+    </header>
+    <p class="muted" id="set-origin"></p>
+    <label for="set-token">Token</label>
+    <input id="set-token" autocomplete="off">
+    <button id="save-settings">Save</button>
+    <button id="forget-token" class="ghost">Forget token</button>
+    <button id="test-push">Test push</button>
+    <p class="muted">Push goes through your own ntfy. Web push is not built.</p>
+    <label class="check" for="set-read-aloud"><input type="checkbox" id="set-read-aloud"> Read replies aloud</label>
+    <p class="muted" id="set-speech">A reply to a message you spoke is read aloud. Turn this on to read every reply. This choice stays in this browser. Playback may stop when a phone locks its screen.</p>
+  </section>
+
+  <section id="machines" class="panel" aria-label="Machines" hidden>
+    <header class="panel-head">
+      <strong>Machines</strong>
+      <button type="button" id="machines-close" class="ghost panel-close" aria-label="Close" title="Close. Esc closes it too.">&#215;</button>
+    </header>
+    <p id="machines-line" role="status" class="muted" hidden></p>
+    <p id="machines-note" class="muted" hidden></p>
+    <ul id="machines-list" class="machines" aria-label="Machines"></ul>
+    <p class="muted machines-foot">Read only. Add a machine and set who may reach it in the Tailscale console.</p>
   </section>
 </section>
 
@@ -94,6 +154,13 @@
     <button id="trust-yes" class="allow" type="button" title="Choose &quot;Yes, I trust this folder&quot; on Claude's screen.">Trust this folder</button>
     <button id="trust-no" class="deny" type="button" title="Press Esc on Claude's screen. This ends Claude.">Not now</button>
   </div>
+  <div id="view-bar" hidden>
+    <span id="view-line" role="status"></span>
+    <button id="view-toggle" type="button" class="ghost" hidden></button>
+  </div>
+  <div id="reading" hidden>
+    <ol id="reading-list" aria-live="polite" aria-label="Messages from the transcript"></ol>
+  </div>
   <div id="canvas-wrap">
     <canvas id="grid" width="360" height="480"></canvas>
     <pre id="grid-text" class="visually-hidden" aria-live="off"></pre>
@@ -106,38 +173,6 @@
     <button id="record" type="button" title="Speak. The words land in this field.">Mic</button>
     <button id="send-enter" type="button" title="Type the text, if any, and press Enter">Enter</button>
   </form>
-</section>
-
-<section id="screen-new" hidden>
-  <label for="new-cwd">Directory</label>
-  <input id="new-cwd" list="recent-cwds" autocomplete="off">
-  <datalist id="recent-cwds"></datalist>
-  <label for="new-label">Label</label>
-  <input id="new-label" autocomplete="off">
-  <label for="new-kind">Kind</label>
-  <select id="new-kind">
-    <option value="pty">pty, the harness UI</option>
-    <option value="headless">headless, supervised</option>
-  </select>
-  <label id="new-command-label" for="new-command">Command</label>
-  <input id="new-command" value="claude" autocomplete="off" placeholder="One word per argument, for example claude --resume. No quoting.">
-  <label id="new-harness-label" for="new-harness">Harness</label>
-  <select id="new-harness">
-    <option value="claude">claude</option>
-    <option value="codex">codex</option>
-    <option value="sprig">sprig</option>
-  </select>
-  <button id="create">Create</button>
-</section>
-
-<section id="screen-settings" hidden>
-  <p class="muted" id="set-origin"></p>
-  <label for="set-token">Token</label>
-  <input id="set-token" autocomplete="off">
-  <button id="save-settings">Save</button>
-  <button id="forget-token" class="ghost">Forget token</button>
-  <button id="test-push">Test push</button>
-  <p class="muted">Push goes through your own ntfy. Web push is not built.</p>
 </section>
 
 </body>

@@ -1,15 +1,29 @@
 import { applyFrame, gridToText, drawGrid, measureAdvance } from './grid.js';
 import { stateChip } from './chips.js';
 import { mountRecord } from './record.js';
-import { cellFor, scrollFollow } from './windows.js';
-import { segments, gateMark, light, details, stackBarEl, gateMarkEls, detailsBox } from './stackbar.js';
+import { cellFor, scrollFollow, fitFor } from './windows.js';
+import { READING_FIRST } from './dock.js';
+import { mountChat, CHAT_LIMIT, READING_WHO } from './chat.js';
+import { createQueue } from './attachq.js';
+import { segments, gateMark, light, details, stackBarEl, gateMarkEls, detailsBox, modeDone, modelDone, routerDone } from './stackbar.js';
 
 // One agent on its own: on a phone, the sheet that slides in over the
-// overview; on a wider page, the screen a link to a pane opens. It
-// watches and never resizes, so attach carries no size, because the same
-// pane is open in the operator's terminal and a resize from here would
-// change what they are reading. The text is drawn at a readable cell, at
-// least 7 px wide, and a terminal wider than the sheet scrolls sideways.
+// overview; on a wider page, the screen a link to a pane opens.
+//
+// On a phone, an agent whose transcript the server reads opens on the
+// reading view: the conversation as messages, wrapped to the phone, with
+// `From the transcript.` and a Screen button above it (READING_FIRST in
+// dock.js turns that off). Screen shows the live canvas. The reading view
+// does not attach, so no frames stream to a phone that does not draw them;
+// the compose bar, the ask bar and the trust bar work the same over it.
+//
+// The phone asks the server to fit the agent to the sheet (pane.attach
+// with fit). The server resizes only when no other client is attached,
+// because the same pane may be open in the operator's terminal, and puts
+// the old size back when the sheet detaches. The reply's fitted says which
+// happened. A wider page never fits: it watches at the size the agent has.
+// The text is drawn at a readable cell, at least 7 px wide, and a terminal
+// wider than the body scrolls sideways.
 //
 // The bottom bar types to the agent. The keyboard's own Enter types the
 // text into the agent's input and does not press Enter, so the owner can
@@ -30,8 +44,50 @@ export const KEYS = [
   { key: 'enter', label: 'Enter', title: 'Enter' },
 ];
 
-export function attachCommand(pane) {
-  return { cmd: 'pane.attach', pane: pane.id };
+// attachCommand attaches pane. fit, when given, is {cols, rows}: the size
+// the phone asks the agent to take while no one else is attached.
+export function attachCommand(pane, fit) {
+  const req = { cmd: 'pane.attach', pane: pane.id };
+  if (fit) req.fit = { cols: fit.cols, rows: fit.rows };
+  return req;
+}
+
+// messagesCommand reads the transcript of pane, to learn whether it has
+// one and to fill the reading view.
+export function messagesCommand(pane) {
+  return { cmd: 'pane.messages', pane: pane.id, limit: CHAT_LIMIT };
+}
+
+// READING_LINE and SCREEN_LINE head the reading view and the screen of an
+// agent with a transcript. FIT_ALONE and FIT_SHARED say what pane.attach's
+// fitted answered.
+export const READING_LINE = 'From the transcript.';
+export const SCREEN_LINE = 'Live screen.';
+export const FIT_ALONE = 'Sized to this phone.';
+export const FIT_SHARED = 'Not resized: open elsewhere, or sized by hand.';
+
+// fitLine is the sheet line for a reply's fitted: true is alone, false is
+// shared, and anything else, a reply with no fit, says nothing.
+export function fitLine(fitted) {
+  if (fitted === true) return FIT_ALONE;
+  if (fitted === false) return FIT_SHARED;
+  return '';
+}
+
+// barFor is the line above the agent and the button beside it. In the
+// reading view it is the transcript line and Screen. On the screen it is
+// the fit line, or the screen line for an agent with a transcript, and
+// Messages for that agent. Before the view is known it is empty.
+export function barFor({ view, transcript, fitted }) {
+  if (view === 'reading') return { line: READING_LINE, toggle: 'Screen' };
+  if (view !== 'screen') return { line: '', toggle: '' };
+  return { line: fitLine(fitted) || (transcript ? SCREEN_LINE : ''), toggle: transcript ? 'Messages' : '' };
+}
+
+// viewFor is the view a sheet opens on: the reading view for an agent with
+// a transcript on a phone when readingFirst is on, else the screen.
+export function viewFor({ phone, readingFirst, transcript }) {
+  return phone && readingFirst && transcript ? 'reading' : 'screen';
 }
 
 // typeCommand types text into the agent's input with no Enter.
@@ -308,6 +364,15 @@ let follow = {};      // autoTop and lastX from the last cursor follow
 let seen = false;     // a pane list has held the open pane
 let openSeg = '';     // the stack segment whose details show
 let headless = false; // the open agent runs headless and takes whole messages
+let view = '';        // '' before a sheet opens, then pending, reading or screen
+let transcript = false; // the server reads a transcript for the open agent
+let attached = false; // this page holds an attach on the open agent
+let fitted = null;    // the last attach's fitted: true, false, or null with no fit
+let fitSent = null;   // the width the last fit was worked out at
+let attachQ = null;   // the attach and detach queue of the current socket
+let queueOn = null;   // the socket it sends on: a new socket holds no old attach
+let reading = null;   // the reading view's message list
+let readingOn = null; // the list element reading draws into
 // outbox chains every send, so the agent gets text and keys in the order
 // they were typed even though the server answers each request on its own.
 let outbox = Promise.resolve();
@@ -404,6 +469,45 @@ async function answerTrust(yes) {
 // lastPart is the last part of a directory.
 const lastPart = (cwd) => String(cwd || '').split('/').filter(Boolean).pop() || '';
 
+// modeAsking is true while the daisugi details ask before Watch only.
+let modeAsking = false;
+
+// setMode sends agent.set_mode for the pane on screen and says the new
+// mode on the status line.
+async function setMode(row, mode) {
+  const pane = row && row.id;
+  if (!pane) return;
+  try {
+    await window.coppice.rpc('agent.set_mode', { pane, mode });
+    say(modeDone(row.label || pane, mode));
+  } catch (e) {
+    say(e);
+  }
+}
+
+// swapAsking is the route the router details ask about: '' for none.
+let swapAsking = '';
+
+// swap sends the model or router swap for the pane on screen and says
+// when it lands. A router swap resumes the agent as a new pane, so the
+// page follows the floor's own events to it.
+async function swap(row, kind, value) {
+  const pane = row && row.id;
+  if (!pane) return;
+  const label = row.label || pane;
+  try {
+    if (kind === 'model') {
+      const res = await window.coppice.rpc('agent.set_model', { pane, model: value });
+      say(modelDone(label, value, res && res.when));
+    } else {
+      await window.coppice.rpc('agent.set_router', { pane, router: value });
+      say(routerDone(label, value));
+    }
+  } catch (e) {
+    say(e);
+  }
+}
+
 // paintStack draws the stack bar, the gate mark and an open segment's
 // details from the pane's row, the way a window's header does.
 function paintStack(row) {
@@ -416,6 +520,8 @@ function paintStack(row) {
   if (!segs.some((s) => s.key === openSeg)) openSeg = '';
   const toggle = (key) => {
     openSeg = !key || openSeg === key ? '' : key;
+    modeAsking = false;
+    swapAsking = '';
     paintStack(row);
   };
   const parts = [];
@@ -435,7 +541,21 @@ function paintStack(row) {
   gate.replaceChildren(...(mark ? gateMarkEls(mark, () => toggle('daisugi')) : []));
   const pane = current ? current.id : '';
   const journal = typeof window.coppice.journal === 'function' && pane ? () => window.coppice.journal(pane) : null;
-  box.replaceChildren(...(openSeg ? [detailsBox(details(openSeg, row, facts, Date.now() / 1000), { onJournal: journal, onClose: () => toggle(openSeg) })] : []));
+  const mode = {
+    onSwap: (kind, value) => swap(row, kind, value),
+    swapAsking,
+    onSwapAsk: (v) => {
+      swapAsking = v;
+      paintStack(row);
+    },
+    onMode: (m) => setMode(row, m),
+    asking: modeAsking,
+    onAsk: (on) => {
+      modeAsking = on;
+      paintStack(row);
+    },
+  };
+  box.replaceChildren(...(openSeg ? [detailsBox(details(openSeg, row, facts, Date.now() / 1000), { onJournal: journal, onClose: () => toggle(openSeg), ...mode })] : []));
   box.hidden = !openSeg;
 }
 
@@ -581,23 +701,59 @@ async function typeText(enter) {
   try {
     const res = await queue(req);
     const line = queuedLine(res);
+    // The status line names where the words went, so a line about the
+    // chat never sits over words typed to this agent.
     if (line) say(line);
+    else say('Sent to ' + (currentName || row.id) + '.');
   } catch (e) {
     if (!box.value) box.value = text;
     say(isQuestionRefusal(e) ? questionMessage(e.message, current && current.id) : e);
   }
 }
 
+// forget clears what the open agent's view held.
+function forget() {
+  view = '';
+  transcript = false;
+  attached = false;
+  fitted = null;
+  fitSent = null;
+  if (reading) reading.reset();
+}
+
+// queueFor is the attach and detach queue of the current socket. Every
+// pane.attach and pane.detach the sheet sends goes through it, so the
+// requests for one agent run in order. See attachq.js.
+function queueFor() {
+  const ws = window.coppice.state.ws;
+  if (!attachQ || queueOn !== ws) {
+    queueOn = ws;
+    // The queue sends only while this socket is the page's.
+    attachQ = createQueue((cmd, fields) => window.coppice.rpc(cmd, fields), () => window.coppice.state.ws === ws, () => Boolean(ws) && ws.readyState === WebSocket.OPEN);
+  }
+  return attachQ;
+}
+
+// runOnPane puts fn on the chain of an agent, behind the attaches and
+// detaches ahead of it. The floor's windows send theirs this way, so the
+// floor and the sheet never race for one agent.
+export function runOnPane(pane, fn) {
+  return queueFor().run(pane, fn);
+}
+
 // close detaches whatever pane is open. Leaving a pane attached while the
 // operator is on another screen keeps frames streaming to a phone that is
 // not showing them, which costs the battery the whole feature exists to
-// save. It returns a promise that settles once the detach is answered.
+// save. It also puts back the size a fit changed. It returns a promise that
+// settles once the queue has answered every request for the agent. The
+// reading view holds no attach, so there is nothing to detach for it.
 export function close() {
   if (!current) return Promise.resolve();
-  const id = current.id;
+  const sheet = current;
   current = null;
   grid = null;
-  return window.coppice.rpc('pane.detach', { pane: id }).catch(() => {});
+  forget();
+  return queueFor().leave(sheet.id);
 }
 
 // detached clears current and the grid the way close does, but sends
@@ -611,17 +767,159 @@ export function close() {
 export function detached() {
   current = null;
   grid = null;
+  attachQ = null;
+  forget();
 }
 
 // release hands the open pane back to the floor. It clears current with
 // no detach and returns the pane id and its grid, or null when no pane is
 // open. The floor adopts the attach and the server never sees a change.
+//
+// A reading view holds no attach, so there is nothing to hand over: it
+// returns null, and the floor adopts nothing.
 export function release() {
   if (!current) return null;
-  const handed = { id: current.id, grid };
+  const sheet = current;
+  const handed = attached ? { id: sheet.id, grid } : null;
   current = null;
   grid = null;
+  forget();
+  // The floor owns the attach from here. The queue drops it, so a request
+  // still on its way never detaches what the floor holds. A fit the sheet
+  // asked for stays with this connection until the floor detaches.
+  if (handed) queueFor().handOver(sheet.id);
   return handed;
+}
+
+const byId = (id) => (typeof document !== 'undefined' ? document.getElementById(id) : null);
+
+// onPhone is true while the page is the phone layout.
+const onPhone = () => typeof window.coppice.phone === 'function' && Boolean(window.coppice.phone());
+
+// paintBar draws the line above the agent and the button beside it.
+function paintBar() {
+  const bar = byId('view-bar');
+  if (!bar) return;
+  const b = barFor({ view, transcript, fitted });
+  const line = byId('view-line');
+  const toggle = byId('view-toggle');
+  if (line) line.textContent = b.line;
+  if (toggle) {
+    toggle.textContent = b.toggle;
+    toggle.hidden = !b.toggle;
+  }
+  bar.hidden = !b.line && !b.toggle;
+}
+
+// setView shows the reading view, the live screen, or neither while the
+// page learns whether the agent has a transcript.
+function setView(next) {
+  view = next;
+  const wrap = byId('canvas-wrap');
+  const list = byId('reading');
+  if (wrap) wrap.hidden = next !== 'screen';
+  if (list) list.hidden = next !== 'reading';
+  paintBar();
+}
+
+// readingList is the reading view's message list: the chat's list, fed by
+// pane.messages for the open agent. Its lines name the agent, carry no sent
+// or read marks and make no chips.
+function readingList() {
+  const list = byId('reading-list');
+  if (!reading || readingOn !== list) {
+    readingOn = list;
+    reading = mountChat({
+      list,
+      rpc: (cmd, fields) => window.coppice.rpc(cmd, fields),
+      panes: () => [],
+      open: () => {},
+      cmd: 'pane.messages',
+      fields: () => ({ pane: current ? current.id : '' }),
+      match: (m) => Boolean(current) && m.pane === current.id,
+      on: () => view === 'reading',
+      who: READING_WHO,
+      marks: false,
+      chips: false,
+      empty: 'No messages yet.',
+      scroller: () => byId('reading'),
+    });
+  }
+  return reading;
+}
+
+// PROBE_MS is how long a sheet waits to learn whether the agent has a
+// transcript before it shows the screen.
+const PROBE_MS = 3000;
+
+// probe asks for the agent's transcript. It resolves to the reply, or to
+// null when the agent has none, the server refuses, or no answer comes.
+function probe(paneId) {
+  const { cmd, ...fields } = messagesCommand({ id: paneId });
+  const asked = window.coppice.rpc(cmd, fields).catch(() => null);
+  const late = new Promise((resolve) => { setTimeout(() => resolve(null), PROBE_MS); });
+  return Promise.race([asked, late]);
+}
+
+// fitNow works out the size to ask for from the body's size now, or null on
+// a page that is not the phone or has no size yet.
+function fitNow() {
+  if (!onPhone()) return null;
+  const wrap = byId('canvas-wrap');
+  const canvas = byId('grid');
+  if (!wrap || !canvas || typeof canvas.getContext !== 'function') return null;
+  if (!advance) advance = measureAdvance(canvas.getContext('2d'));
+  const width = Number(wrap.clientWidth) || 0;
+  const size = fitFor(width, Number(wrap.clientHeight) || 0, advance, dpr());
+  fitSent = size ? width : null;
+  return size;
+}
+
+// showScreen shows the live screen and attaches to it, asking the server
+// to fit the agent to the sheet on a phone. seed is the grid a floor window
+// held for the pane. A failed attach does not latch current: the socket may
+// still be connecting, and the next coppice:open is the retry. A pane that
+// ended is gone, and the page leaves it.
+async function showScreen(paneId) {
+  const mine = current;
+  setView('screen');
+  repaint();
+  attached = true;
+  queueFor().want(paneId, fitNow(), (res, fit) => {
+    if (current !== mine) return;
+    fitted = fit ? Boolean(res && res.fitted) : null;
+    paintBar();
+  }, (e) => {
+    // A failed attach does not latch current: the socket may still be
+    // connecting, and the next coppice:open is the retry.
+    if (current === mine) {
+      current = null;
+      attached = false;
+    }
+    if (e && (e.code === 'pane_closed' || e.code === 'no_such_pane')) gone(paneId);
+    else say(e);
+  });
+}
+
+// showReading shows the reading view with the messages the probe read.
+function showReading(res) {
+  transcript = true;
+  setView('reading');
+  readingList().reset();
+  readingList().seed(res && res.messages);
+}
+
+// toReading leaves the screen for the reading view. The detach puts back
+// the size a fit changed, and the frames stop.
+function toReading() {
+  if (!current) return;
+  const sheet = current;
+  attached = false;
+  fitted = null;
+  grid = null;
+  setView('reading');
+  readingList().read();
+  queueFor().leave(sheet.id);
 }
 
 // open shows one pane. seed is the grid the floor's tile held for this
@@ -629,14 +927,20 @@ export function release() {
 // and later delta frames apply to it. The attach is still sent, and the
 // server answers already-attached with the pump still running, so no
 // detach and attach pair for one pane ever meets on the wire.
+//
+// On a phone it first asks for the agent's transcript. An agent that has
+// one opens on the reading view, with no attach. Any other opens on the
+// screen.
 export async function open(paneId, seed) {
   if (current && current.id === paneId) return;   // a repeat route event must not blank the grid
   if (current) close();
   current = { id: paneId };
+  const mine = current;
   marked = '';
   grid = seed || null;
   follow = {};
   openSeg = '';
+  forget();
   // Another agent's sends never wait on this one's.
   outbox = Promise.resolve();
   const wrap = document.getElementById('canvas-wrap');
@@ -647,25 +951,50 @@ export async function open(paneId, seed) {
   const info = (window.coppice.state.panes || []).find((p) => p.id === paneId);
   seen = Boolean(info);
   paintPane(paneId, info);
-  repaint();
-  const req = attachCommand(current);
-  const { cmd, ...fields } = req;
-  try {
-    await window.coppice.rpc(cmd, fields);
-  } catch (e) {
-    // A failed attach must not latch current: the socket may still be
-    // connecting, and the next coppice:open is the retry. A pane that
-    // ended is gone, and the page leaves it.
-    if (current && current.id === paneId) current = null;
-    if (e && (e.code === 'pane_closed' || e.code === 'no_such_pane')) gone(paneId);
-    else say(e);
+  if (onPhone() && !seed) {
+    if (READING_FIRST) {
+      setView('pending');
+      const res = await probe(paneId);
+      if (current !== mine) return;
+      if (viewFor({ phone: true, readingFirst: true, transcript: Boolean(res) }) === 'reading') {
+        showReading(res);
+        return;
+      }
+    } else {
+      // The screen shows at once. The probe only decides whether it offers
+      // the reading view.
+      probe(paneId).then((res) => {
+        if (current !== mine || !res) return;
+        transcript = true;
+        paintBar();
+      });
+    }
   }
+  showScreen(paneId);
+}
+
+// refit asks the server again to fit the agent to the sheet, and redraws the
+// line from the answer. It runs when the width changed and when someone else
+// attaches or leaves, since the server never fits an agent that others hold
+// and the sheet cannot know that without asking. It does nothing off the
+// phone's screen view. The queue runs it after any request ahead of it.
+function refit() {
+  if (!current || view !== 'screen' || !attached || fitSent === null) return;
+  const fit = fitNow();
+  if (fit) queueFor().refit(current.id, fit);
 }
 
 export function onEvent(msg) {
+  // Someone else opened or left this agent: the fit may have changed hands.
+  if (msg.event === 'presence' && current && msg.pane === current.id) refit();
   if (msg.event === 'frame' && current && msg.pane === current.id) {
     grid = applyFrame(grid, msg);
     schedule();
+    return;
+  }
+  // The agent's transcript grew: the reading view reads it again.
+  if (msg.event === 'messages' && current && msg.pane === current.id && view === 'reading') {
+    readingList().onEvent(msg);
     return;
   }
   if (msg.event === 'state') {
@@ -735,8 +1064,26 @@ export function mountPane() {
     toggle.setAttribute('aria-expanded', drawer.hidden ? 'false' : 'true');
   });
 
-  // A new width, from a turned phone, draws the grid at a new cell.
-  window.addEventListener('resize', () => { if (current) repaint(); });
+  // Screen and Messages switch between the two views of an agent that has
+  // a transcript.
+  const toggle2 = document.getElementById('view-toggle');
+  if (toggle2) {
+    toggle2.addEventListener('click', () => {
+      if (!current) return;
+      if (view === 'reading') showScreen(current.id);
+      else if (view === 'screen') toReading();
+    });
+  }
+
+  // A new width, from a turned phone, draws the grid at a new cell, and on
+  // the phone asks the agent to fit the new width.
+  window.addEventListener('resize', () => {
+    if (!current) return;
+    repaint();
+    const wrap = document.getElementById('canvas-wrap');
+    if (!wrap || (Number(wrap.clientWidth) || 0) === fitSent) return;
+    refit();
+  });
 
   // The route change is app.js's to drive: it decides whether the floor
   // hands this pane over or the pane screen attaches on its own.

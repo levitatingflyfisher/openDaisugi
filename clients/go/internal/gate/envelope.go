@@ -181,3 +181,18 @@ func (e *envelope) maxTimeIn() bool {
 	}
 	return n.Sign() > 0 && n.Cmp(big.NewInt(3600)) <= 0
 }
+
+// deadline is Envelope.deadline: the validated float, or false when the
+// envelope has none.
+func (e *envelope) deadline() (float64, bool) {
+	if e == nil || e.Obj == nil {
+		return 0, false
+	}
+	switch f := e.Obj.Value("deadline").(type) {
+	case float64:
+		return f, true
+	case pyjson.Float:
+		return float64(f), true
+	}
+	return 0, false
+}

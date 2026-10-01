@@ -2,9 +2,9 @@
 // is. A stale frame is worse than an empty one, and a cached ask is a lie
 // about what the gate is holding right now.
 export const SHELL = [
-  '/', '/app.css', '/app.js', '/grid.js', '/chips.js', '/roster.js', '/pane.js',
+  '/', '/app.css', '/app.js', '/grid.js', '/chips.js', '/roster.js', '/pane.js', '/attachq.js',
   '/tiles.js', '/floor.js', '/windows.js', '/keys.js', '/rail.js', '/dock.js',
-  '/newpane.js', '/settings.js', '/views.js', '/watch.js', '/record.js', '/messages.js', '/stackbar.js', '/overlay.js', '/sw-policy.js', '/manifest.webmanifest',
+  '/newpane.js', '/chat.js', '/settings.js', '/views.js', '/watch.js', '/record.js', '/messages.js', '/stackbar.js', '/overlay.js', '/machines.js', '/speech.js', '/sw-policy.js', '/manifest.webmanifest',
   '/icons/icon-192.png', '/icons/icon-512.png',
 ];
 

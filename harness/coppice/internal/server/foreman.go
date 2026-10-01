@@ -42,6 +42,9 @@ type talkQueue struct {
 	paged bool
 	// lines waits to be typed, oldest first.
 	lines []string
+	// reports are workers' lines for the pane foreman. They wait behind
+	// the owner's words and have a small queue of their own.
+	reports []string
 	// running is true while the goroutine that types runs.
 	running bool
 	// foreman is the id of the pane the server started as the floor's
@@ -89,6 +92,11 @@ func ForemanDir() string {
 
 // foremanDir is this server's foreman directory: Config.ForemanDir, else
 // ForemanDir.
+// turnDir is where chat-mode turns work: a dir of their own under the log
+// dir, so each data dir has its own and a second server never touches the
+// files of a turn that runs in another. The pane foreman keeps foremanDir.
+func (s *Server) turnDir() string { return filepath.Join(s.foremanLogDir(), "turns") }
+
 func (s *Server) foremanDir() string {
 	if s.cfg.ForemanDir != "" {
 		return s.cfg.ForemanDir
@@ -136,11 +144,13 @@ func (s *Server) setForeman(id string) {
 	b, _ := json.Marshal(map[string]string{"pane": id})
 	path := filepath.Join(s.cfg.DataDir, foremanFile)
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err == nil {
-		err = os.Rename(tmp, path)
-		if err == nil {
-			return
+	var err error
+	if !s.writeData(func() {
+		if err = os.WriteFile(tmp, b, 0o600); err == nil {
+			err = os.Rename(tmp, path)
 		}
+	}) || err == nil {
+		return
 	}
 	s.Note("cannot write "+path+". The foreman is known until the server stops.", id)
 }
@@ -163,6 +173,7 @@ func (s *Server) followForemanLocked(old, newID string, resumed bool) {
 	}
 	s.setForeman(newID)
 	s.talk.pane, s.talk.paged = newID, resumed
+	s.openStandingNote(newID)
 	if !resumed {
 		s.runTalkLocked()
 	}
@@ -211,6 +222,9 @@ func (s *Server) handleFloorTalk(_ *Client, r *proto.Request) proto.Response {
 	if s.isClosed() {
 		return proto.ErrResp(r.ID, proto.ErrServerClosed, "this server has closed. It cannot take words for the foreman.")
 	}
+	if s.chatMode() {
+		return s.talkChat(r, strings.TrimSpace(raw))
+	}
 	s.talkMu.Lock()
 	defer s.talkMu.Unlock()
 	if len(s.talk.lines) >= maxTalkQueue {
@@ -236,10 +250,14 @@ func (s *Server) handleFloorTalk(_ *Client, r *proto.Request) proto.Response {
 			// got its page then.
 			s.talk.pane, s.talk.paged = id, true
 		}
+		s.openStandingNote(id)
 		if ev, ok := s.effectiveCurrent(id); ok && ev.State == proto.StateBlocked {
 			note = "The foreman waits on a question. Answer it in its window, and your words go after."
 		}
 	}
+	// The owner's words go to the chat file before they are typed, so they
+	// show while the foreman starts and outlive a foreman that ends.
+	s.writeChat("user", id, text)
 	s.talk.lines = append(s.talk.lines, text)
 	queued := len(s.talk.lines)
 	s.runTalkLocked()
@@ -259,6 +277,10 @@ func (s *Server) handleFloorTalk(_ *Client, r *proto.Request) proto.Response {
 func (s *Server) handleFloorForeman(_ *Client, r *proto.Request) proto.Response {
 	if s.isClosed() {
 		return proto.ErrResp(r.ID, proto.ErrServerClosed, "this server has closed. It cannot start a foreman.")
+	}
+	if s.chatMode() {
+		return proto.ErrResp(r.ID, proto.ErrBadRequest,
+			"the foreman runs as a chat in this mode. It has no pane to start. Talk to it with floor.talk.")
 	}
 	harness, _ := r.Str("harness")
 	s.talkMu.Lock()
@@ -300,13 +322,27 @@ func (s *Server) startForeman(reqID, harness string) (string, *proto.Response) {
 		harness = name
 	}
 	dir := s.foremanDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	var err error
+	if !s.writeData(func() { err = os.MkdirAll(dir, 0o700) }) {
+		resp := proto.ErrResp(reqID, proto.ErrServerClosed, "this server has closed. It cannot start a foreman.")
+		return "", &resp
+	}
+	if err != nil {
 		resp := proto.ErrResp(reqID, proto.ErrInternal, "cannot make the foreman's directory "+dir+": "+err.Error())
 		return "", &resp
 	}
-	b, _ := json.Marshal(map[string]any{
+	mountArgs, mountEnv, mountNote := s.foremanMount(harness)
+	s.toolsMounted.Store(len(mountArgs) > 0 || len(mountEnv) > 0)
+	create := map[string]any{
 		"id": reqID, "cmd": "pane.create", "kind": "pty", "harness": harness, "cwd": dir, "label": DefaultForemanLabel,
-	})
+	}
+	if len(mountArgs) > 0 {
+		create["args"] = mountArgs
+	}
+	if len(mountEnv) > 0 {
+		create["env"] = mountEnv
+	}
+	b, _ := json.Marshal(create)
 	var req proto.Request
 	if err := json.Unmarshal(b, &req); err != nil {
 		resp := proto.ErrResp(reqID, proto.ErrInternal, err.Error())
@@ -319,8 +355,14 @@ func (s *Server) startForeman(reqID, harness string) (string, *proto.Response) {
 	}
 	res, _ := resp.Result.(map[string]any)
 	id, _ := res["pane"].(string)
+	if s.trackedForeman() != "" {
+		s.writeChat("note", id, newForemanNote)
+	}
 	s.setForeman(id)
 	s.talk.pane, s.talk.paged = id, false
+	if mountNote != "" {
+		s.Note(mountNote, id)
+	}
 	return id, nil
 }
 
@@ -330,7 +372,7 @@ func (s *Server) startForeman(reqID, harness string) (string, *proto.Response) {
 func (s *Server) runTalk() {
 	for {
 		s.talkMu.Lock()
-		if len(s.talk.lines) == 0 && (s.talk.paged || s.talk.pane == "") {
+		if len(s.talk.lines) == 0 && len(s.talk.reports) == 0 && (s.talk.paged || s.talk.pane == "") {
 			s.talk.running = false
 			s.talkMu.Unlock()
 			return
@@ -353,12 +395,18 @@ func (s *Server) runTalk() {
 				s.labelOf(id)+" waits on a question. Answer it in its window, and your words go after.")
 			if err == nil {
 				s.talkMu.Lock()
-				if s.talk.pane != id || len(s.talk.lines) == 0 {
+				if s.talk.pane != id || len(s.talk.lines)+len(s.talk.reports) == 0 {
 					s.talkMu.Unlock()
 					continue
 				}
-				line := s.talk.lines[0]
-				s.talk.lines = s.talk.lines[1:]
+				var line string
+				if len(s.talk.lines) > 0 {
+					line = s.talk.lines[0]
+					s.talk.lines = s.talk.lines[1:]
+				} else {
+					line = s.talk.reports[0]
+					s.talk.reports = s.talk.reports[1:]
+				}
 				s.talkMu.Unlock()
 				if err = s.typeInto(id, line); err == nil {
 					s.markInput(id, true)
@@ -379,7 +427,7 @@ func (s *Server) runTalk() {
 			continue
 		}
 		lost := len(s.talk.lines)
-		s.talk.pane, s.talk.paged, s.talk.lines, s.talk.running = "", false, nil, false
+		s.talk.pane, s.talk.paged, s.talk.lines, s.talk.reports, s.talk.running = "", false, nil, nil, false
 		s.talkMu.Unlock()
 		label := s.labelOf(id)
 		if !paged {
@@ -399,15 +447,25 @@ func (s *Server) pageForeman(id string) error {
 	if err := s.settle(id, idle, true, notReady); err != nil {
 		return err
 	}
+	// The page starts a turn. A turn can start and end between two polls
+	// (a hook says working, then idle, a millisecond apart), so a waiter
+	// that sees every state from before the page went catches its start.
+	// The start can still come from no source at all, so the wait for it
+	// is bounded (CP-R-51).
+	started, drop := s.watchState(id, proto.StateWorking)
+	defer drop()
 	if err := s.sendPage(id); err != nil {
 		return errForemanGone
 	}
-	// The page starts a turn. Its start can be missed, or come from no
-	// source at all, so the wait for it is short.
 	end := time.Now().Add(s.foremanWait)
 	for time.Now().Before(end) {
 		if ev, ok := s.effectiveCurrent(id); ok && ev.State != proto.StateIdle {
 			break
+		}
+		select {
+		case <-started:
+			return s.settle(id, idle, false, notReady)
+		default:
 		}
 		if err := s.talkSleep(id); err != nil {
 			return err
@@ -433,12 +491,12 @@ func (s *Server) sendPage(id string) error {
 	}
 	s.markInput(id, true)
 	if lp.Adapter != nil {
-		return lp.Adapter.Prompt(foremanPage())
+		return lp.Adapter.Prompt(s.foremanPageText())
 	}
 	if lp.Grid == nil || !lp.Grid.PasteMode() {
 		return lp.write([]byte(skills.FloorLine + "\r"))
 	}
-	if err := lp.write([]byte("\x1b[200~" + foremanPage() + "\x1b[201~")); err != nil {
+	if err := lp.write([]byte("\x1b[200~" + s.foremanPageText() + "\x1b[201~")); err != nil {
 		return err
 	}
 	time.Sleep(pasteGap)

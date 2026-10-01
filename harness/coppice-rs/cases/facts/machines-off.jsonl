@@ -1,0 +1,7 @@
+# floor.machines with a tailscale that does not run: the fake exits 1, as
+# the real one does when tailscaled is down. The answer is off with the one
+# line, and the profile table is not read.
+#!env PATH={FIXTURES}/web/bin:/usr/bin:/bin
+#!env FAKE_TS_FAIL=1
+{"id":"m1","cmd":"floor.machines"}
+{"id":"$id","ok":true,"result":{"tailscale":"off","machines":[],"line":"Tailscale is not running on this box. Run tailscale up, then open Machines again."}}

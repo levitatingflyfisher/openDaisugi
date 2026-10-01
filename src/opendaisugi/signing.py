@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from opendaisugi.contracts import Contract
+from opendaisugi.datahome import data_home
 
 _log = logging.getLogger("opendaisugi.signing")
 
@@ -224,7 +225,7 @@ class TrustedSignerRegistry:
 
 
 def default_registry_path() -> Path:
-    return Path.home() / ".opendaisugi" / "trusted_signers.json"
+    return data_home() / "trusted_signers.json"
 
 
 __all__ = [

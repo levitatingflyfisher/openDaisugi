@@ -47,10 +47,7 @@ func TestNotYetChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"dashboard", "--tui"}, {"dashboard", "--serve"}, {"gate", "replay", "x"}, {"install", "--yes"},
-		{"install", "--gate", "--print-skill", "--yes"}, {"install", "--gate", "--report", "herdr", "--yes"},
-		{"install", "--gate", "--no-allow-shell-decomposition", "--yes"}, {"install", "--uninstall"},
-		{"install", "--gate", "--enforce", "--ask", "--yes"}, {"install", "--gate", "--ask", "--yes"},
+		{"dashboard", "--tui"}, {"dashboard", "--serve"}, {"gate", "audit"},
 	} {
 		code, out, errs := run(t, home, "", args...)
 		if code != 2 || out != "" || !strings.HasSuffix(errs, "is not in this binary yet.\n") || strings.Count(errs, "\n") != 1 {
@@ -134,5 +131,48 @@ func TestPathwaysListOnAFreshHome(t *testing.T) {
 	// Python's PathwayStore creates the database; so does this binary.
 	if _, err := os.Stat(home + "/.opendaisugi/pathways.db"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// DAISUGI_PORT hands install, with its arguments, to the port it names
+// (PK-R-15); with no sibling of that name it stops with one line.
+func TestInstallHandsOverToDaisugiPort(t *testing.T) {
+	dir := t.TempDir()
+	rs := filepath.Join(dir, "daisugi-rs")
+	if err := os.WriteFile(rs, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var gotArgv, gotEnv []string
+	var out, errb bytes.Buffer
+	e := &Env{
+		Args:     []string{"-q", "install", "--gate", "--dry-run"},
+		Stdin:    strings.NewReader(""),
+		Stdout:   &out,
+		Stderr:   &errb,
+		Environ:  []string{"HOME=" + dir, "PATH=/nonexistent", "DAISUGI_PORT=rust"},
+		selfPath: filepath.Join(dir, "daisugi"),
+		execFn: func(argv0 string, argv, env []string) error {
+			gotArgv, gotEnv = argv, env
+			return nil
+		},
+	}
+	if code := Main(e); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	want := []string{rs, "-q", "install", "--gate", "--dry-run"}
+	if strings.Join(gotArgv, " ") != strings.Join(want, " ") {
+		t.Fatalf("argv %q, want %q", gotArgv, want)
+	}
+	if gotEnv[len(gotEnv)-1] != "DAISUGI_PORT_HOP=1" {
+		t.Fatalf("env %q", gotEnv)
+	}
+	e = &Env{
+		Args: []string{"install", "--dry-run"}, Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errb,
+		Environ:  []string{"HOME=" + dir, "PATH=/nonexistent", "DAISUGI_PORT=python"},
+		selfPath: filepath.Join(dir, "daisugi"),
+	}
+	errb.Reset()
+	if code := Main(e); code != 2 || !strings.Contains(errb.String(), "daisugi: DAISUGI_PORT is python, but there is no daisugi-py beside") {
+		t.Fatalf("missing sibling: exit %d, %q", code, errb.String())
 	}
 }

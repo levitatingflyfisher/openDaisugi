@@ -1,0 +1,8 @@
+{"type":"prompt","id":"fake-1","parentId":"fake-h","ts":1.5,"text":"a fake task"}
+{"type":"assistant","id":"fake-2","parentId":"fake-1","ts":2.0,"model":"sprig-fake-1","text":"Looking at it.","usage":{"fresh":4,"cacheRead":40,"cacheWrite":8,"out":2},"toolUses":[{"id":"tu-fake","name":"bash"}]}
+{"type":"tool_call","id":"fake-3","parentId":"fake-2","ts":3.0,"toolUseId":"tu-fake","name":"bash","input":{"command":"ls -la"},"detail":"ls -la"}
+{"type":"verdict","id":"fake-4","parentId":"fake-3","ts":4.0,"toolUseId":"tu-fake","decision":"allow","mode":"enforce","clause":""}
+{"type":"tool_result","id":"fake-5","parentId":"fake-4","ts":4.5,"toolUseId":"tu-fake","ok":true,"output":"FAKE-SECRET-OUTPUT"}
+{"type":"tool_call","id":"fake-6","parentId":"fake-5","ts":5.0,"toolUseId":"tu-fake-2","name":"web","input":{},"detail":"fetch the\nfake page"}
+{"type":"assistant","id":"fake-7","parentId":"fake-6","ts":6.0,"model":"sprig-fake-1","text":"","toolUses":[]}
+{"type":"assistant","id":"fake-8","parentId":"fake-7","ts":7.0,"model":"sprig-fake-1","text":"Done.","toolUses":[]}

@@ -25,7 +25,7 @@ from opendaisugi import delegate
 from opendaisugi.config import gate_hook_kind, is_record_hook
 
 DEFAULT_RULE_ID = "big-read"
-STATES = ("audit", "active")
+STATES = ("audit", "trial", "active")
 
 
 def settings_files(home: Path, cwd: Path) -> list[Path]:
@@ -104,6 +104,7 @@ class Installed:
     version: int
     state: str
     lines: int
+    seed: int | None = None
 
 
 @dataclass(frozen=True)
@@ -140,8 +141,12 @@ def install(
     state: str = "audit",
     lines: int = delegate.DEFAULT_MIN_LINES,
     allow_remote: bool = False,
+    seed: int | None = None,
 ) -> Installed | Refused:
-    """Write the rule file, or refuse beside a rival hook (nothing written)."""
+    """Write the rule file, or refuse beside a rival hook (nothing written).
+
+    A trial rule gets ``"trial": {"seed": SEED}``, the seed 0 when none is
+    given; the gate assigns each session an arm from it."""
     rivals = rival_hooks(home, cwd)
     if rivals:
         return Refused(refusal_line(*rivals[0]))
@@ -156,11 +161,16 @@ def install(
         "redirect": {"tool": delegate.DELEGATE_NAME},
         "worker": {"choose": "router", "allow_remote": allow_remote},
     }
+    if state == "trial":
+        seed = 0 if seed is None else seed
+        rule["trial"] = {"seed": seed}
+    else:
+        seed = None
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_text(json.dumps(rule, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
-    return Installed(path, rule_id, version, state, lines)
+    return Installed(path, rule_id, version, state, lines, seed)
 
 
 def status(root: Path, *, home: Path, cwd: Path) -> dict[str, Any]:
@@ -183,6 +193,7 @@ def status(root: Path, *, home: Path, cwd: Path) -> dict[str, Any]:
                 "state": r.state,
                 "file_lines_over": r.min_lines,
                 "allow_remote": r.allow_remote,
+                "trial_seed": r.seed if r.state == "trial" else None,
                 "in_force": r is acting,
                 "why": why,
             }
@@ -203,8 +214,11 @@ def status_text(doc: dict[str, Any]) -> str:
         lines.append(f"No graft rules in {doc['dir']}.")
     for r in doc["rules"]:
         tail = "in force" if r["in_force"] else f"not in force: {r['why']}"
+        state = r["state"]
+        if r["trial_seed"] is not None:
+            state += f" (seed {r['trial_seed']})"
         lines.append(
-            f"  {r['file']}: {r['id']} v{r['version']}, state {r['state']}, "
+            f"  {r['file']}: {r['id']} v{r['version']}, state {state}, "
             f"reads over {r['file_lines_over']} lines, {tail}"
         )
     for u in doc["unused"]:

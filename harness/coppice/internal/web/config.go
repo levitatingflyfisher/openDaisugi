@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -95,6 +97,67 @@ func Serve(ctx context.Context, c Config, opts Options) error {
 	if source == "" {
 		source = TLSLocalCA
 	}
+	// --tls tailscale does the whole job: it reads this box's name and
+	// tailnet addresses, gets or renews the certificate, and listens on
+	// the tailnet and loopback unless the listen address names a host.
+	tailscale := source == TLSTailscale && c.CertFile != "" && c.KeyFile != ""
+	// blank is true when the listen address has no host: the serve then
+	// binds the tailnet and loopback. A host is used exactly as given.
+	blank := BlankHost(c.Listen)
+	var ts Tailscale
+	// pending is true while the tailnet is not up yet at boot: loopback
+	// serves at once and the tailnet is bound when it comes. It is only
+	// ever set when blank is.
+	pending := false
+	// renew gets or renews the pair. A renewal that fails while the pair
+	// on disk is still good is one warning, and that pair is served; the
+	// daily check tries again.
+	renew := func(ts Tailscale) error {
+		res, err := EnsureCert(ts.Name, c.CertFile, c.KeyFile, time.Now())
+		if err != nil {
+			if ValidPair(c.CertFile, c.KeyFile, time.Now()) {
+				opts.Log.Warn("web: the certificate renewal failed", "err", err)
+				return nil
+			}
+			return err
+		}
+		for _, line := range CertLines(ts.Name, res) {
+			opts.Log.Info("web: " + line)
+		}
+		return nil
+	}
+	if tailscale {
+		var err error
+		if ts, err = ReadTailscale(); err == nil {
+			err = renew(ts)
+		}
+		if err != nil {
+			if !opts.WaitForTailnet || err.Error() == NoTailscale {
+				return err
+			}
+			switch {
+			case ValidPair(c.CertFile, c.KeyFile, time.Now()) && blank:
+				opts.Log.Info("web: waiting for the tailnet address", "err", err)
+				pending = true
+			case ValidPair(c.CertFile, c.KeyFile, time.Now()):
+				opts.Log.Warn("web: tailscale is not ready, so the certificate on disk serves", "err", err)
+			default:
+				opts.Log.Info("web: waiting for tailscale and a certificate", "err", err)
+				// No good pair to serve with: wait for tailscale and a
+				// certificate before anything serves.
+				for wait := tailnetRetry(opts); err != nil; wait = NextTailnetRetry(wait) {
+					select {
+					case <-ctx.Done():
+						return nil
+					case <-time.After(wait):
+					}
+					if ts, err = ReadTailscale(); err == nil {
+						err = renew(ts)
+					}
+				}
+			}
+		}
+	}
 	certFile, keyFile, err := TLSOptions{
 		Source: source, CertFile: c.CertFile, KeyFile: c.KeyFile,
 		CADir: c.CADir, Listen: c.Listen,
@@ -160,23 +223,174 @@ func Serve(ctx context.Context, c Config, opts Options) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
 	}
+	if tailscale {
+		// A renewed pair on disk is served from the next handshake.
+		reloader, err := NewCertReloader(certFile, keyFile)
+		if err != nil {
+			return err
+		}
+		srv.TLSConfig.GetCertificate = reloader.GetCertificate
+		certFile, keyFile = "", ""
+		go checkCertDaily(ctx, c.CertFile, c.KeyFile, opts)
+		// The coppice server reads which certificate this serve uses, so
+		// floor.facts can warn about it wherever it lives.
+		if err := writeServing(opts.ServingFile, c.CertFile, c.KeyFile); err != nil {
+			opts.Log.Warn("web: could not write the serving file", "err", err)
+		}
+		defer removeServing(opts.ServingFile)
+	}
+	opts.Log.Info("web: serving the phone",
+		"listen", c.Listen, "tls", string(source), "gate_root", opts.Gate.Root)
+	// Every address is bound before any is served, so a port that is
+	// taken on one of them leaves nothing half up. Under --tls tailscale
+	// with no host, a tailnet address the box will not bind is skipped;
+	// the serve fails only when no tailnet address binds, and a saved one
+	// at boot waits for the tailnet instead.
+	var lns []net.Listener
+	var addrs []string
+	closeAll := func() {
+		for _, l := range lns {
+			l.Close()
+		}
+	}
+	_, port, _ := net.SplitHostPort(c.Listen)
+	if tailscale && blank {
+		if !pending {
+			tl, ta, skipped, foreign := bindTailnet(ts.IPs, port)
+			logForeign(opts.Log, foreign)
+			if len(tl) == 0 {
+				if !opts.WaitForTailnet {
+					return noTailnetBind(lastSkip(skipped))
+				}
+				opts.Log.Info("web: waiting for the tailnet address", "err", noTailnetBind(lastSkip(skipped)))
+				pending = true
+			} else {
+				logSkipped(opts.Log, skipped)
+			}
+			lns, addrs = tl, ta
+		}
+		loop := net.JoinHostPort("127.0.0.1", port)
+		ln, err := net.Listen("tcp", loop)
+		if err != nil {
+			closeAll()
+			return err
+		}
+		lns, addrs = append(lns, ln), append(addrs, loop)
+	} else {
+		if tailscale && !ListenStaysOnTailnet(c.Listen) {
+			opts.Log.Warn("web: listening beyond the tailnet and this box", "listen", c.Listen)
+		}
+		ln, err := net.Listen("tcp", c.Listen)
+		if err != nil {
+			return err
+		}
+		lns, addrs = append(lns, ln), append(addrs, c.Listen)
+	}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		srv.Shutdown(shutdown)
 	}()
-	opts.Log.Info("web: serving the phone",
-		"listen", c.Listen, "tls", string(source), "gate_root", opts.Gate.Root)
-	if source == TLSOff {
-		err = srv.ListenAndServe()
-	} else {
-		err = srv.ListenAndServeTLS(certFile, keyFile)
+	if opts.Listening != nil {
+		opts.Listening(addrs)
 	}
+	errc := make(chan error, 64)
+	serveLn := func(ln net.Listener) {
+		go func() {
+			if source == TLSOff {
+				errc <- srv.Serve(ln)
+			} else {
+				errc <- srv.ServeTLS(ln, certFile, keyFile)
+			}
+		}()
+	}
+	for _, ln := range lns {
+		serveLn(ln)
+	}
+	if pending {
+		go func() {
+			for wait := tailnetRetry(opts); ; wait = NextTailnetRetry(wait) {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(wait):
+				}
+				got, err := ReadTailscale()
+				if err != nil {
+					continue
+				}
+				tl, ta, skipped, foreign := bindTailnet(got.IPs, port)
+				if len(tl) == 0 {
+					continue
+				}
+				logForeign(opts.Log, foreign)
+				logSkipped(opts.Log, skipped)
+				opts.Log.Info("web: listening on the tailnet", "addrs", strings.Join(ta, ","))
+				for _, ln := range tl {
+					serveLn(ln)
+				}
+				return
+			}
+		}()
+	}
+	err = <-errc
+	// One listener that fails takes the others down with it.
+	srv.Close()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 	return err
+}
+
+// tailnetRetry is the first wait between two tries to bind the tailnet.
+func tailnetRetry(opts Options) time.Duration {
+	if opts.TailnetRetry > 0 {
+		return opts.TailnetRetry
+	}
+	return TailnetRetryFirst
+}
+
+// ValidPair is true when the certificate parses and has not run out,
+// and the key file holds a PEM private key.
+func ValidPair(certFile, keyFile string, now time.Time) bool {
+	leaf, err := LoadLeaf(certFile)
+	if err != nil || !leaf.NotAfter.After(now) {
+		return false
+	}
+	return keyIsPEM(keyFile)
+}
+
+// checkCertDaily reads this box's name from tailscale and runs
+// EnsureCert for the pair every opts.CertCheckEvery until ctx ends, and
+// logs what it did.
+func checkCertDaily(ctx context.Context, certFile, keyFile string, opts Options) {
+	every := opts.CertCheckEvery
+	if every <= 0 {
+		every = CertCheckEvery
+	}
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		ts, err := ReadTailscale()
+		if err != nil {
+			opts.Log.Warn("web: the certificate check failed", "err", err)
+			continue
+		}
+		res, err := EnsureCert(ts.Name, certFile, keyFile, time.Now())
+		if err != nil {
+			opts.Log.Warn("web: the certificate check failed", "err", err)
+			continue
+		}
+		for _, line := range CertLines(ts.Name, res) {
+			opts.Log.Info("web: " + line)
+		}
+	}
 }
 
 // AutoStart is what the coppice server calls once its own socket is up. It
@@ -191,6 +405,13 @@ func AutoStart(ctx context.Context, configPath string, opts Options) (func(), er
 	}
 	if !c.Enabled {
 		return func() {}, nil
+	}
+	// At boot tailscale may not be up yet, so a saved tailscale serve waits
+	// for the tailnet rather than fail, and says which certificate it
+	// serves beside web.json.
+	opts.WaitForTailnet = true
+	if opts.ServingFile == "" {
+		opts.ServingFile = filepath.Join(filepath.Dir(configPath), "serving.json")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {

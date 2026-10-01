@@ -17,24 +17,35 @@ import (
 // never reads it for pane identity. It returns the reply's stdout, stderr
 // and exit code, and never panics out.
 func HookReport(argv []string, raw []byte, caller Caller, environ []string) (stdout, stderr string, exit int) {
+	return hookReport(argv, raw, caller, PaneFreeEnviron(environ), true)
+}
+
+// HookReportCLI is hook_report_argv as the command line runs it: the
+// pane identity comes from environ, the environment this process shares
+// with its caller, as report_state reads it by default.
+func HookReportCLI(argv []string, raw []byte, environ []string) (stdout, stderr string, exit int) {
+	return hookReport(argv, raw, Caller{}, environ, false)
+}
+
+func hookReport(argv []string, raw []byte, caller Caller, environ []string, resident bool) (stdout, stderr string, exit int) {
 	defer func() {
 		if p := recover(); p != nil {
 			stdout, stderr, exit = "", fmt.Sprintf("daisugi hook report: %v", p), 1
 		}
 	}()
 	env := map[string]string{}
-	for _, kv := range PaneFreeEnviron(environ) {
+	for _, kv := range environ {
 		k, v, _ := strings.Cut(kv, "=")
 		env[k] = v
 	}
-	r := &runner{env: env, t0: time.Now(), resident: true, caller: caller}
+	r := &runner{env: env, t0: time.Now(), resident: resident, caller: caller}
 	r.home = r.expanduser("~")
 	pane, root, ok := parseHookReportArgv(argv)
 	if !ok {
 		return "", "daisugi hook report: bad arguments", 1
 	}
 	if root == nil {
-		d := pathJoin(pathStr(r.home), ".opendaisugi/gate")
+		d := pathJoin(r.dataHome(), "gate")
 		root = &d
 	}
 	text, exc := pystr.DecodeStrict(raw)

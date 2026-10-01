@@ -61,14 +61,14 @@ func (e *Env) echoResolved() error {
 	if err != nil {
 		return err
 	}
-	e.note("backend: %s · gate: %s · data: ~/.opendaisugi", e.backend(), gate)
+	e.note("backend: %s · gate: %s · data: %s", e.backend(), gate, e.tilde(e.dataHome()))
 	return nil
 }
 
 // gateState is the gate part of _echo_resolved, which it works out before
 // it resolves the backend.
 func (e *Env) gateState() (string, error) {
-	dataDir := gateroot.Join(e.home, ".opendaisugi")
+	dataDir := e.dataHome()
 	root := gateroot.Join(dataDir, "gate")
 	if gateroot.IsDisarmed(root) {
 		return "disarmed", nil
@@ -168,8 +168,10 @@ func (e *Env) splitClaude(content string, cwd *string) (any, error) {
 	var obj *pyjson.Object
 	if v, derr := pyjson.LoadsPy(body, 900); derr == nil {
 		obj, _ = v.(*pyjson.Object)
-	} else if d, ok := pmodel.DecodeDictText(body); ok {
-		obj = d
+	} else if d := pmodel.DecodeDictText(body); d.Refuse != "" {
+		return nil, fmt.Errorf("%w: claude wrote a reply that holds %s", transcript.ErrUnreadable, d.Refuse)
+	} else {
+		obj = d.Dict
 	}
 	if obj == nil {
 		return nil, nil
@@ -370,29 +372,24 @@ type ingestItem struct {
 	loadErr error
 }
 
-// loadEpisodes is yaml.safe_load for an episodes file: the form
-// yaml.safe_dump writes, or a JSON document.
-func loadEpisodes(text string) (any, error) {
-	empty := true
-	for _, l := range strings.Split(text, "\n") {
-		if t := strings.TrimSpace(l); t != "" && !strings.HasPrefix(t, "#") {
-			empty = false
+// loadEpisodes is yaml.safe_load(episodes_file.read_text()): the value,
+// or the yaml.YAMLError the oracle prints.
+func loadEpisodes(text string) (any, *pystr.Exception, error) {
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	v, exc, why := pyyaml.Load(text)
+	if why != nil {
+		return nil, nil, fmt.Errorf("the episodes file holds YAML this binary does not read (%s)", why.Why)
+	}
+	if exc != nil {
+		if exc.Type == "ValueError" {
+			return nil, nil, errors.New("the episodes file makes yaml raise a ValueError, which the oracle does not catch")
 		}
+		return nil, exc, nil
 	}
-	if empty {
-		return nil, nil
+	if !pyyaml.Plain(v) {
+		return nil, nil, errors.New("the episodes file holds a date or a key that is not text")
 	}
-	if v, why := pyyaml.LoadDumped(text); why == nil {
-		return v, nil
-	}
-	t := pystr.Strip(text)
-	if strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
-		y, err := config.ParseYAML(text)
-		if err == nil {
-			return yamlToJSON(y)
-		}
-	}
-	return nil, errors.New("the episodes file is YAML this binary does not read yet")
+	return v, nil, nil
 }
 
 // traceIDOK is journal._TRACE_ID_RE.
@@ -439,9 +436,13 @@ func (e *Env) journalIngest(args []string) error {
 	if !utf8.Valid(raw) {
 		return e.refuse(cmd, errors.New("the episodes file is not UTF-8"))
 	}
-	v, err := loadEpisodes(string(raw))
+	v, yexc, err := loadEpisodes(string(raw))
 	if err != nil {
 		return e.refuse(cmd, err)
+	}
+	if yexc != nil {
+		e.errf("Invalid YAML: %s\n", yexc.Msg)
+		return exit(2)
 	}
 	obj, isObj := v.(*pyjson.Object)
 	if !isObj {

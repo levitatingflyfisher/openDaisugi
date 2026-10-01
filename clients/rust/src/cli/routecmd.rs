@@ -54,14 +54,14 @@ impl Env {
         let task = p.args[0].clone();
         let has_threshold = p.has("--threshold");
         let mut threshold = self.click_float(CMD, &p, "--threshold", 0.0)?;
-        let data_dir = path_str(&p.str("--data-dir", &format!("{}/.opendaisugi", self.home)));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let cheap = p.str("--cheap-model", DEFAULT_CHEAP_MODEL);
         let frontier = p.str("--frontier-model", DEFAULT_FRONTIER_MODEL);
         let harness = lower(strip(&p.str("--harness", "claude-code")));
         let advisor_tool = matches!(harness.as_str(), "claude-code" | "claude" | "anthropic");
         let db = format!("{data_dir}/pathways.db");
         let has_store = std::fs::metadata(&db).is_ok();
-        let cfg = match super::config::load(&format!("{}/.opendaisugi/config.yaml", self.home)) {
+        let cfg = match super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
             Ok(c) => c,
             Err(e) => return self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")),
         };
@@ -98,6 +98,22 @@ impl Env {
                 // the store.
                 Err(_) => {}
                 Ok(r) => {
+                    // The stale-embeddings UserWarning find prints, as
+                    // Python's warnings module prints it under
+                    // PYTHONWARNINGS; a filter not modelled is refused.
+                    if !r.warning.is_empty() {
+                        let pyw = self.env.get("PYTHONWARNINGS").cloned().unwrap_or_default();
+                        match super::pywarn::user_warning_shown(&pyw, &r.warning) {
+                            None => {
+                                return self.refuse(
+                                    CMD,
+                                    &format!("the pathway store warns of stale embeddings under PYTHONWARNINGS={}, a filter this binary does not read the oracle's way", crate::gate::py::text::repr(&pyw)),
+                                )
+                            }
+                            Some(true) => self.errf(&format!("UserWarning: {}\n", r.warning)),
+                            Some(false) => {}
+                        }
+                    }
                     if let Some((pw, sim)) = r.matched {
                         let id = pw.id().to_string();
                         advice = Some(Advice {

@@ -241,7 +241,8 @@ function nameOf(pane) {
 
 // tail is the end of a row: its window number and the x that stops it.
 function tail(pane) {
-  const out = [windowMark(pane.id)];
+  const reply = floor !== null && typeof floor.replyWaiting === 'function' && floor.replyWaiting(pane.id);
+  const out = [reply ? make('span', 'reply', 'new reply') : null, windowMark(pane.id)];
   if (floor !== null && typeof floor.askKill === 'function') out.push(killButton(pane.id, pane.label || pane.id, floor.askKill));
   return out;
 }
@@ -729,8 +730,32 @@ export function mountRoster() {
       window.coppice.status(e);
       return;
     }
+    if (!restartAsked) {
+      restartAsked = true;
+      sayRestart();
+    }
     readTasks();
     if (endedDue || Date.now() - endedAt >= ENDED_READ_MS) readEnded();
+  };
+
+  // sayRestart asks the server once per page. When the start found agents
+  // that stopped with the old server and can come back, the status line
+  // says so, with Resume all and Show them. Either button, or any other
+  // status line, ends it for the rest of the page. It reads only
+  // restore.resumable, the records the restart stopped that can still
+  // come back. It never takes the place of a line already there, an
+  // error included. A refused read says nothing: this line is a
+  // courtesy, and the floor still shows Recent.
+  let restartAsked = false;
+  const sayRestart = async () => {
+    try {
+      const st = await window.coppice.rpc('server.status');
+      const back = Number(st && st.restore && st.restore.resumable) || 0;
+      const line = document.getElementById('status');
+      if (back > 0 && (!line || line.textContent === '')) window.coppice.status(MESSAGES.restarted(back));
+    } catch {
+      // No line.
+    }
   };
 
   // ended is the last list of ended agents, for Recent. A refused read
@@ -780,6 +805,7 @@ export function mountRoster() {
     if (resuming) return;
     resuming = true;
     endedDue = true;
+    if (ended.length === 0) await readEnded();
     const list = [...ended];
     let done = 0;
     let why = '';
@@ -840,6 +866,16 @@ export function mountRoster() {
     });
   };
   onClick('recent-resume-all', resumeAll);
+  // The restart line's buttons come through app.js as events.
+  window.addEventListener('coppice:resume-all', resumeAll);
+  window.addEventListener('coppice:show-recent', () => {
+    window.coppice.status('');
+    const box = document.getElementById('recent');
+    if (!box) return;
+    box.open = true;
+    if (typeof box.scrollIntoView === 'function') box.scrollIntoView({ block: 'center' });
+    if (floor !== null && typeof floor.seenRecent === 'function') floor.seenRecent();
+  });
   onClick('recent-clear', clearAll);
   // Opening Recent is how the owner sees an ended agent, so the floor
   // drops its ended lines then.

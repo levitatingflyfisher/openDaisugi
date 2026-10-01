@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -16,17 +17,89 @@ import (
 // task in, one answer out — so it drops straight into cron, CI, and pipes.
 type CLI struct {
 	Version  string
-	NewModel func() (Model, error) // the pluggable backend; nil = an honest "not wired" error
+	NewModel func(ModelOptions) (Model, error) // the pluggable backend; nil = an honest "not wired" error
+}
+
+// ModelOptions is what the command line sets on the backend.
+type ModelOptions struct {
+	// Model is --model: the model to ask. Empty keeps the backend's default.
+	Model string
+	// Tools is the wall from --tools, in sprig's order: the only tools the
+	// backend offers the model.
+	Tools []string
+	// Key is the provider key read from --key-fd; KeySet says one was
+	// read. With KeySet, the backend reads no key from the environment.
+	Key    string
+	KeySet bool
+	// Wire is the model wire: claude-code, anthropic or openai. The CLI
+	// sets it from --wire, else from SPRIG_BACKEND.
+	Wire string
+	// BaseURL is --base-url: the server for the anthropic or openai wire.
+	// Empty keeps the wire's default.
+	BaseURL string
+	// NoTools is --tools none: the backend offers the model no tool at
+	// all. Tools is then empty.
+	NoTools bool
+	// System is the bytes of --system-file; SystemSet says a file was
+	// read. With SystemSet they replace sprig's own system prompt.
+	System    string
+	SystemSet bool
+	// Extra are the tools of the MCP servers sprig runs itself (the
+	// anthropic and openai wires).
+	Extra []MCPToolDef
+	// MCPConfig is the --mcp-config JSON and MCPServers the server names,
+	// for the claude-code wire, where claude runs the servers.
+	MCPConfig  string
+	MCPServers []string
+}
+
+// Wires are the model wires --wire takes, in the order the help names
+// them.
+var Wires = []string{"claude-code", "anthropic", "openai"}
+
+// usageKeys are the --json usage keys, the names the Messages API and
+// claude -p give the four token counts.
+var usageKeys = []struct {
+	key string
+	get func(Usage) int
+}{
+	{"input_tokens", func(u Usage) int { return u.Fresh }},
+	{"output_tokens", func(u Usage) int { return u.Out }},
+	{"cache_read_input_tokens", func(u Usage) int { return u.CacheRead }},
+	{"cache_creation_input_tokens", func(u Usage) int { return u.CacheWrite }},
+}
+
+// usageSum adds the token counts of every assistant turn. A count no turn
+// reported (a zero sum) is left out.
+func usageSum(history []Message) map[string]int {
+	sum := map[string]int{}
+	for _, k := range usageKeys {
+		n := 0
+		for _, m := range history {
+			if m.Role == "assistant" {
+				n = satAdd(n, k.get(m.Usage))
+			}
+		}
+		if n != 0 {
+			sum[k.key] = n
+		}
+	}
+	return sum
 }
 
 // Run executes one task and returns a process exit code (0 ok, non-zero fail).
 func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	// Nothing a tool started outlives sprig, however it ends (MX-R-8).
+	defer KillToolGroups()
+	defer onSignalKillToolGroups()()
 	fs := flag.NewFlagSet("sprig", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	jsonOut := fs.Bool("json", false, "emit the result as JSON (for scripts and jq)")
 	gateOn := fs.Bool("gate", false, "verify each tool call against the envelope, fail-closed")
 	maxTurns := fs.Int("max-turns", 20, "give up after this many model turns")
+	maxTokens := fs.Int("max-tokens", -1,
+		"stop before a model call once the run has used this many tokens (all four usage counts); -1 is no cap")
 	gateCmd := fs.String("gate-cmd", DefaultGateCmd(),
 		"the out-of-process envelope gate to call when --gate is set")
 	sessionDir := fs.String("session-dir", "",
@@ -34,6 +107,26 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	sessionID := fs.String("session", "", "session id to write under --session-dir (default: a fresh one)")
 	resume := fs.String("resume", "",
 		"resume this session id from --session-dir: reopen its file, rebuild history from its head, and append")
+	tools := fs.String("tools", strings.Join(AllToolNames, ","),
+		"the tools the model may call, a comma list of read, write, edit, bash and spawn, or none")
+	systemFile := fs.String("system-file", "",
+		"use the bytes of this file as the system prompt, in place of sprig's own")
+	modelName := fs.String("model", "",
+		"the model to ask (default: haiku on claude -p; SPRIG_MODEL, else claude-haiku-4-5, on the API)")
+	keyFd := fs.Int("key-fd", -1,
+		"read the provider key from this file descriptor (3 or more) and use no key from the environment")
+	wire := fs.String("wire", "",
+		"the model wire: claude-code (claude -p), anthropic (the Messages API) or openai (chat completions); default anthropic when SPRIG_BACKEND=api, else claude-code")
+	baseURL := fs.String("base-url", "",
+		"the server for the anthropic or openai wire (default: ANTHROPIC_BASE_URL, else https://api.anthropic.com; https://api.openai.com/v1 for openai)")
+	treeCmd := fs.String("tree-cmd", "",
+		"the command the spawn tool runs to start a child (daisugi tree run); spawn is offered only with it")
+	spawnKeysFd := fs.Int("spawn-keys-fd", -1,
+		"read the resolved agent profiles, with keys, from this file descriptor; the spawn tool passes them on")
+	mcpConfig := fs.String("mcp-config", "",
+		`the MCP servers whose tools the model may call, as a file or inline JSON {"mcpServers": {name: {command, args, env}}}; stdio servers only`)
+	scrubEnv := fs.String("scrub-env", "",
+		"a comma list of more variables no tool, gate or backend process gets")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, `usage: sprig [flags] "<task>"     (or:  echo "<task>" | sprig -)`)
 		fmt.Fprintln(stderr, "a minimal coding-agent harness — the answer goes to stdout, logs to stderr.")
@@ -49,6 +142,88 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	if *showVersion {
 		fmt.Fprintln(stdout, c.Version)
 		return 0
+	}
+	key, keySet := "", false
+	if *keyFd >= 0 {
+		k, err := ReadKeyFd("--key-fd", *keyFd)
+		if err != nil {
+			fmt.Fprintln(stderr, "sprig:", err)
+			return 2
+		}
+		if k == "" {
+			fmt.Fprintf(stderr, "sprig: --key-fd %d held no key\n", *keyFd)
+			return 2
+		}
+		if KeyHasControl(k) {
+			fmt.Fprintf(stderr, "sprig: --key-fd %d held a key with a control character\n", *keyFd)
+			return 2
+		}
+		key, keySet = k, true
+	}
+	var spawnKeys []byte
+	if *spawnKeysFd >= 0 {
+		k, err := ReadKeyFd("--spawn-keys-fd", *spawnKeysFd)
+		if err != nil {
+			fmt.Fprintln(stderr, "sprig:", err)
+			return 2
+		}
+		spawnKeys = []byte(k)
+	}
+	// No process sprig starts inherits a descriptor above 2, and none
+	// gets a key variable or a --scrub-env name.
+	CloseInheritedFds()
+	SetScrubEnv(strings.Split(*scrubEnv, ","))
+	noTools := *tools == "none"
+	var wall []string
+	if !noTools {
+		var err error
+		if wall, err = ParseToolWall(*tools); err != nil {
+			fmt.Fprintln(stderr, "sprig:", err)
+			return 2
+		}
+	}
+	system, systemSet := "", false
+	if *systemFile != "" {
+		b, err := os.ReadFile(*systemFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "sprig: --system-file: cannot read %s: %v\n", *systemFile, err)
+			return 2
+		}
+		system, systemSet = string(b), true
+	}
+	var mcpSpecs []MCPServerSpec
+	mcpJSON := ""
+	if *mcpConfig != "" {
+		var err error
+		if mcpSpecs, mcpJSON, err = ParseMCPConfig(*mcpConfig); err != nil {
+			fmt.Fprintln(stderr, "sprig:", err)
+			return 2
+		}
+	}
+	if slices.Contains(wall, "spawn") {
+		if len(strings.Fields(*treeCmd)) == 0 {
+			fmt.Fprintln(stderr, "sprig: --tools: spawn needs --tree-cmd")
+			return 2
+		}
+		if *sessionID == "" && *resume == "" {
+			fmt.Fprintln(stderr, "sprig: --tools: spawn needs --session, the parent of each child")
+			return 2
+		}
+	}
+	w := *wire
+	if w == "" {
+		w = "claude-code"
+		if os.Getenv("SPRIG_BACKEND") == "api" {
+			w = "anthropic"
+		}
+	}
+	if !slices.Contains(Wires, w) {
+		fmt.Fprintf(stderr, "sprig: --wire: unknown wire %q; the wires are %s\n", w, strings.Join(Wires, ", "))
+		return 2
+	}
+	if *baseURL != "" && w == "claude-code" {
+		fmt.Fprintln(stderr, "sprig: --base-url needs --wire anthropic or --wire openai")
+		return 2
 	}
 
 	if *resume != "" && *sessionDir == "" {
@@ -73,14 +248,42 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 
 	newModel := c.NewModel
 	if newModel == nil {
-		newModel = func() (Model, error) {
+		newModel = func(ModelOptions) (Model, error) {
 			return nil, fmt.Errorf("no model backend configured")
 		}
 	}
-	model, err := newModel()
+	opts := ModelOptions{Model: *modelName, Tools: wall, Key: key, KeySet: keySet,
+		Wire: w, BaseURL: *baseURL, NoTools: noTools, System: system, SystemSet: systemSet}
+	var mcp *MCPSet
+	if len(mcpSpecs) > 0 {
+		if w == "claude-code" {
+			// One decision: claude runs the servers, from the same JSON.
+			opts.MCPConfig = mcpJSON
+			for _, s := range mcpSpecs {
+				opts.MCPServers = append(opts.MCPServers, s.Name)
+			}
+		} else {
+			var err error
+			if mcp, err = StartMCP(mcpSpecs, stderr); err != nil {
+				fmt.Fprintln(stderr, "sprig:", Redact(err.Error(), key))
+				return 1
+			}
+			defer mcp.Close()
+			opts.Extra = mcp.Defs
+		}
+	}
+	model, err := newModel(opts)
 	if err != nil {
-		fmt.Fprintln(stderr, "sprig:", err)
+		fmt.Fprintln(stderr, "sprig:", Redact(err.Error(), key))
 		return 1
+	}
+	// The key the backend holds, from --key-fd or its environment, never
+	// reaches an error line.
+	if kh, ok := model.(interface{ HeldKey() string }); ok && key == "" {
+		key = kh.HeldKey()
+	}
+	if key != "" {
+		model = redactingModel{Model: model, key: key}
 	}
 
 	// --gate wires openDaisugi's envelope as an OUT-OF-PROCESS, fail-closed check
@@ -125,11 +328,35 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "sprig: session %s at %s\n", sid, w.Path())
 	}
 
-	exec := NewExecutor(DefaultTools(), gate)
+	toolMap := ToolsFor(wall)
+	var spawn *SpawnTool
+	if slices.Contains(wall, "spawn") {
+		parent := *sessionID
+		if *resume != "" {
+			parent = *resume
+		}
+		spawn = &SpawnTool{Command: strings.Fields(*treeCmd), Session: parent, Keys: spawnKeys,
+			DefaultTools: HostTools(wall)}
+		toolMap["spawn"] = spawn
+	}
+	if mcp != nil {
+		for _, t := range mcp.Tools {
+			toolMap[t.Name()] = t
+		}
+	}
+	exec := NewExecutor(toolMap, gate)
 	exec.SessionObserver = obs
 	agent := &Agent{
 		Model: model, Exec: exec, MaxTurns: *maxTurns,
 		SessionObserver: obs, SeedHistory: seedHistory,
+		MaxTokens: *maxTokens, CapTokens: *maxTokens >= 0,
+		NoTools: noTools,
+	}
+	if spawn != nil {
+		agent.ExtraTokens = spawn.BranchTokens
+		spawn.OwnUse = func() (int, int) {
+			return agent.TokensUsed() - spawn.BranchTokens(), agent.ModelTurns()
+		}
 	}
 	answer, err := agent.Run(task)
 	if err != nil {
@@ -138,7 +365,12 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	}
 
 	if *jsonOut {
-		_ = json.NewEncoder(stdout).Encode(map[string]any{"answer": answer, "turns": len(agent.History)})
+		name := ""
+		if n, ok := model.(interface{ ModelName() string }); ok {
+			name = n.ModelName()
+		}
+		_ = json.NewEncoder(stdout).Encode(map[string]any{"answer": answer, "turns": len(agent.History),
+			"model_turns": agent.ModelTurns(), "model": name, "usage": usageSum(agent.History)})
 	} else {
 		fmt.Fprintln(stdout, answer)
 	}

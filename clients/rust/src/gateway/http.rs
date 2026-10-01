@@ -508,6 +508,12 @@ enum Kind {
     Deflate,
 }
 
+/// A gzip decoder over `src` (the pack installer reads a CPython tarball
+/// with it).
+pub fn gunzip(src: Box<dyn Read + Send>) -> Box<dyn Read + Send> {
+    Box::new(Inflater::new(src, Kind::Gzip))
+}
+
 /// A streaming decoder: each read passes on what the input read so far
 /// decodes to.
 struct Inflater {

@@ -17,6 +17,9 @@ pub enum ConfigErr {
     Unsupported,
     /// A file load_config is certain to refuse.
     Invalid,
+    /// A file whose YAML makes safe_load raise: to a caller a file that
+    /// does not load, as `Invalid`, with the oracle's traceback line.
+    Yaml(String),
 }
 
 impl std::fmt::Display for ConfigErr {
@@ -24,6 +27,7 @@ impl std::fmt::Display for ConfigErr {
         match self {
             ConfigErr::Unsupported => write!(f, "config.yaml uses YAML this binary does not read yet"),
             ConfigErr::Invalid => write!(f, "config.yaml does not validate"),
+            ConfigErr::Yaml(line) => write!(f, "{line}"),
         }
     }
 }
@@ -38,6 +42,8 @@ enum T {
     OptBool,
     Path,
     Floor,
+    /// typing.Any: any YAML value, never invalid.
+    Any,
 }
 
 /// `opendaisugi.config.Config.model_fields`, in order, with each field's
@@ -79,6 +85,7 @@ const FIELDS: &[(&str, T)] = &[
     ("voice_cleanup_model", T::OptStr),
     ("voice_cleanup_base_url", T::OptStr),
     ("voice_server_url", T::Str),
+    ("agent_profiles", T::Any),
 ];
 
 /// `FloorConfig.model_fields`.
@@ -110,6 +117,16 @@ pub struct Config {
     /// `llm_context_window`, None when unset or null.
     pub llm_context_window: Option<num_bigint::BigInt>,
     pub voice_engine: String,
+    /// The voice bridge's other fields; an optional one is None when unset
+    /// or null.
+    pub voice_model: String,
+    pub voice_cleanup: bool,
+    pub voice_cleanup_model: Option<String>,
+    pub voice_cleanup_base_url: Option<String>,
+    pub voice_server_url: String,
+    /// `floor.backend` and `floor.coppice_socket`.
+    pub floor_backend: String,
+    pub coppice_socket: Option<String>,
     /// `dialect_enforce`, None when unset or null.
     pub dialect_enforce: Option<String>,
 }
@@ -134,6 +151,13 @@ impl Default for Config {
             llm_host_model: None,
             llm_context_window: None,
             voice_engine: "faster-whisper".into(),
+            voice_model: "tiny.en".into(),
+            voice_cleanup: false,
+            voice_cleanup_model: None,
+            voice_cleanup_base_url: None,
+            voice_server_url: "http://127.0.0.1:7477".into(),
+            floor_backend: "auto".into(),
+            coppice_socket: None,
             dialect_enforce: None,
         }
     }
@@ -206,6 +230,9 @@ fn int_of(v: &Node) -> num_bigint::BigInt {
 
 /// pydantic's lax validation of one value for one field type.
 fn check(v: &Node, t: T) -> Verdict {
+    if t == T::Any {
+        return Verdict::Ok;
+    }
     let optional = matches!(t, T::OptStr | T::OptInt | T::OptBool);
     if v.kind == Kind::Null {
         return if optional { Verdict::Ok } else { Verdict::Invalid };
@@ -276,6 +303,7 @@ fn check(v: &Node, t: T) -> Verdict {
             }
             worst
         }
+        T::Any => Verdict::Ok,
     }
 }
 
@@ -348,12 +376,51 @@ fn from_map(m: &Node) -> Result<Config, ConfigErr> {
     if let Some(v) = m.map.get("voice_engine") {
         cfg.voice_engine = v.text.clone();
     }
+    if let Some(v) = m.map.get("voice_model") {
+        cfg.voice_model = v.text.clone();
+    }
+    if let Some(v) = m.map.get("voice_server_url") {
+        cfg.voice_server_url = v.text.clone();
+    }
+    if let Some(v) = m.map.get("voice_cleanup") {
+        cfg.voice_cleanup = bool_of(v);
+    }
+    for (name, dst) in [
+        ("voice_cleanup_model", &mut cfg.voice_cleanup_model),
+        ("voice_cleanup_base_url", &mut cfg.voice_cleanup_base_url),
+    ] {
+        if let Some(v) = m.map.get(name) {
+            if v.kind == Kind::Str {
+                *dst = Some(v.text.clone());
+            }
+        }
+    }
+    if let Some(f) = m.map.get("floor") {
+        if f.kind == Kind::Map {
+            if let Some(b) = f.map.get("backend") {
+                cfg.floor_backend = b.text.clone();
+            }
+            if let Some(c) = f.map.get("coppice_socket") {
+                if c.kind == Kind::Str {
+                    cfg.coppice_socket = Some(c.text.clone());
+                }
+            }
+        }
+    }
     if let Some(v) = m.map.get("llm_context_window") {
         if v.kind != Kind::Null {
             cfg.llm_context_window = Some(int_of(v));
         }
     }
     Ok(cfg)
+}
+
+/// The error a config file's YAML gives a caller.
+fn yaml_err(e: yaml::YErr) -> ConfigErr {
+    match e {
+        yaml::YErr::Unsupported => ConfigErr::Unsupported,
+        yaml::YErr::Exc(_) => ConfigErr::Yaml(e.traceback_line()),
+    }
 }
 
 /// `load_config(path)`: the defaults when the file is absent.
@@ -368,7 +435,7 @@ pub fn load(path: &str) -> Result<Config, ConfigErr> {
         Err(_) => return Err(ConfigErr::Unsupported),
     };
     let text = String::from_utf8(raw).map_err(|_| ConfigErr::Unsupported)?;
-    let v = yaml::parse(&text).map_err(|_| ConfigErr::Unsupported)?;
+    let v = yaml::parse(&text).map_err(yaml_err)?;
     match v.kind {
         Kind::Map => from_map(&v),
         Kind::Null => Ok(Config::default()),
@@ -397,7 +464,7 @@ pub fn load(path: &str) -> Result<Config, ConfigErr> {
 /// validate or names another mode.
 pub fn gate_mode(config_path: &str) -> Result<String, ConfigErr> {
     match load(config_path) {
-        Err(ConfigErr::Invalid) => Ok("audit".into()),
+        Err(ConfigErr::Invalid | ConfigErr::Yaml(_)) => Ok("audit".into()),
         Err(e) => Err(e),
         Ok(c) if c.gate_mode == "audit" || c.gate_mode == "enforce" => Ok(c.gate_mode),
         Ok(_) => Ok("audit".into()),
@@ -409,7 +476,7 @@ pub fn gate_mode(config_path: &str) -> Result<String, ConfigErr> {
 /// validate.
 pub fn dialect_pin(config_path: &str) -> Result<Option<String>, ConfigErr> {
     match load(config_path) {
-        Err(ConfigErr::Invalid) => Ok(None),
+        Err(ConfigErr::Invalid | ConfigErr::Yaml(_)) => Ok(None),
         Err(e) => Err(e),
         Ok(c) => Ok(c.dialect_enforce.filter(|p| !p.is_empty())),
     }
@@ -632,6 +699,7 @@ mod tests {
             T::OptBool => "bool | None",
             T::Path => "<class 'pathlib.Path'>",
             T::Floor => "<class 'opendaisugi.config.FloorConfig'>",
+            T::Any => "typing.Any",
         }
     }
 
@@ -684,7 +752,7 @@ fn defaults(home: &str) -> Vec<(&'static str, Value)> {
         ("model", s("anthropic/claude-sonnet-4-20250514")),
         ("max_task_chars", i("4000")),
         ("z3_timeout_ms", i("500")),
-        ("data_dir", s(&super::gateroot::path_str(&format!("{home}/.opendaisugi")))),
+        ("data_dir", s(&crate::datahome::dir(|k| std::env::var(k).ok(), home, crate::datahome::exists))),
         ("auto_tend", Value::Null),
         ("gateway_local_model", Value::Null),
         ("gateway_router", s("rules")),
@@ -724,12 +792,46 @@ fn big_int(text: &str) -> Result<Value, ConfigErr> {
     Ok(Value::Int(n.to_string()))
 }
 
+/// A YAML value as model_dump(mode="json") keeps an Any field: mappings
+/// with their keys sorted, as yaml.safe_dump(sort_keys=True) writes them.
+fn plain(v: &Node) -> Result<Value, ConfigErr> {
+    match v.kind {
+        Kind::Null => Ok(Value::Null),
+        Kind::Bool => Ok(Value::Bool(v.b)),
+        Kind::Int => {
+            let t = v.text.replace('_', "");
+            let n = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+                Some(h) => num_bigint::BigInt::parse_bytes(h.as_bytes(), 16),
+                None => t.strip_prefix('+').unwrap_or(&t).parse().ok(),
+            };
+            n.map(|n: num_bigint::BigInt| Value::Int(n.to_string())).ok_or(ConfigErr::Unsupported)
+        }
+        Kind::Float => v.text.replace('_', "").parse::<f64>().map(Value::Float).map_err(|_| ConfigErr::Unsupported),
+        Kind::Str => Ok(Value::Str(v.text.clone())),
+        Kind::Seq => Ok(Value::List(v.items.iter().map(plain).collect::<Result<Vec<_>, _>>()?)),
+        Kind::Map => {
+            if v.non_str_keys > 0 {
+                return Err(ConfigErr::Unsupported);
+            }
+            let mut keys = v.keys.clone();
+            keys.sort();
+            let mut o = crate::gate::pyjson::Object::with_capacity(keys.len());
+            for k in keys {
+                o.set(&k, plain(&v.map[&k])?);
+            }
+            Ok(Value::Obj(o))
+        }
+        Kind::Other => Err(ConfigErr::Unsupported),
+    }
+}
+
 /// The value pydantic keeps for `v` in a field of type `t`.
 fn dumped(v: &Node, t: T) -> Result<Value, ConfigErr> {
     if v.kind == Kind::Null {
         return Ok(Value::Null);
     }
     match t {
+        T::Any => plain(v),
         T::Str | T::OptStr => Ok(Value::Str(v.text.clone())),
         T::Path => Ok(Value::Str(super::gateroot::path_str(&v.text))),
         T::Int | T::OptInt => match v.kind {
@@ -776,12 +878,19 @@ pub fn dump(path: &str, home: &str, updates: &[(String, Value)]) -> Result<Strin
     match std::fs::read(path) {
         Ok(raw) => {
             let text = String::from_utf8(raw).map_err(|_| ConfigErr::Unsupported)?;
-            let doc = yaml::parse(&text).map_err(|_| ConfigErr::Unsupported)?;
+            let doc = yaml::parse(&text).map_err(yaml_err)?;
             if doc.kind == Kind::Map {
                 from_map(&doc)?;
                 for (name, t) in FIELDS {
                     if let Some(v) = doc.map.get(*name) {
                         let x = dumped(v, *t)?;
+                        if *t == T::Any {
+                            // Left out of the dump when None.
+                            if x != Value::Null {
+                                vals.push((*name, x));
+                            }
+                            continue;
+                        }
                         if let Some(slot) = vals.iter_mut().find(|(k, _)| k == name) {
                             slot.1 = x;
                         }
@@ -869,8 +978,22 @@ fn kind_name(k: Kind) -> &'static str {
         Kind::Float => "float",
         Kind::Str => "str",
         Kind::Seq => "list",
+        Kind::Other => "date",
         _ => "dict",
     }
+}
+
+/// `agent_profiles.config_text`: the profile names, never a field.
+fn profile_names(v: &Node) -> String {
+    if v.kind == Kind::Null || (v.kind == Kind::Map && v.keys.is_empty() && v.non_str_keys == 0) {
+        return "none".into();
+    }
+    if v.kind != Kind::Map {
+        return "not a mapping".into();
+    }
+    let mut names = v.keys.clone();
+    names.sort();
+    names.join(", ")
 }
 
 /// str() of a value `dumped` holds.
@@ -894,7 +1017,7 @@ pub fn rows(path: &str, home: &str) -> Result<(Vec<Row>, Vec<String>, Config), R
     match std::fs::read(path) {
         Ok(raw) => {
             let text = String::from_utf8(raw).map_err(|_| RowsErr::Config(ConfigErr::Unsupported))?;
-            let v = yaml::parse(&text).map_err(|_| RowsErr::Config(ConfigErr::Unsupported))?;
+            let v = yaml::parse(&text).map_err(|e| RowsErr::Config(yaml_err(e)))?;
             match v.kind {
                 Kind::Map => doc = v,
                 Kind::Null => {}
@@ -941,6 +1064,14 @@ pub fn rows(path: &str, home: &str) -> Result<(Vec<Row>, Vec<String>, Config), R
                         }
                     }
                 }
+            }
+            continue;
+        }
+        if *t == T::Any {
+            // agent_profiles: shown only when the file has a table, and
+            // then the names only.
+            if let Some(v) = v {
+                out.push(Row::new(name, &profile_names(v), "file"));
             }
             continue;
         }

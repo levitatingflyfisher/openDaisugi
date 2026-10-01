@@ -24,6 +24,7 @@ import (
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/pyyaml"
+	"daisugi-verify/internal/sqlpath"
 )
 
 // schema is journal._SCHEMA, byte for byte: SQLite keeps each CREATE text
@@ -70,9 +71,6 @@ CREATE TABLE IF NOT EXISTS provenance_log (
 );
 `
 
-// ErrPath is a database path the driver would misread.
-var ErrPath = errors.New("the journal path holds a '?'")
-
 // ErrUnreadable marks journal content this binary cannot read the way
 // Python does. A command refuses before it writes anything.
 var ErrUnreadable = errors.New("cannot read")
@@ -95,15 +93,12 @@ type Journal struct {
 func Open(dataDir string) (*Journal, error) {
 	traces := filepath.Join(dataDir, "journal", "traces")
 	dbPath := filepath.Join(dataDir, "journal", "index.db")
-	if strings.ContainsRune(dbPath, '?') {
-		return nil, ErrPath
-	}
 	if err := os.MkdirAll(traces, 0o777); err != nil {
 		return nil, err
 	}
-	dsn := dbPath
-	if strings.HasPrefix(dsn, "file:") {
-		dsn = "./" + dsn
+	dsn, err := sqlpath.DSN(dbPath, "")
+	if err != nil {
+		return nil, err
 	}
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
@@ -124,9 +119,6 @@ func Open(dataDir string) (*Journal, error) {
 // that migration: an absent column as NULL, an absent table as empty.
 func OpenReadOnly(dataDir string) (*Journal, error) {
 	dbPath := filepath.Join(dataDir, "journal", "index.db")
-	if strings.ContainsRune(dbPath, '?') {
-		return nil, ErrPath
-	}
 	abs, err := filepath.Abs(dbPath)
 	if err != nil {
 		return nil, err
@@ -365,7 +357,8 @@ func (e *LoadError) Error() string { return e.Msg }
 func (j *Journal) TracePath(id string) string { return filepath.Join(j.TracesDir, id+".yaml") }
 
 // LoadTrace is load_trace: the YAML read with safe_load and each part
-// validated. A body not in the form yaml.safe_dump writes is ErrUnreadable.
+// validated. A body holding a value the result model does not hold is
+// ErrUnreadable.
 func (j *Journal) LoadTrace(id string) (*Record, error) {
 	path := j.TracePath(id)
 	raw, err := os.ReadFile(path)
@@ -379,37 +372,66 @@ func (j *Journal) LoadTrace(id string) (*Record, error) {
 		return nil, fmt.Errorf("%w: the trace %s is not UTF-8", ErrUnreadable, id)
 	}
 	text := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
-	v, why := pyyaml.LoadDumped(text)
+	v, exc, why := pyyaml.Load(text)
 	if why != nil {
 		return nil, fmt.Errorf("%w: the trace %s: %s", ErrUnreadable, id, why.Why)
 	}
+	if exc != nil {
+		return nil, &LoadError{exc.Type, exc.Msg}
+	}
+	if !pyyaml.Plain(v) {
+		return nil, fmt.Errorf("%w: the trace %s holds a date or a key that is not text", ErrUnreadable, id)
+	}
 	o, ok := v.(*pyjson.Object)
 	if !ok {
+		// raw["id"] on another type.
+		switch v.(type) {
+		case nil:
+			return nil, &LoadError{"TypeError", "'NoneType' object is not subscriptable"}
+		case []any:
+			return nil, &LoadError{"TypeError", "list indices must be integers or slices, not str"}
+		case string:
+			return nil, &LoadError{"TypeError", "string indices must be integers, not 'str'"}
+		case bool:
+			return nil, &LoadError{"TypeError", "'bool' object is not subscriptable"}
+		case pyjson.Int:
+			return nil, &LoadError{"TypeError", "'int' object is not subscriptable"}
+		case pyjson.Float:
+			return nil, &LoadError{"TypeError", "'float' object is not subscriptable"}
+		}
 		return nil, fmt.Errorf("%w: the trace %s is not a mapping", ErrUnreadable, id)
 	}
 	rec := &Record{}
-	for _, k := range []string{"id", "created_at", "task", "envelope", "plan", "result"} {
+	// TraceRecord(id=raw["id"], ..., result=VerificationResult(**raw["result"])):
+	// each argument in turn, so the first key missing or part failing is
+	// the error.
+	for _, k := range []string{"id", "created_at", "task"} {
 		if _, has := o.Get(k); !has {
 			return nil, &LoadError{"KeyError", pystr.Repr(k)}
 		}
 	}
 	rec.ID, rec.CreatedAt, rec.Task = o.Value("id"), o.Value("created_at"), o.Value("task")
 	for _, part := range []struct {
-		key   string
-		model *pmodel.Model
-		dst   **pyjson.Object
-	}{{"envelope", pmodel.Envelope, &rec.Envelope}, {"plan", pmodel.ActionPlan, &rec.Plan},
-		{"result", pmodel.VerificationResult, &rec.Result}} {
-		in, isObj := o.Value(part.key).(*pyjson.Object)
+		key, class string
+		model      *pmodel.Model
+		dst        **pyjson.Object
+	}{{"envelope", "Envelope", pmodel.Envelope, &rec.Envelope}, {"plan", "ActionPlan", pmodel.ActionPlan, &rec.Plan},
+		{"result", "VerificationResult", pmodel.VerificationResult, &rec.Result}} {
+		raw, has := o.Get(part.key)
+		if !has {
+			return nil, &LoadError{"KeyError", pystr.Repr(part.key)}
+		}
+		in, isObj := raw.(*pyjson.Object)
 		if !isObj {
-			return nil, fmt.Errorf("%w: the trace %s: %s is not a mapping", ErrUnreadable, id, part.key)
+			return nil, &LoadError{"TypeError", "opendaisugi.models." + part.class +
+				"() argument after ** must be a mapping, not " + pmodel.TypeName(raw)}
 		}
 		// Model(**raw[...]): keyword arguments, so every key is a str.
 		out, verr := part.model.ValidateObject(in, pmodel.Python)
 		if verr != nil {
 			for _, e := range verr.Errs {
 				if e.Type == pmodel.UnreadableStep {
-					return nil, fmt.Errorf("%w: the trace %s holds a plan step given as a string", ErrUnreadable, id)
+					return nil, fmt.Errorf("%w: the trace %s holds %s", ErrUnreadable, id, e.Msg)
 				}
 			}
 			return nil, &LoadError{"ValidationError", verr.String()}
@@ -596,15 +618,12 @@ const envelopePromptVersion = "2026-04-18"
 // the facade builds for every command that makes one: the parent made, the
 // schema created, and rows of another prompt version evicted.
 func EnsureEnvelopeCache(path string) error {
-	if strings.ContainsRune(path, '?') {
-		return ErrPath
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
 		return err
 	}
-	dsn := path
-	if strings.HasPrefix(dsn, "file:") {
-		dsn = "./" + dsn
+	dsn, err := sqlpath.DSN(path, "")
+	if err != nil {
+		return err
 	}
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {

@@ -108,13 +108,14 @@ func TestRankRecordIsAHardDeny(t *testing.T) {
 		t.Fatalf("a near miss must pass: %+v", res)
 	}
 	for _, line := range []string{"/usr/bin/daisugi rank record", "uv run python -m opendaisugi rank record",
-		"sh -c 'daisugi rank record'", "dai\\sugi rank rec\\ord", "daisugi rank record", "daisugi --x /d rank --y record"} {
-		if !namesRankRecord(line) {
+		"sh -c 'daisugi rank record'", "dai\\sugi rank rec\\ord", "daisugi --x /d rank --y record"} {
+		if !(&runner{}).runsVerb(line, rankVerbs) {
 			t.Errorf("miss: %q", line)
 		}
 	}
-	for _, line := range []string{"daisugi rank list", "daisugi-helper rank record", "daisugi rank recorder", "grep 'rank record' daisugi.log"} {
-		if namesRankRecord(line) {
+	for _, line := range []string{"daisugi rank list", "daisugi-helper rank record", "daisugi rank recorder",
+		"grep 'rank record' daisugi.log", "daisugi\u00a0rank record", "daisugi status && rank record"} {
+		if (&runner{}).runsVerb(line, rankVerbs) {
 			t.Errorf("false hit: %q", line)
 		}
 	}

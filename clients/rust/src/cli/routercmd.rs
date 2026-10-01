@@ -51,6 +51,7 @@ const ROUTER_HELP: &str = "Usage: daisugi router [OPTIONS] COMMAND [ARGS]...
   or the built-in rules router.
 
 Commands:
+  label   Record whether a session's task succeeded: the outcome a graft trial counts.
   status  Show the router choice, the Switchyard binary, each running child, and recent turns.
   stop    Stop every switchyard-server that a gateway started and left running.
 ";
@@ -69,6 +70,10 @@ impl Env {
     pub(super) fn load_cfg(&mut self, cmd: &str, path: &str) -> Result<Config, Stop> {
         match config::load(path) {
             Ok(c) => Ok(c),
+            Err(ConfigErr::Yaml(line)) => {
+                self.errf(&format!("daisugi {cmd}: {line}\n"));
+                Err(Stop::Exit(1))
+            }
             Err(ConfigErr::Invalid) => {
                 self.errf(&format!("daisugi {cmd}: pydantic_core._pydantic_core.ValidationError: {path} does not validate\n"));
                 Err(Stop::Exit(1))
@@ -126,6 +131,8 @@ impl Env {
                     ))
                 }
             };
+            // read_text reads with universal newlines.
+            let text = text.replace("\r\n", "\n").replace('\r', "\n");
             config_path = sy::write_config(&dir, &text, &name).map_err(|e| self.fail("gateway", &e.to_string()).unwrap_err())?;
         } else {
             let Some(targets) = sy::targets_from_config(&sy_config(&cfg)) else {
@@ -157,6 +164,10 @@ impl Env {
         }
         let (capable, efficient) = match sy::route_targets(&config_path, &cfg.switchyard_route_id) {
             Ok(p) => p,
+            Err(RouteErr::ValueError(m)) => {
+                self.errf(&format!("Traceback (most recent call last): ...\nValueError: {m}\n"));
+                return Err(super::exit(1).unwrap_err());
+            }
             Err(RouteErr::Meter(m)) => {
                 return Err(self.fail3(
                     &format!("cannot meter this Switchyard config: {m}"),
@@ -164,9 +175,6 @@ impl Env {
                     "name a stage_router route with id switchyard_route_id, or pass a --switchyard-config that has one.",
                     1,
                 ))
-            }
-            Err(RouteErr::NotRead(nr)) => {
-                return Err(self.refuse("gateway", &format!("cannot read {config_path}: {nr}")).unwrap_err());
             }
         };
         if auth.is_none() {
@@ -209,6 +217,7 @@ impl Env {
             return Ok(());
         }
         match args[0].as_str() {
+            "label" => self.router_label(&args[1..]),
             "status" => self.router_status(&args[1..]),
             "stop" => self.router_stop(&args[1..]),
             other => {
@@ -241,7 +250,7 @@ impl Env {
         if p.help {
             return self.cmd_help(CMD, "", "Show the router choice, the Switchyard binary, each running child, and recent turns.", &opts);
         }
-        let data_dir = path_str(&p.str("--data-dir", &format!("{}/.opendaisugi", self.home)));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let cfg = self.load_cfg(CMD, &format!("{data_dir}/config.yaml"))?;
         let path = self.env.get("PATH").cloned().unwrap_or_default();
         let binary = sy::look_path(sy::BINARY_NAME, &path);
@@ -300,6 +309,10 @@ impl Env {
             Ok(x) => x,
             Err(why) => return self.refuse(CMD, &why),
         };
+        let trial = match super::routermeasure::trial_state(&data_dir) {
+            Ok(t) => t,
+            Err(why) => return self.refuse(CMD, &why),
+        };
         if p.flag("--json") {
             let mut o = Object::new();
             o.set("router", cfg.gateway_router.as_str());
@@ -347,6 +360,7 @@ impl Env {
             o.set("weeks", Value::List(weeks.iter().map(|w| Value::Obj(w.object())).collect()));
             o.set("escalation_built", false);
             o.set("delegate", Value::Obj(dstate));
+            o.set("trial", trial.as_ref().map(|(t, _)| Value::Obj(t.clone())).unwrap_or(Value::Null));
             self.out(&format!("{}\n", pyjson::dumps(&Value::Obj(o), true)));
             return Ok(());
         }
@@ -428,6 +442,79 @@ impl Env {
         for ln in &dlines {
             self.out(&format!("{ln}\n"));
         }
+        if let Some((_, lines)) = &trial {
+            for ln in lines {
+                self.out(&format!("{ln}\n"));
+            }
+        }
+        Ok(())
+    }
+
+    /// `daisugi router label`: the operator's outcome for a session.
+    fn router_label(&mut self, args: &[String]) -> Res {
+        const CMD: &str = "router label";
+        let opts = [
+            Opt::val(&["--note"], "TEXT", "Why, in a few words."),
+            Opt::val(&["--data-dir"], "PATH", "Daisugi data directory."),
+            Opt::flag(&["--json"], "Print the row as JSON."),
+        ];
+        let p = match parse_args(args, &opts, 2) {
+            Ok(p) => p,
+            Err(m) => return self.usage_args(CMD, "SESSION OUTCOME", &m),
+        };
+        if p.help {
+            return self.cmd_help(
+                CMD,
+                "SESSION OUTCOME",
+                "Record whether a session's task succeeded: the outcome a graft trial counts.",
+                &opts,
+            );
+        }
+        if p.args.len() < 2 {
+            let missing = if p.args.is_empty() { "session" } else { "outcome" };
+            return self.usage_args(CMD, "SESSION OUTCOME", &format!("Missing argument '{missing}'."));
+        }
+        let (session, outcome) = (p.args[0].clone(), p.args[1].clone());
+        if outcome != "pass" && outcome != "fail" {
+            self.errf("Error: OUTCOME must be pass or fail.\n");
+            return exit(2);
+        }
+        if !super::routermeasure::session_ok(&session) {
+            self.errf(
+                "Error: SESSION must be a session id as the gate names it: 1 to 128 of A-Z a-z 0-9 . _ -, with no dot at either end.\n",
+            );
+            return exit(2);
+        }
+        let note = if p.has("--note") {
+            let n = p.str("--note", "");
+            if text::len(&n) > super::routermeasure::MAX_NOTE_CHARS {
+                self.errf(&format!(
+                    "Error: --note must be at most {} characters.\n",
+                    super::routermeasure::MAX_NOTE_CHARS
+                ));
+                return exit(2);
+            }
+            Value::Str(n)
+        } else {
+            Value::Null
+        };
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
+        let row = Object::new()
+            .with("at", crate::delegate::now_iso())
+            .with("session", session.as_str())
+            .with("outcome", outcome.as_str())
+            .with("note", note);
+        let line = pyjson::dumps(&Value::Obj(row), true);
+        let path = super::routermeasure::labels_path(&data_dir);
+        if !append_label(&data_dir, &path, &format!("{line}\n")) {
+            self.errf(&format!("Error: the label could not be written to {path}.\n"));
+            return exit(1);
+        }
+        if p.flag("--json") {
+            self.out(&format!("{line}\n"));
+            return Ok(());
+        }
+        self.out(&format!("labeled {session}: {outcome}\n"));
         Ok(())
     }
 
@@ -438,7 +525,7 @@ impl Env {
         if p.help {
             return self.cmd_help(CMD, "", "Stop every switchyard-server that a gateway started and left running.", &opts);
         }
-        let data_dir = path_str(&p.str("--data-dir", &format!("{}/.opendaisugi", self.home)));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let states = sy::list_states(&data_dir);
         if states.is_empty() {
             self.out("no switchyard-server state file; nothing to stop\n");
@@ -458,7 +545,7 @@ impl Env {
         if p.help {
             return self.cmd_help(CMD, "", "Calibrate the gateway on a real recorded day: realized routing + potential reuse.", &opts);
         }
-        let data_dir = path_str(&p.str("--data-dir", &format!("{}/.opendaisugi", self.home)));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let records = self.load_journal_for(CMD, &data_dir)?;
         if records.is_empty() {
             self.out("no turns recorded yet \u{2014} run `daisugi gateway` to start journaling.\n");
@@ -485,7 +572,7 @@ impl Env {
                 };
                 turns.push(Turn { signature: r.signature.clone(), task: r.task.clone(), tokens, dollars: r.actual });
             }
-            let cfg = match config::load(&format!("{}/.opendaisugi/config.yaml", self.home)) {
+            let cfg = match config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
                 Ok(c) => c,
                 Err(e) => return self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")),
             };
@@ -546,4 +633,36 @@ impl Env {
         self.out(&b);
         Ok(())
     }
+}
+
+/// `router_report.write_label`'s file work: false when it cannot be written.
+fn append_label(data_dir: &str, path: &str, line: &str) -> bool {
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let to_path = |p: &str| -> Option<std::path::PathBuf> {
+        let b = text::fsencode(p).ok()?;
+        if b.contains(&0) {
+            return None;
+        }
+        Some(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(&b)))
+    };
+    let (Some(dir), Some(file)) = (to_path(&format!("{data_dir}/router")), to_path(path)) else {
+        return false;
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return false;
+    }
+    let new = !file.exists();
+    let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).mode(0o666).open(&file) else {
+        return false;
+    };
+    if f.write_all(line.as_bytes()).is_err() {
+        return false;
+    }
+    drop(f);
+    if new && std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).is_err() {
+        return false;
+    }
+    true
 }

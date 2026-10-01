@@ -1,0 +1,9 @@
+# A voice url on this machine that nothing answers.
+#!config [voice]
+#!config url = "http://127.0.0.1:9/"
+{"id": "s", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down"}}
+{"id": "v", "cmd": "voice.start"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "s2", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down"}}

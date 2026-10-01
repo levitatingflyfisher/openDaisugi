@@ -126,8 +126,12 @@ recommend (a): the saving is real and the write stays under the gate.
   and `router status` says why (RP-5).
 - **The gate checks the delegate call** as a read of its absolute path and, for a remote worker,
   a network send (RP-7). The MCP allowlist alone never grants the read.
-- **The `delegate` MCP tool** (RT-2), bulk-read only (`mcp_server.py`; Go and Rust
-  `mcp serve`). Code-write, ruled a draft by RT-1, is not built. The worker is the local model
+- **The `delegate` MCP tool** (RT-2) (`mcp_server.py`; Go and Rust `mcp serve`). Code-write,
+  ruled a draft by RT-1, was built on 2026-10-01: the worker returns a whole file or a unified
+  diff; a diff is checked against the current file (each hunk's old lines must match it exactly
+  once, the header numbers are not read) and marked when it does not apply; the draft comes back
+  fenced, as untrusted data, and the tool writes nothing. The gate checks it as a read of the
+  target when the target exists (SW-6 to SW-9). The worker is the local model
   `daisugi tiers setup` recorded; a remote worker needs the rule's `allow_remote` and an
   envelope that names its host (GR-2, RP-6). Quotes are checked as exact substrings and a quote
   that is not is dropped; no line numbers (RP-9). The answer is returned as untrusted data.
@@ -214,8 +218,17 @@ it is easy to test with golden cases, and weave was built as a runner of a JSON 
   outcomes (RP-12). It also names the rule and the worker in force. JSON with `--json`.
 
 Not built: escalations are always 0 (part 1 is not built); no chooser learns, so none is
-replaced (part 3); task outcomes are unknown until a label source exists (the ranking design),
-so the promotion measure GR-6 names, billed cost per successful task, is not computed yet.
+replaced (part 3).
+
+**Built 2026-10-01: the promotion meter (GR-6, GR-7).** A graft rule may be in `trial`: each
+session gets an arm (`graft` or `control`) from a seeded hash of its gate session id, recorded on
+the graft audit record, and only the graft arm is redirected. `daisugi router label SESSION
+pass|fail` is the label source, the operator's only (the gate denies an agent that runs it). No
+weave or rank verdict is keyed by a gate session, so none is read (SW-11). `router status` shows
+per arm the sessions, labeled successes and failures, the billed cost (the session's Claude Code
+transcript at the gateway's list prices; a repeated message counted once; an unknown model or a
+remote worker marked estimated) and quota tokens, cost per success, and what promotion would do.
+Nothing is promoted automatically (SW-10 to SW-15).
 Cases: 20 new `router status` cases (33 in all), and the 127 turn cases now carry the time, 0
 disagreements in Go and Rust.
 

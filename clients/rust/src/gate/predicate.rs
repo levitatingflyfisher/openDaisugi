@@ -47,6 +47,34 @@ pub enum Expr {
 }
 
 impl Expr {
+    /// The model's class name, as `type(expr).__name__` gives it.
+    pub fn class(&self) -> &'static str {
+        match self {
+            Expr::Equals { .. } => "Equals",
+            Expr::NotEquals { .. } => "NotEquals",
+            Expr::InSet { .. } => "InSet",
+            Expr::NotInSet { .. } => "NotInSet",
+            Expr::Matches { .. } => "Matches",
+            Expr::NotMatches { .. } => "NotMatches",
+            Expr::NumericRange { .. } => "NumericRange",
+            Expr::LengthRange { .. } => "LengthRange",
+            Expr::Exists { .. } => "Exists",
+            Expr::IsEmpty { .. } => "IsEmpty",
+            Expr::And(_) => "And",
+            Expr::Or(_) => "Or",
+            Expr::Not(_) => "Not",
+            Expr::Implies(..) => "Implies",
+            Expr::ForallSteps(_) => "ForallSteps",
+            Expr::ExistsStep(_) => "ExistsStep",
+            Expr::ForallOutputs(_) => "ForallOutputs",
+            Expr::ForallWrites(_) => "ForallWrites",
+            Expr::DependsOn { .. } => "DependsOn",
+            Expr::Before { .. } => "Before",
+            Expr::Alias { .. } => "AliasRef",
+            Expr::LlmCheck { .. } => "LLMCheck",
+        }
+    }
+
     /// The `op` literal.
     pub fn op(&self) -> &'static str {
         match self {
@@ -312,10 +340,13 @@ enum Verdict {
 
 /// The predicate stage's state for one verify call: the vacuity cache.
 pub struct Stage<'a> {
-    /// None outside the gate: an llm_check there is not decided, since the
-    /// binary asks a model only for a gate call.
+    /// None outside the gate: an llm_check there asks the model through the
+    /// world the command set (`llm::set_command_check`), and is undecided
+    /// when none is set.
     runner: Option<&'a super::Runner>,
     env: &'a Envelope,
+    /// The plan's task, which an llm_check payload holds.
+    task: String,
     steps: Vec<Value>,
     strict: bool,
     cache: HashMap<String, Verdict>,
@@ -342,6 +373,7 @@ impl<'a> Stage<'a> {
         Stage {
             runner: Some(runner),
             env,
+            task: env.task.clone(),
             steps: vec![step],
             strict,
             cache: HashMap::new(),
@@ -352,12 +384,13 @@ impl<'a> Stage<'a> {
         }
     }
 
-    /// The stage for a whole plan (each step as its `model_dump()`), with
-    /// no model to ask.
-    pub fn for_plan(env: &'a Envelope, steps: Vec<Value>, strict: bool) -> Self {
+    /// The stage for a whole plan of task `task` (each step as its
+    /// `model_dump()`), asking a model through the command's world.
+    pub fn for_plan(env: &'a Envelope, task: &str, steps: Vec<Value>, strict: bool) -> Self {
         Stage {
             runner: None,
             env,
+            task: task.to_string(),
             steps,
             strict,
             cache: HashMap::new(),
@@ -614,12 +647,14 @@ impl<'a> Stage<'a> {
                 if self.env.stakes == "physical" {
                     return Err(PyErr::value("llm_check blocked for physical stakes \u{2014} use sound primitives only").into());
                 }
-                let payload = Object::new()
-                    .with("task", self.env.task.as_str())
-                    .with("steps", Value::List(self.steps.clone()));
+                let payload =
+                    Object::new().with("task", self.task.as_str()).with("steps", Value::List(self.steps.clone()));
                 let res = match self.runner {
                     Some(r) => r.run_llm_check(rule, &payload)?,
-                    None => return undecided("an llm_check predicate, which import would ask a model about"),
+                    None => match super::llm::command_llm_check(rule, &payload) {
+                        Some(r) => r?,
+                        None => return undecided("an llm_check predicate outside a command that asks a model"),
+                    },
                 };
                 // Fail closed: a failed call raises, and the item is a
                 // violation.
@@ -692,6 +727,19 @@ pub fn vacuity_of(raw: &Value) -> Result<Vac, String> {
         Ok(Ok(Verdict::Contradiction)) => Ok(Vac::Contradiction),
         Ok(Ok(Verdict::Tautology)) => Ok(Vac::Tautology),
         Ok(_) => Ok(Vac::NonTrivial),
+        Err(Fault::Undecided(w)) => Err(w),
+        Err(Fault::Raised(e)) => Err(e.msg),
+    }
+}
+
+/// `check_vacuity(e)` as the alias registry calls it: an exception it
+/// raises is an error with its text, never non_trivial.
+pub fn vacuity_strict(e: &Expr) -> Result<Vac, String> {
+    match catch(compute_vacuity(e)) {
+        Ok(Ok(Verdict::Contradiction)) => Ok(Vac::Contradiction),
+        Ok(Ok(Verdict::Tautology)) => Ok(Vac::Tautology),
+        Ok(Ok(Verdict::NonTrivial)) => Ok(Vac::NonTrivial),
+        Ok(Err(e)) => Err(e.msg),
         Err(Fault::Undecided(w)) => Err(w),
         Err(Fault::Raised(e)) => Err(e.msg),
     }
@@ -1039,7 +1087,7 @@ impl<'a> Stage<'a> {
     }
 
     /// `write_paths.step_write_paths` (its own frame).
-    fn step_write_paths(&self, step: &Object) -> R<Option<Vec<String>>> {
+    pub(super) fn step_write_paths(&self, step: &Object) -> R<Option<Vec<String>>> {
         let _f = frame();
         let paths = match step.value("type").as_str() {
             Some("file_write") => match step.value("path").as_str() {
@@ -1441,7 +1489,7 @@ fn compile_scalar(c: &Ctx, e: &Expr, scope: &mut Scope, soft: &mut usize) -> R<T
             "unresolved alias reference '{name}'; resolve aliases before compilation"
         ))
         .into()),
-        _ => Err(PyErr::value("unknown scalar predicate op").into()),
+        other => Err(PyErr::value(format!("unknown scalar predicate op: {}", other.class())).into()),
     }
 }
 

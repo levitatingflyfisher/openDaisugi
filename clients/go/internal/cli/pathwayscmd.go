@@ -69,16 +69,13 @@ func (e *Env) missingArg(cmd, usageArgs, name string) error {
 
 // openStore is PathwayStore(data_dir / "pathways.db").
 func (e *Env) openStore(cmd string, p *parsed) (*pathways.Store, error) {
-	dir := p.str("--data-dir", filepath.Join(e.home, ".opendaisugi"))
+	dir := p.str("--data-dir", e.dataHome())
 	if st, err := os.Stat(dir); err == nil && !st.IsDir() {
 		// Path.mkdir(parents=True, exist_ok=True) on a file.
 		e.errf("daisugi %s: FileExistsError: %s exists and is not a directory\n", cmd, dir)
 		return nil, exit(1)
 	}
 	s, err := pathways.Open(filepath.Join(dir, "pathways.db"))
-	if errors.Is(err, pathways.ErrPath) {
-		return nil, e.refuse(cmd, err)
-	}
 	if err != nil {
 		return nil, e.failPy(cmd, err)
 	}

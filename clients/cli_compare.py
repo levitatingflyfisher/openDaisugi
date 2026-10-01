@@ -21,10 +21,9 @@ Each case lands in one class:
   status reports a stronger gate than Python's is flagged fail-open.
 
 Output compared: stdout exactly, except --version, whose number comes
-from the binary's build (only one version line is asked for), and
-install, whose Python text
-describes layers this binary does not write (those lines are dropped on
-both sides). stderr is compared only when Python exited 0, since a Python
+from the binary's build (only one version line is asked for). In an
+install's text a runtime the binary will fail on reads as its name; the
+oracle's skill link reads as the copy a port writes (IN-1). stderr is compared only when Python exited 0, since a Python
 error is a traceback. Warnings compare as "warning: <text>"; the
 binary's own note that it wrote through a symlink is dropped.
 
@@ -54,6 +53,7 @@ from cli_cases import (  # noqa: E402 - sibling module, run as a script
     SCRATCH,
     as_daisugi,
     go_expect_for,
+    help_for_port,
     lay_out,
     python_cmd,
     read_tree,
@@ -66,15 +66,36 @@ from cli_cases import (  # noqa: E402 - sibling module, run as a script
 )
 from fixture_paths import leaks  # noqa: E402 - sibling module, run as a script
 
-_PY_ONLY = (
-    "Skill is discovered on demand",
-    "Tool calls are captured to",
-)
-_GO_ONLY = (
-    "This binary installs the gate",
-    "layers come from the Python CLI",
-    "instruction layers come from the Python CLI",
-)
+# The oracle's skill layer links to its package directory; a port copies
+# the files from the binary (IN-1). The link is read as that copy.
+_SKILL_SRC = "{SRC}/opendaisugi/skills/opendaisugi-checklist"
+
+
+def skill_as_copy(tree: dict[str, Any]) -> dict[str, Any]:
+    """The oracle's tree with each link to the packaged skill read as the
+    directory of files a port writes there (dirs 0755, files 0644)."""
+    src = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "opendaisugi"
+        / "skills"
+        / "opendaisugi-checklist"
+    )
+    out: dict[str, Any] = {}
+    for rel, entry in tree.items():
+        if entry.get("link") != _SKILL_SRC:
+            out[rel] = entry
+            continue
+        out[rel] = {"dir": True, "mode": 0o755}
+        for p in sorted(src.rglob("*")):
+            if "__pycache__" in p.parts:
+                continue
+            sub = rel + "/" + str(p.relative_to(src))
+            if p.is_dir():
+                out[sub] = {"dir": True, "mode": 0o755}
+            else:
+                out[sub] = {"mode": 0o644, "text": p.read_text(encoding="utf-8")}
+    return out
 
 
 _DETECTED = re.compile(r"^  (?:✓ (.+)|! ([^:]+): .*)$")
@@ -83,7 +104,7 @@ _DETECTED = re.compile(r"^  (?:✓ (.+)|! ([^:]+): .*)$")
 def install_lines(text: str) -> list[str]:
     out = []
     for line in text.splitlines():
-        if not line.strip() or line.startswith(_PY_ONLY) or line.startswith(_GO_ONLY):
+        if not line.strip():
             continue
         # The binary marks a detected runtime it will fail on ("  ! Name:
         # why"); Python can only tick it. Both read as the runtime's name.
@@ -146,9 +167,11 @@ def compare(
 ) -> tuple[str, list[str]]:
     err_text = "\n".join(got["stderr"])
     if case.get("go_refuses"):
+        # A ruled refusal is worded either way: a flag or command not in
+        # the binary, or an input it does not read ("Nothing was changed.").
         ok = (
             got["exit"] == 2
-            and "is not in this binary yet." in err_text
+            and ("is not in this binary yet." in err_text or "Nothing was changed." in err_text)
             and got["tree"] == before
             and len(got["stderr"]) == 1
         )
@@ -173,6 +196,13 @@ def compare(
         a, b = install_lines(expect["stdout"]), install_lines(got["stdout"])
         if a != b:
             problems += ["stdout: " + d for d in diff(a, b)]
+    elif case["argv"][-2:] == ["help", "--all"]:
+        # HP-1: a port leaves out the lines of the commands it does not carry.
+        want = help_for_port(expect["stdout"])
+        if want != got["stdout"]:
+            problems += [
+                "stdout: " + d for d in diff(want.splitlines(), got["stdout"].splitlines())
+            ]
     elif case["argv"] == ["--version"]:
         # The binary's version comes from its build (a release number, or
         # the commit it was built from), not from pyproject.toml, so only
@@ -185,8 +215,9 @@ def compare(
         a, b = warnings_as_go(expect["stderr"]), without_notes(got["stderr"])
         if a != b:
             problems += ["stderr: " + d for d in diff(a, b)]
-    if expect["tree"] != got["tree"]:
-        problems += ["tree: " + d for d in diff(expect["tree"], got["tree"])]
+    want_tree = skill_as_copy(expect["tree"])
+    if want_tree != got["tree"]:
+        problems += ["tree: " + d for d in diff(want_tree, got["tree"])]
     return ("agree", []) if not problems else ("disagree", problems)
 
 

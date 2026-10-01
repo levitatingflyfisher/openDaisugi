@@ -497,7 +497,24 @@ _AGENTIC_TOOL_CAPABILITIES: dict[str, str] = {
     "MultiEdit": "file_write",
     "WebFetch": "network",
     "WebSearch": "network",
+    # sprig's spawn tool: the gate sees it as mcp__sprig__spawn, which the
+    # envelope admits only when mcp_allowlist names sprig/spawn.
+    "Spawn": "mcp_allowlist",
 }
+
+#: The mcp_allowlist key of the Spawn tool, as the gate keys mcp__sprig__spawn.
+SPAWN_MCP_KEY = "sprig/spawn"
+
+
+def agentic_tool_granted(tool: str, perms: Permission) -> bool:
+    """Whether the envelope backs a host tool an agentic step asks for.
+    Spawn needs its own name in mcp_allowlist: any other entry is not it."""
+    cap = _AGENTIC_TOOL_CAPABILITIES.get(tool)
+    if cap is None:
+        return False
+    if tool == "Spawn":
+        return _head_allowed(SPAWN_MCP_KEY, perms.mcp_allowlist)
+    return bool(getattr(perms, cap))
 
 
 def _check_agentic_step(step, perms: Permission) -> list[Violation]:
@@ -548,8 +565,7 @@ def _check_agentic_step(step, perms: Permission) -> list[Violation]:
                 )
             )
             continue
-        granted = getattr(perms, cap)
-        if not granted:  # False for bools, [] for glob lists — both deny
+        if not agentic_tool_granted(tool, perms):  # False for bools, [] for glob lists
             violations.append(
                 Violation(
                     stage="permissions",
@@ -988,7 +1004,7 @@ def _verify(
         return _result(plan, envelope, violations, warnings, t0)
 
     # Stage 3: DAG
-    from opendaisugi.dag import check_dag  # networkx: only when a plan reaches this stage
+    from opendaisugi.dag import check_dag  # only when a plan reaches this stage
 
     violations.extend(check_dag(plan))
 
@@ -1079,7 +1095,7 @@ def verify_step(
 
     # DAG check on a singleton with depends_on=[] is trivial; included for
     # symmetry with the whole-plan path.
-    from opendaisugi.dag import check_dag  # networkx: only when a plan reaches this stage
+    from opendaisugi.dag import check_dag  # only when a plan reaches this stage
 
     violations.extend(check_dag(plan))
 

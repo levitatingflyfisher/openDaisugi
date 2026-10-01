@@ -164,10 +164,70 @@ func (f *floor) checkVoice() {
 	}()
 }
 
+// voicePoll is how often the line follows a voice that is starting.
+var voicePoll = time.Second
+
+// pollVoice is one look at a starting voice. Tests replace it.
+var pollVoice = voiceProgress
+
+// voiceLine is a line the watch on a starting voice found. done ends the
+// watch.
+type voiceLine struct {
+	text string
+	done bool
+}
+
+// watchVoice follows a voice that is getting its speech model, so the voice
+// line shows how far it is and ends with Voice is ready. One watch runs at
+// a time, and it ends when the floor does.
+func (f *floor) watchVoice() {
+	if f.watching {
+		return
+	}
+	f.watching = true
+	socket, stop := f.o.Socket, f.stopWatch
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(voicePoll):
+			}
+			text, done := pollVoice(socket)
+			select {
+			case f.voiceLines <- voiceLine{text, done}:
+			case <-stop:
+				return
+			}
+			if done {
+				return
+			}
+		}
+	}()
+}
+
+// voiceProgressed shows a line the watch found, unless a clip is being
+// checked, recorded or heard: that line is the owner's to read.
+func (f *floor) voiceProgressed(l voiceLine) {
+	if l.done {
+		f.watching = false
+	}
+	if f.checking || f.sp.recording || f.hearing > 0 {
+		return
+	}
+	f.m.Voice = l.text
+}
+
 // voiceCheckDone starts the clip the check allowed, or says why not.
 func (f *floor) voiceCheckDone(c voiceCheck) {
 	f.checking = false
 	if c.vt == nil {
+		if waiting(c.why) {
+			// Waiting is the fix: the line follows the download.
+			f.m.Voice = c.why
+			f.watchVoice()
+			return
+		}
 		f.m.Voice = c.why + ", then press " + f.m.talkName() + " again."
 		return
 	}
@@ -258,7 +318,7 @@ func (f *floor) voiceHeard(r voiceResult) error {
 		m.Voice = "The agent the clip was for is gone."
 		return nil
 	}
-	if m.isHeadless(r.pane) {
+	if m.takesLine(r.pane) {
 		f.headlessInsert(r.pane, r.text)
 		m.Voice = "Typed into " + m.labelOf(r.pane) + ". Read it, then press Enter there."
 		return nil

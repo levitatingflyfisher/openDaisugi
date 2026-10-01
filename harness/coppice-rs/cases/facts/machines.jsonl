@@ -1,0 +1,32 @@
+# floor.machines: the boxes on the tailnet. The fake tailscale has this box
+# (box, 127.0.0.2) and three peers: gpu (online, 127.0.0.3), laptop
+# (online, 127.0.0.4) and nas (offline, 127.0.0.5). The fake daisugi writes
+# a profile table: desk points at gpu by its MagicDNS name, where a pane
+# listens; dead points at nas by address, where nothing listens; local
+# points at this box by the name localhost, where a pane listens on 127.0.0.1
+# only (Go and Rust both try ::1 and 127.0.0.1 within one second); cloud and default point at no
+# machine, and hk has no URL. dead names a key variable that is not set. The fake
+# daisugi records its working directory: coppice runs it in the foreman's
+# compactor directory, as Go does. [voice] url names gpu too. answers_ms is a clock value, so it is
+# masked (MA-R-1); the bool answers is compared.
+#!env PATH={FIXTURES}/web/bin:/usr/bin:/bin
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/web/bin/fake-daisugi
+#!env FAKE_TS_PEERS_FILE={WORK}/peers.json
+#!env FAKE_PROFILES_FILE={WORK}/profiles.json
+#!env FAKE_PWD_FILE={WORK}/daisugi-pwd
+#!mask answers_ms
+#!config [voice]
+#!config url = "http://gpu:{PORT}"
+{"id":"w1","write":"{WORK}/peers.json","text":"{\"nodekey:a\":{\"HostName\":\"GPU\",\"DNSName\":\"gpu.tail1.ts.net.\",\"OS\":\"linux\",\"Online\":true,\"LastSeen\":\"0001-01-01T00:00:00Z\",\"TailscaleIPs\":[\"127.0.0.3\",\"fd7a:115c::3\"]},\"nodekey:b\":{\"HostName\":\"laptop\",\"DNSName\":\"laptop.tail1.ts.net.\",\"OS\":\"macOS\",\"Online\":true,\"TailscaleIPs\":[\"127.0.0.4\"]},\"nodekey:c\":{\"HostName\":\"nas\",\"DNSName\":\"nas.tail1.ts.net.\",\"OS\":\"windows\",\"Online\":false,\"LastSeen\":\"2026-10-01T10:00:00Z\",\"TailscaleIPs\":[\"127.0.0.5\"]}}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w2","write":"{WORK}/profiles.json","text":"[{\"base_url\":\"https://api.example.com\",\"key_set\":true,\"model\":null,\"name\":\"cloud\",\"wire\":\"anthropic\"},{\"base_url\":\"http://127.0.0.5:{PORT2}/v1\",\"key_set\":false,\"model\":\"m\",\"name\":\"dead\",\"wire\":\"openai\"},{\"base_url\":\"http://gpu.tail1.ts.net:{PORT}/v1\",\"key_set\":true,\"model\":\"m\",\"name\":\"desk\",\"wire\":\"openai\"},{\"base_url\":null,\"key_set\":true,\"model\":\"haiku\",\"name\":\"hk\",\"wire\":\"claude-code\"},{\"base_url\":\"http://localhost:{PORT2}/v1\",\"key_set\":true,\"model\":null,\"name\":\"local\",\"wire\":\"openai\"}]"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"p0","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/usr/bin/python3","-c","import socket,time;s=socket.socket();s.setsockopt(1,2,1);s.bind(('127.0.0.1',{PORT2}));s.listen(8);time.sleep(600)"],"label":"local-model"}
+{"id":"$id","ok":true,"result":{"pane":"$lm"}}
+{"id":"p1","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/usr/bin/python3","-c","import socket,time;s=socket.socket();s.setsockopt(1,2,1);s.bind(('127.0.0.3',{PORT}));s.listen(8);time.sleep(600)"],"label":"model"}
+{"id":"$id","ok":true,"result":{"pane":"$m"}}
+#!retry 8000
+{"id":"m1","cmd":"floor.machines"}
+{"id":"$id","ok":true,"result":{"tailscale":"ok","machines":[{"name":"box","online":true,"os":"linux","self":true,"profiles":[{"name":"local","address":"localhost:{PORT2}","answers":true,"answers_ms":"*","key_set":true}]},{"name":"gpu","online":true,"os":"linux","self":false,"profiles":[{"name":"desk","address":"gpu.tail1.ts.net:{PORT}","answers":true,"answers_ms":"*","key_set":true}],"voice":{"address":"gpu:{PORT}","answers":true,"answers_ms":"*"}},{"name":"laptop","online":true,"os":"macOS","self":false,"profiles":[]},{"name":"nas","online":false,"os":"windows","self":false,"last_seen":"2026-10-01T10:00:00Z","profiles":[{"name":"dead","address":"127.0.0.5:{PORT2}","answers":false,"answers_ms":null,"key_set":false}]}]}}
+{"id":"f1","file":"{WORK}/daisugi-pwd"}
+{"id":"$id","ok":true,"result":{"text":"{HOME}/.local/state/coppice/foreman/compactor\n","mode":"0o644"}}

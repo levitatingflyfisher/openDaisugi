@@ -1,7 +1,9 @@
 package sprig
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -62,7 +64,60 @@ type Agent struct {
 	// Run starts from just the new task.
 	SeedHistory []Message
 
+	// MaxTokens caps the tokens the run may use, when CapTokens is set:
+	// before each model call the loop stops once the four usage counts of
+	// its turns, plus ExtraTokens, reach it. One turn may overshoot.
+	MaxTokens int
+	CapTokens bool
+	// ExtraTokens is the tokens spent outside this loop's own turns (the
+	// branches of the children it started). Nil is none.
+	ExtraTokens func() int
+
+	// NoTools is a run that offers the model no tool (--tools none): a
+	// reply that calls one fails the run.
+	NoTools bool
+
 	clarified bool // whether the current unclear reply has already been nudged
+}
+
+// TokensUsed is the four usage counts of every assistant turn so far,
+// plus ExtraTokens.
+func (a *Agent) TokensUsed() int {
+	n := 0
+	for _, m := range a.History {
+		if m.Role == "assistant" {
+			for _, c := range []int{m.Usage.Fresh, m.Usage.Out, m.Usage.CacheRead, m.Usage.CacheWrite} {
+				n = satAdd(n, c)
+			}
+		}
+	}
+	if a.ExtraTokens != nil {
+		n = satAdd(n, a.ExtraTokens())
+	}
+	return n
+}
+
+// satAdd adds a count to a sum of counts: a negative count adds nothing,
+// and the sum holds at the largest int instead of wrapping.
+func satAdd(a, b int) int {
+	if b <= 0 {
+		return a
+	}
+	if a > math.MaxInt-b {
+		return math.MaxInt
+	}
+	return a + b
+}
+
+// ModelTurns is the number of assistant turns in the history.
+func (a *Agent) ModelTurns() int {
+	n := 0
+	for _, m := range a.History {
+		if m.Role == "assistant" {
+			n++
+		}
+	}
+	return n
 }
 
 func (a *Agent) report(state string) {
@@ -82,10 +137,20 @@ func (a *Agent) Run(task string) (string, error) {
 		a.SessionObserver.OnPrompt(task)
 	}
 	for turn := 0; turn < a.MaxTurns; turn++ {
+		if a.CapTokens {
+			if used := a.TokensUsed(); used >= a.MaxTokens {
+				a.report("failed")
+				return "", fmt.Errorf("used %d tokens of the %d allowed", used, a.MaxTokens)
+			}
+		}
 		msg, err := a.Model.Next(a.History)
 		if err != nil {
 			a.report("failed")
 			return "", err
+		}
+		if u := msg.Usage; u.Fresh < 0 || u.Out < 0 || u.CacheRead < 0 || u.CacheWrite < 0 {
+			a.report("failed")
+			return "", errors.New("the model reported a negative token count")
 		}
 		// Mint a tool_use_id for any call that doesn't already have one (the
 		// API backend gives a real one, model_api.go's parseAPIResponse;
@@ -116,6 +181,17 @@ func (a *Agent) Run(task string) (string, error) {
 			}
 			a.report("done")
 			return msg.Text, nil // finished
+		}
+		if a.NoTools {
+			for _, c := range msg.Calls {
+				if !a.Exec.Has(c.Name) {
+					a.report("failed")
+					if len(a.Exec.tools) == 0 {
+						return "", fmt.Errorf("the model called the tool %q, and this run offers no tools", c.Name)
+					}
+					return "", fmt.Errorf("the model called the tool %q, which this run does not offer", c.Name)
+				}
+			}
 		}
 		a.clarified = false // a real call arrived; the next unclear reply earns a fresh nudge
 		for _, call := range msg.Calls {

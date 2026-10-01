@@ -13,7 +13,6 @@ use rusqlite::{params, Connection, OpenFlags};
 
 use crate::gate::py::text::repr;
 use crate::gate::pyjson::{any_json, dumps, Object, Value};
-use crate::pathways::dumped::load_dumped;
 use crate::pathways::pmodel::{self, take_model, Id, Mode};
 use crate::pathways::store::{sql_err, Col};
 use crate::pathways::yamldump::safe_dump;
@@ -373,29 +372,66 @@ pub fn load_trace(traces_dir: &str, id: &str) -> Result<Result<Record, LoadError
     };
     let text = String::from_utf8(raw).map_err(|_| unreadable(format!("the trace {id} is not UTF-8")))?;
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let v = load_dumped(&text).map_err(|w| unreadable(format!("the trace {id}: {}", w.0)))?;
+    let y = match crate::pyyaml::load(&text) {
+        Ok(y) => y,
+        Err(crate::pyyaml::Fail::Unsupported(why)) => return Err(unreadable(format!("the trace {id}: {why}"))),
+        Err(crate::pyyaml::Fail::Exc(e)) => return Ok(Err(LoadError { typ: e.kind.into(), msg: e.msg })),
+    };
+    let Some(v) = crate::pyyaml::to_json(&y) else {
+        return Err(unreadable(format!("the trace {id} holds a date or a key that is not text")));
+    };
     let o = match v {
         Value::Obj(o) => o,
-        _ => return Err(unreadable(format!("the trace {id} is not a mapping"))),
+        // raw["id"] on another type.
+        other => {
+            let msg = match &other {
+                Value::Null => "'NoneType' object is not subscriptable",
+                Value::List(_) => "list indices must be integers or slices, not str",
+                Value::Str(_) => "string indices must be integers, not 'str'",
+                Value::Bool(_) => "'bool' object is not subscriptable",
+                Value::Int(_) => "'int' object is not subscriptable",
+                Value::Float(_) => "'float' object is not subscriptable",
+                _ => return Err(unreadable(format!("the trace {id} is not a mapping"))),
+            };
+            return Ok(Err(LoadError { typ: "TypeError".into(), msg: msg.into() }));
+        }
     };
-    for k in ["id", "created_at", "task", "envelope", "plan", "result"] {
+    // TraceRecord(id=raw["id"], ..., result=VerificationResult(**raw["result"])):
+    // each argument in turn, so the first key missing or part failing is
+    // the error.
+    for k in ["id", "created_at", "task"] {
         if o.get(k).is_none() {
             return Ok(Err(LoadError { typ: "KeyError".into(), msg: repr(k) }));
         }
     }
     let mut parts = vec![];
-    for (key, id_) in [("envelope", Id::Envelope), ("plan", Id::ActionPlan), ("result", Id::VerificationResult)] {
-        let inner = match o.value(key) {
+    for (key, class, id_) in [
+        ("envelope", "Envelope", Id::Envelope),
+        ("plan", "ActionPlan", Id::ActionPlan),
+        ("result", "VerificationResult", Id::VerificationResult),
+    ] {
+        let Some(raw) = o.get(key) else {
+            return Ok(Err(LoadError { typ: "KeyError".into(), msg: repr(key) }));
+        };
+        let inner = match raw {
             Value::Obj(x) => x.clone(),
-            _ => return Err(unreadable(format!("the trace {id}: {key} is not a mapping"))),
+            other => {
+                return Ok(Err(LoadError {
+                    typ: "TypeError".into(),
+                    msg: format!(
+                        "opendaisugi.models.{class}() argument after ** must be a mapping, not {}",
+                        crate::gate::pyjson::py_type_name(other)
+                    ),
+                }))
+            }
         };
         // Model(**raw[...]): keyword arguments, so every key is a str.
         match take_model(id_, Value::Obj(inner), Mode::Python) {
             Ok(Value::Obj(x)) => parts.push(x),
             Ok(_) => return Err(unreadable(format!("the trace {id}: {key} did not validate to a mapping"))),
             Err(e) => {
-                if e.unreadable_step() {
-                    return Err(unreadable(format!("the trace {id} holds a plan step given as a string")));
+                if let Some(why) = e.unreadable() {
+                    return Err(unreadable(format!("the trace {id} holds {why}")));
                 }
                 return Ok(Err(LoadError { typ: "ValidationError".into(), msg: e.text() }));
             }

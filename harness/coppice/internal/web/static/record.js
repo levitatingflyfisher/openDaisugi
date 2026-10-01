@@ -78,19 +78,58 @@ export function applyReply(body, existingText, where = 'prompt box') {
 // say, and the mic then just tries.
 export function voiceDownMessage(body) {
   if (!body || body.ready !== false) return null;
+  // Voice is getting its speech model: say how far, with no Retry, since
+  // waiting is the fix.
+  if (body.state === 'starting' && body.fetch && body.fetch.total > 0) {
+    return MESSAGES.voiceFetching(body.fetch.done, body.fetch.total);
+  }
   return MESSAGES.voiceDown(body.message || 'Voice cannot run now. Press Retry.', body.command || '', Boolean(body.away));
 }
 
 // retryVoice is the Retry action: it asks the server to start voice, and
 // returns what the status line says after.
-export async function retryVoice(api) {
+export async function retryVoice(api, say) {
   const body = await api('/api/voice/retry', { method: 'POST' });
+  // A voice that is starting is followed, as after a Mic press.
+  if (say && body && body.state === 'starting') followStart(api, say);
   return voiceDownMessage(body) || 'Voice is ready. Tap the mic.';
+}
+
+// followStart asks again while voice starts, so the status line follows the
+// model download and ends with Voice is ready. note gets each message (null
+// when voice can run). One follow runs at a time.
+let following = false;
+export async function followStart(api, say, note = () => {}) {
+  if (following) return;
+  following = true;
+  try {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, timing.pollMs));
+      let body;
+      try {
+        body = await api('/api/voice/status');
+      } catch {
+        break;
+      }
+      const m = voiceDownMessage(body);
+      note(m);
+      if (m) say(m);
+      if (body && body.state === 'starting') continue;
+      if (!m) say(MESSAGES.voiceReady());
+      break;
+    }
+  } finally {
+    following = false;
+  }
 }
 
 // VOICE_DOWN is the status a transcribe reply carries when voice cannot
 // run. Its message already says why and ends with Retry.
 const VOICE_DOWN = 503;
+
+// timing is how long the mic waits between asks while voice starts. A test
+// shortens it.
+export const timing = { pollMs: 1000 };
 
 const IDLE = 'idle';
 const STARTING = 'starting';
@@ -101,11 +140,12 @@ function stopTracks(s) {
   if (s) s.getTracks().forEach((t) => t.stop());
 }
 
-// mountRecord wires one record button to one text box. Each button keeps
+// mountRecord wires one record button to one text box. voiced is true for
+// the tell bar: words the mic adds there mark the message as spoken. Each button keeps
 // its own recorder, so the pane screen's button and the tell bar's never
 // share a clip. The text that comes back only fills the box. Nothing is
 // sent until the operator sends it.
-export function mountRecord(buttonId = 'record', boxId = 'text', where = 'prompt box') {
+export function mountRecord(buttonId = 'record', boxId = 'text', where = 'prompt box', voiced = false) {
   const button = document.getElementById(buttonId);
   let state = IDLE;
   let recorder = null;
@@ -115,20 +155,29 @@ export function mountRecord(buttonId = 'record', boxId = 'text', where = 'prompt
   // down is the message that says why voice cannot run, or null. Its fix
   // buttons, Retry among them, show on the status line.
   let down = null;
+  // pressed is true after the first Mic press. Until then the page asks
+  // whether voice can run and says nothing about it, so a load never
+  // shows a voice banner.
+  let pressed = false;
   const setDown = (m) => {
     down = m;
-    if (m) window.coppice.status(m);
+    if (m && pressed) window.coppice.status(m);
   };
-  // check asks the server whether voice can run. A request that fails
-  // leaves what the mic knew as it was: the mic then just tries, and a
-  // clip that cannot be heard says why.
+  // check asks the server whether voice can run, and answers the reply, or
+  // null when the request failed. A request that fails leaves what the mic
+  // knew as it was: the mic then just tries, and a clip that cannot be
+  // heard says why.
   const check = async (path, options) => {
     try {
-      setDown(voiceDownMessage(await window.coppice.api(path, options)));
+      const body = await window.coppice.api(path, options);
+      setDown(voiceDownMessage(body));
+      return body;
     } catch {
       // Nothing is known, so nothing changes.
+      return null;
     }
   };
+  const watch = () => followStart(window.coppice.api, window.coppice.status, (m) => { down = m; });
   // A page with no token yet asks nothing: the mic learns on its first
   // clip instead.
   const app = window.coppice;
@@ -153,6 +202,10 @@ export function mountRecord(buttonId = 'record', boxId = 'text', where = 'prompt
       });
       const box = document.getElementById(boxId);
       const result = applyReply(body, box.value, where);
+      // Words the mic added mean the reply to this message is read aloud.
+      // Only the tell bar goes to the foreman: a pane's own prompt box is for
+      // that agent, and its words are not a message to read a reply to.
+      if (voiced && result.text !== box.value && window.coppice.speech) window.coppice.speech.markVoiced();
       box.value = result.text;
       window.coppice.status(result.status);
     } catch (e) {
@@ -199,6 +252,17 @@ export function mountRecord(buttonId = 'record', boxId = 'text', where = 'prompt
 
   const idleText = button.textContent || 'Record';
   button.addEventListener('click', async () => {
+    pressed = true;
+    // A mic press unlocks sound and stops any reply being read aloud.
+    if (window.coppice.speech) window.coppice.speech.pressMic();
+    // Over plain http from another machine the browser gives no
+    // microphone at all. Say that this is why, and where the fix is,
+    // before the browser is blamed. An older browser with no
+    // isSecureContext is taken as secure.
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      window.coppice.status(MESSAGES.micNeedsHttps());
+      return;
+    }
     if (!canRecord()) {
       window.coppice.status('This browser cannot record audio. Try a newer browser or device.');
       return;
@@ -211,9 +275,12 @@ export function mountRecord(buttonId = 'record', boxId = 'text', where = 'prompt
         // Voice was down when last asked. It may have come up since, so
         // ask again before saying so.
         state = STARTING;
-        await check('/api/voice/status');
+        const body = await check('/api/voice/status');
         state = IDLE;
-        if (down) return;
+        if (down) {
+          if (body && body.state === 'starting') watch();
+          return;
+        }
       }
       start();
       return;

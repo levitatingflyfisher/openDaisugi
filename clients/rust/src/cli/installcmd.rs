@@ -1,25 +1,27 @@
-//! `daisugi install --gate` and `--harness`: the gate half of install.
+//! `daisugi install`: every layer of install, its reverse, and `--harness`.
 
 use super::gateroot::{self, join, parent};
 use super::install::{self, Change, HarnessErr, InstErr, Runtime};
-use super::installgw::{self, DEFAULT_BASE_URL};
+use super::installgw::DEFAULT_BASE_URL;
+use super::layers;
+use crate::gate::pyjson::Value;
 use super::{exit, parse_args, Env, Opt, Parsed, Res};
 
 const INSTALL_OPTS: &[Opt] = &[
     Opt::flag(&["--dry-run"], "Show what would change without writing anything."),
     Opt::flag(&["--yes", "-y"], "Skip confirmation prompt."),
-    Opt::flag(&["--print-skill"], "Not in this binary yet."),
-    Opt::flag(&["--uninstall"], "With --gate, remove the gate hooks; with --harness, the extensions."),
+    Opt::flag(&["--print-skill"], "Print the opendaisugi-checklist skill content to stdout."),
+    Opt::flag(&["--uninstall"], "Reverse all managed changes."),
     Opt::many(&["--runtime"], "TEXT", "Target named runtime(s) only, e.g. --runtime claude."),
     Opt::many(&["--harness"], "TEXT", "Install a loop harness's gate extension. Supported: pi, opencode."),
-    Opt::pair(&["--gate"], "--no-gate", "Install the fail-closed verify hook (audit by default)."),
+    Opt::pair(&["--gate"], "--no-gate", "Also install the fail-closed verify hook (opt-in; audit by default)."),
     Opt::pair(&["--enforce"], "--audit", "Gate mode: --enforce denies out-of-envelope calls; --audit only observes."),
     Opt::hidden(&["--shadow"]),
-    Opt::pair(&["--ask"], "--no-ask", "Not in this binary yet."),
+    Opt::pair(&["--ask"], "--no-ask", "Hand an enforce-mode would-deny to a present operator for a bounded time."),
     Opt::pair(&["--gateway"], "--no-gateway", "Also point the harness at the local token-saving gateway (opt-in)."),
-    Opt::pair(&["--allow-shell-decomposition"], "--no-allow-shell-decomposition", "Not in this binary yet."),
+    Opt::pair(&["--allow-shell-decomposition"], "--no-allow-shell-decomposition", "Let the envelope admit compound shell (ADR-0010)."),
     Opt::val(&["--base-url"], "TEXT", "Gateway base_url to wire in when --gateway is set."),
-    Opt::val(&["--report"], "TEXT", "Not in this binary yet."),
+    Opt::val(&["--report"], "TEXT", "Report gate state to a floor host: herdr or coppice."),
     Opt::val(&["--router"], "TEXT", "Who picks the model for each gateway turn: rules, switchyard, or off."),
     Opt::val(&["--efficient-model"], "TEXT", "The model id of Switchyard's efficient tier."),
     Opt::val(&["--capable-model"], "TEXT", "The model id of Switchyard's capable tier."),
@@ -31,12 +33,9 @@ const INSTALL_OPTS: &[Opt] = &[
 pub const ENFORCE_NEEDS_POLICY: &str = "Enforce needs a policy first. Run: daisugi gate init --workspace DIR \
      for a starter envelope, then this command again. Or install in audit mode: daisugi install --gate";
 
-/// The install flags this binary does not carry. A run that names one is
-/// refused before anything is read or written.
-const NOT_YET_FLAGS: &[&str] = &["--print-skill", "--allow-shell-decomposition", "--report", "--ask"];
-
 impl Env {
     pub(super) fn install(&mut self, args: &[String]) -> Res {
+        self.port_hop(args)?;
         let p = match parse_args(args, INSTALL_OPTS, 0) {
             Ok(p) => p,
             Err(m) => return self.usage("install", m),
@@ -45,9 +44,9 @@ impl Env {
             return self.cmd_help(
                 "install",
                 "",
-                "Wire the gate into agent harnesses: --gate writes the gate hook (Claude Code, Codex); --gateway \
-                 points them at the token-saving gateway; --harness writes the pi or OpenCode extension. The skill, \
-                 MCP, capture and instruction layers are not in this binary yet.",
+                "Wire openDaisugi into every detected agent harness: the skill, the MCP server, the capture hook and \
+                 the pathway instructions; --gate adds the gate hook, --gateway points the harness at the \
+                 token-saving gateway, --harness writes the pi or OpenCode extension.",
                 INSTALL_OPTS,
             );
         }
@@ -55,24 +54,15 @@ impl Env {
             // `cli._shadow_moved`: the old name of --audit, one line.
             return self.usage("install", "Invalid value for '--shadow': shadow mode is now audit mode: use --audit".into());
         }
-        for f in NOT_YET_FLAGS {
-            // --no-gateway changes nothing; --no-allow-shell-decomposition
-            // writes config.yaml in Python, so it is refused too.
-            if p.has(f) || p.flag(f) || (*f == "--allow-shell-decomposition" && p.flag_set(f)) {
-                return self.not_yet(&format!("daisugi install {f}"));
-            }
+        if p.flag("--print-skill") {
+            self.out(&format!("{}\n", layers::skill_text()));
+            return Ok(());
         }
         let harness = p.list("--harness");
         if !harness.is_empty() {
             return self.install_harness(&harness, &p);
         }
         let (gate, gw) = (p.flag("--gate"), p.flag("--gateway"));
-        if !gate && !gw {
-            if p.flag("--uninstall") {
-                return self.not_yet("daisugi install --uninstall without --gate or --gateway");
-            }
-            return self.not_yet("daisugi install without --gate, --gateway or --harness");
-        }
         let mut base_url = p.str("--base-url", "");
         if base_url.is_empty() {
             base_url = DEFAULT_BASE_URL.into();
@@ -95,10 +85,10 @@ impl Env {
             return Ok(());
         }
         if p.flag("--uninstall") {
-            return self.uninstall_gate(&runtimes);
+            return self.uninstall_all(&runtimes);
         }
-        let (enforce, ask) = (p.flag("--enforce"), false);
-        let root = join(&self.home, ".opendaisugi/gate");
+        let (enforce, ask) = (p.flag("--enforce"), p.flag("--ask"));
+        let root = join(&self.data_home(), "gate");
         // With no envelope registered, an enforce hook denies every call, so
         // the agent can do nothing at all. Refuse before anything is written.
         if gate && enforce {
@@ -113,6 +103,21 @@ impl Env {
         }
         if enforce && !gate {
             self.out("Note: --enforce only applies with --gate; no gate hook will be installed.\n");
+        }
+        if ask && !(gate && enforce) {
+            self.out("Note: --ask only applies with --gate --enforce; no operator ask will be wired.\n");
+        }
+        let effective_ask = ask && gate && enforce;
+        let mut report = p.str("--report", "");
+        if p.has("--report") && report != "herdr" && report != "coppice" {
+            self.errf("Error: --report must be herdr or coppice. Run: daisugi install --gate --report herdr\n");
+            return exit(1);
+        }
+        if p.has("--report") && !gate {
+            self.out("Note: --report needs --gate. This run installs no floor-report hooks.\n");
+        }
+        if !gate {
+            report.clear();
         }
         // The router choice is checked before anything is written, so a bad
         // value leaves the harness and config.yaml as they were.
@@ -130,13 +135,11 @@ impl Env {
             self.errf(&format!("{}\n", install::versioned_note(&me)));
         }
         let home = self.home.clone();
-        // Decide every change before printing the plan: a settings file
-        // this binary cannot edit refuses the run with nothing written.
+        let o = layers::Opts { gate, gateway: gw, enforce, ask: effective_ask, url: base_url.clone(), report: report.clone() };
+        // Decide every change before printing the plan: a file this binary
+        // cannot edit refuses the run with nothing written.
         let plan_all = || -> Result<Vec<Change>, InstErr> {
-            runtimes
-                .iter()
-                .map(|rt| installgw::plan_apply_gateway(rt, &home, &me, &root, gate, gw, enforce, ask, &base_url))
-                .collect()
+            runtimes.iter().map(|rt| layers::plan_install(rt, &home, &me, &root, &o)).collect()
         };
         let planned = match plan_all() {
             Ok(c) => c,
@@ -154,7 +157,7 @@ impl Env {
         let mut gaps = vec![];
         for rt in &runtimes {
             self.out(&format!("[{}]\n", rt.name));
-            for s in installgw::plan_steps(rt, &self.home, gate, gw, enforce, ask, &base_url) {
+            for s in layers::plan_all_steps(rt, &self.home, &o) {
                 let target = if s.target.is_empty() { String::new() } else { format!("  → {}", s.target) };
                 let marker = if s.supported {
                     "+"
@@ -169,10 +172,9 @@ impl Env {
         if !gaps.is_empty() {
             self.out(&format!("Honest gaps (selected but not wired for this harness):\n{}\n\n", gaps.join("\n")));
         }
-        self.out(
-            "This binary installs the gate and gateway layers only. The skill, MCP, capture and\n\
-             instruction layers come from the Python CLI's `daisugi install`.\n\n",
-        );
+        self.out("Skill is discovered on demand — zero added tokens for simple sessions.\n");
+        let captures = self.tilde(&join(&self.data_home(), "captures"));
+        self.out(&format!("Tool calls are captured to {captures}/ for distillation.\n\n"));
         if gate {
             self.out(
                 "The gate checks each call against a registered envelope — this install writes the hook, not the \
@@ -212,6 +214,8 @@ impl Env {
             if let Err(e) = res {
                 return self.fail("install", &e.to_string());
             }
+            // A runtime whose apply raised lists nothing, even the files
+            // it wrote before it raised, as Python's does.
             if ch.failed {
                 failed.push(format!("{}: {}", ch.runtime.name, ch.why));
             } else {
@@ -227,18 +231,72 @@ impl Env {
         } else if failed.is_empty() {
             self.out("\nAll runtimes were already configured — nothing changed.\n");
         }
-        // A runtime that failed wrote nothing: name it and exit 1, never
-        // report it as configured.
         for f in &failed {
             self.errf(&format!("Failed: {f}. Nothing was written for it.\n"));
         }
+        let cfg_path = join(&self.data_home(), "config.yaml");
+        if p.flag_set("--allow-shell-decomposition") {
+            let allow = p.flag("--allow-shell-decomposition");
+            self.save_install_config(&cfg_path, vec![("shell_allow_decomposition".into(), Value::Bool(allow))])?;
+            let state = if allow { "on" } else { "off" };
+            self.out(&format!(
+                "Compound-shell decomposition default: {state} ({cfg_path}) — config is your data, so it survives \
+                 --uninstall; edit or delete the file to reset it.\n"
+            ));
+        }
         if let Some(u) = &router {
             self.apply_router_update(u)?;
+        }
+        if !report.is_empty() {
+            self.save_install_config(&cfg_path, vec![("floor_report".into(), Value::Str(report.clone()))])?;
+            if report == "coppice" {
+                self.out(&format!(
+                    "Floor report set to coppice. Saved in {cfg_path}. The coppice server is built. Nothing reports to it yet.\n"
+                ));
+            }
+        }
+        // Ask once whether to distil repeated tasks in the background.
+        // Interactive only: a --yes install leaves consent unasked.
+        if !p.flag("--yes") {
+            let cfg = match super::config::load(&cfg_path) {
+                Ok(c) => c,
+                Err(e) => return self.refuse("install", &format!("{cfg_path} is not one this binary rewrites: {e}")),
+            };
+            if cfg.auto_tend.is_none() {
+                let yes = self.confirm_default(
+                    "\nLet openDaisugi distil your repeated tasks in the background, so reuse compounds \
+                     automatically? (only affects cost — the guard enforces safety either way)",
+                    true,
+                )?;
+                self.save_install_config(&cfg_path, vec![("auto_tend".into(), Value::Bool(yes))])?;
+                if yes {
+                    self.out(
+                        "Background distillation is ON — no cron needed: your capture hook kicks off a rate-limited \
+                         tend on its own. (You can also run `daisugi hook auto-tend` any time.)\n",
+                    );
+                } else {
+                    self.out("Left OFF — run `daisugi tend` yourself whenever you want it.\n");
+                }
+            }
         }
         if !failed.is_empty() {
             return exit(1);
         }
         Ok(())
+    }
+
+    /// `save_config(load_config(path).model_copy(update))`.
+    fn save_install_config(&mut self, path: &str, update: Vec<(String, Value)>) -> Result<(), super::Stop> {
+        use super::config::{ConfigErr, SaveErr};
+        match super::config::save(path, &self.home.clone(), &update) {
+            Ok(()) => Ok(()),
+            Err(SaveErr::Config(ConfigErr::Invalid | ConfigErr::Yaml(_))) => {
+                self.errf(&format!("daisugi install: pydantic_core._pydantic_core.ValidationError: {path} does not validate\n"));
+                Err(super::Stop::Exit(1))
+            }
+            Err(SaveErr::Config(e)) => Err(self.refuse("install", &format!("{path} is not one this binary rewrites: {e}")).unwrap_err()),
+            Err(SaveErr::Io(e)) => Err(self.fail("install", &e.to_string()).unwrap_err()),
+        }
     }
 
     fn note_followed(&mut self, followed: &[String]) {
@@ -249,21 +307,16 @@ impl Env {
         }
     }
 
-    fn uninstall_gate(&mut self, runtimes: &[Runtime]) -> Res {
+    /// `install.uninstall`: every managed change reversed for each
+    /// runtime.
+    fn uninstall_all(&mut self, runtimes: &[Runtime]) -> Res {
         let mut changes = vec![];
+        let mut gone = std::collections::HashSet::new();
         for rt in runtimes {
-            let mut ch = match install::plan_reverse(rt, &self.home) {
-                Ok(c) => c,
+            match layers::plan_reverse_all(rt, &self.home, &mut gone) {
+                Ok(c) => changes.push(c),
                 Err(e) => return self.refuse("install --uninstall", &e.to_string()),
-            };
-            // Both layers this binary writes are reversed, as Python's
-            // uninstall reverses every layer.
-            if !ch.failed {
-                if let Err(e) = installgw::plan_reverse_gateway(rt, &self.home, &mut ch) {
-                    return self.refuse("install --uninstall", &e.to_string());
-                }
             }
-            changes.push(ch);
         }
         let (mut written, mut failed) = (vec![], vec![]);
         for ch in &changes {
@@ -281,7 +334,6 @@ impl Env {
         let names: Vec<&str> = runtimes.iter().map(|r| r.name).collect();
         self.out(&format!("Uninstalled from: {}\n", names.join(", ")));
         if !failed.is_empty() {
-            // A runtime left untouched, and why: the run exits 1.
             self.out(&format!("Failures (left untouched): {}\n", failed.join("; ")));
         }
         if !written.is_empty() {
@@ -354,5 +406,38 @@ impl Env {
             ));
         }
         Ok(())
+    }
+
+    /// Hands the whole install to the port DAISUGI_PORT names, when that
+    /// is not this one (ruling PK-R-15): runs that binary in place of
+    /// this process, with the same arguments. Returns only when there is
+    /// no hand-over.
+    fn port_hop(&mut self, args: &[String]) -> Res {
+        use std::os::unix::process::CommandExt;
+        let me = match self.self_path() {
+            Ok(s) => s,
+            Err(e) => return self.fail("install", &e),
+        };
+        let target = match super::port::port_hop("rust", &me, &self.env) {
+            Ok(None) => return Ok(()),
+            Ok(Some(t)) => t,
+            Err(msg) => {
+                self.errf(&format!("daisugi: {msg}\n"));
+                return exit(2);
+            }
+        };
+        let mut argv: Vec<String> = vec![];
+        if self.quiet {
+            argv.push("-q".into());
+        }
+        if self.plain {
+            argv.push("--plain".into());
+        }
+        argv.push("install".into());
+        argv.extend(args.iter().cloned());
+        self.flush();
+        let err = std::process::Command::new(&target).args(&argv).env(super::port::PORT_HOP_ENV, "1").exec();
+        self.errf(&format!("daisugi: cannot run {target}: {err}\n"));
+        exit(1)
     }
 }

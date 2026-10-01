@@ -41,8 +41,8 @@ func WordWouldDeny(dataDir, auditPrefix string) int {
 		if !strings.Contains(text, "dialect") {
 			continue
 		}
-		v, why := pyyaml.LoadDumped(text)
-		if why != nil {
+		v, exc, why := pyyaml.Load(text)
+		if why != nil || exc != nil {
 			continue
 		}
 		o, isObj := v.(*pyjson.Object)

@@ -28,6 +28,34 @@ var agenticToolCapabilities = map[string]string{
 	"Bash": "shell", "Read": "file_read", "Glob": "file_read", "Grep": "file_read",
 	"Write": "file_write", "Edit": "file_write", "MultiEdit": "file_write",
 	"WebFetch": "network", "WebSearch": "network",
+	// sprig's spawn tool: the gate sees it as mcp__sprig__spawn, which
+	// the envelope admits only when mcp_allowlist names sprig/spawn.
+	"Spawn": "mcp_allowlist",
+}
+
+// SpawnMCPKey is verify.SPAWN_MCP_KEY: the mcp_allowlist key of the Spawn
+// tool, as the gate keys mcp__sprig__spawn.
+const SpawnMCPKey = "sprig/spawn"
+
+// AgenticToolGranted is verify.agentic_tool_granted: whether the envelope
+// backs a host tool an agentic step asks for. Spawn needs its own name in
+// mcp_allowlist: any other entry is not it.
+func AgenticToolGranted(tool string, perms Permission) bool {
+	capName, ok := agenticToolCapabilities[tool]
+	if !ok {
+		return false
+	}
+	if tool == "Spawn" {
+		return headAllowed(SpawnMCPKey, perms.McpAllowlist)
+	}
+	return capabilityGranted(perms, capName)
+}
+
+// AgenticToolCapability is the permission a host tool needs, and whether
+// it has one.
+func AgenticToolCapability(tool string) (string, bool) {
+	c, ok := agenticToolCapabilities[tool]
+	return c, ok
 }
 
 // VerifyOptions mirrors the verify()/kwargs surface the conformance corpus
@@ -271,7 +299,7 @@ func checkAgenticStep(step Step, perms Permission) []Violation {
 				With(kv("step", step.ID, "tool", tool), nil))
 			continue
 		}
-		if !capabilityGranted(perms, cap) {
+		if !AgenticToolGranted(tool, perms) {
 			violations = append(violations, VStep("permissions", step.ID, fmt.Sprintf(
 				"Step '%s' requests host tool '%s' but the envelope grants no %s capability", step.ID, tool, cap)).
 				With(kv("step", step.ID, "tool", tool, "capability", cap), nil))

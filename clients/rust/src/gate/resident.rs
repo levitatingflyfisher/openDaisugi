@@ -9,6 +9,7 @@ use super::py::text::{repr, surrogate_char};
 use super::pyjson::{self, dumps, py_decode_error, py_float_repr, Object, Value};
 use super::pystr::safe_session_id;
 use super::state_report::{report_explicit, valid_coppice_pane_id};
+use std::collections::HashMap;
 
 /// `gate_server._MAX_REQUEST`: a request line is read up to its newline or
 /// this many bytes, whichever comes first.
@@ -344,11 +345,30 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
 /// stdout, stderr and exit code. Deep input recurses: run it on a large
 /// stack.
 pub fn hook_report(argv: &[String], raw: &[u8], caller: &Caller, home: &str) -> (String, String, i32) {
+    hook_report_with(argv, raw, home, &|row: &Object| {
+        if caller.names_a_pane() {
+            caller.report(row);
+        }
+    })
+}
+
+/// `_state_report.hook_report_argv` as the command line runs it: the pane
+/// identity comes from `env`, the environment this process shares with its
+/// caller, as `report_state` reads it by default.
+pub fn hook_report_cli(argv: &[String], raw: &[u8], env: &HashMap<String, String>, home: &str) -> (String, String, i32) {
+    hook_report_with(argv, raw, home, &|row: &Object| {
+        let _ = super::state_report::report_state_env(env, row);
+    })
+}
+
+fn hook_report_with(argv: &[String], raw: &[u8], home: &str, deliver: &dyn Fn(&Object)) -> (String, String, i32) {
     let (pane, root) = match parse_hook_report_argv(argv) {
         Some(x) => x,
         None => return (String::new(), "daisugi hook report: bad arguments".into(), 1),
     };
-    let root = root.unwrap_or_else(|| path_join(&path_join(&path_str(home), ".opendaisugi"), "gate"));
+    let root = root.unwrap_or_else(|| {
+        path_join(&crate::datahome::dir(|k| std::env::var(k).ok(), &path_str(home), crate::datahome::exists), "gate")
+    });
     let text = match std::str::from_utf8(raw) {
         Ok(t) => t.to_string(),
         Err(_) => {
@@ -372,9 +392,7 @@ pub fn hook_report(argv: &[String], raw: &[u8], caller: &Caller, home: &str) -> 
         return (String::new(), format!("daisugi hook report: {m}"), 1);
     }
     let _ = append_report_tree(&root, &row);
-    if caller.names_a_pane() {
-        caller.report(&row);
-    }
+    deliver(&row);
     (String::new(), String::new(), 0)
 }
 

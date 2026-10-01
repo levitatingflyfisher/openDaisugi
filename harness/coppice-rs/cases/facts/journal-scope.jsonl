@@ -1,0 +1,26 @@
+# A pane reading floor.journal gets only its own pane's entries, whichever
+# pane it asks for; a pane that asks for another's gets none. An operator
+# (the connection before its hello) gets all. A hello that names a pane
+# narrows the connection for good, so the pane checks come last.
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":true,"result":{"pane":"$a"}}
+{"id":"2","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":true,"result":{"pane":"$b"}}
+{"id":"3","cmd":"pane.report_state","pane":"$a","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$a","state":"working","source":"gate","detail":"verdict=allow","mode":"enforcing","verdict":{"decision":"allow","tool":"Read","clause":"a1"}}}
+{"id":"$id","ok":true,"result":{"pane":"$a"}}
+{"id":"4","cmd":"pane.report_state","pane":"$b","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$b","state":"working","source":"gate","detail":"verdict=allow","mode":"enforcing","verdict":{"decision":"allow","tool":"Read","clause":"b1"}}}
+{"id":"$id","ok":true,"result":{"pane":"$b"}}
+{"id":"5","cmd":"pane.report_state","pane":"$a","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$a","state":"working","source":"gate","detail":"verdict=allow","mode":"enforcing","verdict":{"decision":"allow","tool":"Read","clause":"a2"}}}
+{"id":"$id","ok":true,"result":{"pane":"$a"}}
+{"id":"6","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"$a","decision":"allow","tool":"Read","clause":"a2","mode":"enforcing"},{"at":"*","pane":"$b","decision":"allow","tool":"Read","clause":"b1","mode":"enforcing"},{"at":"*","pane":"$a","decision":"allow","tool":"Read","clause":"a1","mode":"enforcing"}]}}
+{"id":"7","cmd":"hello","role":"pane","pane":"$b"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$b"}}
+{"id":"8","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"$b","decision":"allow","tool":"Read","clause":"b1","mode":"enforcing"}]}}
+{"id":"9","cmd":"floor.journal","pane":"$b"}
+{"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"$b","decision":"allow","tool":"Read","clause":"b1","mode":"enforcing"}]}}
+{"id":"10","cmd":"floor.journal","pane":"$a"}
+{"id":"$id","ok":true,"result":{"entries":[]}}
+{"id":"11","cmd":"floor.journal","since":99999999999}
+{"id":"$id","ok":true,"result":{"entries":[]}}

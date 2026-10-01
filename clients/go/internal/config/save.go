@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"daisugi-verify/internal/datahome"
 	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pyyaml"
@@ -21,12 +22,12 @@ import (
 // refuses before it writes anything.
 
 // defaults is Config() as model_dump(mode="json") gives it; data_dir is
-// filled from the home directory.
+// the data home (datahome.Dir) for this process's environment and home.
 func defaults(home string) map[string]any {
 	null := any(nil)
 	return map[string]any{
 		"model": "anthropic/claude-sonnet-4-20250514", "max_task_chars": pyjson.Int{Text: "4000"},
-		"z3_timeout_ms": pyjson.Int{Text: "500"}, "data_dir": gateroot.PathStr(filepath.Join(home, ".opendaisugi")),
+		"z3_timeout_ms": pyjson.Int{Text: "500"}, "data_dir": datahome.Dir(os.Getenv, home, datahome.Exists),
 		"auto_tend": null, "gateway_local_model": null, "gateway_router": "rules", "switchyard_route_id": "daisugi",
 		"switchyard_capable_model": "claude-sonnet-5", "switchyard_efficient_model": null,
 		"switchyard_api_key_env": null, "shell_allow_decomposition": false, "gate_mode": "audit", "gate_ask": false,
@@ -49,12 +50,66 @@ func floorObject(m map[string]any) *pyjson.Object {
 	return o
 }
 
+// plain is a YAML value as model_dump(mode="json") keeps an Any field:
+// mappings with their keys sorted, as yaml.safe_dump(sort_keys=True)
+// writes them.
+func plain(v Value) (any, error) {
+	switch v.Kind {
+	case Null:
+		return nil, nil
+	case Bool:
+		return v.B, nil
+	case Int:
+		n, ok := new(big.Int).SetString(strings.ReplaceAll(v.Text, "_", ""), 0)
+		if !ok {
+			return nil, ErrUnsupported
+		}
+		return pyjson.Int{Text: n.String()}, nil
+	case Float:
+		f, err := strconv.ParseFloat(strings.ReplaceAll(v.Text, "_", ""), 64)
+		if err != nil {
+			return nil, ErrUnsupported
+		}
+		return pyjson.Float(f), nil
+	case Str:
+		return v.Text, nil
+	case Seq:
+		out := []any{}
+		for _, x := range v.Items {
+			p, err := plain(x)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, p)
+		}
+		return out, nil
+	case Map:
+		if v.NonStrKeys > 0 {
+			return nil, ErrUnsupported
+		}
+		keys := append([]string{}, v.Keys...)
+		sort.Strings(keys)
+		o := pyjson.NewObjectCap(len(keys))
+		for _, k := range keys {
+			p, err := plain(v.Map[k])
+			if err != nil {
+				return nil, err
+			}
+			o.Set(k, p)
+		}
+		return o, nil
+	}
+	return nil, ErrUnsupported
+}
+
 // dumped is the value pydantic keeps for v in a field of type t.
 func dumped(v Value, t fieldType) (any, error) {
 	if v.Kind == Null {
 		return nil, nil
 	}
 	switch t {
+	case tAny:
+		return plain(v)
 	case tStr, tOptStr:
 		return v.Text, nil
 	case tPath:
@@ -147,6 +202,9 @@ func Dump(path, home string, updates map[string]any) (string, error) {
 				x, err := dumped(v, f.Type)
 				if err != nil {
 					return "", err
+				}
+				if f.Type == tAny && x == nil {
+					continue // left out of the dump when None
 				}
 				vals[f.Name] = x
 			}

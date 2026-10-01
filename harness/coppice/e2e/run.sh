@@ -2,12 +2,14 @@
 # harness/coppice/e2e/run.sh: the coppice end-to-end suite.
 #
 # It starts one coppice server on a scratch socket and data directory,
-# with fake harnesses only (bash, and fake-trust.sh standing in for claude),
+# with fake harnesses only (bash, fake-trust.sh standing in for claude on its
+# folder trust screen, and fake-foreman.sh standing in for a claude foreman),
 # and then:
 #   1. tui: runs the coppice TUI inside a coppice pane, so the server's own
 #      virtual terminal is the screen the check reads (tui.sh);
 #   2. web: opens the web floor in headless chromium (web.mjs) and checks
-#      the roster, a live tile, a gate ask bar and the trust screen buttons.
+#      the roster, a live tile, a gate ask bar, the trust screen buttons,
+#      and the phone home with the chat with the foreman.
 # Screenshots and TUI screen dumps go to $E2E_DIR/shots.
 #
 #   harness/coppice/e2e/run.sh [web|tui|all]
@@ -18,6 +20,7 @@
 #                and made again at the start of a run and kept afterwards.
 #   COPPICE_BIN  a built coppice; default: build one into $E2E_DIR/bin.
 #   E2E_PORT     the web floor's loopback port (default 18490).
+#   E2E_SPEAK_PORT  the fake speech server's loopback port (default 18491).
 #
 # The suite never runs a real claude, model or upstream: it stops at once
 # if the harness table it writes would reach one, and every coppice call
@@ -31,6 +34,7 @@ case "$which" in web|tui|all) ;; *) echo "usage: run.sh [web|tui|all]" >&2; exit
 
 E2E_DIR="${E2E_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/coppice-e2e}"
 port="${E2E_PORT:-18490}"
+speak_port="${E2E_SPEAK_PORT:-18491}"
 rm -rf "$E2E_DIR"
 mkdir -p "$E2E_DIR"/{bin,cfg/coppice,share,state,data,run,proj/alpha,proj/beta,shots}
 chmod 700 "$E2E_DIR/run"
@@ -58,6 +62,34 @@ export XDG_CONFIG_HOME="$E2E_DIR/cfg" XDG_DATA_HOME="$E2E_DIR/share"
 export XDG_STATE_HOME="$E2E_DIR/state" XDG_RUNTIME_DIR="$E2E_DIR/run"
 export COPPICE_NO_AUTOSTART=1
 unset COPPICE_SOCKET ANTHROPIC_API_KEY ANTHROPIC_BASE_URL OPENAI_API_KEY 2>/dev/null || true
+# The fake foreman writes its invented transcript under a scratch Claude
+# config directory, never the operator's own.
+export CLAUDE_CONFIG_DIR="$E2E_DIR/claude"
+mkdir -p "$CLAUDE_CONFIG_DIR/projects"
+
+# The Machines panel reads tailscale and the agent profiles. The fakes shadow
+# the real tailscale, which this suite never runs: this box (127.0.0.2) and
+# three peers, gpu (127.0.0.1, so the web floor's own port answers for the
+# profile desk), laptop (no profile) and nas (offline, profile dead).
+fixbin="$module/../coppice-rs/cases/web/fixtures/bin"
+mkdir -p "$E2E_DIR/fakebin"
+cp "$fixbin/tailscale" "$fixbin/fake-daisugi" "$E2E_DIR/fakebin/"
+cat > "$E2E_DIR/peers.json" <<EOT
+{"nodekey:a":{"HostName":"gpu","DNSName":"gpu.tail1.ts.net.","OS":"linux","Online":true,"TailscaleIPs":["127.0.0.1"]},
+ "nodekey:b":{"HostName":"laptop","DNSName":"laptop.tail1.ts.net.","OS":"macOS","Online":true,"TailscaleIPs":["127.0.0.4"]},
+ "nodekey:c":{"HostName":"nas","DNSName":"nas.tail1.ts.net.","OS":"windows","Online":false,"LastSeen":"2026-10-01T10:00:00Z","TailscaleIPs":["127.0.0.5"]}}
+EOT
+cat > "$E2E_DIR/profiles.json" <<EOT
+[{"base_url":"http://127.0.0.5:9/v1","key_set":false,"model":"m","name":"dead","wire":"openai"},
+ {"base_url":"http://gpu.tail1.ts.net:$port/v1","key_set":true,"model":"m","name":"desk","wire":"openai"}]
+EOT
+# Only the server gets them, and only when the web phase runs: the TUI phase
+# and every other call see the real PATH.
+srv_env=()
+if [ "$which" = web ] || [ "$which" = all ]; then
+  srv_env=(env "PATH=$E2E_DIR/fakebin:$PATH" "COPPICE_DAISUGI_BIN=$E2E_DIR/fakebin/fake-daisugi"
+    "FAKE_TS_PEERS_FILE=$E2E_DIR/peers.json" "FAKE_PROFILES_FILE=$E2E_DIR/profiles.json")
+fi
 
 screen="$module/testdata/screens/claude/blocked-10.txt"
 cat > "$XDG_CONFIG_HOME/coppice/coppice.toml" <<EOT
@@ -70,11 +102,17 @@ args = ["--norc", "--noprofile"]
 
 [harness.claude]
 command = "bash"
-args = ["$here/fake-trust.sh", "$screen"]
+args = ["$here/fake-foreman.sh"]
 
 [harness.codex]
 command = "bash"
 args = ["--norc", "--noprofile"]
+
+# The foreman answers aloud through a fake speech server: no model, no
+# network beyond this loopback port.
+[voice]
+enabled = false
+speak_url = "http://127.0.0.1:$speak_port"
 EOT
 if grep -qE 'command = "(claude|codex|sprig|opencode|pi)"' "$XDG_CONFIG_HOME/coppice/coppice.toml"; then
   echo "run.sh: the harness table names a real agent; refusing to run" >&2
@@ -85,13 +123,16 @@ cop() { "$COPPICE_BIN" --socket "$sock" --data-dir "$E2E_DIR/data" "$@"; }
 id_of() { sed -n 's/.*"pane": *"\([^"]*\)".*/\1/p' | head -n1; }
 
 pids=()
+python3 "$module/../coppice-rs/cases/web/fixtures/fake-speech.py" "127.0.0.1:$speak_port" \
+  > "$E2E_DIR/speech.log" 2>&1 < /dev/null &
+pids+=("$!")
 cleanup() {
   for p in "${pids[@]}"; do kill "$p" 2>/dev/null || true; done
   cop server stop >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-"$COPPICE_BIN" --socket "$sock" --data-dir "$E2E_DIR/data" server start --foreground \
+"${srv_env[@]}" "$COPPICE_BIN" --socket "$sock" --data-dir "$E2E_DIR/data" server start --foreground \
   > "$E2E_DIR/server.log" 2>&1 < /dev/null &
 pids+=("$!")
 for _ in $(seq 1 100); do
@@ -104,7 +145,9 @@ cop server status > /dev/null
 # with a gate ask held on "e2e ask" the way a gate hook reports one.
 shell=$(cop pane create --json --label "e2e shell" --kind pty --cwd "$E2E_DIR/proj/alpha" -- bash --norc --noprofile | id_of)
 ask=$(cop pane create --json --label "e2e ask" --kind pty --cwd "$E2E_DIR/proj/beta" -- bash --norc --noprofile | id_of)
-trust=$(cop pane create --json --label "e2e trust" --kind pty --harness claude --cwd "$E2E_DIR/proj/alpha" | id_of)
+# The trust pane is a claude pane that runs fake-trust.sh; the claude table
+# itself runs the fake foreman.
+trust=$(cop pane create --json --label "e2e trust" --kind pty --harness claude --cwd "$E2E_DIR/proj/alpha" -- bash "$here/fake-trust.sh" "$screen" | id_of)
 [ -n "$shell" ] && [ -n "$ask" ] && [ -n "$trust" ] || { echo "run.sh: a pane was not made" >&2; exit 1; }
 deadline=$(( $(date +%s) + 3600 ))
 node "$here/rpc.mjs" "$sock" report "$ask" \

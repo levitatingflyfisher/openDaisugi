@@ -177,6 +177,10 @@ pub struct Record {
     pub cache_creation: BigInt,
     /// elapsed_ms: the turn's time in the proxy, or None.
     pub elapsed_ms: Option<f64>,
+    /// The coppice pane and floor the turn came from. The journal line has
+    /// these two keys only when they are set.
+    pub pane: String,
+    pub floor: String,
 }
 
 /// `record_turn` with created_at stamped now (UTC seconds).
@@ -200,6 +204,8 @@ pub fn record_turn(d: &Decision, s: &Saving, task: &str, ask: &str, now_secs: i6
         cache_read: s.actual.cache_read.clone(),
         cache_creation: s.actual.cache_creation.clone(),
         elapsed_ms: None,
+        pane: String::new(),
+        floor: String::new(),
     })
 }
 
@@ -228,6 +234,10 @@ impl Record {
         o.set("cache_read_tokens", big(&self.cache_read));
         o.set("cache_creation_tokens", big(&self.cache_creation));
         o.set("elapsed_ms", self.elapsed_ms.map(Value::Float).unwrap_or(Value::Null));
+        if !self.pane.is_empty() {
+            o.set("pane", self.pane.as_str());
+            o.set("floor", self.floor.as_str());
+        }
         pyjson::dumps(&Value::Obj(o), true)
     }
 }

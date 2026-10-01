@@ -33,7 +33,7 @@ impl Env {
         if p.help {
             return self.cmd_help("gate serve", "", "Run the resident gate in the foreground (Ctrl-C to stop).", &opts);
         }
-        let root = if p.has("--root") { path_str(&p.str("--root", "")) } else { join(&self.home, ".opendaisugi/gate") };
+        let root = if p.has("--root") { path_str(&p.str("--root", "")) } else { join(&self.data_home(), "gate") };
         let sock = join(&root, "gate.sock");
         self.flush();
         // A live gate keeps its socket; a second server never takes it over.

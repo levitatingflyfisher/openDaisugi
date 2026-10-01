@@ -1,0 +1,55 @@
+sprig, the Rust port (harness/sprig-rs)
+Copyright the openDaisugi contributors.
+
+It is part of openDaisugi and is MIT licensed. It builds on these crates
+from crates.io, each used under one of the licences it offers:
+
+  rustls           Apache-2.0 OR ISC OR MIT (the API backend's https)
+  ring             Apache-2.0 AND ISC (rustls's crypto; carries C and
+                   assembly code, compiled by its build script, with
+                   getrandom, once_cell, cfg-if and libc, MIT OR
+                   Apache-2.0)
+  rustls-pki-types MIT OR Apache-2.0
+  rustls-webpki    ISC
+  untrusted        ISC
+  subtle           BSD-3-Clause
+  zeroize          Apache-2.0 OR MIT
+
+The crates that only run at build time (cc, shlex, find-msvc-tools) are
+not in the binary. The Rust standard library (MIT OR Apache-2.0, used
+under Apache-2.0, Copyright the Rust Project Developers) is linked into
+the binary. The exact crate versions are in harness/sprig-rs/Cargo.lock,
+and harness/sprig-rs/PINS.md says why each one is there.
+
+src/goerr.rs carries three tables printed by the Go standard library
+(Go 1.25.12, linux/amd64): the errno texts of syscall.Errno, the signal
+names of syscall.Signal, and the code points strconv.IsPrint calls not
+printable. They are used under the Go licence:
+
+Copyright 2009 The Go Authors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google LLC nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

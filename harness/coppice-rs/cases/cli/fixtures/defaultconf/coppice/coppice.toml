@@ -1,0 +1,4 @@
+gateway = ""
+
+[voice]
+enabled = false

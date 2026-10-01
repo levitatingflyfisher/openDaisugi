@@ -59,9 +59,6 @@ func (e *Env) journal(args []string) error {
 func (e *Env) openJournal(cmd, dataDir string) (*tracejournal.Journal, error) {
 	j, err := tracejournal.Open(dataDir)
 	if err != nil {
-		if err == tracejournal.ErrPath {
-			return nil, e.refuse(cmd, err)
-		}
 		return nil, e.failPy(cmd, err)
 	}
 	return j, nil
@@ -251,7 +248,7 @@ func (e *Env) journalSearch(args []string) error {
 	// The matcher is the one ~/.opendaisugi/config.yaml names. A matcher
 	// this binary does not carry is refused before Journal() makes
 	// anything; an error Python raises comes after it, as in Python.
-	cfg, cerr := config.Load(gateroot.Join(e.home, ".opendaisugi/config.yaml"))
+	cfg, cerr := config.Load(gateroot.Join(e.dataHome(), "config.yaml"))
 	if cerr != nil && !errors.Is(cerr, config.ErrInvalid) {
 		return e.configLoadErr(cmd, cerr)
 	}

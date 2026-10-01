@@ -1,0 +1,6 @@
+torch==2.14.1+cpu
+transformers
+peft
+trl
+datasets
+accelerate

@@ -66,4 +66,5 @@ var Config = &Model{Name: "Config", Fields: []Field{
 	{Name: "voice_cleanup_model", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "voice_cleanup_base_url", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "voice_server_url", Schema: Str{}, Default: constant("http://127.0.0.1:7477")},
+	{Name: "agent_profiles", Schema: Any{}, Default: constant(nil), OmitNone: true},
 }}

@@ -1,0 +1,325 @@
+<title>openDaisugi · Execution Monitor</title>
+<style>
+  :root{
+    --ground:#0b0f0d; --panel:#111814; --panel-2:#0e1512; --grid:#1c2a22;
+    --line:#223129; --text:#d8e6dc; --muted:#7c8f84; --dim:#4d5f55;
+    --green:#43c47d; --green-deep:#2e7d46; --red:#ff5c5c; --red-deep:#7d2626;
+    --amber:#f0a020; --cyan:#4fd6c9; --steel:#8aa0b0;
+    --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0}
+  .screen{
+    min-height:100vh; background:
+      radial-gradient(1200px 600px at 80% -10%, #10231a55, transparent 60%),
+      linear-gradient(var(--ground),var(--ground));
+    color:var(--text); font-family:var(--sans);
+    padding:clamp(14px,3vw,34px); line-height:1.5;
+    background-attachment:fixed;
+  }
+  .wrap{max-width:1160px; margin:0 auto}
+
+  /* ---- command bar ---- */
+  .bar{
+    display:flex; flex-wrap:wrap; align-items:flex-end; gap:14px 26px;
+    border:1px solid var(--line); border-radius:12px; padding:16px 18px;
+    background:linear-gradient(180deg,var(--panel),var(--panel-2));
+    box-shadow:0 1px 0 #ffffff08 inset, 0 18px 40px -30px #000;
+  }
+  .brand{font-family:var(--mono); font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted)}
+  .brand b{color:var(--green); font-weight:600}
+  .task{font-size:clamp(19px,2.6vw,26px); font-weight:650; text-wrap:balance; margin:2px 0 0; letter-spacing:-.01em}
+  .bar-right{margin-left:auto; display:flex; gap:22px; align-items:center}
+  .metric{font-family:var(--mono); text-align:right}
+  .metric .n{font-size:22px; font-variant-numeric:tabular-nums; line-height:1}
+  .metric .k{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin-top:5px}
+  .metric.bad .n{color:var(--red)}
+  .metric.cost .n{color:var(--amber)}
+
+  .verdict{
+    font-family:var(--mono); font-size:12px; font-weight:600; letter-spacing:.1em; text-transform:uppercase;
+    padding:7px 12px; border-radius:8px; display:inline-flex; align-items:center; gap:8px; white-space:nowrap;
+  }
+  .verdict.refused{color:#ffd7d7; background:#2a1414; border:1px solid #5a2a2a; box-shadow:0 0 22px -6px var(--red)}
+  .verdict.cleared{color:#d7ffe6; background:#0f2118; border:1px solid #235c3c}
+  .verdict .dot{width:8px;height:8px;border-radius:50%}
+  .verdict.refused .dot{background:var(--red); box-shadow:0 0 10px var(--red); animation:blink 1.1s steps(2) infinite}
+  .verdict.cleared .dot{background:var(--green); box-shadow:0 0 10px var(--green)}
+  @keyframes blink{50%{opacity:.25}}
+
+  /* ---- envelope strip ---- */
+  .env{display:flex; flex-wrap:wrap; gap:8px; margin:12px 2px 0; font-family:var(--mono); font-size:11.5px}
+  .chip{display:inline-flex; gap:7px; align-items:center; padding:5px 10px; border-radius:7px;
+    border:1px solid var(--line); background:#0e1512; color:var(--muted)}
+  .chip b{color:var(--text); font-weight:500}
+  .chip .lbl{letter-spacing:.08em; text-transform:uppercase; font-size:9.5px; color:var(--dim)}
+
+  /* ---- theater ---- */
+  .theater{position:relative; margin-top:22px; overflow-x:auto; padding-bottom:6px}
+  svg.edges{position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:1; overflow:visible}
+  .waves{display:flex; gap:clamp(30px,6vw,72px); align-items:flex-start; min-width:min-content; position:relative; z-index:2}
+  .wave{display:flex; flex-direction:column; gap:16px; min-width:230px; flex:1}
+  .wave-hd{font-family:var(--mono); font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--dim);
+    display:flex; align-items:center; gap:9px; padding-bottom:2px; border-bottom:1px dashed var(--line)}
+  .wave-hd .w{color:var(--green); font-weight:600}
+  .wave-hd .par{color:var(--muted)}
+
+  /* ---- node cards ---- */
+  .node{position:relative; border:1px solid var(--line); border-radius:11px; background:linear-gradient(180deg,#121a16,#0e1512);
+    padding:12px 13px 12px 16px; transition:box-shadow .3s, border-color .3s, transform .3s; overflow:hidden}
+  .node::before{content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--dim)}
+  .node.ok::before{background:linear-gradient(var(--green),var(--green-deep))}
+  .node.blocked::before{background:linear-gradient(var(--red),var(--red-deep))}
+  .node .top{display:flex; align-items:center; gap:9px; margin-bottom:8px}
+  .kind{font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; padding:3px 7px; border-radius:5px;
+    border:1px solid var(--line); color:var(--text)}
+  .kind[data-t="task"]{color:var(--amber); border-color:#4a3a12}
+  .kind[data-t="skill"]{color:var(--green); border-color:#1f4a30}
+  .kind[data-t="mcp"]{color:var(--cyan); border-color:#134a44}
+  .kind[data-t="shell"],.kind[data-t="file_read"],.kind[data-t="file_write"],.kind[data-t="network"]{color:var(--steel); border-color:#26333c}
+  .sid{font-family:var(--mono); font-size:11px; color:var(--dim); margin-left:auto}
+  .state{font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+    display:inline-flex; align-items:center; gap:6px}
+  .state.ok{color:var(--green)} .state.blocked{color:var(--red)}
+  .state .d{width:7px;height:7px;border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor}
+  .label{font-family:var(--mono); font-size:12.5px; color:var(--text); word-break:break-word; margin:2px 0 10px;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden}
+  .meta{display:flex; flex-wrap:wrap; gap:6px 8px; align-items:center; font-family:var(--mono); font-size:10.5px}
+  .tag{padding:3px 7px; border-radius:5px; background:#0c1310; border:1px solid var(--line); color:var(--muted); font-variant-numeric:tabular-nums}
+  .tag.model{color:var(--amber); border-color:#3a2e10}
+  .tag.free{color:var(--dim)}
+  .reason{margin-top:10px; font-family:var(--mono); font-size:11px; color:#ffc9c9; background:#1c0f0f;
+    border:1px solid #4a2222; border-radius:7px; padding:8px 10px; display:flex; gap:8px; align-items:flex-start}
+  .reason .x{color:var(--red); font-weight:700}
+  .reason .stg{color:var(--red); text-transform:uppercase; letter-spacing:.08em; font-size:9px}
+
+  /* engaged / sweep states */
+  .node.pending{opacity:.5}
+  .node.engaged.ok{border-color:#2c6b46; box-shadow:0 0 0 1px #2c6b4655, 0 0 26px -8px var(--green)}
+  .node.engaged.blocked{border-color:#7a2c2c; box-shadow:0 0 0 1px #7a2c2c88, 0 0 30px -6px var(--red); animation:flash .6s ease-out 2}
+  @keyframes flash{0%{box-shadow:0 0 0 1px #ff5c5c, 0 0 40px -2px var(--red)} 100%{box-shadow:0 0 0 1px #7a2c2c88, 0 0 30px -6px var(--red)}}
+  .halt{font-family:var(--mono); font-size:11px; color:var(--red); letter-spacing:.1em; text-transform:uppercase;
+    display:none; align-items:center; gap:8px; margin-top:14px}
+  .halt.show{display:inline-flex}
+
+  /* ---- legend + footer ---- */
+  .legend{display:flex; flex-wrap:wrap; gap:16px; margin-top:22px; padding-top:16px; border-top:1px solid var(--line);
+    font-family:var(--mono); font-size:11px; color:var(--muted)}
+  .legend .it{display:inline-flex; align-items:center; gap:7px}
+  .legend .sw{width:22px;height:6px;border-radius:3px}
+  .thesis{margin-top:20px; font-size:14.5px; color:var(--muted); max-width:60ch; text-wrap:pretty}
+  .thesis b{color:var(--text); font-weight:600}
+  .thesis .em{color:var(--green)}
+  .foot{margin-top:18px; font-family:var(--mono); font-size:10.5px; color:var(--dim); letter-spacing:.04em}
+
+  @media (prefers-reduced-motion:reduce){
+    .node,.verdict .dot{animation:none!important}
+    .node.pending{opacity:1}
+  }
+  @media (max-width:640px){
+    .bar-right{margin-left:0; width:100%; justify-content:flex-start; gap:20px}
+    .wave{min-width:200px}
+  }
+</style>
+
+<div class="screen">
+  <div class="wrap">
+    <header class="bar">
+      <div>
+        <div class="brand"><b>openDaisugi</b> ▸ execution monitor</div>
+        <h1 class="task" id="task"></h1>
+      </div>
+      <div class="bar-right">
+        <div class="metric"><div class="n" id="m-steps">–</div><div class="k">steps</div></div>
+        <div class="metric"><div class="n" id="m-waves">–</div><div class="k">waves</div></div>
+        <div class="metric cost"><div class="n" id="m-calls">–</div><div class="k">model calls</div></div>
+        <div class="metric bad"><div class="n" id="m-ref">–</div><div class="k">refused</div></div>
+        <div id="verdict"></div>
+      </div>
+    </header>
+
+    <div class="env" id="env"></div>
+
+    <div class="theater">
+      <svg class="edges" id="edges" preserveAspectRatio="none"></svg>
+      <div class="waves" id="waves"></div>
+    </div>
+    <div class="halt" id="halt"><span>■</span> execution halted — refused step reached (fail-closed)</div>
+
+    <div class="legend">
+      <span class="it"><span class="sw" style="background:linear-gradient(90deg,#43c47d,#2e7d46)"></span> in envelope</span>
+      <span class="it"><span class="sw" style="background:linear-gradient(90deg,#ff5c5c,#7d2626)"></span> refused (proven out-of-envelope)</span>
+      <span class="it"><span class="sw" style="background:#f0a020"></span> spends a model</span>
+      <span class="it"><span class="sw" style="background:#8aa0b0"></span> deterministic · 0 tokens</span>
+    </div>
+
+    <p class="thesis">
+      Every step is proved against a declared <b>envelope</b> <span class="em">before it runs</span>.
+      Deterministic work costs no tokens; only sub-agent leaves call a model, sized to the
+      cheapest one that can handle it. Any step the envelope <b>refuses</b> is shown with its
+      reason, and the run halts rather than push past it. <b>Separate what is <span class="em">allowed</span>
+      from what is <span class="em">decided</span>.</b>
+    </p>
+    <div class="foot" id="foot"></div>
+  </div>
+</div>
+
+<script>
+const DATA = /*__DATA__*/ null;
+
+const KIND = {shell:"Shell", file_read:"Read", file_write:"Write", network:"Network",
+  task:"Sub-agent", skill:"Skill", mcp:"MCP"};
+
+function el(t, cls, txt){const e=document.createElement(t); if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e;}
+
+function render(d){
+  document.getElementById("task").textContent = d.task;
+  const calls = d.steps.filter(s=>s.runs_llm).length;
+  document.getElementById("m-steps").textContent = d.steps.length;
+  document.getElementById("m-waves").textContent = d.levels.length;
+  document.getElementById("m-calls").textContent = calls;
+  document.getElementById("m-ref").textContent = d.n_violations;
+
+  const v = el("div", "verdict " + (d.ok ? "cleared" : "refused"));
+  v.innerHTML = '<span class="dot"></span>' + (d.ok ? "cleared" : d.n_violations + " refused");
+  document.getElementById("verdict").appendChild(v);
+
+  // envelope chips
+  const env = document.getElementById("env");
+  const e = d.envelope;
+  const chips = [
+    ["shell", (e.shell_allowlist||[]).join(" ") || "—"],
+    ["mcp allow", (e.mcp_allowlist||[]).length ? e.mcp_allowlist.join(" ") : "∅ none"],
+    ["read", (e.file_read||[]).join(" ") || "—"],
+    ["network", e.network ? "on" : "off"],
+  ];
+  for(const [k,val] of chips){
+    const c = el("span","chip");
+    c.appendChild(el("span","lbl",k));
+    c.appendChild(el("b",null,val));
+    env.appendChild(c);
+  }
+
+  // waves
+  const waves = document.getElementById("waves");
+  d.levels.forEach((ids, i)=>{
+    const col = el("div","wave"); col.dataset.wave=i;
+    const hd = el("div","wave-hd");
+    hd.innerHTML = '<span class="w">WAVE '+i+'</span><span class="par">'+(ids.length>1? ids.length+" parallel":"1 step")+'</span>';
+    col.appendChild(hd);
+    ids.forEach(id=>{
+      const s = d.steps.find(x=>x.id===id);
+      col.appendChild(nodeCard(s));
+    });
+    waves.appendChild(col);
+  });
+}
+
+function nodeCard(s){
+  const n = el("div","node pending " + (s.blocked?"blocked":"ok"));
+  n.id = "node-"+s.id;
+  const top = el("div","top");
+  const kind = el("span","kind", KIND[s.type]||s.type); kind.dataset.t=s.type;
+  top.appendChild(kind);
+  const st = el("span","state "+(s.blocked?"blocked":"ok"));
+  st.innerHTML = '<span class="d"></span>'+(s.blocked?"refused":"in envelope");
+  top.appendChild(st);
+  top.appendChild(el("span","sid","#"+s.id));
+  n.appendChild(top);
+
+  n.appendChild(el("div","label", s.label));
+
+  const meta = el("div","meta");
+  if(s.runs_llm){
+    meta.appendChild(el("span","tag model", s.model));
+    meta.appendChild(el("span","tag", "tier:"+s.tier));
+    meta.appendChild(el("span","tag", "diff "+s.difficulty));
+    meta.appendChild(el("span","tag", "~"+s.est_tokens+" tok"));
+  } else {
+    meta.appendChild(el("span","tag free", "deterministic"));
+    meta.appendChild(el("span","tag free", "0 tokens"));
+  }
+  n.appendChild(meta);
+
+  if(s.blocked && s.violations.length){
+    const v = s.violations[0];
+    const r = el("div","reason");
+    r.appendChild(el("span","x","✕"));
+    const body = el("div");
+    body.appendChild(el("div","stg", v.stage));
+    body.appendChild(el("div",null, v.message));
+    r.appendChild(body);
+    n.appendChild(r);
+  }
+  return n;
+}
+
+/* ---- edges: draw dependency connectors from node positions ---- */
+function drawEdges(d){
+  const svg = document.getElementById("edges");
+  const theater = svg.parentElement;
+  const tb = theater.getBoundingClientRect();
+  svg.setAttribute("viewBox", `0 0 ${tb.width} ${tb.height}`);
+  svg.innerHTML = "";
+  const anchor = (id, side)=>{
+    const node = document.getElementById("node-"+id);
+    const r = node.getBoundingClientRect();
+    return {
+      x: (side==="right"? r.right : r.left) - tb.left + theater.scrollLeft,
+      y: r.top + r.height/2 - tb.top
+    };
+  };
+  for(const s of d.steps){
+    for(const dep of s.depends_on){
+      const a = anchor(dep,"right"), b = anchor(s.id,"left");
+      const dx = Math.max(28,(b.x-a.x)*0.5);
+      const path = document.createElementNS("http://www.w3.org/2000/svg","path");
+      path.setAttribute("d", `M ${a.x} ${a.y} C ${a.x+dx} ${a.y}, ${b.x-dx} ${b.y}, ${b.x} ${b.y}`);
+      path.setAttribute("fill","none");
+      const blocked = s.blocked;
+      path.setAttribute("stroke", blocked ? "#7d3030" : "#28503a");
+      path.setAttribute("stroke-width", blocked ? "1.6" : "1.4");
+      if(blocked) path.setAttribute("stroke-dasharray","5 4");
+      svg.appendChild(path);
+    }
+  }
+}
+
+/* ---- wave sweep: engage wave by wave, halt at refused ---- */
+function sweep(d){
+  const reduce = matchMedia("(prefers-reduced-motion:reduce)").matches;
+  if(reduce){
+    document.querySelectorAll(".node").forEach(n=>{n.classList.remove("pending"); n.classList.add("engaged");});
+    if(!d.ok) document.getElementById("halt").classList.add("show");
+    return;
+  }
+  let w = 0;
+  const step = ()=>{
+    if(w >= d.levels.length) return;
+    const ids = d.levels[w];
+    let hitBlock = false;
+    ids.forEach(id=>{
+      const node = document.getElementById("node-"+id);
+      node.classList.remove("pending"); node.classList.add("engaged");
+      if(d.steps.find(x=>x.id===id).blocked) hitBlock = true;
+    });
+    if(hitBlock){
+      document.getElementById("halt").classList.add("show");
+      return; // fail-closed: stop advancing
+    }
+    w++;
+    setTimeout(step, 720);
+  };
+  setTimeout(step, 420);
+}
+
+function boot(){
+  render(DATA);
+  requestAnimationFrame(()=>{ drawEdges(DATA); sweep(DATA); });
+  document.getElementById("foot").textContent =
+    "plan verified by opendaisugi.verify · sizing by model_sizer · dependency levels by dag.dependency_levels · data is real, not mocked";
+  let t; addEventListener("resize", ()=>{clearTimeout(t); t=setTimeout(()=>drawEdges(DATA),120);});
+}
+boot();
+</script>

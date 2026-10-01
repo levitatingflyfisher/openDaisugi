@@ -1,0 +1,9 @@
+# The agent profiles cannot be read: daisugi is not where COPPICE_DAISUGI_BIN
+# says. One line says why, in Go's exec words, and no key is in it.
+#!env COPPICE_DAISUGI_BIN=/nonexistent/daisugi
+#!config [voice]
+#!config enabled = false
+#!config speak_url = "http://127.0.0.1:9"
+#!config speak_profile = "tts"
+{"id":"a1","cmd":"speech.say","text":"Hello."}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"The agent profiles could not be read, so the speech server at 127.0.0.1:9 gets no key: cannot start daisugi to read the agent profiles: fork/exec /nonexistent/daisugi: no such file or directory."}}

@@ -1,0 +1,56 @@
+# The websocket: the handshake and its refusals, the hello the server
+# sends upstream first, lines through in both directions, and the closes.
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "n1", "write": "{DATA}/web/token-names.json", "text": "{\"tokens\":[{\"name\":\"kid\",\"token\":\"kid-token-0001\"}]}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "alpha"}
+{"id": "$id", "ok": true, "result": {"pane": "$a"}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g0", "http": "GET", "url": "http://{ADDR}/", "wait_ms": 8000, "same_as": "{FIXTURES}/web/static/index.html"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+# The token rides a second subprotocol offer, and is never echoed.
+{"id": "s1", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1", "daisugi.bearer.pinned-web-token-0001"], "order_free": true, "send": ["{\"id\":\"1\",\"cmd\":\"pane.list\"}", "{\"id\":\"2\",\"cmd\":\"hello\"}", "{\"id\":\"3\",\"cmd\":\"nope.verb\"}"]}
+{"id": "$id", "ok": true, "result": {"status": 101, "accept_ok": true}}
+{"id": "s2", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1"], "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "send": ["{\"id\":7,\"cmd\":\"hello\",\"name\":\"me\"}"]}
+{"id": "$id", "ok": true, "result": {"status": 101}}
+{"id": "s3", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.bearer.kid-token-0001", "daisugi.v1"], "send": ["{\"id\":\"h\",\"cmd\":\"hello\",\"name\":\"other\"}", "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"pane.list\"}"]}
+{"id": "$id", "ok": true, "result": {"status": 101}}
+{"id": "s4", "ws": "ws://{ADDR}/ws", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "send": ["{\"id\":\"1\",\"cmd\":\"server.status\"}"]}
+{"id": "$id", "ok": true, "result": {"status": 101}}
+{"id": "s5", "ws": "ws://{ADDR}/ws", "headers": {"Authorization": "Bearer pinned-web-token-0001", "Origin": "http://{ADDR}"}, "send": ["not json at all", "{\"id\":\"2\",\"cmd\":\"pane.list\"}"]}
+{"id": "$id", "ok": true, "result": {"status": 101}}
+# The refusals.
+{"id": "r1", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1"]}
+{"id": "$id", "ok": true, "result": {"status": 401}}
+{"id": "r2", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1"], "headers": {"Authorization": "Bearer pinned-web-token-0001", "Origin": "https://evil.test"}}
+{"id": "$id", "ok": true, "result": {"status": 403}}
+{"id": "r3", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1"], "headers": {"Authorization": "Bearer pinned-web-token-0001", "Origin": "null"}}
+{"id": "$id", "ok": true, "result": {"status": 403}}
+{"id": "r4", "ws": "ws://{ADDR}/ws", "headers": {"Authorization": "Bearer pinned-web-token-0001", "Sec-WebSocket-Version": "8"}}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "r5", "http": "GET", "url": "http://{ADDR}/ws", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 426}}
+{"id": "r6", "http": "POST", "url": "http://{ADDR}/ws", "headers": {"Authorization": "Bearer pinned-web-token-0001", "Connection": "Upgrade", "Upgrade": "websocket"}}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "r7", "http": "GET", "url": "http://{ADDR}/ws", "headers": {"Authorization": "Bearer pinned-web-token-0001", "Connection": "keep-alive, Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "short"}}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "r8", "http": "GET", "url": "http://{ADDR}/ws", "headers": {"Authorization": "Bearer pinned-web-token-0001", "Connection": "Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13"}}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "r9", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1"], "headers": {"Authorization": "Bearer pinned-web-token-0001", "Origin": "http://{ADDR}:99"}}
+{"id": "$id", "ok": true, "result": {"status": 403}}
+{"id": "r10", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1"], "headers": {"Authorization": "Bearer pinned-web-token-0001", "Origin": "%zz"}}
+{"id": "$id", "ok": true, "result": {"status": 403}}
+# A frame over the server's own line limit closes the socket with why.
+{"id": "b1", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1"], "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "send_big": 1048576, "wait_close": true}
+{"id": "$id", "ok": true, "result": {"status": 101}}
+# The coppice server going away tells the browser.
+{"id": "d1", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1"], "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "send": ["{\"id\":\"1\",\"cmd\":\"server.stop\"}"], "wait_close": true, "ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 101}}
+{"id": "d2", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1"], "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_close": true, "ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 101}}
+{"id": "d3", "http": "GET", "url": "http://{ADDR}/api/panes", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 502}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}

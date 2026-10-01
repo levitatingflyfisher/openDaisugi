@@ -507,7 +507,7 @@ def build_modules_cases() -> list[dict[str, Any]]:
             **LEX,
             **cfg(
                 "matcher_model: potion\ngateway_router: switchyard\nllm_backend: claude-code\n"
-                "voice_engine: parakeet\nshell_allow_decomposition: true\n"
+                "voice_engine: moonshine\nshell_allow_decomposition: true\n"
                 "llm_base_url: http://gpu-box:11434/v1\nllm_host_kind: ollama\n"
                 "llm_host_model: qwen3:8b\nllm_context_window: 32768\n"
             ),

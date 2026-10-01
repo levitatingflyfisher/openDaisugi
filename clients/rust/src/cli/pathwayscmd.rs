@@ -63,7 +63,7 @@ impl Env {
 
     /// `PathwayStore(data_dir / "pathways.db")`.
     pub(super) fn open_store(&mut self, cmd: &str, p: &super::Parsed) -> Result<Store, Stop> {
-        let dir = p.str("--data-dir", &format!("{}/.opendaisugi", self.home));
+        let dir = p.str("--data-dir", &self.data_home());
         if std::fs::metadata(&dir).map(|m| !m.is_dir()).unwrap_or(false) {
             // Path.mkdir(parents=True, exist_ok=True) on a file.
             self.errf(&format!("daisugi {cmd}: FileExistsError: {dir} exists and is not a directory\n"));
@@ -153,7 +153,7 @@ impl Env {
     }
 
     /// The pathway with this id, reading every row as `list_all()` does.
-    fn find_by_id(&mut self, cmd: &str, s: &Store, id: &str) -> Result<Option<Pathway>, Stop> {
+    pub(super) fn find_by_id(&mut self, cmd: &str, s: &Store, id: &str) -> Result<Option<Pathway>, Stop> {
         let all = s.read_all(&|x| x == id).map_err(|e| self.pw_err(cmd, e))?;
         Ok(all.into_iter().find(|pw| pw.id() == id))
     }

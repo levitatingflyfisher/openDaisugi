@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"daisugi-verify/internal/config"
+	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
@@ -17,7 +18,11 @@ import (
 // when the file is outside the YAML this binary reads.
 func (e *Env) configLoadErr(cmd string, err error) error {
 	var attr *config.AttributeError
+	var yerr *config.YAMLError
 	switch {
+	case errors.As(err, &yerr):
+		e.errf("daisugi %s: %s\n", cmd, yerr.Error())
+		return exit(1)
 	case errors.As(err, &attr):
 		e.errf("daisugi %s: %s\n", cmd, attr.Error())
 		return exit(1)
@@ -39,10 +44,7 @@ func (e *Env) configCmd(args []string) error {
 	if p.help {
 		return e.cmdHelp("config", "", "Show every setting as daisugi will use it, and where each one came from.", opts)
 	}
-	path := e.home + "/.opendaisugi/config.yaml"
-	if e.home == "/" {
-		path = "/.opendaisugi/config.yaml"
-	}
+	path := gateroot.Join(e.dataHome(), "config.yaml")
 	rows, unknown, cfg, err := config.Rows(path, e.home)
 	if err != nil {
 		return e.configLoadErr("config", err)

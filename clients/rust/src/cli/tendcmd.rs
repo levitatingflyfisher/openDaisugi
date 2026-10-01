@@ -102,7 +102,7 @@ impl Env {
         let min_traces = self.click_int(CMD, &p, "--min-traces", 3)?;
         let lookback = self.click_int(CMD, &p, "--lookback-days", 30)?;
         let model = p.str("--model", DEFAULT_MODEL);
-        let data_dir = p.str("--data-dir", &format!("{}/.opendaisugi", self.home));
+        let data_dir = p.str("--data-dir", &self.data_home());
         let r = self.run_tend(&data_dir, &model, min_traces, lookback, p.flag("--dry-run"), None)?;
         let mut b = format!(
             "tend complete: created={} updated={} skipped={} in {:.1}s\n",
@@ -137,7 +137,7 @@ impl Env {
         notes: &Rc<RefCell<String>>,
     ) -> Result<TendState, CheckStop> {
         const CMD: &str = "tend";
-        let cfg = match super::config::load(&format!("{}/.opendaisugi/config.yaml", self.home)) {
+        let cfg = match super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
             Ok(c) => c,
             Err(e) => return Err(self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")).unwrap_err().into()),
         };
@@ -284,7 +284,7 @@ impl Env {
             return self.cmd_help(CMD, "", "Rank repeated gateway asks into a reuse worklist.", &opts);
         }
         let top = self.click_int(CMD, &p, "--top", 20)?;
-        let data_dir = p.str("--data-dir", &format!("{}/.opendaisugi", self.home));
+        let data_dir = p.str("--data-dir", &self.data_home());
         // Skipped lines are logged on the opendaisugi logger, which prints
         // nothing by default.
         let turns = load_turns(&format!("{data_dir}/gateway/turns.jsonl")).map_err(|e| self.pw_err(CMD, e))?;
@@ -294,7 +294,7 @@ impl Env {
         }
         let mut cands = vec![];
         if turns.iter().any(|t| !t.signature.is_empty()) {
-            let cfg = match super::config::load(&format!("{}/.opendaisugi/config.yaml", self.home)) {
+            let cfg = match super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
                 Ok(c) => c,
                 Err(e) => return self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")),
             };
@@ -321,14 +321,35 @@ impl Env {
             let store = if std::fs::metadata(&db).is_ok() { Some(Store::open(&db).map_err(|e| self.pw_err(CMD, e))?) } else { None };
             let key = cfg.matcher_model.clone();
             let mut cache = crate::pathways::find::Cache::default();
+            // The first stale-embeddings warning find gives (Python prints
+            // it once per process).
+            let mut warning = String::new();
             let mut find = |task: &str| -> bool {
                 match &store {
-                    Some(s) => matches!(s.find(task, &key, &pe, None, &mut cache), Ok(r) if r.matched.is_some()),
+                    Some(s) => match s.find(task, &key, &pe, None, &mut cache) {
+                        Ok(r) => {
+                            if warning.is_empty() {
+                                warning = r.warning;
+                            }
+                            r.matched.is_some()
+                        }
+                        Err(_) => false,
+                    },
                     None => false,
                 }
             };
             cands = rank_reuse(&turns, &emb, m.threshold(), &mut find);
             self.drain_notes(&notes);
+            if !warning.is_empty() {
+                let pyw = self.env.get("PYTHONWARNINGS").cloned().unwrap_or_default();
+                match super::pywarn::user_warning_shown(&pyw, &warning) {
+                    None => {
+                        return self.refuse(CMD, &format!("the pathway store warns of stale embeddings under PYTHONWARNINGS={}, a filter this binary does not read the oracle's way", crate::gate::py::text::repr(&pyw)))
+                    }
+                    Some(true) => self.errf(&format!("UserWarning: {warning}\n")),
+                    Some(false) => {}
+                }
+            }
         }
         if cands.is_empty() {
             self.out("no repeated asks found yet.\n");

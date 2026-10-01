@@ -75,6 +75,10 @@ class GatewayTurnRecord:
     # The turn's time in the proxy, from the request to the end of the
     # answer, in milliseconds. None for a turn recorded outside the proxy.
     elapsed_ms: float | None = None
+    # The coppice pane and floor the turn came from, when its base URL named
+    # them. The journal line has these two keys only then.
+    pane: str | None = None
+    floor: str | None = None
 
     @property
     def dollars_saved(self) -> float:
@@ -89,6 +93,8 @@ def record_turn(
     ask: str | None = None,
     created_at: str | None = None,
     elapsed_ms: float | None = None,
+    pane: str | None = None,
+    floor: str | None = None,
 ) -> GatewayTurnRecord:
     """Build a turn record from a routing decision and its measured saving.
 
@@ -122,6 +128,8 @@ def record_turn(
         cache_read_tokens=saving.actual.cache_read_tokens,
         cache_creation_tokens=saving.actual.cache_creation_tokens,
         elapsed_ms=elapsed_ms,
+        pane=pane,
+        floor=floor,
     )
 
 
@@ -221,7 +229,11 @@ class GatewayJournal:
     def append(self, record: GatewayTurnRecord) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(asdict(record)) + "\n")
+            line = asdict(record)
+            for key in ("pane", "floor"):
+                if line[key] is None:
+                    del line[key]
+            fh.write(json.dumps(line) + "\n")
 
     def load(self) -> list[GatewayTurnRecord]:
         if not self.path.exists():

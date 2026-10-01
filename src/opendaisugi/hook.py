@@ -32,6 +32,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from opendaisugi.datahome import data_home
 from opendaisugi.models import (
     ActionPlan,
     Envelope,
@@ -43,7 +44,7 @@ from opendaisugi.models import (
     ShellStep,
 )
 
-DEFAULT_CAPTURES_ROOT = Path.home() / ".opendaisugi" / "captures"
+DEFAULT_CAPTURES_ROOT = data_home() / "captures"
 
 
 def stdout_for_format(fmt: str, *, block: bool, reason: str = "") -> str:

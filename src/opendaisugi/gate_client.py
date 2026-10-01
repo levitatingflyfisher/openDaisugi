@@ -18,8 +18,10 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+from opendaisugi.datahome import data_home
+
 SOCK_NAME = "gate.sock"
-_DEFAULT_ROOT = Path.home() / ".opendaisugi" / "gate"
+_DEFAULT_ROOT = data_home() / "gate"
 _SERVER_TIMEOUT_S = 5.0  # well under any host hook timeout, so the fallback still fits
 
 

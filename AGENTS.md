@@ -145,8 +145,8 @@ The native prefix lives in `$XDG_CACHE_HOME/opendaisugi/native/<stamp>` (`~/.cac
 - Native libraries: versions and SHA-256 digests in `clients/go/scripts/native.sh` and the
   `NOTICE` files. `scripts/release.sh` fails when a NOTICE misses a static library.
 
-Ask the owner before you add a dependency. `docs/research/dependency-sweep-2026-09-26.md` has the
-verdict on each one that exists.
+Ask the owner before you add a dependency. `docs/reference/dependencies.md` has the
+licence, the reason and the status of each one that exists.
 
 ## Style
 
@@ -168,6 +168,8 @@ verdict on each one that exists.
 - Commit by explicit path. Never commit `CLAUDE.md` or `docs/superpowers/`.
 - Push only through the monthly fold script, on the owner's word. The public history is one
   commit a month.
+- Never run `git push --all` or `git push --mirror`. The local `backup*` branches hold old
+  history with machine paths in it. They stay in this clone and are never pushed.
 
 ## When you are unsure
 

@@ -1,6 +1,12 @@
 package gate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"strings"
+	"syscall"
+
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
@@ -66,6 +72,104 @@ func (r *runner) resolveMode(explicit *string) string {
 		return c.mode
 	}
 	return "audit"
+}
+
+// agentModeMaxBytes is gate.AGENT_MODE_MAX_BYTES: a larger marker is not
+// read at all.
+const agentModeMaxBytes = 64
+
+// effectiveMode is gate.effective_gate_mode: mode, except that an enforce
+// hook becomes audit when the calling pane's marker says watching
+// (F11-R-1). The marker never raises a mode.
+func (r *runner) effectiveMode(mode string) string {
+	if mode == "enforce" && r.agentModeLowered() {
+		return "audit"
+	}
+	return mode
+}
+
+// geteuid is os.Geteuid, a variable so a test can name another owner.
+var geteuid = os.Geteuid
+
+// agentModeLowered is gate.agent_mode_lowered: true when
+// <root>/agents/<floor>/<pane>.mode is a regular file this user owns, with
+// one link, writable by no group and no other user, of at most
+// agentModeMaxBytes bytes, that holds exactly "watching" with at most one
+// newline after it. The pane and floor are COPPICE_PANE and COPPICE_SOCK,
+// or a resident call's caller pane and socket, and only an id of
+// coppice's shape is read (F11-R-2, F11-R-6). No symlink is followed below
+// the gate root, and the marker is opened without blocking (F11-R-7).
+// Anything else, an error included, is false.
+func (r *runner) agentModeLowered() bool {
+	var pane, sock *string
+	if r.resident {
+		pane, sock = r.caller.Pane, r.caller.Sock
+	} else {
+		if v, ok := r.env["COPPICE_PANE"]; ok {
+			pane = &v
+		}
+		if v, ok := r.env["COPPICE_SOCK"]; ok {
+			sock = &v
+		}
+	}
+	if !validCoppicePane(pane) || sock == nil || *sock == "" {
+		return false
+	}
+	floor, ok := agentModeFloor(*sock)
+	if !ok {
+		return false
+	}
+	agents := pathJoin(r.root, "agents")
+	if strings.ContainsRune(agents, 0) {
+		return false
+	}
+	enc, eerr := pystr.FSEncode(agents)
+	if eerr != nil {
+		return false
+	}
+	// F11-R-7: agents/ and the floor's directory are opened as
+	// directories without following a symlink, and the marker by its
+	// name in the floor's directory.
+	const dirFlags = syscall.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_CLOEXEC
+	afd, err := syscall.Open(string(enc), dirFlags, 0)
+	if err != nil {
+		return false
+	}
+	defer syscall.Close(afd)
+	ffd, err := syscall.Openat(afd, floor, dirFlags, 0)
+	if err != nil {
+		return false
+	}
+	defer syscall.Close(ffd)
+	fd, err := syscall.Openat(ffd, *pane+".mode", syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return false
+	}
+	defer syscall.Close(fd)
+	var st syscall.Stat_t
+	if syscall.Fstat(fd, &st) != nil || st.Mode&syscall.S_IFMT != syscall.S_IFREG ||
+		int(st.Uid) != geteuid() || st.Nlink != 1 || st.Mode&0o022 != 0 || st.Size > agentModeMaxBytes {
+		return false
+	}
+	buf := make([]byte, agentModeMaxBytes+1)
+	n, err := syscall.Read(fd, buf)
+	if err != nil || n < 0 {
+		return false
+	}
+	got := string(buf[:n])
+	return got == "watching" || got == "watching\n"
+}
+
+// agentModeFloor is gate.agent_mode_floor: the first 16 hex digits of the
+// SHA-256 of the floor's socket path as the OS spells it (F11-R-6). false
+// when the path cannot be encoded.
+func agentModeFloor(sock string) (string, bool) {
+	enc, err := pystr.FSEncode(sock)
+	if err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256(enc)
+	return hex.EncodeToString(sum[:])[:16], true
 }
 
 // verifierClient is gate._configured_verifier_client's client: python

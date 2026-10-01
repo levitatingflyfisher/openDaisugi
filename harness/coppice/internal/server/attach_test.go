@@ -190,7 +190,7 @@ func TestDetachWithoutAttachIsNotAttached(t *testing.T) {
 	s.RegisterPaneCommands()
 	s.RegisterAttachCommands()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+t.TempDir()+`","cmd_argv":["sh","-c","sleep 2"],"kind":"pty"}`,
+		`{"id":"1","cmd":"pane.create","cwd":"`+t.TempDir()+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`,
 		`{"id":"2","cmd":"pane.detach","pane":"w1:p1"}`)
 	if got[1].OK || got[1].Error.Code != proto.ErrNotAttached {
 		t.Fatalf("got %+v, want not_attached", got[1])
@@ -212,7 +212,7 @@ func TestDetachRemovesTheStateSubscriptionAttachAdded(t *testing.T) {
 	send, next, stop := stream(t, s)
 	defer stop()
 	send(`{"id":"1","cmd":"pane.create","cwd":"` + t.TempDir() +
-		`","cmd_argv":["sh","-c","sleep 3"],"kind":"pty","cols":20,"rows":6}`)
+		`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","cols":20,"rows":6}`)
 	if m := next(); m["ok"] != true {
 		t.Fatalf("pane.create failed: %v", m)
 	}
@@ -280,7 +280,7 @@ func TestDetachLeavesAnExplicitSubscriptionAlone(t *testing.T) {
 	send, next, stop := stream(t, s)
 	defer stop()
 	send(`{"id":"1","cmd":"pane.create","cwd":"` + t.TempDir() +
-		`","cmd_argv":["sh","-c","sleep 3"],"kind":"pty","cols":20,"rows":6}`)
+		`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","cols":20,"rows":6}`)
 	if m := next(); m["ok"] != true {
 		t.Fatalf("pane.create failed: %v", m)
 	}
@@ -568,7 +568,7 @@ func TestFramePumpEndsOnDetach(t *testing.T) {
 	send, next, stop := stream(t, s)
 	defer stop()
 	send(`{"id":"1","cmd":"pane.create","cwd":"` + t.TempDir() +
-		`","cmd_argv":["sh","-c","sleep 3"],"kind":"pty","cols":20,"rows":6}`)
+		`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","cols":20,"rows":6}`)
 	if m := next(); m["ok"] != true {
 		t.Fatalf("pane.create failed: %v", m)
 	}
@@ -617,7 +617,7 @@ func TestFramePumpEndsWhenThePaneCloses(t *testing.T) {
 	send, next, stop := stream(t, s)
 	defer stop()
 	send(`{"id":"1","cmd":"pane.create","cwd":"` + t.TempDir() +
-		`","cmd_argv":["sh","-c","sleep 3"],"kind":"pty","cols":20,"rows":6}`)
+		`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","cols":20,"rows":6}`)
 	if m := next(); m["ok"] != true {
 		t.Fatalf("pane.create failed: %v", m)
 	}
@@ -662,7 +662,7 @@ func TestDisconnectingClearsOperatorStatus(t *testing.T) {
 	send, next, stop := stream(t, s)
 	defer stop()
 	send(`{"id":"1","cmd":"pane.create","cwd":"` + t.TempDir() +
-		`","cmd_argv":["sh","-c","sleep 3"],"kind":"pty","cols":20,"rows":6}`)
+		`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","cols":20,"rows":6}`)
 	if m := next(); m["ok"] != true {
 		t.Fatalf("pane.create failed: %v", m)
 	}
@@ -709,7 +709,7 @@ func TestPaneGoneClearsOperatorStatus(t *testing.T) {
 	send, next, stop := stream(t, s)
 	defer stop()
 	send(`{"id":"1","cmd":"pane.create","cwd":"` + t.TempDir() +
-		`","cmd_argv":["sh","-c","sleep 3"],"kind":"pty","cols":20,"rows":6}`)
+		`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","cols":20,"rows":6}`)
 	if m := next(); m["ok"] != true {
 		t.Fatalf("pane.create failed: %v", m)
 	}
@@ -766,7 +766,7 @@ func TestGridClosedClearsOperatorStatusEvenWithTheLiveEntryStillPresent(t *testi
 	send, next, stop := stream(t, s)
 	defer stop()
 	send(`{"id":"1","cmd":"pane.create","cwd":"` + t.TempDir() +
-		`","cmd_argv":["sh","-c","sleep 3"],"kind":"pty","cols":20,"rows":6}`)
+		`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","cols":20,"rows":6}`)
 	if m := next(); m["ok"] != true {
 		t.Fatalf("pane.create failed: %v", m)
 	}
@@ -820,7 +820,7 @@ func TestDetachAfterThePumpAlreadyForgotThePaneLeavesTheSubscriptionAlone(t *tes
 	send, next, stop := stream(t, s)
 	defer stop()
 	send(`{"id":"1","cmd":"pane.create","cwd":"` + t.TempDir() +
-		`","cmd_argv":["sh","-c","sleep 3"],"kind":"pty","cols":20,"rows":6}`)
+		`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","cols":20,"rows":6}`)
 	if m := next(); m["ok"] != true {
 		t.Fatalf("pane.create failed: %v", m)
 	}
@@ -935,7 +935,7 @@ func TestAttachingTwiceToTheSamePaneIsIdempotent(t *testing.T) {
 	send, next, stop := stream(t, s)
 	defer stop()
 	send(`{"id":"1","cmd":"pane.create","cwd":"` + t.TempDir() +
-		`","cmd_argv":["sh","-c","sleep 3"],"kind":"pty","cols":20,"rows":6}`)
+		`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","cols":20,"rows":6}`)
 	if m := next(); m["ok"] != true {
 		t.Fatalf("pane.create failed: %v", m)
 	}

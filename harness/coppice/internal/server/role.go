@@ -110,7 +110,10 @@ func classifyPeer(pid, self int, leader bool, panes, plugins map[int]string,
 }
 
 // panePIDs maps the child pid of every live pty pane, and every root pid a
-// headless pane's adapter names, to its pane id.
+// headless pane's adapter names, to its pane id. A pty pane whose process
+// ended drops out at once, and so does a pid that now belongs to another
+// process, told by its start time, so a process that gets an old pane's
+// pid again is not placed in that pane.
 func (s *Server) panePIDs() map[int]string {
 	out := map[int]string{}
 	s.liveMu.RLock()
@@ -119,7 +122,15 @@ func (s *Server) panePIDs() map[int]string {
 		pid := 0
 		switch {
 		case lp.PTY != nil:
+			if lp.ptyGone() {
+				continue
+			}
 			pid = lp.PTY.Pid()
+			if lp.ptyStart != 0 {
+				if st, ok := procStartTime(pid); !ok || st != lp.ptyStart {
+					continue
+				}
+			}
 		case lp.Adapter != nil:
 			if p, ok := lp.Adapter.(pane.Pider); ok {
 				for _, root := range p.Pids() {
@@ -377,11 +388,17 @@ var allowVerbs = map[string]bool{"agent.allow": true, "agent.deny": true}
 // owner's words go to the foreman, and a pane's words are not the owner's.
 const TalkRefusal = "only the operator talks to the floor's foreman."
 
+// ProjectRefusal is the message a pane or a plugin gets for project.remove.
+const ProjectRefusal = "only the operator edits the project list."
+
 // operatorVerbs are verbs only the operator may run, with no exception,
 // each with its refusal.
 var operatorVerbs = map[string]string{
 	"task.set_foreman": ForemanRefusal, "floor.talk": TalkRefusal, "floor.foreman": ForemanRefusal,
-	"pane.trust": TrustRefusal,
+	"floor.chat": TalkRefusal, "floor.machines": MachinesRefusal,
+	"speech.say": SpeechRefusal, "speech.status": SpeechRefusal,
+	"pane.trust": TrustRefusal, "project.remove": ProjectRefusal,
+	"agent.set_mode": ModeRefusal, "agent.set_model": ModelRefusal, "agent.set_router": RouterRefusal,
 }
 
 // ForemanLabelRefusal is the message a pane or a plugin gets for a pane
@@ -492,7 +509,7 @@ func (s *Server) foremanDeny(ro role, r *proto.Request) bool {
 var quietVerbs = map[string]bool{
 	"hello": true, "pane.report_state": true, "pane.report_child": true,
 	"events.subscribe": true, "events.pause": true, "events.resume": true,
-	"floor.note": true, "floor.notes": true, "floor.facts": true,
+	"floor.note": true, "floor.notes": true, "floor.facts": true, "floor.journal": true,
 }
 
 // typingVerbs put keys or text into a pane. A pane may not use them on a
@@ -508,6 +525,26 @@ func (s *Server) guard(c *Client, r *proto.Request) (proto.Response, bool) {
 	ro := c.roleOf()
 	if msg, ok := operatorVerbs[r.Cmd]; ok && ro.noAllow {
 		return proto.ErrResp(r.ID, proto.ErrUnauthorized, msg), false
+	}
+	// A named token (a kid's) may not read aloud either: it is the owner's
+	// key and bandwidth, as the chat is the owner's own sign-in.
+	if (r.Cmd == "speech.say" || r.Cmd == "speech.status") && c.tokenNamed() {
+		return proto.ErrResp(r.ID, proto.ErrUnauthorized, SpeechRefusal), false
+	}
+	// A model on a prompt and a router on a resume are swaps too.
+	if ro.noAllow {
+		if m, _ := r.Str("model"); m != "" && r.Cmd == "agent.prompt" {
+			return proto.ErrResp(r.ID, proto.ErrUnauthorized, ModelRefusal), false
+		}
+		if m, _ := r.Str("router"); m != "" && r.Cmd == "pane.resume" {
+			return proto.ErrResp(r.ID, proto.ErrUnauthorized, RouterRefusal), false
+		}
+	}
+	if resp, ok := s.chatGuard(c, ro, r); !ok {
+		return resp, false
+	}
+	if resp, ok := s.sprigGuard(ro, r); !ok {
+		return resp, false
 	}
 	if ro.noAllow && (takesForemanLabel(r) || s.resumesForemanLabel(r)) {
 		return proto.ErrResp(r.ID, proto.ErrUnauthorized, ForemanLabelRefusal), false
@@ -670,6 +707,7 @@ func (s *Server) RegisterFloorCommands() {
 	_ = s.Handle("floor.note", s.handleNote)
 	_ = s.Handle("floor.notes", s.handleNotes)
 	_ = s.Handle("floor.facts", s.handleFloorFacts)
+	_ = s.Handle("floor.journal", s.handleFloorJournal)
 	_ = s.Handle("agent.allow", s.handleAnswer("allow"))
 	_ = s.Handle("agent.deny", s.handleAnswer("deny"))
 	_ = s.Handle("pane.report_child", s.handleReportChild)

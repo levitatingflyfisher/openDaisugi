@@ -22,7 +22,15 @@ async function bootAt(hash, panes) {
   await freshApp();
   const ws = lastSocket();
   const sent = [];
-  ws.send = (data) => { sent.push(JSON.parse(data)); };
+  // An agent with no transcript opens on its screen: the sheet's first ask,
+  // for the transcript, is refused.
+  ws.send = (data) => {
+    const m = JSON.parse(data);
+    sent.push(m);
+    if (m.cmd === 'pane.messages') {
+      queueMicrotask(() => ws.fire('message', { data: JSON.stringify({ id: m.id, ok: false, error: { code: 'bad_request', message: m.pane + ' has no transcript to read. Its hook reported none.' } }) }));
+    }
+  };
   ws.simulateOpen();
   const list = sent.find((m) => m.cmd === 'pane.list');
   ws.fire('message', { data: JSON.stringify({ id: list.id, ok: true, result: { panes } }) });

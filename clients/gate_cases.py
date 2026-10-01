@@ -38,6 +38,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from fixture_paths import fixed_root
+
 REPO = Path(__file__).resolve().parent.parent
 FIXTURE_DIR = REPO / "clients" / "fixtures" / "gate"
 # DAISUGI_GATE_SCRATCH lets two runs on one box keep apart: each run
@@ -123,6 +125,26 @@ class FakeCoppice:
         return self.lines
 
 
+def floor_key(sock: str) -> str:
+    """gate.agent_mode_floor: a floor's directory name under agents/."""
+    return hashlib.sha256(os.fsencode(sock)).hexdigest()[:16]
+
+
+def floor_paths(rel: str, case: dict[str, Any], root: str) -> str:
+    """rel with {FLOOR} written as the floor key of the call's own socket
+    (the case's COPPICE_SOCK, or the fake coppice socket), and
+    {FLOOR=<sock>} as the key of that socket."""
+    if "{FLOOR" not in rel:
+        return rel
+    own = (case.get("env") or {}).get("COPPICE_SOCK")
+    if case.get("coppice"):
+        own = str(Path(root) / "c.sock")
+    own = (own or "").replace("{ROOT}", root)
+    return re.sub(
+        r"\{FLOOR(?:=([^}]*))?\}", lambda m: floor_key(m.group(1) if m.group(1) else own), rel
+    )
+
+
 def prepare(case: dict[str, Any], workdir: Path) -> tuple[list[str], bytes, dict[str, str]]:
     """Lay out the case's gate root under workdir and return argv, stdin
     and the environment for one run."""
@@ -149,7 +171,7 @@ def prepare(case: dict[str, Any], workdir: Path) -> tuple[list[str], bytes, dict
         )
     for rel, spec in sorted((st.get("files") or {}).items()):
         # Files the call reads, under the run's own directory.
-        f = workdir / rel
+        f = workdir / floor_paths(rel, case, root)
         f.parent.mkdir(parents=True, exist_ok=True)
         if spec.get("dir"):
             f.mkdir(exist_ok=True)
@@ -157,12 +179,17 @@ def prepare(case: dict[str, Any], workdir: Path) -> tuple[list[str], bytes, dict
             os.mkfifo(f)
         elif "symlink" in spec:
             os.symlink(spec["symlink"].replace("{ROOT}", root), f)
+        elif "hardlink" in spec:
+            # A second name for a file an earlier (sorted) entry made.
+            os.link(workdir / floor_paths(spec["hardlink"], case, root), f)
         elif "hex" in spec:
             f.write_bytes(bytes.fromhex(spec["hex"]))
         elif "repeat" in spec:
             f.write_text(spec["repeat"] * spec["count"], encoding="utf-8")
         else:
             f.write_text(spec["text"], encoding="utf-8")
+        if "mode" in spec:
+            f.chmod(spec["mode"])
     if st.get("grafts"):
         gd = gate_root / "grafts"
         gd.mkdir()
@@ -190,9 +217,27 @@ _PLAN = re.compile(r"^plan_[0-9a-f]{8}$")
 _ENV = re.compile(r"^env_[0-9a-f]{8}$")
 
 
+# The gate cuts a record's detail and its verdict clause at this many
+# characters (_state_report._DETAIL_MAX). A cut can fall inside a copy of
+# the root; that part of a path is written as {ROOT-CUT}.
+DETAIL_MAX = 200
+
+
+def _cut_root(v: str, root: str) -> str:
+    """v with a root cut short at its end written as {ROOT-CUT}. Only a
+    string the gate cut (DETAIL_MAX long) is read so. A lone '/' is the
+    same on every machine and is kept."""
+    if len(v) != DETAIL_MAX or v.endswith(root):
+        return v
+    for k in range(len(root) - 1, 1, -1):
+        if v.endswith(root[:k]):
+            return v[:-k] + "{ROOT-CUT}"
+    return v
+
+
 def _norm_value(v: Any, root: str) -> Any:
     if isinstance(v, str):
-        v = v.replace(root, "{ROOT}")
+        v = _cut_root(v, root).replace(root, "{ROOT}")
         if _PLAN.match(v):
             return "<plan>"
         if _ENV.match(v):
@@ -329,7 +374,9 @@ def run_case(
     if case.get("coppice"):
         sock = workdir / "c.sock"
         env["COPPICE_SOCK"] = str(sock)
-        env["COPPICE_PANE"] = "pane-7"
+        # A case that names its own pane keeps it (the agent mode cases).
+        if "COPPICE_PANE" not in (case.get("env") or {}):
+            env["COPPICE_PANE"] = "pane-7"
         server = FakeCoppice(sock)
     try:
         t0 = time.perf_counter()
@@ -403,7 +450,7 @@ def envelope(eid: str | None = "env_base", **perms: Any) -> dict[str, Any]:
     top = {
         k: perms.pop(k)
         for k in list(perms)
-        if k in ("stakes", "shell_interpreter_policy", "invariants", "postconditions")
+        if k in ("stakes", "shell_interpreter_policy", "invariants", "postconditions", "deadline")
     }
     p.update(perms)
     env: dict[str, Any] = {
@@ -1154,6 +1201,318 @@ def build_cases() -> list[dict[str, Any]]:
         )
     )
 
+    # -- no agent registers an envelope or writes the delegation tree ---------
+    for cmd in [
+        "daisugi gate register env.json",
+        "daisugi gate register env.json --session kid --parent top",
+        "/usr/local/bin/daisugi gate register e.yaml",
+        "uv run --no-sync python -m opendaisugi gate register e.yaml",
+        "daisugi --root /g gate --x register e.json",
+        "daisugi tree root e.json --session top",
+        "daisugi tree spawn e.json --parent top --session kid",
+        "daisugi tree end kid --tokens-used 3",
+        "daisugi tree answer ask_0123456789ab allow",
+        "daisugi tree run --parent top --profile default -",
+        "daisugi agent-profiles bundle --fd 3",
+        "daisugi agent-profiles list --json",
+        "sh -c 'daisugi agent-profiles list'",
+        "/usr/bin/python3 -I -m opendaisugi.cli agent-profiles bundle --fd 4",
+        "sh -c 'daisugi agent-profiles bundle --fd 3'",
+        "daisugi agent-profiles",
+        "daisugi agent-profile bundle",
+        "/usr/bin/python3 -I -m opendaisugi.cli tree run --parent p --profile desk -",
+        "uv run --no-sync python -m opendaisugi tree run -",
+        "daisugi tree runs",
+        "sh -c 'daisugi tree spawn e.json'",
+        "dai\\sugi tr'ee' spa\"wn\"",
+        "daisugi tree status; daisugi gate register e.json",
+        "daisugi\ttree\nend",
+        "daisugi\u00a0tree root",
+        "echo daisugi tree end",
+        "daisugi tree check p.json c.json",
+        "daisugi tree status --json",
+        "daisugi gate status",
+        "daisugi register gate",
+        "daisugi-helper tree spawn",
+        "daisugi trees spawn",
+        "daisugi tree check end.json root.json",
+        "daisugi tree spawned",
+        "daisugi gate init --force",
+        "daisugi gate init --session kid --workspace /w",
+        "daisugi start claude",
+        "uv run daisugi --data-dir /d start",
+        "daisugi status && npm start",
+        "daisugi registry init /r",
+        "npm start",
+    ]:
+        add(mk(f"tree rule {cmd!r}", bash(cmd), envelopes=rank_env, tags=["tree"]))
+    add(
+        mk(
+            "tree rule audit",
+            bash("daisugi tree spawn e.json --parent top --session kid"),
+            mode="audit",
+            envelopes=rank_env,
+            tags=["tree"],
+        )
+    )
+    # The verbs read per simple command, as arguments of a daisugi command.
+    # This envelope reads compound lines, so a line the rules pass is
+    # allowed.
+    dec_env = {
+        "default": envelope(
+            shell_allowlist=[*ALLOW, "daisugi", "uv", "env", "sh", "npm", "yarn", "true"],
+            shell_allow_decomposition=True,
+        )
+    }
+    for cmd in [
+        "daisugi status; yarn start",
+        "npm test && daisugi start",
+        "daisugi-py start",
+        "daisugi status && npm start (",
+        "daisugi weave run start",
+        "daisugi help start",
+        "daisugi --plain start --enforce",
+        "x=$(daisugi tree end kid)",
+        "git commit -m 'daisugi start now'",
+        "daisugi status && npm start",
+    ]:
+        add(mk(f"tree rule compound {cmd!r}", bash(cmd), envelopes=dec_env, tags=["tree"]))
+    for cmd in ["true && daisugi\trank\nrecord", "daisugi status && rank record"]:
+        add(mk(f"rank rule compound {cmd!r}", bash(cmd), envelopes=dec_env, tags=["rank"]))
+    # Forms shlex splits differently from the shell: a line continuation,
+    # $'...' and $"..." quoting. Each is also read by word order.
+    for cmd in [
+        "daisugi \\\nrank record",
+        "daisugi $'rank' record",
+        'daisugi $"rank" record',
+        "dai\\\nsugi start",
+        "daisugi \\\ngate disarm",
+        "daisugi gate dis\\\narm",
+        "daisugi gate $'disarm'",
+        'daisugi gate $"arm"',
+        "daisugi router $'label' s1 pass",
+        "echo $'x' && npm start",
+        "ls \\\n/work && npm start",
+    ]:
+        add(mk(f"owner rule shlex gap {cmd!r}", bash(cmd), envelopes=dec_env, tags=["owner"]))
+
+    # -- no agent changes how the gate enforces -----------------------------
+    for cmd in [
+        "daisugi gate disarm",
+        "daisugi gate arm",
+        "daisugi gate disarm --root /g",
+        "daisugi gate serve",
+        "daisugi install --gate --enforce",
+        "daisugi install --uninstall",
+        "daisugi install --dry-run",
+        "daisugi graft install --state active",
+        "daisugi graft remove --id big-read",
+        "/usr/local/bin/daisugi gate disarm",
+        "./daisugi gate disarm",
+        "daisugi-py gate disarm",
+        "~/.local/bin/daisugi-py gate arm",
+        "uv run daisugi gate disarm",
+        "uv run --no-sync python -m opendaisugi.cli gate disarm",
+        "python3 -m opendaisugi gate disarm",
+        "env A=1 daisugi gate disarm",
+        "nohup daisugi gate serve &",
+        "daisugi --plain gate disarm",
+        "daisugi gate --x disarm",
+        "daisugi --data-dir /d gate disarm",
+        "ls && daisugi gate disarm",
+        "daisugi status || daisugi gate disarm",
+        "x=$(daisugi gate disarm)",
+        "echo $(daisugi gate disarm)",
+        "sh -c 'daisugi gate disarm'",
+        'bash -lc "cd /w && daisugi gate disarm"',
+        "'daisugi' 'gate' 'disarm'",
+        "dai\\sugi gate dis\\arm",
+        "'dai'sugi gate disarm",
+        "daisugi gate disarm; (",
+        "echo daisugi gate disarm",
+        "daisugi\udc80gate disarm",
+        "daisugi gate status",
+        "daisugi gate check --mode enforce",
+        "daisugi gate settings --enforce",
+        "daisugi graft status",
+        "daisugi status && npm install",
+        "pip install daisugi",
+        "daisugi status; gate disarm",
+        "daisugi-helper gate disarm",
+        "daisugi gates disarm",
+        "daisugi pathways show disarm",
+        "daisugi status gate disarm",
+        "git commit -m 'gate: disarm in tests'",
+        "grep 'gate disarm' daisugi.log",
+        "daisugi\u00a0gate disarm",
+    ]:
+        add(mk(f"gate change rule {cmd!r}", bash(cmd), envelopes=dec_env, tags=["owner"]))
+    # A pack install, remove or bundle is the operator's (PK-R-12); the
+    # other pack verbs and lora train are the envelope's.
+    for cmd in [
+        "daisugi pack install train",
+        "daisugi pack install train --offline --bundle /b.tar",
+        "daisugi pack remove train",
+        "daisugi pack bundle train --out /x",
+        "npm test && daisugi pack install train",
+        "sh -c 'daisugi pack remove train'",
+        "daisugi pack list",
+        "daisugi pack status train",
+        "daisugi pack run train selftest",
+        "daisugi lora train --jsonl a --output b",
+        "daisugi pack status gate disarm",
+        "daisugi pack install gate disarm",
+    ]:
+        add(mk(f"pack rule {cmd!r}", bash(cmd), envelopes=dec_env, tags=["owner"]))
+    add(
+        mk(
+            "gate change rule audit",
+            bash("daisugi gate disarm"),
+            mode="audit",
+            envelopes=rank_env,
+            tags=["owner"],
+        )
+    )
+    add(
+        mk(
+            "gate change rule ask",
+            bash("daisugi gate disarm", tool_use_id="tu-1"),
+            envelopes=rank_env,
+            extra_args=["--ask", "--ask-timeout", "10"],
+            operator={
+                "tool_use_id": "tu-1",
+                "answer": {"decision": "allow", "reason": "ok", "updatedInput": None},
+            },
+            tags=["owner", "ask"],
+        )
+    )
+
+    # Long && chains: the rules decompose at frame 13, three deeper than
+    # the permission stage. Near the limit the rules' decomposition raises
+    # and the line is read by word order, so `start` after a daisugi word
+    # is a hit there and not below it.
+    for n in (955, 960, 965, 970, 972, 973, 974, 975, 976, 977, 978, 979, 980):
+        cmd = "daisugi status && " + " && ".join(["ls"] * n) + " && npm start"
+        add(mk(f"owner chain {n}", bash(cmd), envelopes=dec_env, tags=["owner", "depth"]))
+
+    # -- no agent labels a task's outcome (SW-12) -----------------------------
+    for cmd in [
+        "daisugi router label s1 pass",
+        "daisugi router label s1 fail --note x",
+        "uv run daisugi router --x label s1 pass",
+        "sh -c 'daisugi router label s1 pass'",
+        "daisugi router status",
+        "daisugi router stop",
+        "daisugi status && router label s1 pass",
+    ]:
+        add(mk(f"label rule {cmd!r}", bash(cmd), envelopes=dec_env, tags=["owner"]))
+
+    # -- the envelope's deadline holds at call time ---------------------------
+    # DAISUGI_GATE_NOW pins the clock; only a later time than the real one
+    # counts, so the deadlines here are far in the future.
+    far = 4000000000
+    dl = {"default": envelope(deadline=far)}
+    for name, now in (
+        ("before", "3999999999"),
+        ("at", "4000000000"),
+        ("after", "4000000000.5"),
+        ("long after", "4100000000"),
+        ("odd pin", "4e9"),
+        ("signed pin", "+4000000001"),
+        ("spaced pin", " 4000000001"),
+    ):
+        add(
+            mk(
+                f"deadline {name}",
+                payload("Read", {"file_path": "/work/a"}),
+                envelopes=dl,
+                env={"DAISUGI_GATE_NOW": now},
+                tags=["deadline"],
+            )
+        )
+    add(
+        mk(
+            "deadline after audit",
+            payload("Read", {"file_path": "/work/a"}),
+            mode="audit",
+            envelopes=dl,
+            env={"DAISUGI_GATE_NOW": "4000000001"},
+            tags=["deadline"],
+        )
+    )
+    add(
+        mk(
+            "deadline after shell",
+            bash("ls /work"),
+            envelopes=dl,
+            env={"DAISUGI_GATE_NOW": "4000000001"},
+            tags=["deadline"],
+        )
+    )
+    add(
+        mk(
+            "deadline after rank record",
+            bash("daisugi rank record"),
+            envelopes={"default": envelope(deadline=far, shell_allowlist=[*ALLOW, "daisugi"])},
+            env={"DAISUGI_GATE_NOW": "4000000001"},
+            tags=["deadline"],
+        )
+    )
+    add(
+        mk(
+            "deadline past no pin",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(deadline=1000000000)},
+            tags=["deadline"],
+        )
+    )
+    add(
+        mk(
+            "deadline float",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(deadline=4000000000.25)},
+            env={"DAISUGI_GATE_NOW": "4000000000.5"},
+            tags=["deadline"],
+        )
+    )
+    add(
+        mk(
+            "deadline after pinned session",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(), "kid": envelope("env_kid", deadline=far)},
+            pin="kid",
+            env={"DAISUGI_GATE_NOW": "4000000001"},
+            tags=["deadline"],
+        )
+    )
+    for name, answer in (
+        ("deadline operator allows", {"decision": "allow", "reason": "ok", "updatedInput": None}),
+        (
+            "deadline operator edit",
+            {"decision": "allow", "reason": "ok", "updatedInput": {"command": "ls"}},
+        ),
+    ):
+        add(
+            mk(
+                name,
+                bash("ls /work", tool_use_id="tu-1"),
+                envelopes=dl,
+                env={"DAISUGI_GATE_NOW": "4000000001"},
+                extra_args=["--ask", "--ask-timeout", "10"],
+                operator={"tool_use_id": "tu-1", "answer": answer},
+                tags=["deadline", "ask"],
+            )
+        )
+    add(
+        mk(
+            "deadline after unknown tool",
+            payload("Frobnicate", {}),
+            envelopes=dl,
+            env={"DAISUGI_GATE_NOW": "4000000001"},
+            tags=["deadline"],
+        )
+    )
+
     # -- hard-deny rules -----------------------------------------------------
     hard = [
         (
@@ -1327,6 +1686,9 @@ def build_cases() -> list[dict[str, Any]]:
         ("pane deny through a socket", bash("coppice --socket /x agent deny 42 h1")),
         ("pane deny through remote", bash("coppice --remote ssh://box agent deny 42 h1")),
         ("pane deny runtime dir", bash("XDG_RUNTIME_DIR=/x coppice agent deny 42 h1")),
+        ("pane deny data home", bash("OPENDAISUGI_HOME=/x coppice agent deny 42 h1")),
+        ("pane deny xdg data home", bash("XDG_DATA_HOME=/x coppice agent deny 42 h1")),
+        ("pane deny home", bash("HOME=/x coppice agent deny 42 h1")),
         ("pane deny over ssh", bash("ssh box 'coppice agent deny 42 h1'")),
         ("pane deny setsid", bash("setsid -f coppice agent deny 42 h1")),
         ("pane deny systemd-run", bash("systemd-run --user coppice agent deny 42 h1")),
@@ -1356,6 +1718,27 @@ def build_cases() -> list[dict[str, Any]]:
             "pane grep voice dir",
             payload("Grep", {"pattern": ".", "path": "/home/user/.opendaisugi/coppice/voice"}),
         ),
+        # The chat with the foreman and the gate's journal: private, read
+        # by the operator only.
+        ("pane chat file cat", bash("cat /home/user/.opendaisugi/coppice/chat/2026-10-09.jsonl")),
+        ("pane chat glob cat", bash("cat ~/.opendaisugi/coppice/chat/*")),
+        (
+            "pane chat from data dir",
+            bash("cat chat/2026-10-09.jsonl", cwd="/home/user/.opendaisugi/coppice"),
+        ),
+        (
+            "pane journal file read",
+            payload(
+                "Read", {"file_path": "/home/user/.opendaisugi/coppice/journal/verdicts.jsonl"}
+            ),
+        ),
+        (
+            "pane grep chat dir",
+            payload("Grep", {"pattern": ".", "path": "/home/user/.opendaisugi/coppice/chat"}),
+        ),
+        ("pane rg journal dir", bash("rg verdict ~/.opendaisugi/coppice/journal")),
+        ("pane chat elsewhere", bash("cat /work/src/chat/notes.md")),
+        ("pane journal elsewhere", bash("cat /work/journal/2026.md")),
         (
             "pane grep web dir respelled",
             payload(
@@ -1430,6 +1813,171 @@ def build_cases() -> list[dict[str, Any]]:
             tags=["hard_deny"],
         )
     )
+    # Every pane has COPPICE_DATA_DIR, so a read through the variable is a
+    # read of the data dir, custom or default. OPENDAISUGI_HOME and
+    # XDG_DATA_HOME expand the same way when the pane's env holds them.
+    default = {"COPPICE_DATA_DIR": "/home/user/.opendaisugi/coppice"}
+    for dir_name, env in (("custom", custom), ("default", default)):
+        for name, line in (
+            ("var cat chat", "cat $COPPICE_DATA_DIR/chat/*"),
+            ("braced cat chat", 'cat "${COPPICE_DATA_DIR}"/chat/*'),
+            ("var head chat", "head -n 999 $COPPICE_DATA_DIR/chat/*.jsonl"),
+            ("var cp chat", "cp -r $COPPICE_DATA_DIR/chat /work/x"),
+            ("var cd chat", "cd $COPPICE_DATA_DIR/chat && cat *"),
+            ("var cat journal", "cat $COPPICE_DATA_DIR/journal/*"),
+            ("var cat web", "cat $COPPICE_DATA_DIR/web/*"),
+        ):
+            add(mk(f"pane {dir_name} data dir {name}", bash(line), env=env, tags=["hard_deny"]))
+    for name, line in (
+        ("param default chat", "cat ${COPPICE_DATA_DIR:-x}/chat/*"),
+        ("param unset chat", "cat ${COPPICE_DATA_DIR-x}/chat/*"),
+        ("param assign journal", "cat ${COPPICE_DATA_DIR:=x}/journal/*"),
+        ("param strip web", "cat ${COPPICE_DATA_DIR%/}/web/*"),
+    ):
+        add(mk(f"pane custom data dir {name}", bash(line), env=custom, tags=["hard_deny"]))
+    for name, line in (
+        ("chat wire cmd", """printf '{"cmd":"floor.chat"}\\n' | nc -U $COPPICE_SOCK"""),
+        ("messages wire dict", """python -c 'send({"cmd": "pane.messages", "pane": "w1:p1"})'"""),
+        (
+            "chat wire method",
+            """echo '{"id":"1","method":"floor.chat"}' | socat - UNIX:/run/c.sock""",
+        ),
+        ("chat wire escaped dot", """printf '{"cmd":"floor\\u002echat"}' | nc -U s"""),
+        ("messages wire escaped", """printf '{"cmd":"pane\\.messages"}' | nc -U s"""),
+        ("allow wire escaped dot", """printf '{"cmd":"agent\\u002eallow"}' | nc -U s"""),
+        ("allow wire escaped slash", """printf '{"cmd":"agent\\.allow","by":"a\\/b"}' | nc -U s"""),
+    ):
+        add(mk(f"pane {name}", bash(line), tags=["hard_deny"]))
+    add(mk("pane chat verb mention", bash("grep -rn floor.chat src/"), tags=["pane"]))
+    for name, line in (
+        ("cd chat", "cd /srv/cdata/chat && cat ./2026-10-09.jsonl"),
+        ("cd chat glob", "cd /srv/cdata/chat && cat *"),
+        ("cd journal", "cd /srv/cdata/journal && cat ./verdicts.jsonl"),
+    ):
+        add(mk(f"pane custom data dir {name}", bash(line), env=custom, tags=["hard_deny"]))
+    add(
+        mk(
+            "pane custom data dir cwd chat",
+            bash("cat 2026-10-09.jsonl", cwd="/srv/cdata/chat"),
+            env=custom,
+            tags=["hard_deny"],
+        )
+    )
+    add(
+        mk(
+            "pane opendaisugi home var chat",
+            bash("cat $OPENDAISUGI_HOME/coppice/chat/*"),
+            env={"OPENDAISUGI_HOME": "/home/user/.opendaisugi"},
+            tags=["hard_deny"],
+        )
+    )
+    add(
+        mk(
+            "pane xdg data home var chat",
+            bash("cat ${XDG_DATA_HOME}/opendaisugi/coppice/chat/*"),
+            env={"XDG_DATA_HOME": "/home/user/.local/share"},
+            tags=["hard_deny"],
+        )
+    )
+    # The foreman's log dir and its turn dir: private, read by the operator
+    # only. The log dir sits beside the coppice data dir under the data
+    # home; the turn dir sits under the state home.
+    log = "/home/user/.opendaisugi/foreman"
+    turn = "/home/user/.local/state/coppice/foreman"
+    foreman_hard = [
+        ("log cat main", bash(f"cat {log}/main/0")),
+        ("log cat tilde", bash("cat ~/.opendaisugi/foreman/view.json")),
+        ("log grep -r", bash(f"grep -rn secret {log}")),
+        ("log rg tree", bash("rg secret ~/.opendaisugi/foreman/tree")),
+        ("log cd then cat", bash(f"cd {log}/tree && cat ./0")),
+        ("log cat from cwd", bash("cat view.json", cwd=log)),
+        ("log cat work gate", bash(f"cat {log}/work/gate/sessions/s1")),
+        ("log cat turns", bash(f"tail -n 5 {log}/turns.jsonl")),
+        ("log read", payload("Read", {"file_path": f"{log}/view.json"})),
+        ("log read from cwd", payload("Read", {"file_path": "view.json"}, cwd=log)),
+        ("log glob", payload("Glob", {"pattern": "**/*", "path": log})),
+        ("log glob from cwd", payload("Glob", {"pattern": "*"}, cwd=log)),
+        ("log glob pattern path", payload("Glob", {"pattern": f"{log}/main/*"})),
+        ("log grep dir", payload("Grep", {"pattern": ".", "path": log})),
+        ("log grep tree dir", payload("Grep", {"pattern": ".", "path": f"{log}/tree"})),
+        ("log grep from cwd", payload("Grep", {"pattern": "."}, cwd=f"{log}/main")),
+        ("log grep respelled", payload("Grep", {"pattern": ".", "path": f"{log}/tree/x/../"})),
+        ("turn cat mcp", bash(f"cat {turn}/mcp.json")),
+        ("turn cd", bash(f"cd {turn} && ls")),
+        ("turn read", payload("Read", {"file_path": f"{turn}/mcp.json"})),
+        ("turn glob", payload("Glob", {"pattern": "*", "path": turn})),
+        ("turn grep", payload("Grep", {"pattern": ".", "path": turn})),
+        ("turn grep from cwd", payload("Grep", {"pattern": "."}, cwd=turn)),
+        (
+            "search above turn dir",
+            payload("Grep", {"pattern": ".", "path": "/home/user/.local/state"}),
+        ),
+    ]
+    for name, pl in foreman_hard:
+        add(mk(f"pane foreman {name}", pl, tags=["hard_deny"]))
+    for name, env, line, rd in (
+        (
+            "xdg state",
+            {"XDG_STATE_HOME": "/xdg/state"},
+            "cat /xdg/state/coppice/foreman/mcp.json",
+            "/xdg/state/coppice/foreman/mcp.json",
+        ),
+        (
+            "opendaisugi home",
+            {"OPENDAISUGI_HOME": "/srv/oh"},
+            "cat /srv/oh/foreman/main/0",
+            "/srv/oh/foreman/view.json",
+        ),
+        (
+            "opendaisugi home var",
+            {"OPENDAISUGI_HOME": "/srv/oh"},
+            "cat $OPENDAISUGI_HOME/foreman/main/0",
+            "/srv/oh/foreman/main/0",
+        ),
+        (
+            "xdg data home",
+            {"XDG_DATA_HOME": "/xdg/data"},
+            "cat /xdg/data/opendaisugi/foreman/view.json",
+            "/xdg/data/opendaisugi/foreman/view.json",
+        ),
+        (
+            "custom data dir",
+            {"COPPICE_DATA_DIR": "/srv/cdata"},
+            "cat /srv/cdata/foreman/view.json",
+            "/srv/cdata/foreman/view.json",
+        ),
+        (
+            "custom data dir var",
+            {"COPPICE_DATA_DIR": "/srv/cdata"},
+            "cat $COPPICE_DATA_DIR/foreman/main/0",
+            "/srv/cdata/foreman/tree/0",
+        ),
+    ):
+        add(mk(f"pane foreman env {name} cat", bash(line), env=env, tags=["hard_deny"]))
+        add(
+            mk(
+                f"pane foreman env {name} read",
+                payload("Read", {"file_path": rd}),
+                env=env,
+                tags=["hard_deny"],
+            )
+        )
+        add(
+            mk(
+                f"pane foreman env {name} glob",
+                payload("Glob", {"pattern": "*", "path": rd.rsplit("/", 1)[0]}),
+                env=env,
+                tags=["hard_deny"],
+            )
+        )
+    for name, pl in (
+        ("elsewhere cat", bash("cat /work/src/foreman/notes.md")),
+        ("elsewhere read", payload("Read", {"file_path": "/work/foreman/notes.md"})),
+        ("source file", bash("cat /work/src/opendaisugi/foreman.py")),
+        ("other name", bash("cat /work/foremanager/x")),
+        ("other file", bash("cat /work/src/coppice/foreman.md")),
+    ):
+        add(mk(f"pane foreman control {name}", pl))
     above = [
         ("search grep home", payload("Grep", {"pattern": ".", "path": "/home/user"})),
         ("search grep tilde", payload("Grep", {"pattern": ".", "path": "~"})),
@@ -1957,6 +2505,31 @@ def build_cases() -> list[dict[str, Any]]:
                 extra_args=["--verify-timeout", "30"],
             )
         )
+    # llm_check through the claude-code backend: no key, and a fake
+    # `claude` first on PATH that reads the prompt and prints a fixed
+    # reply. A failed run is a plain "not satisfied".
+    for name, script in [
+        ("llm claude holds", 'printf \'%s\' \'{"satisfied": true, "rationale": "ok"}\''),
+        ("llm claude not satisfied", "printf '%s' 'verdict: {\"satisfied\": false}'"),
+        ("llm claude dict literal", "printf '%s' \"{'satisfied': True}\""),
+        ("llm claude prose", "printf '%s' 'I think so.'"),
+        ("llm claude fails", "echo boom >&2; exit 3"),
+    ]:
+        add(
+            mk(
+                name,
+                payload("Read", {"file_path": "/work/a"}),
+                env={"PATH": "{ROOT}/bin:/usr/bin:/bin"},
+                envelopes={
+                    "default": envelope(invariants=[{"type": "t", "description": "d", "expr": llm}])
+                },
+                files={
+                    "bin/claude": {"text": f"#!/bin/sh\ncat >/dev/null\n{script}\n", "mode": 0o755}
+                },
+                tags=["envelope", "predicate", "llm"],
+                extra_args=["--verify-timeout", "30"],
+            )
+        )
     add(
         mk(
             "envelope coerced bool",
@@ -2253,6 +2826,22 @@ def build_cases() -> list[dict[str, Any]]:
             },
         ),
         (
+            "operator edit gate disarm",
+            {
+                "decision": "allow",
+                "reason": "ok",
+                "updatedInput": {"command": "daisugi gate disarm"},
+            },
+        ),
+        (
+            "operator edit npm start",
+            {
+                "decision": "allow",
+                "reason": "ok",
+                "updatedInput": {"command": "ls && npm start"},
+            },
+        ),
+        (
             "operator edit not an object",
             {"decision": "allow", "reason": "ok", "updatedInput": "ls"},
         ),
@@ -2319,7 +2908,261 @@ def build_cases() -> list[dict[str, Any]]:
     dialect_followup_cases(add)
     daisugi_config_cases(add)
     graft_cases(add)
+    gate_state_cases(add)
+    data_home_cases(add)
+    agent_mode_cases(add)
     return C
+
+
+def agent_mode_cases(add: Any) -> None:
+    """F11: the per-agent mode marker, <gate root>/agents/<floor>/<pane>.mode.
+
+    Only the bytes ``watching`` (one newline after it at most), in a
+    regular file named for the calling pane (COPPICE_PANE, coppice's own
+    id shape) in the calling floor's directory (the key of COPPICE_SOCK),
+    lower an enforce hook to audit. Every other marker leaves the hook's
+    mode (F11-R-1, F11-R-2, F11-R-6). Each case that ends in a deny has a
+    twin, ``agent mode watching``, where the same call is lowered, so the
+    set fails when the marker code is taken out.
+    """
+    me = {"COPPICE_PANE": "w1:p1", "COPPICE_SOCK": "/run/coppice/floor-a.sock"}
+    mark = "data/gate/agents/{FLOOR}/w1:p1.mode"
+    outside = payload("Read", {"file_path": "/etc/passwd"})
+    for name, files, env in (
+        ("missing", None, me),
+        ("garbage", {mark: {"text": "banana\n"}}, me),
+        ("watching", {mark: {"text": "watching\n"}}, me),
+        ("watching no newline", {mark: {"text": "watching"}}, me),
+        ("watching two newlines", {mark: {"text": "watching\n\n"}}, me),
+        ("watching crlf", {mark: {"text": "watching\r\n"}}, me),
+        ("watching upper", {mark: {"text": "WATCHING\n"}}, me),
+        ("enforcing", {mark: {"text": "enforcing\n"}}, me),
+        ("off", {mark: {"text": "off\n"}}, me),
+        ("empty", {mark: {"text": ""}}, me),
+        ("too big", {mark: {"text": "watching\n" + " " * 60}}, me),
+        ("bad utf8", {mark: {"hex": "ff77617463680a"}}, me),
+        ("symlink", {"w.txt": {"text": "watching\n"}, mark: {"symlink": "{ROOT}/w.txt"}}, me),
+        ("fifo", {mark: {"fifo": True}}, me),
+        ("directory", {mark: {"dir": True}}, me),
+        ("other pane", {"data/gate/agents/{FLOOR}/w1:p2.mode": {"text": "watching\n"}}, me),
+        (
+            "other floor",
+            {
+                "data/gate/agents/{FLOOR=/run/coppice/floor-b.sock}/w1:p1.mode": {
+                    "text": "watching\n"
+                }
+            },
+            me,
+        ),
+        (
+            "other floor same pane both",
+            {
+                "data/gate/agents/{FLOOR=/run/coppice/floor-b.sock}/w1:p1.mode": {
+                    "text": "watching\n"
+                },
+                mark: {"text": "enforcing\n"},
+            },
+            me,
+        ),
+        ("no floor dir", {"data/gate/agents/w1:p1.mode": {"text": "watching\n"}}, me),
+        ("no sock", {mark: {"text": "watching\n"}}, {"COPPICE_PANE": "w1:p1"}),
+        ("empty sock", {mark: {"text": "watching\n"}}, {**me, "COPPICE_SOCK": ""}),
+        (
+            "traversal",
+            {"data/gate/agents/w1:p1.mode": {"text": "watching\n"}, mark: {"text": "watching\n"}},
+            {**me, "COPPICE_PANE": "../w1:p1"},
+        ),
+        (
+            "traversal inside",
+            {mark: {"text": "watching\n"}},
+            {**me, "COPPICE_PANE": "w1:p1/../w1:p1"},
+        ),
+        ("long id", {mark: {"text": "watching\n"}}, {**me, "COPPICE_PANE": "w1:p1234567890"}),
+        # F11-R-7: the directories are not followed through a symlink, and
+        # the marker must be this user's, with one link, writable by no one
+        # else.
+        (
+            "agents dir symlink",
+            {
+                "data/gate/agents": {"symlink": "{ROOT}/real-agents"},
+                "real-agents/{FLOOR}/w1:p1.mode": {"text": "watching\n"},
+            },
+            me,
+        ),
+        (
+            "floor dir symlink",
+            {
+                "data/gate/agents/{FLOOR}": {"symlink": "{ROOT}/real-floor"},
+                "real-floor/w1:p1.mode": {"text": "watching\n"},
+            },
+            me,
+        ),
+        ("hard link", {mark: {"text": "watching\n"}, "zz-second-name": {"hardlink": mark}}, me),
+        ("group writable", {mark: {"text": "watching\n", "mode": 0o664}}, me),
+        ("other writable", {mark: {"text": "watching\n", "mode": 0o646}}, me),
+        (
+            "tmux pane only",
+            {mark: {"text": "watching\n"}},
+            {"TMUX_PANE": "w1:p1", "COPPICE_SOCK": me["COPPICE_SOCK"]},
+        ),
+        (
+            "herdr pane only",
+            {mark: {"text": "watching\n"}},
+            {"HERDR_PANE_ID": "w1:p1", "COPPICE_SOCK": me["COPPICE_SOCK"]},
+        ),
+    ):
+        add(mk(f"agent mode {name}", outside, files=files, env=env, tags=["agent_mode"]))
+    watching = {mark: {"text": "watching\n"}}
+    add(
+        mk(
+            "agent mode audit hook enforcing marker",
+            outside,
+            mode="audit",
+            files={mark: {"text": "enforcing\n"}},
+            env=me,
+            tags=["agent_mode"],
+        )
+    )
+    # F11-R-11: a typed wire call of agent.set_mode is the pane rule's
+    # deny in every mode, as agent.allow is: a pane may not lower an agent.
+    for mode in ("enforce", "audit"):
+        for name, line in (
+            (
+                "nc",
+                'printf \'{"cmd":"agent.set_mode","pane":"w1:p1","mode":"watching"}\\n\''
+                ' | nc -U "$COPPICE_SOCK"',
+            ),
+            (
+                "setsid python",
+                """setsid python3 -c 'send({"cmd": "agent.set_mode", "pane": "w1:p2"})'""",
+            ),
+        ):
+            add(
+                mk(
+                    f"agent mode typed set_mode {name} ({mode})",
+                    bash(line),
+                    mode=mode,
+                    env=me,
+                    tags=["agent_mode"],
+                )
+            )
+    # The report names the mode the call was decided in. The fake coppice
+    # socket is the floor here, so the floor key is its path's.
+    add(
+        mk(
+            "agent mode watching report",
+            outside,
+            files=watching,
+            env={"COPPICE_PANE": "w1:p1"},
+            coppice=True,
+            tags=["agent_mode"],
+        )
+    )
+
+
+def data_home_cases(add: Any) -> None:
+    """DH-R-2: OPENDAISUGI_HOME and XDG_DATA_HOME can move the data home.
+    Every place it can be is guarded: the gate's state, daisugi's
+    config.yaml and coppice's data directory, by path and through the
+    variable. The fake HOME has no ~/.opendaisugi, so XDG_DATA_HOME moves
+    the data home; the legacy directory stays guarded too."""
+    allow = envelope(
+        file_read=["/**"],
+        file_write=["/**"],
+        shell_allowlist=[*ALLOW, "touch", "tee", "rm", "cp"],
+        shell_allow_decomposition=True,
+    )
+    od = {"OPENDAISUGI_HOME": "/od"}
+    xdg = {"XDG_DATA_HOME": "/xdg"}
+    calls = {
+        "od envelope": (
+            od,
+            payload("Write", {"file_path": "/od/gate/envelopes/default.json", "content": "{}"}),
+        ),
+        "od config": (od, payload("Write", {"file_path": "/od/config.yaml", "content": "x"})),
+        "od coppice": (od, payload("Write", {"file_path": "/od/coppice/web.json", "content": "x"})),
+        "od var": (od, bash("touch $OPENDAISUGI_HOME/gate/DISARMED")),
+        "od var braces": (od, bash("tee ${OPENDAISUGI_HOME}/config.yaml < /dev/null")),
+        "od legacy": (
+            od,
+            payload(
+                "Write", {"file_path": f"{FAKE_HOME}/.opendaisugi/gate/DISARMED", "content": "x"}
+            ),
+        ),
+        "od elsewhere": (
+            od,
+            payload("Write", {"file_path": "/work/od/gate/DISARMED", "content": "x"}),
+        ),
+        "xdg envelope": (
+            xdg,
+            payload(
+                "Write",
+                {"file_path": "/xdg/opendaisugi/gate/envelopes/default.json", "content": "{}"},
+            ),
+        ),
+        "xdg config": (
+            xdg,
+            payload("Write", {"file_path": "/xdg/opendaisugi/config.yaml", "content": "x"}),
+        ),
+        "xdg coppice": (
+            xdg,
+            payload("Write", {"file_path": "/xdg/opendaisugi/coppice/web.json", "content": "x"}),
+        ),
+        "xdg var": (xdg, bash("rm -f $XDG_DATA_HOME/opendaisugi/gate/DISARMED")),
+        "xdg legacy": (
+            xdg,
+            payload(
+                "Write", {"file_path": f"{FAKE_HOME}/.opendaisugi/config.yaml", "content": "x"}
+            ),
+        ),
+        "unset var": ({}, bash("touch $OPENDAISUGI_HOME/x")),
+        "od web token read": (od, payload("Read", {"file_path": "/od/coppice/web/token"})),
+        "xdg ca key cat": (xdg, bash("cat /xdg/opendaisugi/coppice/web/ca/ca.key")),
+        # A leading ~ is the home; a value still not absolute is ignored, so
+        # it never moves the guarded set into the workspace.
+        "od tilde": (
+            {"OPENDAISUGI_HOME": "~/od"},
+            payload("Write", {"file_path": f"{FAKE_HOME}/od/gate/DISARMED", "content": "x"}),
+        ),
+        "od tilde var": (
+            {"OPENDAISUGI_HOME": "~/od"},
+            bash("touch $OPENDAISUGI_HOME/gate/DISARMED"),
+        ),
+        "od relative": (
+            {"OPENDAISUGI_HOME": "od"},
+            payload("Write", {"file_path": "od/gate/DISARMED", "content": "x"}),
+        ),
+        "od dot relative": (
+            {"OPENDAISUGI_HOME": "./od"},
+            payload("Write", {"file_path": "/work/od/config.yaml", "content": "x"}),
+        ),
+        "od empty": (
+            {"OPENDAISUGI_HOME": ""},
+            payload(
+                "Write", {"file_path": f"{FAKE_HOME}/.opendaisugi/gate/DISARMED", "content": "x"}
+            ),
+        ),
+        "xdg tilde": (
+            {"XDG_DATA_HOME": "~/x"},
+            payload(
+                "Write", {"file_path": f"{FAKE_HOME}/x/opendaisugi/config.yaml", "content": "x"}
+            ),
+        ),
+        "xdg relative": (
+            {"XDG_DATA_HOME": "rel"},
+            payload("Write", {"file_path": "/work/rel/opendaisugi/config.yaml", "content": "x"}),
+        ),
+    }
+    for cname, (env_, call) in calls.items():
+        add(
+            mk(
+                f"data home {cname}",
+                call,
+                envelopes={"default": allow},
+                env=env_ or None,
+                tags=["state", "data-home"],
+            )
+        )
 
 
 def dialect_cases(add: Any) -> None:
@@ -2680,6 +3523,187 @@ def daisugi_config_cases(add: Any) -> None:
             )
 
 
+def gate_state_cases(add: Any) -> None:
+    """The hard-deny rule on the gate's own state (SW-17): every write
+    form into the gate root and the data dir's state paths, the reads and
+    the near misses that stay allowed, and the long lines."""
+    g = "{ROOT}/data/gate"
+    data = "{ROOT}/data"
+    allow = envelope(
+        file_read=["/**"],
+        file_write=["/**"],
+        shell_allowlist=[
+            *ALLOW,
+            "chmod",
+            "cp",
+            "curl",
+            "dd",
+            "find",
+            "install",
+            "jq",
+            "ln",
+            "mkdir",
+            "mv",
+            "python",
+            "rm",
+            "rsync",
+            "sed",
+            "sh",
+            "tail",
+            "tar",
+            "tee",
+            "touch",
+            "truncate",
+        ],
+        shell_allow_decomposition=True,
+        mcp_allowlist=["fs/*"],
+    )
+    denied = {
+        "write marker": payload("Write", {"file_path": f"{g}/DISARMED", "content": "x"}),
+        "write envelope": payload(
+            "Write", {"file_path": f"{g}/envelopes/default.json", "content": "{}"}
+        ),
+        "write graft": payload("Write", {"file_path": f"{g}/grafts/g.json", "content": "{}"}),
+        "write label": payload(
+            "Write", {"file_path": f"{data}/router/labels.jsonl", "content": "{}"}
+        ),
+        "write default tree": payload(
+            "Write", {"file_path": f"{FAKE_HOME}/.opendaisugi/tree/ledger.jsonl", "content": "x"}
+        ),
+        "write dotdot": payload(
+            "Write", {"file_path": f"{data}/x/../gate/DISARMED", "content": "x"}
+        ),
+        "write symlinked parent": payload(
+            "Write", {"file_path": "{ROOT}/work/g/DISARMED", "content": "x"}
+        ),
+        "edit envelope": payload(
+            "Edit",
+            {"file_path": f"{g}/envelopes/default.json", "old_string": "a", "new_string": "b"},
+        ),
+        "multiedit envelope": payload(
+            "MultiEdit", {"file_path": f"{g}/envelopes/default.json", "edits": []}
+        ),
+        "apply_patch": payload(
+            "mcp__opencode__apply_patch",
+            {"patchText": f"*** Begin Patch\n*** Add File: {g}/DISARMED\n+x\n*** End Patch"},
+        ),
+        "touch": bash(f"touch {g}/DISARMED"),
+        "redirect": bash(f"echo x > {g}/DISARMED"),
+        "append label": bash(f"echo '{{}}' >> {data}/router/labels.jsonl"),
+        "mkdir": bash(f"mkdir -p {g}/grafts"),
+        "rm": bash(f"rm -f {g}/envelopes/default.json"),
+        "mv dest": bash(f"mv /work/e.json {g}/envelopes/default.json"),
+        "mv source": bash(f"mv {g}/envelopes/default.json /work/e.json"),
+        "cp dest": bash(f"cp /work/e.json {g}/envelopes/default.json"),
+        "cp into dir": bash(f"cp /work/e.json {g}/envelopes/"),
+        "cp link": bash(f"cp -l {g}/envelopes/default.json /work/x"),
+        "ln": bash(f"ln {g}/envelopes/default.json /work/x"),
+        "ln -s dest": bash(f"ln -s /work/e.json {g}/envelopes/default.json"),
+        "ln -s then write": bash(f"ln -s {g}/DISARMED /work/x && echo x > /work/x"),
+        "chmod": bash(f"chmod 777 {g}/envelopes/default.json"),
+        "truncate": bash(f"truncate -s 0 {data}/router/delegations.jsonl"),
+        "tee": bash(f"tee {g}/DISARMED < /dev/null"),
+        "dd": bash(f"dd if=/dev/zero of={g}/DISARMED count=0"),
+        "install": bash(f"install -m 600 /work/e.json {g}/envelopes/default.json"),
+        "rsync": bash(f"rsync -a /work/grafts/ {g}/grafts/"),
+        "sed -i": bash(f"sed -i 's/enforce/audit/' {g}/envelopes/default.json"),
+        "git": bash(f"git -C {g} checkout ."),
+        "tar": bash(f"tar -xf /work/x.tar -C {g}"),
+        "python": bash(f"python -c \"open('{g}/DISARMED','w')\""),
+        "sh -c": bash(f"sh -c 'touch {g}/DISARMED'"),
+        "curl": bash(f"curl -o {g}/grafts/g.json http://example.com/g"),
+        "find delete": bash(f"find {g} -name '*.json' -delete"),
+        "tilde": bash("touch ~/.opendaisugi/gate/DISARMED"),
+        "home var": bash("touch $HOME/.opendaisugi/gate/DISARMED"),
+        "variable": bash(f'cp /work/x "{data}/$NAME"'),
+        "glob": bash(f"cp /work/x {data}/*/"),
+        "substitution": bash(f"cp /work/x {data}/$(cat /work/n)"),
+        "cd then write": bash(f"cd {g} && touch DISARMED"),
+        "cd data rm": bash(f"cd {data} && rm -r gate"),
+        "relative in root": bash("touch DISARMED", cwd=g),
+        "no cwd": bash(f"ls {data} && touch DISARMED", cwd=None),
+        "journal": bash(f"touch {data}/journal/traces/x.yaml"),
+        "gateway": bash(f"echo x > {data}/gateway/turns.jsonl"),
+        "weave": bash(f"echo x > {data}/weave/run.jsonl"),
+        "envelope cache": bash(f"echo x > {data}/envelope_cache.db"),
+        "tree ledger": bash(f"echo x > {data}/tree/ledger.jsonl"),
+        "rm data dir": bash(f"rm -rf {data}"),
+        "mv data dir": bash(f"mv {data} /work/old"),
+        "chmod -R data dir": bash(f"chmod -R 777 {data}"),
+        "mcp write": payload("mcp__fs__write_file", {"path": f"{g}/DISARMED", "content": "x"}),
+        "mcp cwd": payload("mcp__fs__write_file", {"path": "DISARMED"}, cwd=g),
+    }
+    allowed = {
+        "read": payload("Read", {"file_path": f"{g}/envelopes/default.json"}),
+        "cat": bash(f"cat {g}/envelopes/default.json"),
+        "ls": bash(f"ls -la {g}"),
+        "tail jq": bash(f"tail -n 5 {data}/router/labels.jsonl | jq .outcome"),
+        "head to work": bash(f"head {g}/audit/s1.jsonl > /work/out.txt"),
+        "find": bash(f"find {g} -name '*.json'"),
+        "cp out": bash(f"cp {g}/envelopes/default.json /work/env.json"),
+        "ls from root": bash("ls envelopes", cwd=g),
+        "beside state": bash(f"touch {data}/notes.txt"),
+        "sibling touch": bash("touch {ROOT}/data2/DISARMED"),
+        "sibling redirect": bash("echo x > {ROOT}/data2/gate/DISARMED"),
+        "sibling git": bash("git -C {ROOT}/data2 status"),
+        "sibling write": payload(
+            "Write", {"file_path": "{ROOT}/data2/gate/DISARMED", "content": "x"}
+        ),
+        "unnamed variable": bash('cp /work/x "/work/$NAME"'),
+        "unnamed git": bash("git -C /work status"),
+        "mcp elsewhere": payload("mcp__fs__write_file", {"path": "/work/x", "content": "x"}),
+    }
+    files = {"work/g": {"symlink": g}}
+    for group in (denied, allowed):
+        for cname, call in group.items():
+            for mode in ("enforce", "audit"):
+                add(
+                    mk(
+                        f"gate state {cname} {mode}",
+                        call,
+                        mode=mode,
+                        envelopes={"default": allow},
+                        files=files if cname == "write symlinked parent" else None,
+                        tags=["state"],
+                    )
+                )
+    add(
+        mk(
+            "gate state ask",
+            bash(f"touch {g}/DISARMED", tool_use_id="tu-1"),
+            envelopes={"default": allow},
+            extra_args=["--ask", "--ask-timeout", "10"],
+            operator={
+                "tool_use_id": "tu-1",
+                "answer": {"decision": "allow", "reason": "ok", "updatedInput": None},
+            },
+            tags=["state", "ask"],
+        )
+    )
+    # Long lines: the rule decomposes no deeper than the floor rule, and
+    # an sh -c payload is decomposed a few frames deeper.
+    for n in (960, 975, 977, 978, 979):
+        cmd = " && ".join(["ls"] * n) + f" && touch {g}/DISARMED"
+        add(
+            mk(
+                f"gate state chain {n}",
+                bash(cmd),
+                envelopes={"default": allow},
+                tags=["state", "depth"],
+            )
+        )
+    for n in (960, 970, 972, 973, 974, 975, 976, 977, 978):
+        inner = " && ".join(["ls"] * n) + f" && touch {g}/DISARMED"
+        add(
+            mk(
+                f"gate state sh chain {n}",
+                bash(f"sh -c '{inner}'"),
+                envelopes={"default": allow},
+                tags=["state", "depth"],
+            )
+        )
+
+
 def graft_cases(add: Any) -> None:
     """The deny_redirect graft on a whole read of a large
     file, and the gate's check of the delegate MCP call. The files are real
@@ -2935,6 +3959,96 @@ def graft_cases(add: Any) -> None:
         "other key": {"file_path": big},
     }.items():
         g(f"graft delegate call {label}", payload(dg, args, cwd=work))
+    # A graft trial (SW-13): the session's arm is recorded; only the graft
+    # arm is redirected. s0..s9 fall in both arms for seed 5.
+    trial_rule = {**rule, "state": "trial", "trial": {"seed": 5}}
+    for sid in ("s0", "s1", "s2", "s3", "s4", "s5"):
+        g(
+            f"graft trial {sid}",
+            payload("Read", {"file_path": big}, sid=sid, cwd=work),
+            grafts={"big-read.json": trial_rule},
+        )
+    g(
+        "graft trial audit gate",
+        payload("Read", {"file_path": big}, sid="s0", cwd=work),
+        mode="audit",
+        grafts={"big-read.json": trial_rule},
+    )
+    g(
+        "graft trial audit gate graft arm",
+        payload("Read", {"file_path": big}, sid="s1", cwd=work),
+        mode="audit",
+        grafts={"big-read.json": trial_rule},
+    )
+    g(
+        "graft trial pinned",
+        payload("Read", {"file_path": big}, sid="s0", cwd=work),
+        pin="kid",
+        envelopes={"kid": env_()},
+        grafts={"big-read.json": trial_rule},
+    )
+    g(
+        "graft trial no session",
+        payload("Read", {"file_path": big}, sid=None, cwd=work),
+        grafts={"big-read.json": trial_rule},
+    )
+    g(
+        "graft trial unsafe session",
+        payload("Read", {"file_path": big}, sid="../x y", cwd=work),
+        grafts={"big-read.json": trial_rule},
+    )
+    g(
+        "graft trial no seed",
+        payload("Read", {"file_path": big}, sid="s1", cwd=work),
+        grafts={"big-read.json": {**rule, "state": "trial"}},
+    )
+    g(
+        "graft trial bad seed",
+        payload("Read", {"file_path": big}, sid="s1", cwd=work),
+        grafts={"big-read.json": {**rule, "state": "trial", "trial": {"seed": 1.5}}},
+    )
+    g(
+        "graft trial no worker",
+        payload("Read", {"file_path": big}, sid="s1", cwd=work),
+        grafts={"big-read.json": trial_rule},
+        tier1=None,
+    )
+    # A code write reads its target only when the target exists.
+    for label, args in {
+        "big": {"path": big},
+        "new": {"path": f"{work}/sub/new.py"},
+        "new outside": {"path": "/elsewhere/new.py"},
+        "outside exists": {"path": "/etc/passwd"},
+        "dir": {"path": f"{work}/sub"},
+        "link": {"path": f"{work}/link.py"},
+        "fifo": {"path": f"{work}/fifo"},
+        "dotdot new outside": {"path": f"{work}/../elsewhere/new.py"},
+        "relative": {"path": "new.py"},
+    }.items():
+        g(
+            f"graft delegate code write {label}",
+            payload(dg, {**args, "question": "q", "mode": "code_write"}, cwd=work),
+        )
+    for label, mode_value in {"mode null": None, "mode int": 1, "mode other": "edit"}.items():
+        g(
+            f"graft delegate code write {label}",
+            payload(dg, {"path": "/elsewhere/new.py", "question": "q", "mode": mode_value}),
+        )
+    for label, kw in {
+        "remote no grant": {"grafts": remote_rule},
+        "remote granted": {"grafts": remote_rule, "envelopes": granted},
+    }.items():
+        g(
+            f"graft delegate code write new {label}",
+            payload(dg, {"path": "/elsewhere/new.py", "question": "q", "mode": "code_write"}),
+            tier1=remote,
+            **kw,
+        )
+    g(
+        "graft delegate code write physical",
+        payload(dg, {"path": "/elsewhere/new.py", "mode": "code_write"}),
+        envelopes=physical,
+    )
     g("graft delegate call physical", payload(dg, {"path": big}), envelopes=physical)
     g(
         "graft delegate call not allowed",
@@ -3013,7 +4127,7 @@ def main() -> int:
     elif cache_path.exists():
         cache_path.unlink()
     for i, c in enumerate(cases):
-        work = SCRATCH / "gen" / f"{i:04d}"
+        work = fixed_root(SCRATCH, f"g/{i:04d}")
         key = case_id(c)
         if key in cached and not args.check:
             obs = cached[key]
@@ -3048,7 +4162,7 @@ def main() -> int:
         json.dumps(manifest, indent=1) + "\n", encoding="utf-8"
     )
     print(f"wrote {len(out_lines)} cases to {path}")
-    shutil.rmtree(SCRATCH / "gen", ignore_errors=True)
+    shutil.rmtree(SCRATCH / "g", ignore_errors=True)
     cache_path.unlink(missing_ok=True)
     return 0
 

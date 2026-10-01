@@ -19,6 +19,10 @@ impl Env {
                 self.errf(&format!("daisugi {cmd}: {err}\n"));
                 Stop::Exit(1)
             }
+            RowsErr::Config(ConfigErr::Yaml(line)) => {
+                self.errf(&format!("daisugi {cmd}: {line}\n"));
+                Stop::Exit(1)
+            }
             RowsErr::Config(ConfigErr::Invalid) => {
                 self.errf(&format!(
                     "daisugi {cmd}: pydantic_core._pydantic_core.ValidationError: the config file does not validate\n"
@@ -42,11 +46,7 @@ impl Env {
         if p.help {
             return self.cmd_help(CMD, "", "Show every setting as daisugi will use it, and where each one came from.", &opts);
         }
-        let path = if self.home == "/" {
-            "/.opendaisugi/config.yaml".to_string()
-        } else {
-            format!("{}/.opendaisugi/config.yaml", self.home)
-        };
+        let path = super::gateroot::join(&self.data_home(), "config.yaml");
         let home = self.home.clone();
         let (mut rows, unknown, cfg) = match config::rows(&path, &home) {
             Ok(r) => r,

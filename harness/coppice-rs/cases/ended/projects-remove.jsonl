@@ -1,0 +1,17 @@
+# project.remove takes a path as the list holds it, so a hand-edited pin with
+# a slash at its end can go. A path that is not absolute is refused before
+# anything is looked up.
+#!config projects = ["{WORK}/raw/", "{WORK}/clean"]
+{"id":"1","cmd":"project.remove","path":"relative/dir"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"project.remove needs an absolute path. Pass the full project directory."}}
+{"id":"2","cmd":"project.remove","path":"."}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"project.remove needs an absolute path. Pass the full project directory."}}
+{"id":"3","cmd":"project.remove","path":"{WORK}/raw/"}
+{"id":"$id","ok":true,"result":{"removed":"*"}}
+{"id":"4","cmd":"project.list"}
+{"id":"$id","ok":true,"result":{"projects":[{"path":"*","pinned":true}]}}
+{"id":"5","cmd":"project.remove","path":"{WORK}/clean/"}
+{"id":"$id","ok":true,"result":{"removed":"*"}}
+{"id":"6","cmd":"project.list"}
+{"id":"$id","ok":true,"result":{"projects":[]}}
+#!tree

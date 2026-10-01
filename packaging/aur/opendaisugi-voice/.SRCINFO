@@ -1,0 +1,39 @@
+pkgbase = opendaisugi-voice
+	pkgdesc = Speech engines for daisugi voice
+	pkgver = 0.43.0
+	pkgrel = 1
+	url = https://github.com/levitatingflyfisher/openDaisugi
+	arch = x86_64
+	license = MIT
+	makedepends = git
+	makedepends = cmake
+	makedepends = make
+	makedepends = gcc
+	makedepends = curl
+	makedepends = binutils
+	noextract = onnxruntime-linux-x64-1.23.2.tgz
+	options = !strip
+	options = !debug
+	options = !lto
+	source = openDaisugi::git+https://github.com/levitatingflyfisher/openDaisugi.git#commit=
+	source = moonshine::git+https://github.com/moonshine-ai/moonshine.git#commit=234f60faa0eb388b01cdf7e60aca232af37aefda
+	source = crispasr::git+https://github.com/CrispStrobe/CrispASR.git#commit=7e2b030780df5c9ad7ede6ac1935bc783b037d18
+	source = ggml::git+https://github.com/CrispStrobe/ggml.git#commit=2f5a80d258c46e6ac8eee95f1328c0f58376d7ee
+	source = https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-linux-x64-1.23.2.tgz
+	source = https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = 1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b
+	sha256sums = 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+
+pkgname = moonshine-cli
+	pkgdesc = Moonshine speech engine for daisugi voice (moonshine-cli, with its ONNX Runtime)
+	depends = glibc
+	depends = libgcc
+	depends = libstdc++
+
+pkgname = parakeet-cli
+	pkgdesc = Parakeet speech engine for daisugi voice (parakeet-cli and parakeet-quantize)
+	depends = glibc

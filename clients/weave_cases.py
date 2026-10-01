@@ -37,8 +37,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import garden_cases  # noqa: E402 - sibling module, run as a script
 import k2_cases  # noqa: E402, F401 - patches garden_cases (normalize, lay_out)
+from fixture_paths import fixed_root  # noqa: E402
 from garden_cases import PY_CLI, body_id, record_replies, run_case, write_jsonl  # noqa: E402
-from k2_cases import API, CC, W, env_doc, rd, sh, task, wr, yml  # noqa: E402
+from k2_cases import (  # noqa: E402
+    API,
+    CC,
+    W,
+    env_doc,
+    profiles_config,
+    rd,
+    sentinel_key,
+    sh,
+    task,
+    wr,
+    yml,
+)
 from pathway_cases import REPO  # noqa: E402
 
 FIXTURE_DIR = REPO / "clients" / "fixtures" / "weave"
@@ -89,6 +102,15 @@ def lay_out(tree: dict[str, Any], home: Path, t0: float) -> None:
 
 
 garden_cases.lay_out = lay_out
+
+
+# ---------------------------------------------------------------------------
+# The sub-agent of an agentic step
+# ---------------------------------------------------------------------------
+
+# The fake `claude` and the fake `sprig` are in clients/agentic_fakes.py,
+# which the K2 suite imports too; importing it patches garden_cases.
+from agentic_fakes import AGENTIC_CLAUDE, FAKE_SPRIG  # noqa: E402, F401
 
 
 def cmd_for(case: dict[str, Any], binary: str | None) -> list[str]:
@@ -567,7 +589,9 @@ def build_cases() -> list[dict[str, Any]]:
         )
     )
 
-    # Agentic steps (WV-4) and parallel levels (K2-4): the ports refuse both.
+    # Agentic steps (WV-4): `claude -p` under the call-time gate, the tool
+    # wall from the child envelope, which is proved inside the caller's
+    # first. The sub-agent's tool calls run through the gate's own hook.
     agentic = {
         "id": "g",
         "type": "agentic",
@@ -577,6 +601,593 @@ def build_cases() -> list[dict[str, Any]]:
         "depends_on": [],
     }
     add(wv("agentic no workspace", [agentic], shell_rw, flags=("--yes", "--json")))
+    ag = {**agentic, "workspace": W, "tools": ["Read", "Bash"]}
+    reads = [
+        {"tool_name": "Read", "tool_input": {"file_path": f"{W}/a.txt"}},
+        {"tool_name": "Read", "tool_input": {"file_path": "/etc/passwd"}},
+        {"tool_name": "Bash", "tool_input": {"command": "cat a.txt"}},
+        {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}},
+    ]
+    wfile = {"w/a.txt": {"text": "a\n"}}
+    add(
+        wv(
+            "agentic runs",
+            [ag],
+            shell_rw,
+            before=wfile,
+            replies=[{"agentic": "fixed it", "calls": reads}],
+        )
+    )
+    add(
+        wv(
+            "agentic runs json",
+            [ag, sh("after", "printf done", ["g"])],
+            shell_rw,
+            before=wfile,
+            flags=("--yes", "--json"),
+            replies=[{"agentic": "fixed it\nline two", "calls": reads[:2]}],
+        )
+    )
+    add(
+        wv(
+            "agentic max turns and args",
+            [{**ag, "max_turns": 3}],
+            shell_rw,
+            before=wfile,
+            env={"DAISUGI_CLAUDE_ARGS": "--verbose"},
+            replies=[{"agentic": "ok"}],
+        )
+    )
+    add(
+        wv(
+            "agentic is error",
+            [ag],
+            shell_rw,
+            replies=[{"agentic": "it went wrong", "is_error": True}],
+        )
+    )
+    add(wv("agentic not json", [ag], shell_rw, replies=[{"claude_raw": "I did it."}]))
+    add(
+        wv(
+            "agentic claude fails",
+            [ag],
+            shell_rw,
+            replies=[{"claude_raw": "", "stderr": "boom", "exit": 3}],
+        )
+    )
+    add(wv("agentic no claude", [ag], shell_rw, no_claude=True))
+    narrow_child = env_doc(
+        2,
+        file_read=[f"{W}/**"],
+        shell=False,
+    )
+    add(
+        wv(
+            "agentic child narrower",
+            [{**ag, "child_envelope": narrow_child}],
+            shell_rw,
+            before=wfile,
+            replies=[{"agentic": "read it", "calls": reads}],
+        )
+    )
+    add(
+        wv(
+            "agentic child backs no tool",
+            [{**ag, "tools": ["Bash"], "child_envelope": narrow_child}],
+            shell_rw,
+        )
+    )
+    add(
+        wv(
+            "agentic child wider",
+            [
+                {
+                    **ag,
+                    "child_envelope": env_doc(
+                        3, file_read=["/**"], shell=True, shell_allowlist=["cat"]
+                    ),
+                }
+            ],
+            shell_rw,
+        )
+    )
+    add(
+        wv(
+            "agentic odd step id",
+            [{**ag, "id": "../g h"}],
+            shell_rw,
+            before=wfile,
+            replies=[{"agentic": "ok", "calls": reads[:1]}],
+        )
+    )
+    # Agentic steps on sprig (--agent sprig): the same edge, gate root,
+    # pinned session and tool wall; the gate rides in --gate-cmd and the
+    # wall in --tools. Kind A runs the fake sprig, which sends each scripted
+    # call to the gate command as sprig sends it.
+    sg = ("--yes", "--agent", "sprig")
+    sreads = [
+        {"tool": "read", "input": {"path": "a.txt"}},
+        {"tool": "read", "input": {"path": "/etc/passwd"}},
+        {"tool": "bash", "input": {"cmd": "cat a.txt"}},
+        {"tool": "bash", "input": {"cmd": "rm -rf /"}},
+    ]
+
+    def sp(answer="fixed it", calls=(), **reply):
+        body = {"answer": answer, "turns": 2 + 2 * len(calls), "model": "haiku"}
+        body.update(reply)
+        return {"sprig": body, "calls": list(calls)}
+
+    def swv(name, steps, *, flags=sg, envelope=shell_rw, **kw):
+        kw.setdefault("sprig", "fake")
+        return wv(f"sprig agentic {name}", steps, envelope, flags=flags, **kw)
+
+    # The envelope backs Glob (file_read) and WebFetch (network) too, so
+    # the plan verifies; sprig has no tool for either, so its wall drops them.
+    net_rw = env_doc(
+        shell=True,
+        shell_allowlist=["printf", "false", "true", "cat"],
+        shell_allow_decomposition=True,
+        file_read=[f"{W}/**"],
+        file_write=[f"{W}/**"],
+        network=True,
+        network_hosts=["example.invalid"],
+    )
+
+    add(swv("runs", [ag], before=wfile, replies=[sp(calls=sreads)]))
+    add(
+        swv(
+            "runs json",
+            [ag, sh("after", "printf done", ["g"])],
+            flags=(*sg, "--json"),
+            before=wfile,
+            replies=[sp("fixed it\nline two", sreads[:2])],
+        )
+    )
+    add(swv("max turns and model", [{**ag, "max_turns": 3}], before=wfile, replies=[sp("ok")]))
+    add(
+        swv(
+            "is error",
+            [ag],
+            replies=[{"sprig_raw": "", "stderr": "sprig: x\nsprig: gave up\n", "exit": 1}],
+        )
+    )
+    add(swv("not json", [ag], replies=[{"sprig_raw": "I did it."}]))
+    add(swv("no answer", [ag], replies=[{"sprig_raw": '{"turns": 2, "answer": null}'}]))
+    add(swv("no sprig", [ag], sprig=None))
+    add(swv("timeout", [ag], replies=[{**sp("late"), "sleep": 45}], timeout=200, delay_s=15))
+    add(
+        swv(
+            "child narrower",
+            [{**ag, "child_envelope": narrow_child}],
+            before=wfile,
+            replies=[sp("read it", sreads)],
+        )
+    )
+    add(
+        swv(
+            "child wider",
+            [
+                {
+                    **ag,
+                    "child_envelope": env_doc(
+                        3, file_read=["/**"], shell=True, shell_allowlist=["cat"]
+                    ),
+                }
+            ],
+        )
+    )
+    add(swv("child backs no tool", [{**ag, "tools": ["Bash"], "child_envelope": narrow_child}]))
+    add(
+        swv(
+            "unbacked tools dropped",
+            [{**ag, "tools": ["Glob", "Read", "WebFetch", "Bash"]}],
+            envelope=net_rw,
+            before=wfile,
+            replies=[sp("ok", sreads[:1])],
+        )
+    )
+    add(swv("only unbacked", [{**ag, "tools": ["Grep"]}]))
+    # A sub-agent that may write its workspace plants a stand-in gate there;
+    # the gate runs in the workspace, and must still be the real one
+    # (SX-R-9): the read of /etc/passwd stays denied, on both runtimes.
+    planted = {
+        **wfile,
+        "w/opendaisugi/__init__.py": {"text": ""},
+        "w/opendaisugi/gate_client.py": {"text": "import sys\nprint('PLANTED')\nsys.exit(0)\n"},
+    }
+    add(swv("planted gate", [ag], before=planted, replies=[sp("ok", sreads[:2])]))
+    add(
+        wv(
+            "agentic planted gate",
+            [ag],
+            shell_rw,
+            before=planted,
+            replies=[{"agentic": "ok", "calls": reads[:2]}],
+        )
+    )
+    add(
+        swv(
+            "session spoof",
+            [ag],
+            before=wfile,
+            replies=[
+                sp(
+                    "ok",
+                    [
+                        {**sreads[0], "session_id": "other-session"},
+                        {**sreads[1], "session_id": "other-session"},
+                    ],
+                )
+            ],
+        )
+    )
+    add(
+        swv(
+            "odd step id",
+            [{**ag, "id": "../g h"}],
+            before=wfile,
+            replies=[sp("ok", sreads[:1])],
+        )
+    )
+    add(
+        swv(
+            "gate root with space",
+            [ag],
+            env={"TMPDIR": "{HOME}/t mp"},
+            before={"t mp": {"dir": True}},
+        )
+    )
+    add(
+        swv(
+            "usage",
+            [ag],
+            flags=(*sg, "--json"),
+            replies=[
+                sp(
+                    "ok",
+                    usage={
+                        "input_tokens": 5,
+                        "output_tokens": "6",
+                        "cache_read_input_tokens": True,
+                        "cache_creation_input_tokens": 2**70,
+                    },
+                )
+            ],
+        )
+    )
+    add(wv("agent flag bad value", [ag], shell_rw, flags=("--yes", "--agent", "pi")))
+
+    # Agent profiles (mixed trees). A step names a profile; a profile on
+    # another wire runs on sprig whatever --agent says, its key on
+    # descriptor 3, with no ambient key or redirect in its environment.
+    table = {
+        "oai": {
+            "wire": "openai",
+            "base_url": "http://127.0.0.1:{PORT}/v1",
+            "model": "gpt-oss-120b",
+            "key_env": "OAI_KEY",
+        },
+        "desk": {"wire": "anthropic", "base_url": "http://127.0.0.1:{DESK}"},
+        "switchyard": {
+            "wire": "anthropic",
+            "base_url": "http://127.0.0.1:{PORT}",
+            "model": "daisugi",
+        },
+        "nokey": {
+            "wire": "openai",
+            "base_url": "http://127.0.0.1:{PORT}/v1",
+            "key_env": "UNSET_KEY",
+        },
+        "cc": {"wire": "claude-code", "model": "opus"},
+        "bad": {"wire": "grpc"},
+    }
+    conf = profiles_config(table)
+    ok = sp("done")
+
+    def pwv(name, step, *, flags=("--yes", "--agent", "claude"), envelope=shell_rw, **kw):
+        kw.setdefault("sprig", "fake")
+        kw.setdefault("replies", [ok])
+        before = {**wfile, **conf, **kw.pop("before", {})}
+        return wv(
+            f"sprig agentic profile {name}", [step], envelope, flags=flags, before=before, **kw
+        )
+
+    sk = sentinel_key("weave sprig agentic profile openai")
+    add(pwv("openai", {**ag, "profile": "oai"}, env={"OAI_KEY": sk}, sentinel=sk))
+    add(pwv("anthropic local", {**ag, "profile": "desk"}, desk=True))
+    add(pwv("switchyard", {**ag, "profile": "switchyard"}))
+    add(pwv("unknown", {**ag, "profile": "nope"}, replies=[]))
+    add(pwv("key env unset", {**ag, "profile": "nokey"}, replies=[]))
+    add(pwv("not valid", {**ag, "profile": "bad"}, replies=[]))
+    add(pwv("default named", {**ag, "profile": "default"}, flags=sg))
+    sk = sentinel_key("weave sprig agentic profile key never logged")
+    add(
+        pwv(
+            "key never logged",
+            {**ag, "profile": "oai"},
+            env={"OAI_KEY": sk, "ANTHROPIC_API_KEY": sk, "OPENAI_API_KEY": sk},
+            sentinel=sk,
+            replies=[{**sp("done"), "stderr": "sprig: noise\n"}],
+        )
+    )
+    add(
+        pwv(
+            "env scrubbed",
+            {**ag, "profile": "switchyard"},
+            env={
+                "OAI_KEY": "k1",
+                "ANTHROPIC_API_KEY": "k2",
+                "OPENAI_API_KEY": "k3",
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:9",
+                "SPRIG_BACKEND": "api",
+                "SPRIG_MODEL": "other",
+                "KEEP_KEY_NAME_ONLY": "x",
+            },
+        )
+    )
+    add(
+        pwv(
+            "model from step",
+            {**ag, "profile": "oai", "preferred_model": "qwen3-coder"},
+            env={"OAI_KEY": "k"},
+        )
+    )
+    spawn_env = {
+        **shell_rw,
+        "permissions": {**shell_rw["permissions"], "mcp_allowlist": ["sprig/spawn"]},
+    }
+    add(
+        pwv(
+            "spawn wall",
+            {**ag, "profile": "oai", "tools": ["Read", "Spawn"]},
+            envelope=spawn_env,
+            env={"OAI_KEY": "k"},
+        )
+    )
+    add(
+        pwv(
+            "spawn not allowlisted",
+            {**ag, "tools": ["Read", "Spawn"]},
+            flags=sg,
+            replies=[],
+        )
+    )
+    add(
+        pwv(
+            "timeout ends subtree",
+            {**ag, "profile": "switchyard"},
+            replies=[{**sp("late"), "sleep": 45}],
+            timeout=200,
+            delay_s=15,
+        )
+    )
+    add(
+        pwv(
+            "budget",
+            {**ag, "profile": "switchyard", "max_turns": 9},
+            flags=(*sg, "--tokens", "700", "--turns", "4"),
+        )
+    )
+    add(
+        wv(
+            "claude agentic profile scrub",
+            [{**ag, "profile": "cc"}],
+            shell_rw,
+            before={**wfile, **conf},
+            env={"OAI_KEY": "k1", "UNSET_KEY_X": "x"},
+            replies=[{"agentic": "ok", "calls": reads[:1]}],
+        )
+    )
+    # Every child, default or profiled, gets no *_API_KEY and no *_TOKEN;
+    # a claude -p child keeps ANTHROPIC_BASE_URL (MX-R-3).
+    every_key = {
+        "ANTHROPIC_API_KEY": "k1",
+        "ANTHROPIC_AUTH_TOKEN": "k2",
+        "CLAUDE_CODE_OAUTH_TOKEN": "k3",
+        "XAI_API_KEY": "k4",
+        "GITHUB_TOKEN": "k5",
+        "ANTHROPIC_BASE_URL": "http://127.0.0.1:9",
+        "SPRIG_BACKEND": "api",
+        "KEEP_KEY_NAME_ONLY": "x",
+    }
+    add(
+        wv(
+            "claude agentic default scrub",
+            [ag],
+            shell_rw,
+            before=wfile,
+            env=every_key,
+            replies=[{"agentic": "ok", "calls": reads[:1]}],
+        )
+    )
+    add(swv("default scrub", [ag], before=wfile, env=every_key, replies=[sp()]))
+    for label, wire, base in (
+        ("qwen", "openai", "http://127.0.0.1:{PORT}/v1"),
+        ("llama", "anthropic", "http://127.0.0.1:{DESK}"),
+        ("grok", "openai", "http://127.0.0.1:{PORT}/v1"),
+        ("gemini", "openai", "http://127.0.0.1:{PORT}/v1"),
+    ):
+        model = {
+            "qwen": "qwen3-coder",
+            "llama": "llama3.3:70b",
+            "grok": "grok-4",
+            "gemini": "gemini-2.5-pro",
+        }[label]
+        add(
+            wv(
+                f"sprig agentic profile ancestry {label}",
+                [{**ag, "profile": label}],
+                shell_rw,
+                flags=sg,
+                before={
+                    **wfile,
+                    **profiles_config({label: {"wire": wire, "base_url": base, "model": model}}),
+                },
+                sprig="fake",
+                desk=True,
+                replies=[sp("done", model=model)],
+            )
+        )
+
+    # Kind B: mixed trees with the real sprig. The parent runs on a fake
+    # Anthropic wire (its key by pipe), calls spawn; the one starter starts
+    # a real sprig child on a fake OpenAI wire at the second port ("the
+    # desktop"); the child's answer comes back as the tool result.
+    mixed = {
+        "cloud": {
+            "wire": "anthropic",
+            "base_url": "http://127.0.0.1:{PORT}",
+            "key_env": "CLOUD_KEY",
+        },
+        "desk": {"wire": "openai", "base_url": "http://127.0.0.1:{DESK}/v1"},
+    }
+    child_env = {
+        "generated_by": "parent",
+        "task": "count",
+        "permissions": {"shell": True, "shell_allowlist": ["true"]},
+    }
+
+    def spawn_use(envelope):
+        return {
+            "http_body": {
+                "model": "claude-fake-1",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "spawn",
+                        "input": {
+                            "task": "count to three",
+                            "envelope": envelope,
+                            "profile": "desk",
+                            "model": "llama3.3:70b",
+                            "tools": ["bash"],
+                        },
+                    }
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }
+        }
+
+    parent = {**ag, "profile": "cloud", "tools": ["Read", "Bash", "Spawn"]}
+    sk = sentinel_key("weave sprig agentic real mixed tree")
+    add(
+        wv(
+            "sprig agentic real mixed tree",
+            [parent],
+            spawn_env,
+            flags=("--yes",),
+            before={**wfile, **profiles_config(mixed)},
+            env={"CLOUD_KEY": sk},
+            sentinel=sk,
+            sprig="real",
+            desk=True,
+            replies=[
+                spawn_use(child_env),
+                {"chat": "one two three"},
+                {"http": "the child counted"},
+            ],
+        )
+    )
+    # The kill (MX-R-13): the child's bash leaves a background sleeper and
+    # blocks; the step runs past its 30 s; no sleeper may survive.
+    kill_env = {
+        **spawn_env,
+        "permissions": {
+            **spawn_env["permissions"],
+            "shell_allowlist": ["true", "sleep"],
+            "max_execution_time_s": 60,
+        },
+    }
+    sleeper_env = {
+        "generated_by": "parent",
+        "task": "wait",
+        "permissions": {
+            "shell": True,
+            "shell_allowlist": ["sleep"],
+            "shell_allow_decomposition": True,
+            "max_execution_time_s": 60,
+        },
+    }
+    bash_call = {
+        "http_body": {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "bash",
+                                    "arguments": json.dumps({"cmd": "sleep 31415 & sleep 60"}),
+                                },
+                            }
+                        ],
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+        }
+    }
+    sk = sentinel_key("weave sprig agentic real kill reaches the grandchild")
+    add(
+        wv(
+            "sprig agentic real kill reaches the grandchild",
+            [parent],
+            kill_env,
+            flags=("--yes",),
+            before={**wfile, **profiles_config(mixed)},
+            env={"CLOUD_KEY": sk},
+            sentinel=sk,
+            sprig="real",
+            desk=True,
+            survivor_marker="sleep 31415",
+            # The step's own 30 s runs out first: the root branch is killed
+            # while the grandchild's bash still runs.
+            timeout=200,
+            delay_s=15,
+            replies=[spawn_use(sleeper_env), bash_call],
+        )
+    )
+    sk = sentinel_key("weave sprig agentic real mixed tree refused")
+    wide_child = {**child_env, "permissions": {"shell": True, "shell_allowlist": ["rm"]}}
+    add(
+        wv(
+            "sprig agentic real mixed tree refused",
+            [parent],
+            spawn_env,
+            flags=("--yes",),
+            before={**wfile, **profiles_config(mixed)},
+            env={"CLOUD_KEY": sk},
+            sentinel=sk,
+            sprig="real",
+            desk=True,
+            replies=[spawn_use(wide_child), {"http": "the child was refused"}],
+        )
+    )
+    # Kind B: the real sprig (--sprig BIN) against the fake claude. Every
+    # side starts the same sprig, so a difference is in daisugi.
+    real_read = [
+        {
+            "claude": "```sprig-tool\n"
+            + json.dumps({"tool": "read", "input": {"path": "a.txt"}})
+            + "\n```"
+        },
+        {"claude": "a.txt holds the letter a."},
+    ]
+    real_deny = [
+        {
+            "claude": "```sprig-tool\n"
+            + json.dumps({"tool": "read", "input": {"path": "/etc/passwd"}})
+            + "\n```"
+        },
+        {"claude": "the gate refused it."},
+    ]
+    add(swv("real read", [ag], before=wfile, sprig="real", replies=real_read))
+    add(swv("real deny", [ag], before=wfile, sprig="real", replies=real_deny))
+    # Parallel levels (K2-4): a level's parallel-safe steps run at once.
     add(
         wv(
             "max parallel two",
@@ -584,6 +1195,23 @@ def build_cases() -> list[dict[str, Any]]:
             shell_rw,
             flags=("--yes", "--json", "--max-parallel", "2"),
             before={"w/x.txt": {"text": "x\n"}, "w/y.txt": {"text": "y\n"}},
+        )
+    )
+    three = [
+        sh("a", "printf a"),
+        sh("b", "printf b"),
+        sh("c", "printf c"),
+        sh("d", "false", ["a"]),
+        sh("e", "printf e", ["b", "c"]),
+    ]
+    add(wv("max parallel three", three, shell_rw, flags=("--yes", "--json", "--max-parallel", "3")))
+    add(wv("max parallel three text", three, shell_rw, flags=("--yes", "--max-parallel", "2")))
+    add(
+        wv(
+            "max parallel a level fails",
+            [sh("a", "false"), sh("b", "printf b"), sh("c", "printf c", ["a"])],
+            shell_rw,
+            flags=("--yes", "--json", "--max-parallel", "2"),
         )
     )
 
@@ -822,6 +1450,27 @@ def build_cases() -> list[dict[str, Any]]:
             replies=risks,
         )
     )
+    # A resumed run that runs an undoable write below the open choice: the
+    # card's switch cost counts that run's receipt (RK-R-9). The first run
+    # stops at the read of a file that is not there yet; a gate register
+    # writes it (a second plan would mint its hash in a random order); the
+    # resumed run reads it and writes.
+    flag = f"{W}/gr/envelopes/default.json"
+    resumed = wv(
+        "attempts resumed run counts in the switch cost",
+        [two_plain, rd("g", flag, ["t"]), wr("w", to, "done", ["g"])],
+        shell_rw,
+        env=API,
+        replies=risks,
+    )
+    weave_argv = resumed["argv"][:4]
+    resumed["pre"] = [
+        [*weave_argv, "--yes"],
+        ["gate", "register", "e.yaml", "--root", "w/gr"],
+        [*weave_argv, "--yes", "--resume"],
+    ]
+    resumed["argv"] = ["rank", "queue", "--json"]
+    add(resumed)
     for label, step in (
         ("on a shell step", {**sh("a", "true"), "attempts": 2}),
         ("one", {**task("t", "x"), "attempts": 1}),
@@ -857,7 +1506,11 @@ def main() -> int:
         "--only", help="run only cases whose name holds this text; print, write nothing"
     )
     ap.add_argument("--fresh", action="store_true", help="rerun every case")
+    ap.add_argument("--sprig", help="the sprig binary the real-sprig cases run")
     args = ap.parse_args()
+    import agentic_fakes
+
+    agentic_fakes.set_real_sprig(args.sprig)
     out_dir: Path = args.out
     out_dir.mkdir(parents=True, exist_ok=True)
     SCRATCH.mkdir(parents=True, exist_ok=True)
@@ -883,12 +1536,14 @@ def main() -> int:
             if "model" in prev:
                 c["model"] = prev["model"]
             continue
-        work = SCRATCH / "gen" / f"{i:04d}"
+        work = fixed_root(SCRATCH, f"g/{i:04d}")
         if c.get("replies"):
             record_replies(c, work)
         c["expect"] = run_case(c, cmd_for(c, None), work)
         if any(r.get("key_ok") is False for r in c["expect"]["requests"]):
             raise SystemExit(f"{c['name']}: the oracle sent a credential that is not the case's")
+        if c.get("sentinel") and c["sentinel"] in json.dumps(c["expect"]):
+            raise SystemExit(f"{c['name']}: the sentinel key reached the fixture")
         if args.only:
             print(
                 json.dumps({"name": c["name"], **c["expect"]}, indent=1, ensure_ascii=False)[:6000]
@@ -907,7 +1562,7 @@ def main() -> int:
     (out_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=1, sort_keys=True) + "\n", encoding="utf-8"
     )
-    shutil.rmtree(SCRATCH / "gen", ignore_errors=True)
+    shutil.rmtree(SCRATCH / "g", ignore_errors=True)
     cache_path.unlink(missing_ok=True)
     from fixture_paths import leaks
 

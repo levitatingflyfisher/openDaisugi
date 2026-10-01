@@ -7,7 +7,7 @@ use super::install::{self, HookOptions};
 use super::journal::{self, JournalErr};
 use super::words::KIND_UNKNOWN;
 use super::yaml::{self, Kind, Node};
-use super::{exit, parse_args, Env, Opt, Res};
+use super::{exit, parse_args, Env, Opt, Res, Stop};
 use crate::gate::pyjson::{dumps, dumps_indent, loads, LoadError, Object, Value};
 
 const ROOT_OPT: Opt = Opt::val(&["--root"], "PATH", "Gate state directory (envelopes, audit log, disarm marker).");
@@ -23,7 +23,7 @@ impl Env {
         if p.has("--root") {
             return path_str(&p.str("--root", ""));
         }
-        join(&self.home, ".opendaisugi/gate")
+        join(&self.data_home(), "gate")
     }
 
     /// `Path.cwd()`, or home when the directory is gone.
@@ -230,6 +230,7 @@ impl Env {
             mode: if p.flag("--enforce") { "enforce".into() } else { "audit".into() },
             root: self.root(&p),
             format: p.str("--format", "claude"),
+            captures_root: None,
             session: p.has("--session").then(|| p.str("--session", "")),
             ask: false,
         };
@@ -247,7 +248,7 @@ impl Env {
     pub(super) fn decompose_default(&mut self, root: &str, cmd: &str) -> Result<bool, super::Stop> {
         match config::load(&join(&parent(root), "config.yaml")) {
             Ok(c) => Ok(c.shell_allow_decomposition),
-            Err(e @ ConfigErr::Invalid) => Err(self.fail(cmd, &e.to_string()).unwrap_err()),
+            Err(e @ (ConfigErr::Invalid | ConfigErr::Yaml(_))) => Err(self.fail(cmd, &e.to_string()).unwrap_err()),
             Err(e) => Err(self.refuse(cmd, &e.to_string()).unwrap_err()),
         }
     }
@@ -323,6 +324,11 @@ impl Env {
         let opts = [
             Opt::val(&["--session"], "TEXT", "Bind to one session id; omit to register the default envelope."),
             ROOT_OPT,
+            Opt::val(
+                &["--parent"],
+                "TEXT",
+                "Register a child of this session: the edge to it is proved first, and a refused edge registers nothing.",
+            ),
         ];
         let p = match parse_args(args, &opts, 1) {
             Ok(p) => p,
@@ -352,6 +358,8 @@ impl Env {
         // 1e-09 is a string, not a number.
         let y = match yaml::parse(&text) {
             Ok(y) => y,
+            // safe_load raises: the oracle's traceback names the exception.
+            Err(e @ yaml::YErr::Exc(_)) => return self.fail("gate register", &e.traceback_line()),
             Err(_) => return self.refuse("gate register", "the envelope uses YAML this binary does not read yet"),
         };
         let v = match yaml_to_json(&y) {
@@ -368,6 +376,15 @@ impl Env {
             Err(e) => return self.refuse("gate register", &e.to_string()),
         };
         let session = p.str("--session", "");
+        let env = if p.has("--parent") {
+            let root = self.root(&p);
+            match self.proved_child(&env, &session, &p.str("--parent", ""), &root) {
+                Ok(e) => e,
+                Err(stop) => return Err(stop),
+            }
+        } else {
+            env
+        };
         let (path, followed, res) = envelope::register(&env, &session, &self.root(&p));
         self.note_file(&path, &followed);
         if let Err(e) = res {
@@ -376,6 +393,36 @@ impl Env {
         let which = if session.is_empty() { "default".to_string() } else { format!("session {session}") };
         self.out(&format!("registered {which} envelope → {path}\n"));
         Ok(())
+    }
+
+    /// `cli._proved_child`: the child as it registers once the edge from
+    /// `parent` is proved, or a one-line refusal and exit 1.
+    fn proved_child(&mut self, env: &Object, session: &str, parent: &str, root: &str) -> Result<Object, Stop> {
+        let mut refuse = |why: String| {
+            self.errf(&format!("not registered: {why}\n"));
+            Stop::Exit(1)
+        };
+        if parent.is_empty() {
+            return Err(refuse("--parent needs a session id".into()));
+        }
+        if session.is_empty() {
+            return Err(refuse("--parent needs --session; the starter names the child's session".into()));
+        }
+        if !crate::tree::valid_session(session) {
+            return Err(refuse(format!("the child's session id {} is not one the tree takes", crate::tree::q(&Value::Str(session.into())))));
+        }
+        let target = super::gateroot::join(&super::gateroot::envelopes_dir(root), &format!("{}.json", super::gateroot::safe_session_id(session)));
+        if std::fs::metadata(&target).is_ok() {
+            return Err(refuse(format!("session {session} is registered already")));
+        }
+        let penv = crate::tree::load_registered(parent, root);
+        let res = crate::tree::edge_ok(penv.as_ref(), Some(env), crate::tree::DEFAULT_TIMEOUT_MS);
+        if !res.holds {
+            return Err(refuse(format!("the edge from {parent} to {session} is refused: {}", res.reasons.join("; "))));
+        }
+        let child = res.child.expect("the edge holds");
+        let id = penv.expect("the edge holds, so the parent has an envelope").value("id").clone();
+        Ok(crate::tree::with_key(&child, "parent_envelope", id))
     }
 
     pub(super) fn gate_proposals(&mut self, args: &[String]) -> Res {
@@ -479,6 +526,7 @@ pub(super) fn yaml_to_json(v: &Node) -> Result<Value, String> {
         Kind::Int => loads(&v.text).map_err(|_| "an integer this binary does not read yet".to_string())?,
         Kind::Float => Value::Float(v.text.parse::<f64>().map_err(|e| e.to_string())?),
         Kind::Str => Value::Str(v.text.clone()),
+        Kind::Other => return Err("the envelope holds a date".into()),
         Kind::Seq => Value::List(v.items.iter().map(yaml_to_json).collect::<Result<Vec<_>, _>>()?),
         Kind::Map => {
             if v.non_str_keys > 0 {

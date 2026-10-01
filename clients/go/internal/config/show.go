@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"sort"
+	"strings"
 
 	"daisugi-verify/internal/pyjson"
 )
@@ -125,6 +126,14 @@ func Rows(path, home string) (rows []Row, unknown []string, cfg Config, err erro
 			}
 			continue
 		}
+		if f.Type == tAny {
+			// agent_profiles: shown only when the file has a table, and
+			// then the names only.
+			if present {
+				rows = append(rows, Row{f.Name, profileNames(v), "file"})
+			}
+			continue
+		}
 		val, source := defs[f.Name], "default"
 		if present {
 			d, derr := dumped(v, f.Type)
@@ -146,6 +155,20 @@ func Rows(path, home string) (rows []Row, unknown []string, cfg Config, err erro
 	}
 	sort.Strings(unknown)
 	return rows, unknown, cfg, nil
+}
+
+// profileNames is agent_profiles.config_text: the profile names, never
+// a field, so no key name or URL is on that surface.
+func profileNames(v Value) string {
+	if v.Kind == Null || (v.Kind == Map && len(v.Keys) == 0 && v.NonStrKeys == 0) {
+		return "none"
+	}
+	if v.Kind != Map {
+		return "not a mapping"
+	}
+	names := append([]string{}, v.Keys...)
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 func configField(k string) bool {

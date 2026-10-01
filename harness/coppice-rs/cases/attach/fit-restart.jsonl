@@ -1,0 +1,12 @@
+# A fit changes only the running terminal. The record, and layout.json with
+# it, keeps the owner's size, so a restart resumes at the desk size.
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "alpha", "cols": 40, "rows": 10}
+{"id": "$id", "ok": true, "result": {"pane": "$a"}}
+{"id": "a1", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 50, "rows": 30}}
+{"id": "$id", "ok": true, "result": {"fitted": true}}
+{"id": "l1", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 50, "rows": 30}]}}
+#!tree
+#!restart
+{"id": "l2", "cmd": "pane.list", "ended": true}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 40, "rows": 10}]}}

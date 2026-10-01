@@ -8,16 +8,19 @@
 // agent's sheet in over it; the overview stays drawn and live under it.
 
 import { mountRoster } from './roster.js';
-import { mountFloor, endedMessage } from './floor.js';
-import { mountPane, onEvent as paneEvent, detached, open as openPane, close as closePane, release as releasePane } from './pane.js';
+import { mountFloor, endedMessage, stripFits } from './floor.js';
+import { mountPane, onEvent as paneEvent, detached, open as openPane, close as closePane, release as releasePane, runOnPane } from './pane.js';
 import { mountNew, mountNewButton } from './newpane.js';
 import { mountSettings, tokenFromHash, wsUrl } from './settings.js';
-import { isPhone, overviewShown, mountSheet, phoneAfter, keyboardInset } from './dock.js';
+import { isPhone, overviewShown, mountSheet, phoneAfter, keyboardInset, mountFold } from './dock.js';
+import { mountChat } from './chat.js';
 import { mountViews, mountViewHost, parseView } from './views.js';
-import { MESSAGES, toMessage, fixButtons, openShell, shellCwd } from './messages.js';
+import { MESSAGES, toMessage, fixButtons, openShell, shellCwd, cannotReach, pageHost } from './messages.js';
 import { mountFacts } from './stackbar.js';
-import { mountOverlay, escCloses, JOURNAL } from './overlay.js';
+import { mountMachines } from './machines.js';
+import { mountOverlay, escCloses, isPanel, panelEsc, JOURNAL } from './overlay.js';
 import { retryVoice } from './record.js';
+import { mountSpeech, parseFrame } from './speech.js';
 
 export const WS_SUBPROTOCOL = 'daisugi.v1';
 export const WS_BEARER_PREFIX = 'daisugi.bearer.';
@@ -61,6 +64,10 @@ let phone = false;
 // viewHostRef is the mounted view host, or null before boot runs. The
 // socket's close drops its attaches the way it drops the floor's.
 let viewHostRef = null;
+// chatRef is the phone's chat with the foreman, or null before boot runs.
+let chatRef = null;
+// speechRef is the page's speech: replies read aloud. Null before boot runs.
+let speechRef = null;
 
 const state = {
   token: null,
@@ -167,8 +174,9 @@ const UPSTREAM_CLOSE_REASONS = [
 // timer so it can be tested on its own. reason is 'upstream' for a close
 // naming one of the two reasons above, 'rejected' for a token the server no
 // longer accepts, 'banned' for an address the server is refusing for a
-// minute, or 'unknown' for anything else, including a network the phone
-// cannot reach at all. It returns the delay to use now and the delay to
+// minute, 'unreachable' when the page cannot reach the box at all, or
+// 'unknown' for anything else. The last two retry the same way. It
+// returns the delay to use now and the delay to
 // remember for next time, or a stop marker when no further retry belongs
 // on the schedule at all.
 export function nextRetry(reason, retryMs) {
@@ -177,13 +185,22 @@ export function nextRetry(reason, retryMs) {
   return { delayMs: retryMs, retryMs: Math.min(RETRY_MAX_MS, retryMs * 2) };
 }
 
+// closeStatus is what the status line says after a close the page will
+// retry. Only a page that cannot reach the box at all names the fixes on
+// the phone; a drop the coppice server caused only reconnects.
+export function closeStatus(reason, host) {
+  if (reason === 'banned') return MESSAGES.banned();
+  if (reason === 'unreachable') return cannotReach(host);
+  return MESSAGES.reconnecting();
+}
+
 // probeReason asks the server why the last close might have happened, for
 // the one case the close event itself does not say. A handshake the
 // server refuses outright reaches the browser as a blank reason, so the
 // only way left to tell a bad token from a box that is simply unreachable
 // is to ask the API directly. A plain network drop, the phone losing
 // signal, also reaches this function, and costs one doomed fetch before
-// the catch below turns it into 'unknown'. That fetch is accepted: without
+// the catch below turns it into 'unreachable'. That fetch is accepted: without
 // it there would be no way left to tell a refused handshake from a box
 // that is simply out of reach.
 async function probeReason() {
@@ -193,7 +210,9 @@ async function probeReason() {
       headers: { Authorization: 'Bearer ' + state.token },
     });
   } catch {
-    probe = null;   // the box is unreachable, which is a normal retry
+    // The page cannot reach the box at all, which is a normal retry, and
+    // the one case whose fixes are on the phone.
+    return 'unreachable';
   }
   if (probe && probe.status === 401) return 'rejected';
   if (probe && probe.status === 429) return 'banned';
@@ -221,7 +240,7 @@ async function afterClose(e) {
     window.dispatchEvent(new CustomEvent('coppice:route'));
     return;
   }
-  status(reason === 'banned' ? MESSAGES.banned() : MESSAGES.reconnecting());
+  status(closeStatus(reason, pageHost()));
   setOffline(true);
   retryMs = decision.retryMs;
   setTimeout(connect, decision.delayMs);
@@ -232,6 +251,8 @@ function connect() {
   if (state.ws && [WebSocket.CONNECTING, WebSocket.OPEN, WebSocket.CLOSING].includes(state.ws.readyState)) return;
   if (!state.token) { status(MESSAGES.noToken()); return; }
   const ws = new WebSocket(wsUrl(location.origin), bearerProtocols(state.token));
+  // Speech comes as binary frames; see speech.js.
+  ws.binaryType = 'arraybuffer';
   state.ws = ws;
   ws.addEventListener('open', () => {
     status('');
@@ -243,12 +264,21 @@ function connect() {
     // Presence says who else has a pane open. It comes on its own
     // subscribe too.
     rpc('events.subscribe', { panes: '*', kinds: ['presence'] }).catch(() => {});
+    // A messages event says the chat changed; the phone reads it again.
+    rpc('events.subscribe', { panes: '*', kinds: ['messages'] }).catch(() => {});
     rpc('floor.notes', {}).then((r) => { if (floor) floor.seedNotes(r.notes); }).catch(() => {});
-    // The page leaves its own name off the tiles it has open.
+    // The page leaves its own name off the tiles it has open. The chat is
+    // for the owner's own sign-in, so it is read once the name is known.
     api('/api/token/check').then((r) => {
       state.me = r && typeof r.name === 'string' ? r.name : '';
       if (floor) floor.paint(state.panes);
-    }).catch(() => {});
+    }).catch(() => {}).then(() => { if (chatRef) chatRef.read(); });
+    if (speechRef) {
+      speechRef.refresh();
+      // A page that reads every reply aloud learns the chat at once; any
+      // other learns it at its first send.
+      if (speechRef.readAloud()) speechRef.prime();
+    }
     window.dispatchEvent(new CustomEvent('coppice:open'));
   });
   ws.addEventListener('message', (e) => {
@@ -257,6 +287,18 @@ function connect() {
     // if it survives past the next handshake, so it resets here and not on
     // open.
     retryMs = RETRY_MIN_MS;
+    // A binary frame is one sentence of audio answering a speech.say. It
+    // settles that request like a reply would.
+    if (typeof e.data !== 'string') {
+      const frame = parseFrame(e.data);
+      if (frame && state.pending.has(frame.id)) {
+        const { resolve, timer } = state.pending.get(frame.id);
+        clearTimeout(timer);
+        state.pending.delete(frame.id);
+        resolve({ audio: frame.audio, type: frame.type });
+      }
+      return;
+    }
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
     if (msg.id && state.pending.has(msg.id)) {
@@ -376,20 +418,26 @@ function sheetDialog(sheet, paneEl) {
   sheetPane = now;
 }
 
-// show draws one screen. On a phone a pane is a sheet over the overview,
-// so the overview stays drawn under it, and the sheet's own back control
-// and the edge of overview beside it take the header's Back.
+// show draws one screen. The floor is never hidden: the New form and
+// Settings open as a panel over it, and on a phone a pane is a sheet over
+// the overview. On a wide page a pane screen covers the floor but leaves
+// it drawn under. The sheet's own back control and the edge of overview
+// beside it take the header's Back.
 function show(name) {
   const sheet = phone && name === 'pane';
-  for (const s of ['roster', 'pane', 'new', 'settings']) {
-    document.getElementById('screen-' + s).hidden = s !== name && !(sheet && s === 'roster');
+  const panel = isPanel(name);
+  for (const s of ['pane', 'new', 'settings']) {
+    document.getElementById('screen-' + s).hidden = s !== name;
   }
+  document.getElementById('screen-roster').hidden = false;
   const edge = document.getElementById('sheet-edge');
   if (edge) edge.hidden = !sheet;
   const body = typeof document !== 'undefined' ? document.body : null;
   if (body && body.classList && typeof body.classList.toggle === 'function') {
     body.classList.toggle('phone', phone);
     body.classList.toggle('sheet-open', sheet);
+    body.classList.toggle('pane-page', !phone && name === 'pane');
+    body.classList.toggle('panel-open', panel);
   }
   // The sheet covers the status line, so the line moves into the sheet,
   // above its keys and bottom bar, while the sheet is open.
@@ -400,7 +448,7 @@ function show(name) {
     else if (!sheet && row.parentNode === paneEl) body.insertBefore(row, document.getElementById('screen-roster'));
   }
   sheetDialog(sheet, paneEl);
-  document.getElementById('back').hidden = name === 'roster' || sheet;
+  document.getElementById('back').hidden = name === 'roster' || sheet || panel;
   // A button pointed at the screen it already opened does nothing useful.
   document.getElementById('go-new').hidden = name === 'new';
   const menuBtn = document.getElementById('new-menu-btn');
@@ -429,10 +477,15 @@ async function fix(action) {
         status('Connecting.');
         connect();
       }
+    } else if (kind === 'resume_all') {
+      status('');
+      window.dispatchEvent(new CustomEvent('coppice:resume-all'));
+    } else if (kind === 'show_recent') {
+      window.dispatchEvent(new CustomEvent('coppice:show-recent'));
     } else if (kind === 'settings') {
       location.hash = '#/settings';
     } else if (kind === 'voice') {
-      status(await retryVoice(api));
+      status(await retryVoice(api, status));
     } else if (kind === 'open' && action.pane) {
       // Show the pane, so its question is in view.
       const want = '#/pane/' + encodeURIComponent(action.pane);
@@ -482,7 +535,7 @@ async function fix(action) {
 
 // overview is true while the overview is on screen: the floor, or a
 // phone's sheet over it.
-const overview = () => overviewShown(route(location.hash).screen, phone);
+const overview = () => overviewShown(route(location.hash).screen, phone) || isPanel(route(location.hash).screen);
 
 if (typeof window !== 'undefined') {
   window.coppice = { rpc, api, state, show, status, route, connect, reconnect, fix, overview, phone: () => phone };
@@ -538,8 +591,8 @@ function boot() {
   window.addEventListener('coppice:route', () => {
     const r = route(location.hash);
     show(r.screen);
-    document.getElementById('title').textContent = phone && r.screen === 'pane' ? 'Floor'
-      : { roster: 'Floor', pane: 'Pane', new: 'New pane', settings: 'Settings', view: 'View' }[r.screen];
+    document.getElementById('title').textContent = (phone && r.screen === 'pane') || isPanel(r.screen) ? 'Floor'
+      : { roster: 'Floor', pane: 'Pane', view: 'View' }[r.screen];
   });
   // pushed is true while the open sheet came from a tap on this page, so
   // the history holds the overview right under it. Going back then steps
@@ -588,6 +641,18 @@ function boot() {
     onAction: fix,
     hintEl: document.getElementById('gate-hint'),
   }) : null;
+  // Machines is a read-only panel of the tailnet's boxes; its button sits beside Settings.
+  const machines = mountMachines({
+    el: document.getElementById('machines'),
+    list: document.getElementById('machines-list'),
+    line: document.getElementById('machines-line'),
+    note: document.getElementById('machines-note'),
+    close: document.getElementById('machines-close'),
+    rpc,
+    connected: () => Boolean(state.ws && state.ws.readyState === WebSocket.OPEN),
+    keys: () => (floor ? floor.keys() : 'rail'),
+  });
+  document.getElementById('go-machines').addEventListener('click', () => machines.toggle());
   if (factsRow) {
     window.addEventListener('coppice:open', () => factsRow.read());
     // The rail and the header count from the same list, so they agree the
@@ -625,7 +690,9 @@ function boot() {
     },
   });
   const placeMinimap = () => {
-    const on = minimapOn && overview();
+    // A phone has the colony strip, with labels, at the top of home, so
+    // the minimap does not draw there.
+    const on = minimapOn && overview() && !phone;
     minimapFrame.hidden = !on;
     if (on) minimap.show('minimap', []);
     else minimap.hide();
@@ -675,7 +742,7 @@ function boot() {
     },
   });
   floor = mountFloor(document.getElementById('screen-roster'), {
-    panes: state.panes, width: window.innerWidth, height: window.innerHeight, rpc, api, status, fix,
+    panes: state.panes, width: window.innerWidth, height: window.innerHeight, rpc, run: runOnPane, api, status, fix,
     facts: () => (factsRow ? factsRow.facts() : null),
     journal: (pane) => { if (overlay) overlay.open(JOURNAL, [], pane); },
     // A change in what the windows hold moves the open view's watch.
@@ -756,6 +823,7 @@ function boot() {
   };
   moveStrip();
   const overlayEl = document.getElementById('overlay');
+  const dotsEl = document.getElementById('strip-dots');
   overlay = mountOverlay({
     el: overlayEl,
     title: document.getElementById('overlay-title'),
@@ -767,7 +835,7 @@ function boot() {
     unpin: document.getElementById('strip-unpin'),
     host: viewHost,
     stripHost,
-    api,
+    rpc,
     labelOf: (pane) => {
       const p = state.panes.find((x) => x && x.id === pane);
       return (p && p.label) || pane;
@@ -782,14 +850,28 @@ function boot() {
     cancel: (id) => clearInterval(id),
     place: placeOverlay,
     relayout: () => { if (floor) floor.paint(state.panes); },
+    dots: dotsEl,
+    stripFits: () => (floor ? floor.stripFits(strip && !strip.hidden ? strip.offsetHeight + 8 : 0) : stripFits(window.innerWidth, window.innerHeight)),
   });
+  if (dotsEl) {
+    dotsEl.addEventListener('click', () => overlay.open('colony', []));
+    const paintDots = () => {
+      dotsEl.textContent = '';
+      for (const p of state.panes) {
+        const dot = document.createElement('span');
+        dot.className = 'dot dot-' + (p && p.state ? p.state : 'unknown');
+        dotsEl.append(dot);
+      }
+    };
+    window.addEventListener('coppice:panes', paintDots);
+    paintDots();
+  }
   window.addEventListener('message', (e) => viewHost.onMessage(e));
   window.addEventListener('message', (e) => stripHost.onMessage(e));
   window.addEventListener('message', (e) => minimap.onMessage(e));
   window.addEventListener('coppice:panes', () => viewHost.post());
   window.addEventListener('coppice:panes', () => stripHost.post());
   window.addEventListener('coppice:panes', () => minimap.post());
-  window.addEventListener('coppice:panes', () => overlay.panesChanged(state.panes));
   window.addEventListener('coppice:route', placeMinimap);
   window.addEventListener('coppice:route', () => overlay.routed());
   window.addEventListener('coppice:route', () => {
@@ -797,6 +879,31 @@ function boot() {
     const v = viewAsked;
     viewAsked = null;
     overlay.open(v.view, v.sel);
+  });
+  // A panel (New, Settings) closes with its x and with Esc, also from a
+  // field. Closing it goes back to the floor, which stayed drawn.
+  const closePanel = () => {
+    if (isPanel(route(location.hash).screen)) location.hash = '#/roster';
+  };
+  for (const id of ['new-close', 'settings-close']) document.getElementById(id).addEventListener('click', closePanel);
+  document.addEventListener('keydown', (e) => {
+    if (!e || e.key !== 'Escape' || e.defaultPrevented) return;
+    if (!panelEsc(route(location.hash).screen, floor ? floor.keys() : 'rail')) return;
+    if (typeof e.preventDefault === 'function') e.preventDefault();
+    closePanel();
+  });
+  // A panel opens over the floor and takes the focus on its first field. A
+  // view overlay closes first, so only one thing covers the windows.
+  window.addEventListener('coppice:route', () => {
+    const r = route(location.hash);
+    if (!isPanel(r.screen)) return;
+    if (overlay.state().open) overlay.close();
+    // The form takes the keys, so a window that had them gives them up.
+    if (floor && floor.typing()) floor.leave();
+    const el = document.getElementById('screen-' + r.screen);
+    placeOverlay(el);
+    const first = el && typeof el.querySelector === 'function' ? el.querySelector('input:not([hidden])') : null;
+    if (first && typeof first.focus === 'function') first.focus();
   });
   // Esc closes the overlay while the keys are on the rail. In a window Esc
   // is the agent's.
@@ -816,6 +923,12 @@ function boot() {
       openPane(r.pane, seed);
       return;
     }
+    if (isPanel(r.screen)) {
+      // A panel leaves the floor as it is. A pane screen under it closes.
+      closePane();
+      floor.paint(state.panes);
+      return;
+    }
     if (r.screen === 'roster') {
       const handed = releasePane();
       if (handed) floor.adopt(handed.id, handed.grid);
@@ -832,7 +945,7 @@ function boot() {
   window.addEventListener('coppice:route', () => {
     const r = route(location.hash);
     const hash = location.hash;
-    const gone = r.screen !== 'roster' ? viewHost.hide() : null;
+    const gone = r.screen !== 'roster' && !isPanel(r.screen) ? viewHost.hide() : null;
     if (!gone) {
       onRoute(r);
       return;
@@ -859,8 +972,50 @@ function boot() {
     },
     go: (hash) => { location.hash = hash; },
   });
+  speechRef = mountSpeech({
+    rpc,
+    status,
+    storage: typeof localStorage !== 'undefined' ? localStorage : null,
+    connected: () => Boolean(state.ws && state.ws.readyState === WebSocket.OPEN),
+  });
+  window.coppice.speech = speechRef;
   mountSettings();
   window.addEventListener('coppice:panes', () => floor.paint(state.panes));
+
+  // The phone's home: the agents fold, then the chat with the foreman. A
+  // chip in the chat opens its agent's sheet the way a row does, so going
+  // back steps back. The chat is read while it is on screen and the socket
+  // is up.
+  const fold = mountFold(document.getElementById('agents-fold'), document.getElementById('rail'));
+  // floor.facts names the tracked foreman; its scratch directory is no
+  // project.
+  const foremanId = () => {
+    const f = factsRow ? factsRow.facts() : null;
+    return f && f.foreman && typeof f.foreman.pane === 'string' ? f.foreman.pane : '';
+  };
+  fold.paint(state.panes, foremanId());
+  window.addEventListener('coppice:panes', () => fold.paint(state.panes, foremanId()));
+  const chatOn = () => phone && overview() && Boolean(state.ws && state.ws.readyState === WebSocket.OPEN);
+  chatRef = mountChat({
+    list: document.getElementById('chat-list'),
+    rpc,
+    panes: () => state.panes,
+    open: (pane) => { location.hash = '#/pane/' + encodeURIComponent(pane); },
+    me: () => state.me,
+    on: chatOn,
+    speak: (text) => speechRef.speak(text),
+  });
+  window.coppice.chat = chatRef;
+  // The chips name the live agents, so a new pane list draws the chat
+  // again.
+  window.addEventListener('coppice:panes', () => chatRef.paint());
+  // A page that turns into a phone, or comes back to home, reads the chat.
+  let chatWas = false;
+  window.addEventListener('coppice:route', () => {
+    const now = chatOn();
+    if (now && !chatWas) chatRef.read();
+    chatWas = now;
+  });
 
   // The sheet goes back on a swipe right, a tap on the edge of overview
   // beside it, or its own back control.
@@ -931,10 +1086,13 @@ function boot() {
     vv.addEventListener('scroll', inset);
   }
   // A view open over the overview closes when a sheet slides in, so the
-  // sheet is what the owner sees.
+  // sheet is what the owner sees. The status line moves into the sheet,
+  // so an older line, such as where a chat sentence went, is cleared: it
+  // would name the wrong place for the words typed in the sheet.
   let sheetWas = false;
   window.addEventListener('coppice:route', () => {
     const now = phone && route(location.hash).screen === 'pane';
+    if (now && !sheetWas) status('');
     if (now && !sheetWas && overlay.state().open) overlay.close();
     sheetWas = now;
   });
@@ -943,6 +1101,9 @@ function boot() {
     floor.onEvent(msg);
     viewHost.onEvent(msg);
     overlay.onEvent(msg);
+    chatRef.onEvent(msg);
+    floor.chatEvent(msg);
+    speechRef.onEvent(msg);
   };
 
   connect();

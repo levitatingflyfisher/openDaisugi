@@ -270,23 +270,38 @@ test('a window that takes a pane whose view-only attach is on the wire attaches 
   assert.deepEqual(reattached, ['w2:p1']);
 });
 
-test('the journal opens over the floor, says where its lines come from, and lists gate verdicts', async () => {
+test('the journal opens over the floor, says where its lines come from, and lists the verdicts floor.journal returns', async () => {
   await bootAt('#/roster');
+  const { lines, settle } = wire();
+  const ws = lastSocket();
   const button = element('view-list').querySelector('[data-view=":journal"]');
   assert.ok(button, 'the rail shows no Journal button');
   button.dispatchEvent({ type: 'click' });
-  for (let i = 0; i < 5; i++) await tick();
+  await settle();
   assert.equal(global.location.hash, '#/roster');
   assert.equal(element('overlay').hidden, false);
   assert.equal(element('overlay-title').textContent, 'Journal');
   assert.equal(element('view-frame').hidden, true);
+  const asked = () => lines.filter((l) => l.cmd === 'floor.journal');
+  assert.equal(asked().length, 1, 'the journal did not ask the server');
+  assert.equal(asked()[0].pane, 'w1:p1', 'the journal opened for the selected agent');
+  ws.fire('message', { data: JSON.stringify({ id: asked()[0].id, ok: true, result: { entries: [
+    { at: 50, pane: 'w1:p1', decision: 'deny', tool: 'Bash', clause: 'net' },
+    { at: 40, pane: 'w1:p1', decision: 'allow', tool: 'Read', clause: '' },
+  ] } }) });
+  await settle();
   const text = element('journal').textContent;
-  assert.ok(text.includes('The server keeps no verdict history.'), text);
-  global.window.coppice.state.onEvent({ event: 'state', pane: 'w1:p1', source: 'gate', state: 'working', detail: 'verdict=deny clause=net', ts: 50 });
-  assert.ok(element('journal').textContent.includes('clause net'), element('journal').textContent);
-  // Two reports at one moment with other details are two lines.
-  global.window.coppice.state.onEvent({ event: 'state', pane: 'w1:p1', source: 'gate', state: 'working', detail: 'verdict=deny clause=disk', ts: 50 });
-  assert.ok(element('journal').textContent.includes('clause disk'), 'a second report at the same moment was dropped');
+  assert.ok(text.includes("100 per agent, 500 in all, oldest first"), text);
+  assert.ok(text.includes('deny \u00b7 Bash \u00b7 clause net'), text);
+  assert.ok(text.includes('allow \u00b7 Read'), text);
+  // A gate report while the journal shows reads it again.
+  global.window.coppice.state.onEvent({ event: 'state', pane: 'w1:p1', source: 'gate', state: 'working', detail: 'verdict=deny', ts: 60 });
+  await settle();
+  assert.equal(asked().length, 2, 'a gate report did not read the journal again');
+  // A refused read shows its words with the journal still open.
+  ws.fire('message', { data: JSON.stringify({ id: asked()[1].id, ok: false, error: { code: 'bad_request', message: 'The server is busy.' } }) });
+  await settle();
+  assert.ok(element('journal').textContent.includes('The journal did not load'), element('journal').textContent);
 });
 
 test('the overlay takes the focus when it opens and gives it back when it closes', async () => {
@@ -362,7 +377,7 @@ test('a host with its own open and no select hands the pane over and drops a sel
 
 test('the minimap leaves with the floor, and stays hidden when it is off', async () => {
   const { mini } = await bootAt('#/roster', WITH_MINIMAP);
-  global.location.hash = '#/settings';
+  global.location.hash = '#/pane/a';
   global.window.dispatchEvent(new global.CustomEvent('coppice:route'));
   assert.equal(mini.hidden, true);
   assert.equal(mini.src, 'about:blank');

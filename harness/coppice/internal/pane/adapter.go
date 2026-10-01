@@ -140,6 +140,13 @@ type Prompter interface {
 	PromptFrom(text string, operator bool) error
 }
 
+// ModelSetter is a Proc that runs each turn as its own process, so the
+// model of the turns after a call can change. SetModel names it; an empty
+// name takes the swap back. A turn already running keeps its model.
+type ModelSetter interface {
+	SetModel(name string)
+}
+
 // Answerer is a Proc whose harness holds asks of its own, such as
 // OpenCode's permission prompts. agent.allow and agent.deny answer such an
 // ask through Answer, after the same role checks as a gate ask, and a typed

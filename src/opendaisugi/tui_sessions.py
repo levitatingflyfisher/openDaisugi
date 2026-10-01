@@ -104,6 +104,12 @@ class SessionsScreen(AskActionsMixin, CockpitScreen):
         super().on_screen_resume()
         self._start_poll_timer()
 
+    def on_screen_suspend(self) -> None:
+        # A switch away suspends this screen; it does not unmount it. The
+        # poll must stop here too, or it runs on a hidden screen, and a tick
+        # at app exit, after the widgets are gone, finds no #roster.
+        self._stop_poll_timer()
+
     def on_unmount(self) -> None:
         # Without this, the 1 Hz poll kept running after the screen was
         # switched away from. An "installed" screen survives being popped

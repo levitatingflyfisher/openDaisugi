@@ -1,0 +1,23 @@
+# The verdict journal file after a crash in the middle of an append. The
+# last line is torn: only it is dropped, the file is not moved aside, and
+# the verdicts before it stay. The file is cut back to whole lines when the
+# server reads it. A bad line before the last is the other file's case
+# (journal-corrupt).
+{"id":"1","write":"{DATA}/journal/verdicts.jsonl","text":"{\"at\":1.5,\"pane\":\"w1:p1\",\"decision\":\"allow\",\"tool\":\"Read\",\"clause\":\"first\"}\n{\"at\":2.5,\"pane\":\"w1:p1\",\"decision\":\"deny\",\"tool\":\"Bash\",\"clause\":\"second\",\"mode\":\"enforcing\"}\n{\"at\":3.5,\"pane\":\"w1:p1\",\"deci"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"2","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"w1:p1","decision":"deny","tool":"Bash","clause":"second","mode":"enforcing"},{"at":"*","pane":"w1:p1","decision":"allow","tool":"Read","clause":"first"}]}}
+{"id":"3","file":"{DATA}/journal/verdicts.jsonl","count":"\n"}
+{"id":"$id","ok":true,"result":{"count":2}}
+{"id":"4","file":"{DATA}/journal/verdicts.jsonl","count":"3.5"}
+{"id":"$id","ok":true,"result":{"count":0}}
+# The torn line is kept, never deleted: it is appended to the .dropped file
+# (0600), and one note names that file.
+{"id":"5","file":"{DATA}/journal/verdicts.jsonl.dropped","count":"\"at\":3.5"}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"6","ls":"{DATA}/journal"}
+{"id":"$id","ok":true,"result":{"tree":[["verdicts.jsonl","file","0o600"],["verdicts.jsonl.dropped","file","0o600"]]}}
+#!retry 3000
+{"id":"7","cmd":"floor.notes"}
+{"id":"$id","ok":true,"result":{"notes":[{"event":"note","text":"The last line of the verdict journal could not be read. It is dropped and saved to {DATA}/journal/verdicts.jsonl.dropped.","ts":"*"}]}}

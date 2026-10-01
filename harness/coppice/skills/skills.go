@@ -9,6 +9,12 @@ import _ "embed"
 //go:embed foreman/SKILL.md
 var Foreman string
 
+// ForemanTurn is the system page of one turn of the chat-mode foreman. The
+// bytes are fixed, so the model's cache can hold them.
+//
+//go:embed foreman-turn/SKILL.md
+var ForemanTurn string
+
 // Pages maps each page name to its text.
 var Pages = map[string]string{"foreman": Foreman}
 

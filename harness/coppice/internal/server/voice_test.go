@@ -42,6 +42,21 @@ func fakeDaisugi(mode string, args []string) int {
 		fmt.Fprintln(f, strings.Join(args, " "))
 		f.Close()
 	}
+	if len(args) >= 3 && args[0] == "voice" && args[1] == "status" {
+		kind := os.Getenv("COPPICE_FAKE_KIND")
+		if kind == "" {
+			return 2
+		}
+		fmt.Printf(`{"engine": "moonshine", "model": "small", "model_bytes": 1, "fetched": %v, "kind": %q`,
+			os.Getenv("COPPICE_FAKE_FETCHED") == "1", kind)
+		if f := os.Getenv("COPPICE_FAKE_FETCH"); f != "" {
+			var done, total int64
+			fmt.Sscan(f, &done, &total)
+			fmt.Printf(`, "fetch": {"done": %d, "total": %d}`, done, total)
+		}
+		fmt.Println("}")
+		return 0
+	}
 	if len(args) < 2 || args[0] != "voice" || args[1] != "serve" {
 		return 2
 	}
@@ -51,6 +66,18 @@ func fakeDaisugi(mode string, args []string) int {
 				return 2
 			}
 			return 0
+		}
+	}
+	if mode == "noengine" {
+		fmt.Fprintln(os.Stderr, "moonshine-cli is not on PATH. Build it with scripts/native.sh, then try again.")
+		return 3
+	}
+	if mode == "slow" {
+		for {
+			if _, err := os.Stat(os.Getenv("COPPICE_FAKE_GO")); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	if mode == "noextra" {
@@ -377,5 +404,121 @@ func TestLastLineReadsOnlyTheLatestRun(t *testing.T) {
 	os.WriteFile(p, []byte("old\ncoppice: starting daisugi voice serve\nnew line\n\n"), 0o600)
 	if got := lastLine(p); got != "new line" {
 		t.Fatalf("lastLine = %q", got)
+	}
+}
+
+func TestAGoOrRustDaisugiWithoutAnEngineIsOfferedNoPipLine(t *testing.T) {
+	for _, kind := range []string{"go", "rust"} {
+		t.Run(kind, func(t *testing.T) {
+			fakeDaisugiOnPath(t, "noengine")
+			t.Setenv("COPPICE_FAKE_KIND", kind)
+			s := newVoiceServer(t, VoiceConfig{})
+			s.voice.ensure()
+			st := waitVoice(t, s, voiceDown)
+			if st["reason"] != "Voice needs a speech engine, and daisugi cannot find one." {
+				t.Fatalf("reason: %v", st)
+			}
+			if st["command"] != "" || strings.Contains(fmt.Sprint(st["fix"]), "pip") {
+				t.Fatalf("a %s daisugi was offered pip: %v", kind, st)
+			}
+		})
+	}
+}
+
+func TestAGoOrRustDaisugiThatCannotServeVoiceIsOfferedNoPipLine(t *testing.T) {
+	for _, kind := range []string{"go", "rust"} {
+		t.Run(kind, func(t *testing.T) {
+			fakeDaisugiOnPath(t, "nohelp")
+			t.Setenv("COPPICE_FAKE_KIND", kind)
+			s := newVoiceServer(t, VoiceConfig{})
+			s.voice.ensure()
+			st := waitVoice(t, s, voiceDown)
+			if st["reason"] != "This daisugi cannot serve voice." || st["command"] != "" ||
+				strings.Contains(fmt.Sprint(st["fix"]), "pip") {
+				t.Fatalf("%s: %v", kind, st)
+			}
+		})
+	}
+}
+
+func TestAPythonDaisugiKeepsItsPipLine(t *testing.T) {
+	fakeDaisugiOnPath(t, "noextra")
+	t.Setenv("COPPICE_FAKE_KIND", "python")
+	s := newVoiceServer(t, VoiceConfig{})
+	s.voice.ensure()
+	st := waitVoice(t, s, voiceDown)
+	if st["command"] != "pip install 'opendaisugi[voice]'" {
+		t.Fatalf("%v", st)
+	}
+}
+
+func TestAStartingVoiceCarriesTheModelFetchThenIsReady(t *testing.T) {
+	fakeDaisugiOnPath(t, "slow")
+	t.Setenv("COPPICE_FAKE_KIND", "go")
+	t.Setenv("COPPICE_FAKE_FETCH", "41000000 160000000")
+	release := filepath.Join(t.TempDir(), "go")
+	t.Setenv("COPPICE_FAKE_GO", release)
+	s := newVoiceServer(t, VoiceConfig{})
+	s.voice.fetchEvery = 20 * time.Millisecond
+	s.voice.ensure()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		st := s.voice.status()
+		if f, ok := st["fetch"].(map[string]any); ok {
+			if f["done"] != int64(41000000) || f["total"] != int64(160000000) || st["state"] != voiceStarting {
+				t.Fatalf("fetch: %v", st)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no fetch shown: %v", st)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := waitVoice(t, s, voiceReady)
+	if _, ok := st["fetch"]; ok {
+		t.Fatalf("a ready voice still shows a fetch: %v", st)
+	}
+}
+
+func TestTheStatusAskReadsTheDataDirVoiceServeGets(t *testing.T) {
+	argsFile := fakeDaisugiOnPath(t, "nohelp")
+	t.Setenv("COPPICE_FAKE_KIND", "go")
+	s := newVoiceServer(t, VoiceConfig{Args: []string{"--data-dir", "/some/dir"}})
+	s.voice.ensure()
+	waitVoice(t, s, voiceDown)
+	raw, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(raw), "voice status --json --data-dir /some/dir") {
+		t.Fatalf("status was asked without the data dir:\n%s", raw)
+	}
+	if got := dataDirArgs([]string{"--x", "--data-dir=/a"}); len(got) != 1 || got[0] != "--data-dir=/a" {
+		t.Fatalf("equals form: %v", got)
+	}
+}
+
+func TestTheFetchPollStopsOnceTheModelIsFetched(t *testing.T) {
+	argsFile := fakeDaisugiOnPath(t, "slow")
+	t.Setenv("COPPICE_FAKE_KIND", "go")
+	t.Setenv("COPPICE_FAKE_FETCHED", "1")
+	t.Setenv("COPPICE_FAKE_GO", filepath.Join(t.TempDir(), "never"))
+	s := newVoiceServer(t, VoiceConfig{})
+	s.voice.fetchEvery = 10 * time.Millisecond
+	s.voice.ensure()
+	// Wait for the first ask (slow under the race detector), then give the
+	// poll 40 more turns to ask again; a stopped poll never does.
+	asks := func() int {
+		raw, _ := os.ReadFile(argsFile)
+		return strings.Count(string(raw), "voice status")
+	}
+	for deadline := time.Now().Add(20 * time.Second); asks() == 0 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(400 * time.Millisecond)
+	raw, _ := os.ReadFile(argsFile)
+	if n := strings.Count(string(raw), "voice status"); n != 1 {
+		t.Fatalf("asked %d times after the model was fetched:\n%s", n, raw)
 	}
 }

@@ -1,0 +1,88 @@
+# coppice web and coppice web serve: every refusal before a listener
+# opens, and the words of each. No case here serves.
+{"id": "u1", "cli": ["web", "nope"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "u2", "cli": ["web", "cert"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "u3", "cli": ["web", "cert", "nope"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "u4", "cli": ["--remote", "box", "web", "token"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s1", "cli": ["web", "serve", "--web-push", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s2", "cli": ["web", "serve", "--voice-url", "127.0.0.1:7477", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s3", "cli": ["web", "serve", "--voice-url", "ftp://h/x", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s4", "cli": ["web", "serve", "--voice-url", "http://", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s5", "cli": ["web", "serve", "--tls", "tailscale", "--cert", "{WORK}/c.crt", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s6", "cli": ["web", "serve", "--tls", "tailscale", "--listen", "{ADDR}"], "env": {"PATH": "{WORK}"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s7", "cli": ["web", "serve", "--tls", "tailscale", "--cert", "{WORK}/c.crt", "--key", "{WORK}/c.key", "--listen", "{ADDR}"], "env": {"PATH": "{WORK}"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s8", "cli": ["web", "serve", "--tls", "files", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s9", "cli": ["web", "serve", "--tls", "files", "--cert", "{WORK}/c.crt", "--key", "{WORK}/c.key", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "w1", "write": "{WORK}/c.crt", "text": "not a cert\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "s10", "cli": ["web", "serve", "--tls", "files", "--cert", "{WORK}/c.crt", "--key", "{WORK}/c.key", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s11", "cli": ["web", "serve", "--tls", "tailscale", "--cert", "{WORK}/c.crt", "--key", "{WORK}/c.key", "--listen", "{ADDR}"], "env": {"PATH": "{WORK}"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s12", "cli": ["web", "serve", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s13", "cli": ["web", "serve", "--ca-dir", "", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s14", "cli": ["web", "serve", "--tls", "nope", "--listen", "{ADDR}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s15", "cli": ["web", "serve", "--tls", "off", "--listen", "0.0.0.0:18999"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s16", "cli": ["web", "serve", "--tls", "off", "--listen", ":18999"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s17", "cli": ["web", "serve", "--tls", "off", "--listen", "nohost"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s18", "cli": ["web", "serve", "--tls", "off", "--listen", "192.168.1.9:18999"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s19", "cli": ["web", "serve", "--tls", "off", "--listen", "example.test:18999"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s20", "cli": ["web", "serve", "--nope"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s21", "cli": ["web", "serve", "--qr=maybe"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# A refused serve leaves no token and no web.json behind.
+{"id": "l1", "ls": "{DATA}"}
+{"id": "$id", "ok": true, "result": "*"}
+# --forget with nothing saved records what was asked for, turned off.
+{"id": "f1", "cli": ["web", "serve", "--forget", "--tls", "off", "--listen", "{ADDR}", "--ntfy", "https://ntfy.test", "--ntfy-topic", "t1"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "The phone server will not start with the coppice server.\n"}}
+{"id": "f2", "file": "{DATA}/web/web.json"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "f3", "ls": "{DATA}/web"}
+{"id": "$id", "ok": true, "result": "*"}
+# --forget keeps what was saved and turns it off.
+{"id": "w2", "write": "{DATA}/web/web.json", "text": "{\"enabled\": true, \"listen\": \"127.0.0.1:7443\", \"tls\": \"off\", \"ntfy\": \"https://n.test\", \"ntfy_topic\": \"keep\", \"voice_token_file\": \"/v/t\", \"extra\": 1}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "f4", "cli": ["web", "serve", "--forget"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "f5", "file": "{DATA}/web/web.json"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "w3", "write": "{DATA}/web/web.json", "text": "{\"enabled\": \"yes\"}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "f6", "cli": ["web", "serve", "--forget"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "w4", "write": "{DATA}/web/web.json", "text": "{\"enabled\": true, \"listen\": \"\"}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "f7", "cli": ["web", "serve", "--forget", "--listen", "127.0.0.1:1", "--tls", "files"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "f8", "file": "{DATA}/web/web.json"}
+{"id": "$id", "ok": true, "result": "*"}
+# coppice web with no verb: --no-open and a listen that is not loopback.
+{"id": "o1", "cli": ["web", "--no-open", "--listen", "0.0.0.0:18999"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "o2", "cli": ["web", "--no-open", "--listen", "nohost"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "o3", "cli": ["web", "--bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}

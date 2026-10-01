@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -112,9 +113,29 @@ func (s *Server) now() time.Time {
 	return time.Now()
 }
 
+// panePrefix is the prefix a coppice pane's base URL carries:
+// <gateway>/pane/<floor>/<pane>. The floor is 16 lower-case hex digits and
+// the pane is w<n>:p<n>.
+var panePrefix = regexp.MustCompile(`^/pane/([0-9a-f]{16})/(w[0-9]{1,9}:p[0-9]{1,9})(/|$)`)
+
+// SplitPanePath takes the pane prefix off a path: the floor, the pane and
+// the path without the prefix. A path with no well-formed prefix comes
+// back unchanged with an empty floor and pane.
+func SplitPanePath(path string) (floor, pane, rest string) {
+	m := panePrefix.FindStringSubmatchIndex(path)
+	if m == nil {
+		return "", "", path
+	}
+	rest = path[m[5]:]
+	if rest == "" {
+		rest = "/"
+	}
+	return path[m[2]:m[3]], path[m[4]:m[5]], rest
+}
+
 // ServeHTTP is the ASGI app.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
+	floor, pane, path := SplitPanePath(r.URL.Path)
 	if path == "/_reload" {
 		switch {
 		case s.Reloader == nil:
@@ -125,6 +146,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sendJSON(w, 403, errObj("reload is loopback only"))
 		default:
 			sendJSON(w, 200, pyjson.NewObject().Set("reloaded", s.Reloader.Reload()))
+		}
+		return
+	}
+	if path == "/_caps" {
+		switch {
+		case strings.ToUpper(r.Method) != "GET":
+			sendJSON(w, 405, errObj("caps accepts GET"))
+		case !isLoopback(r.RemoteAddr):
+			sendJSON(w, 403, errObj("caps is loopback only"))
+		default:
+			sendJSON(w, 200, pyjson.NewObject().Set("pane_prefix", true))
 		}
 		return
 	}
@@ -155,6 +187,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if st, err := get(v, "stream", nil); err == nil {
 			stream = st == true
 		}
+	}
+	if prepared != nil && pane != "" {
+		prepared.Pane, prepared.Floor = pane, floor
 	}
 	record := prepared
 	if gw != nil && gw.RouterMode != ModeRules && countTokens {

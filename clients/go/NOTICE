@@ -156,3 +156,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 LLVM libc++, libc++abi and libunwind are under the Apache License 2.0
 with LLVM Exceptions, whose exception lets a binary that embeds them
 carry no notice for them.
+
+Not in the shipped binaries: a build with the mujoco build tag (Go) or
+Cargo feature (Rust), such as the robot-probe test instrument, links
+MuJoCo 3.12.0 dynamically (libmujoco.so, the official release that
+scripts/native.sh --mujoco installs, checked against its published
+SHA-256) and the system's libEGL.
+  License: Apache License 2.0
+  Copyright 2021 DeepMind Technologies Limited

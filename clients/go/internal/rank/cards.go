@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -103,6 +104,9 @@ func ChoiceID(rankingID string, survivors [][2]string) string {
 // Card is rank.Card: the fold of one choice's rows.
 type Card struct {
 	Opened, Close, Answer *pyjson.Object
+	// Resumed holds the runs that resumed the plan while the choice was
+	// open, each once, in file order.
+	Resumed []string
 }
 
 // ID is the card's choice id.
@@ -182,6 +186,12 @@ func ReadCards(dataDir string) []*Card {
 		}
 		card := cards[cid]
 		evs, _ := ev.(string)
+		if card != nil && evs == "resumed" {
+			if run, ok := row.Value("run_id").(string); ok && !slices.Contains(card.Resumed, run) {
+				card.Resumed = append(card.Resumed, run)
+			}
+			continue
+		}
 		if card == nil || (evs != "confirmed" && evs != "overridden" && evs != "ignored") {
 			continue
 		}
@@ -376,11 +386,25 @@ func SwitchCost(card *Card, dataDir, to string) Switch {
 					in[s] = true
 				}
 			}
-			for _, r := range receipts(dataDir, rid) {
-				if in[r.step] {
-					later = append(later, r)
+			runs := []string{rid}
+			for _, r := range card.Resumed {
+				if r != rid {
+					runs = append(runs, r)
 				}
 			}
+			for _, run := range runs {
+				for _, r := range receipts(dataDir, run) {
+					if in[r.step] {
+						later = append(later, r)
+					}
+				}
+			}
+			sort.SliceStable(later, func(i, j int) bool {
+				if later[i].at != later[j].at {
+					return later[i].at < later[j].at
+				}
+				return later[i].step < later[j].step
+			})
 		}
 	}
 	var hard, undo []receipt

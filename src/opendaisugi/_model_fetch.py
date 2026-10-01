@@ -39,7 +39,9 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def fetch(url: str, sha256: str, dest: Path, *, size: int | None = None) -> Path:
+def fetch(
+    url: str, sha256: str, dest: Path, *, size: int | None = None, notice: bool = True
+) -> Path:
     """Return ``dest``. Download it first when it is absent or hash-mismatched.
 
     Resumes a partial download at ``<dest>.part`` with an HTTP Range request
@@ -48,7 +50,8 @@ def fetch(url: str, sha256: str, dest: Path, *, size: int | None = None) -> Path
     Verifies the sha256 of a complete file before it renames the file into
     place. Logs one notice that names the file and its size before the first
     network call this process makes for it. The notice never fires at
-    import, only when a caller needs the file.
+    import, only when a caller needs the file. ``notice=False`` drops it,
+    for a caller that says one line for a whole set of files itself.
     """
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -60,9 +63,12 @@ def fetch(url: str, sha256: str, dest: Path, *, size: int | None = None) -> Path
     part = dest.with_name(dest.name + ".part")
     resume_from = part.stat().st_size if part.exists() else 0
     size_note = f" of about {size // 1024 // 1024}MB" if size else ""
-    _log.warning("fetching %s%s from %s ...", dest.name, size_note, url)
+    if notice:
+        _log.warning("fetching %s%s from %s ...", dest.name, size_note, url)
 
-    req = urllib.request.Request(url)
+    # A plain name, not Python-urllib's default: download.moonshine.ai
+    # answers that one 403. The Go and Rust fetchers send the same name.
+    req = urllib.request.Request(url, headers={"User-Agent": "opendaisugi"})
     if resume_from:
         req.add_header("Range", f"bytes={resume_from}-")
     try:

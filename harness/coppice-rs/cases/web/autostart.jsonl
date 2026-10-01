@@ -1,0 +1,43 @@
+# web serve --persist saves web.json, and the coppice server starts the
+# phone server on its own from then on; --forget turns that off.
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v1", "cli": ["web", "serve", "--persist", "--tls", "off", "--listen", "{ADDR}", "--ca-listen", "off", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g1", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "f1", "file": "{DATA}/web/web.json"}
+{"id": "$id", "ok": true, "result": {"mode": "0o600"}}
+{"id": "l1", "ls": "{DATA}/web"}
+{"id": "$id", "ok": true, "result": "*"}
+#!restart
+{"id": "g2", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "g3", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1", "daisugi.bearer.pinned-web-token-0001"], "send": ["{\"id\":\"1\",\"cmd\":\"hello\"}"]}
+{"id": "$id", "ok": true, "result": {"status": 101}}
+{"id": "lg", "log": "web:"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "f2", "cli": ["web", "serve", "--forget"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+#!restart
+{"id": "g4", "http": "GET", "url": "http://{ADDR}/", "refused_ok": true}
+{"id": "$id", "ok": true, "result": {"refused": true}}
+# A saved config that cannot serve logs why and the server runs on.
+{"id": "w1", "write": "{DATA}/web/web.json", "text": "{\"enabled\": true, \"listen\": \"{ADDR}\", \"tls\": \"localca\", \"ca_dir\": \"{WORK}/noca\"}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+{"id": "s1", "cmd": "server.status"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "z1", "sleep": 500}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "lg2", "log": "web:"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "w2", "write": "{DATA}/web/web.json", "text": "{not json"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+{"id": "s2", "cmd": "server.status"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "lg3", "log": "web:"}
+{"id": "$id", "ok": true, "result": "*"}

@@ -15,6 +15,7 @@ import (
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/switchyard"
+	"daisugi-verify/internal/voice"
 )
 
 // This file is opendaisugi.modules: the module map `daisugi modules`
@@ -190,7 +191,7 @@ func (e *Env) opencodePluginPath() string {
 // coppiceSocketPresent is modules._coppice_socket_present: a socket this
 // user owns at the coppice server path, not followed through a link.
 func (e *Env) coppiceSocketPresent() bool {
-	base := gateroot.Join(e.home, ".opendaisugi/coppice")
+	base := gateroot.Join(e.dataHome(), "coppice")
 	if rt := e.env["XDG_RUNTIME_DIR"]; rt != "" {
 		base = gateroot.Join(gateroot.PathStr(rt), "coppice")
 	}
@@ -245,7 +246,7 @@ func (e *Env) wiringRead(cmd, dataDir string) (*wiringPre, error) {
 	pre := &wiringPre{}
 	// gather_status first asks the matcher's threshold, which loads the
 	// config in the default data directory.
-	hcfg, herr := config.Load(gateroot.Join(e.home, ".opendaisugi/config.yaml"))
+	hcfg, herr := config.Load(gateroot.Join(e.dataHome(), "config.yaml"))
 	if herr != nil {
 		return nil, e.configLoadErr(cmd, herr)
 	}
@@ -410,8 +411,32 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 			fmt.Sprintf("%s (%s, %s, %s)", netloc, kind, model, ctx), modAvailable,
 			"recorded. Export the env lines from `tiers setup --remote` to use it"})
 	}
+	// The engine the config means (engines.resolve_engine): with the voice
+	// settings at their defaults, the engine the hardware picks among those
+	// installed (VO-17); faster-whisper never imports here.
+	whisperCli, moonCli, paraCli := which("whisper-cli"), which("moonshine-cli"), which("parakeet-cli")
+	voiceSel, voiceModel := cfg.VoiceEngine, cfg.VoiceModel
+	if voiceSel == voice.DefaultEngine && voiceModel == voice.DefaultModel {
+		menv := voice.ModelEnv{Lookup: func(k string) (string, bool) { v, ok := e.env[k]; return v, ok },
+			Hardware: e.voiceHardware}
+		voiceSel, voiceModel, _ = voice.ChooseEngine(menv.DetectHardware(),
+			map[string]bool{"moonshine": moonCli, "parakeet": paraCli}, false,
+			voice.ParakeetUsable(voice.ParakeetDefaultModel, menv, voice.Machine()))
+	}
+	moonModel := "small"
+	if voiceSel == "moonshine" && voiceModel != voice.DefaultModel {
+		moonModel = voiceModel
+	}
+	paraNote := "model NVIDIA Parakeet-TDT-0.6B v2, CC-BY-4.0"
+	moonNote := "needs moonshine-cli on PATH (scripts/install.sh)"
+	if moonCli {
+		moonNote = "moonshine-cli on PATH"
+		if moonModel == "tiny" || moonModel == "small" || moonModel == "medium" {
+			moonNote = "moonshine-cli on PATH; " + moonModel + ", fetched on first use"
+		}
+	}
 	voiceState := func(key string, installed bool) string {
-		if cfg.VoiceEngine == key && installed {
+		if voiceSel == key && installed {
 			return modActive
 		}
 		if installed {
@@ -526,7 +551,10 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 		}},
 		{"voice_engine", "voice engine (speech to text)", "turns a recorded clip into text for the voice bridge", []wModule{
 			{"faster-whisper", voiceState("faster-whisper", false), "needs opendaisugi[voice]"},
-			{"parakeet", modPossible, "needs opendaisugi[voice-parakeet]"},
+			{"moonshine", voiceState("moonshine", moonCli), moonNote},
+			{"parakeet", voiceState("parakeet", paraCli), cond(paraCli, "parakeet-cli on PATH; "+paraNote,
+				"needs parakeet-cli on PATH (scripts/install.sh); "+paraNote)},
+			{"whisper.cpp", voiceState("whisper.cpp", whisperCli), cond(whisperCli, "whisper-cli on PATH", "needs whisper-cli on PATH")},
 		}},
 	}, nil
 }

@@ -868,7 +868,8 @@ disagreements. The 7 refused, the tree unchanged, are the Go binary's 7 by
 name: YAML the binary does not read (`run envelope not yaml`, `run plan
 not yaml`, `orch envelope not yaml`; K2-3), `--max-parallel` above 1
 (K2-4), a stale-embeddings warning (K2-5), and an `llm_check` invariant and
-postcondition (K2-8). Python read back every journal and pathway store the
+postcondition (K2-8). (Since then all but K2-8 retired: YM-1, MP-1, PG-1 and,
+on 2026-10-08, RF-4 for the warning.) Python read back every journal and pathway store the
 binary wrote (99 cases). `cargo test` reaches what no case can: the
 per-step rejection and the recompute fallback (K2-1), and a Z3 check that
 answers `unknown` in the verify before `run`, in the decomposition, before
@@ -924,6 +925,7 @@ port's own.
 | `src/cli/mcpcmd.rs` | `daisugi mcp serve` and the 11 tools |
 | `src/cli/onboardcmd.rs` | `daisugi onboard`: discovery, the split cache, the ingest, the report |
 | `src/cli/setupcmd.rs` | `daisugi tiers setup` and `daisugi setup` |
+| `src/cli/modelscmd.rs` | `daisugi models list`, `search` and `use`: the catalog (`model_catalog.json`, included at build time), the default by hardware, the Hugging Face search and its filters (MC-R-1 to MC-R-7); `models pin` (`src/cli/modelspin.rs`), `--pull` included, as huggingface_hub does it (RF-7) |
 | `src/pathways/verify.rs` | `stage2_violations`: `verify_completed_step` with each violation's detail |
 | `src/tracejournal/runs.rs` | `receipts`: `receipts_for_run` as the Receipt model reads it |
 

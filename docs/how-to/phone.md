@@ -24,7 +24,7 @@ honest ways to get one.
 | Who issues it | Let's Encrypt, through Tailscale | your own box |
 | What leaves the box | your machine name, onto a public certificate ledger | nothing |
 | Phone setup | none | install one certificate, once |
-| Renewal | yours, every 90 days | ten years |
+| Renewal | automatic, while coppice web serve runs | ten years |
 | Works off the tailnet | no | yes, on any LAN |
 
 Pick `tailscale` if publishing `<machine>.<tailnet>.ts.net` on a public ledger
@@ -44,27 +44,34 @@ another room.
 3. Under HTTPS Certificates, choose Enable HTTPS.
 4. Acknowledge the notice. Your machine names go into a public ledger. Do not
    turn this on if a machine name is sensitive.
-5. On the box, ask for the certificate:
+5. On the box, run one command:
 
 ```bash
-coppice web cert tailscale box.tail1234.ts.net
+coppice web serve --tls tailscale --persist
 ```
 
-That runs `tailscale cert` with explicit `--cert-file` and `--key-file` paths
-and writes the pair under `~/.opendaisugi/coppice/web/tls/`.
+That does the whole job. It reads this box's MagicDNS name and tailnet
+address from `tailscale status --json`, runs `tailscale cert` with explicit
+`--cert-file` and `--key-file` paths into `~/.opendaisugi/coppice/web/tls/`,
+and prints the QR to scan with the token in it. The first time it also says
+`This name is now in public certificate logs: <name>.` Then it prints one
+line that says where it listens: the tailnet address and 127.0.0.1, on port
+8443, and nowhere else. No device on your LAN or in a cafe sees the port.
+With `--persist` the next `coppice` start serves the phone the same way.
 
-6. Start the server:
+To change the port and keep the tailnet-only listen, give a `--listen` with no
+host, such as `--listen :9443`. A `--listen` with a host, such as
+`--listen 0.0.0.0:8443`, listens there instead.
 
-```bash
-coppice web serve --tls tailscale --external-url https://box.tail1234.ts.net:8443
-```
+Let's Encrypt certificates last 90 days. The server gets a new one when under
+30 days are left, at start and once a day while it runs, and serves it from
+the next connection. If that keeps failing, the floor header warns 7 days
+before the end, with Renew, which types `coppice web cert tailscale` in a
+shell on the box.
 
-No `--cert` or `--key` needed here. `--tls tailscale` reads the same pair
-`coppice web cert tailscale` just wrote, from the same data directory. Pass
-`--cert` and `--key` yourself only when the pair lives somewhere else.
-
-Let's Encrypt certificates last 90 days. Renewal is yours. The server warns
-in its log for the last 14 days.
+With no tailscale on PATH, the command says so in one line and stops. If
+`tailscale cert` says access denied, run `sudo tailscale set --operator=$USER`
+once.
 
 ## Path B: the local CA
 
@@ -224,7 +231,8 @@ server with itself, so there is one process to keep alive instead of two.
 | That token is not accepted. Run coppice web token and scan the QR again. | The token on the phone is stale. Do exactly that. The app stops retrying on purpose, so it does not get your own address banned. |
 | No token. Open Settings and paste one. | Nothing is stored yet. Scan the QR from `coppice web token`. |
 | Too many bad tokens. Waiting one minute. | Three wrong tokens came from your address. Wait, then scan the QR. |
-| Reconnecting. | The box is unreachable. Check the tailnet or the LAN. The app backs off to thirty seconds and keeps trying. |
+| Cannot reach the box. Turn on Tailscale on this phone. The box may be asleep or off. | The phone cannot reach the box. Turn on Tailscale on the phone, or wake the box. The app backs off to thirty seconds and keeps trying; Retry tries now. |
+| The mic needs https here. | The page came over plain http, so the browser gives it no microphone. On the box, run `coppice web serve --tls tailscale` and open the address it prints. |
 | coppice-server did not answer. Run coppice server status. | This is the roster's cold read, before the socket is open. The coppice server is not running, or `--socket` does not match. Run `coppice server status`, then `coppice server start` if it says nothing is running. |
 | Add to home screen is missing | The page is not a secure context. Fix the certificate first. |
 | No panes yet. Tap New to start one. | There really are no panes. A refusal is never shown this way; it shows on the status line as `server refused: ...`. Tap New to start one, or run `coppice pane list` on the box to confirm the server really has none. |

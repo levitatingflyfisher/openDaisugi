@@ -54,6 +54,8 @@ type Config struct {
 	Gateway *string `toml:"gateway,omitempty"`
 	// Voice is the [voice] table. See Voice.
 	Voice Voice `toml:"voice,omitempty"`
+	// Foreman is the [foreman] table. See Foreman.
+	Foreman Foreman `toml:"foreman,omitempty"`
 }
 
 // DefaultGateway is where `daisugi gateway` listens when started with no

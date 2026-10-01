@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  overlayNext, escCloses, verdictOfDetail, journalFromEvents, seeVerdicts, journal, readPinned, savePinned,
-  JOURNAL, COLONY, JOURNAL_KEPT,
+  overlayNext, escCloses, journalRows, readPinned, savePinned,
+  JOURNAL, COLONY, JOURNAL_KEPT, JOURNAL_SOURCE, isPanel, panelEsc, PANELS,
 } from '../overlay.js';
 
 test('an overlay opens with its selection, closes, and the journal keeps its agent', () => {
@@ -35,49 +35,36 @@ test('Esc closes an overlay only while the keys are not in a window', () => {
   assert.equal(escCloses(null, 'rail'), false);
 });
 
-test('a gate report detail reads as its verdict', () => {
-  assert.deepEqual(verdictOfDetail('verdict=allow'), { decision: 'allow', clause: '' });
-  assert.deepEqual(verdictOfDetail('verdict=deny clause=shell: curl | sh'), { decision: 'deny', clause: 'shell: curl | sh' });
-  assert.deepEqual(verdictOfDetail('verdict=deny'), { decision: 'deny', clause: '' });
-  assert.equal(verdictOfDetail('output in the last 5 s'), null);
-  assert.equal(verdictOfDetail('verdict=allowed'), null);
-  assert.equal(verdictOfDetail(undefined), null);
-});
-
-test('the journal takes gate verdicts and asks from state events, newest first', () => {
-  const events = [
-    { event: 'state', pane: 'a', source: 'gate', state: 'working', detail: 'verdict=allow', ts: 10 },
-    { event: 'state', pane: 'a', source: 'process', state: 'working', detail: 'verdict=allow', ts: 11 },
-    { event: 'state', pane: 'b', source: 'gate', state: 'working', detail: 'verdict=deny clause=net', ts: 12 },
-    { event: 'state', pane: 'a', source: 'gate', state: 'blocked', detail: 'awaiting operator', ask: { tool: 'Bash', summary: 'git push' }, ts: 13 },
-    { event: 'note', pane: 'a', text: 'verdict=allow', ts: 14 },
-    { event: 'state', pane: 'a', source: 'gate', state: 'working', detail: 'no verdict here', ts: 15 },
+test('the journal rows are the server entries, newest first, for one agent or all', () => {
+  const entries = [
+    { at: 10, pane: 'a', decision: 'allow', tool: 'Read', clause: '' },
+    { at: 12, pane: 'b', decision: 'deny', tool: 'Bash', clause: 'net', mode: 'enforcing' },
+    { at: 13, pane: 'a', decision: 'ask', tool: 'Bash', clause: '' },
+    { at: 'x', pane: 'a', decision: 'allow' },
+    { pane: 'a', decision: 'allow' },
+    null,
   ];
-  assert.deepEqual(journalFromEvents(events).map((e) => [e.pane, e.decision, e.ts]), [['a', 'ask', 13], ['b', 'deny', 12], ['a', 'allow', 10]]);
-  const ask = journalFromEvents(events, 'a')[0];
-  assert.deepEqual([ask.tool, ask.what], ['Bash', 'git push']);
-  assert.deepEqual(journalFromEvents(events, 'b').map((e) => e.clause), ['net']);
-  assert.deepEqual(journalFromEvents(null), []);
-});
-
-test('the page keeps each new last verdict it sees once', () => {
-  const seen = seeVerdicts(new Map(), [{ id: 'a', gate: { decision: 'deny', tool: 'Bash', clause: 'net', at: 20 } }, { id: 'b' }]);
-  seeVerdicts(seen, [{ id: 'a', gate: { decision: 'deny', tool: 'Bash', clause: 'net', at: 20 } }]);
-  seeVerdicts(seen, [{ id: 'a', gate: { decision: 'allow', tool: 'Read', clause: '', at: 25 } }, { id: 'c', gate: { decision: 'what', at: 1 } }]);
-  assert.deepEqual([...seen.values()].map((e) => [e.pane, e.decision, e.tool, e.ts]), [['a', 'deny', 'Bash', 20], ['a', 'allow', 'Read', 25]]);
-  const many = new Map();
-  for (let i = 0; i < JOURNAL_KEPT + 5; i += 1) seeVerdicts(many, [{ id: 'a', gate: { decision: 'allow', at: i } }]);
-  assert.equal(many.size, JOURNAL_KEPT);
-});
-
-test('the journal merges both sources and a seen verdict wins over the same event', () => {
-  const fromEvents = journalFromEvents([
-    { event: 'state', pane: 'a', source: 'gate', state: 'working', detail: 'verdict=deny clause=net', ts: 21 },
-    { event: 'state', pane: 'a', source: 'gate', state: 'working', detail: 'verdict=allow', ts: 5 },
+  assert.deepEqual(journalRows(entries).map((e) => [e.pane, e.decision, e.ts]), [['a', 'ask', 13], ['b', 'deny', 12], ['a', 'allow', 10]]);
+  assert.deepEqual(journalRows(entries, 'b').map((e) => [e.clause, e.mode]), [['net', 'enforcing']]);
+  assert.deepEqual(journalRows(null), []);
+  const odd = journalRows([
+    { at: 1, pane: 'a', decision: 'ask' },
+    { at: 2, pane: 'a', decision: 'x" onclick="y' },
+    { at: 3, pane: 'a', decision: 'deny gate-allow' },
   ]);
-  const seen = seeVerdicts(new Map(), [{ id: 'a', gate: { decision: 'deny', tool: 'Bash', clause: 'net', at: 20 } }, { id: 'b', gate: { decision: 'allow', tool: 'Read', at: 30 } }]);
-  assert.deepEqual(journal(fromEvents, seen).map((e) => [e.pane, e.decision, e.tool, e.ts]), [['b', 'allow', 'Read', 30], ['a', 'deny', 'Bash', 20], ['a', 'allow', '', 5]]);
-  assert.deepEqual(journal(fromEvents, seen, 'b').map((e) => e.pane), ['b']);
+  assert.deepEqual(odd.map((e) => e.kind), ['other', 'other', 'ask']);
+  assert.equal(odd[0].decision, 'deny gate-allow');
+});
+
+test('the journal shows at most what the server keeps, and says what it lists', () => {
+  const many = [];
+  for (let i = 0; i < JOURNAL_KEPT + 7; i += 1) many.push({ at: i, pane: 'a', decision: 'allow' });
+  const rows = journalRows(many);
+  assert.equal(rows.length, JOURNAL_KEPT);
+  assert.equal(rows[0].ts, JOURNAL_KEPT + 6);
+  assert.match(JOURNAL_SOURCE, /verdicts the gate and each agent's loop report/);
+  assert.match(JOURNAL_SOURCE, /100 per agent, 500 in all, oldest first/);
+  assert.match(JOURNAL_SOURCE, /restart/);
 });
 
 test('the colony pin is kept in storage, and broken storage reads as not pinned', () => {
@@ -89,4 +76,16 @@ test('the colony pin is kept in storage, and broken storage reads as not pinned'
   const broken = { getItem: () => { throw new Error('no'); }, setItem: () => { throw new Error('no'); } };
   assert.equal(readPinned(broken), false);
   savePinned(broken, true);
+});
+
+test('New and Settings are panels over the floor, and Esc closes them unless a window has the keys', () => {
+  assert.deepEqual([...PANELS], ['new', 'settings']);
+  assert.equal(isPanel('new'), true);
+  assert.equal(isPanel('settings'), true);
+  assert.equal(isPanel('roster'), false);
+  assert.equal(isPanel('pane'), false);
+  assert.equal(panelEsc('new', 'rail'), true);
+  assert.equal(panelEsc('settings', 'rail'), true);
+  assert.equal(panelEsc('new', 'window'), false);
+  assert.equal(panelEsc('roster', 'rail'), false);
 });

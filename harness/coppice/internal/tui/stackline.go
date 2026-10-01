@@ -23,6 +23,10 @@ func stackText(p map[string]any) string {
 		if d, ok := st["daisugi"].(map[string]any); ok {
 			if mode := str(d, "mode"); mode != "" {
 				text := "daisugi " + mode
+				// The owner set watching; the gate reads it on the next call.
+				if str(d, "marker") == "watching" && mode != "watching" {
+					text += " → watching"
+				}
 				if armed, isBool := d["armed"].(bool); isBool && !armed {
 					text += " disarmed"
 				}
@@ -56,6 +60,14 @@ func stackText(p map[string]any) string {
 		parts[i] = textwidth.Printable(parts[i], 0)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// daisugiOf is the daisugi mode a pane.list row reports and the marker
+// the owner set, "watching" or "".
+func daisugiOf(p map[string]any) (mode, marker string) {
+	st, _ := p["stack"].(map[string]any)
+	d, _ := st["daisugi"].(map[string]any)
+	return str(d, "mode"), str(d, "marker")
 }
 
 // countText is a token count in few cells: 950, 12k, 1.2M.

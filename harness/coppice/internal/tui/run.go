@@ -441,8 +441,13 @@ type floor struct {
 	// and voiceChecked carries its answer.
 	checking     bool
 	voiceChecked chan voiceCheck
-	keysToTalk   time.Time
-	awaitDevice  bool
+	// watching is true while a watch follows a starting voice; voiceLines
+	// carries what it finds, and closing stopWatch ends it.
+	watching    bool
+	voiceLines  chan voiceLine
+	stopWatch   chan struct{}
+	keysToTalk  time.Time
+	awaitDevice bool
 	// hearing counts clips sent and not yet heard back.
 	hearing int
 	// utf8Pending holds the bytes of a multi-byte rune typed into a
@@ -668,7 +673,7 @@ func (f *floor) setTyping(id string) {
 	f.kr = nil
 	f.utf8Pending = nil
 	f.m.Typing = id
-	if id == "" || f.m.isHeadless(id) {
+	if id == "" || f.m.takesLine(id) {
 		return
 	}
 	f.kr = attach.NewKeyReader(f.o.Leave)
@@ -693,6 +698,13 @@ func (f *floor) armHold() {
 // byte already waiting after it, then sends the text. It stops early when
 // a byte gives the keyboard away. closed is true when the keys closed.
 func (f *floor) typeKeys(b byte) (closed bool, err error) {
+	if f.kr == nil {
+		// The window stopped taking lines: it takes raw keys now.
+		f.setTyping(f.m.Typing)
+		if f.kr == nil {
+			return false, nil
+		}
+	}
 	for {
 		if f.talkWants(b) {
 			// The talk key never reaches the agent. It goes back to be
@@ -758,14 +770,16 @@ func (f *floor) headlessKeys(b byte) (closed bool, err error) {
 				}
 				continue
 			}
-			if f.m.Typing != start {
+			if f.m.Typing != start || !f.m.takesLine(start) {
 				break
 			}
 			if err := f.headlessKey(k); err != nil {
 				return false, err
 			}
 		}
-		if closed || f.m.Typing != start {
+		// A window that stopped taking lines hands what is left to typeKeys,
+		// through the next key.
+		if closed || f.m.Typing != start || !f.m.takesLine(start) {
 			break
 		}
 		next, more, open := f.nextKey()
@@ -809,6 +823,14 @@ func (f *floor) headlessKey(k key) error {
 		switch {
 		case k.b == m.Leave:
 			f.setTyping("")
+		case k.b == 0x09 && m.toggleWord(id) != "": // Tab: Screen
+			// A Tab with more bytes behind it is part of a paste: a space.
+			if f.moreWaiting() {
+				f.headlessInsert(id, " ")
+				return nil
+			}
+			f.toggleScreen()
+			f.setTyping(id)
 		case k.b == 0x15: // ctrl-u
 			m.setHeadlessBuf(id, "", 0)
 		case k.b == 0x7f || k.b == 0x08:
@@ -892,6 +914,20 @@ func (f *floor) headlessMove(id string, dir int) {
 func (f *floor) sendHeadlessLine(id string) error {
 	text, _ := f.m.headlessBuf(id)
 	if text == "" {
+		return nil
+	}
+	if id == f.m.ForemanID && !f.m.chatWindow(id) && !f.m.isHeadless(id) {
+		// The foreman's terminal takes keys, never a line.
+		return nil
+	}
+	if f.m.chatWindow(id) {
+		// The foreman's chat line sends the words to the foreman, not
+		// keys to its terminal.
+		if _, err := call(f.o.Socket, "floor.talk", map[string]any{"text": text}); err != nil {
+			return f.fail(err)
+		}
+		f.m.setHeadlessBuf(id, "", 0)
+		f.readChat()
 		return nil
 	}
 	if _, err := call(f.o.Socket, "agent.prompt", map[string]any{"pane": id, "text": text}); err != nil {
@@ -1184,16 +1220,23 @@ func Run(o Options) error {
 		// One check runs at a time, so one slot means it never waits on a
 		// floor that quit.
 		voiceChecked: make(chan voiceCheck, 1),
+		voiceLines:   make(chan voiceLine, 1),
+		stopWatch:    make(chan struct{}),
 	}
+	defer close(f.stopWatch)
 	defer f.detachAll()
 	// A clip still recording is thrown away and the kitty flags come off
 	// before the terminal is given back.
 	defer f.stopVoice()
 	f.seedNotes()
+	// The foreman and its chat are read first, so the first fill puts the
+	// foreman after the agents that need you.
+	f.readFacts()
+	f.readChat()
 	if err := f.refresh(); err != nil {
 		return err
 	}
-	f.readFacts()
+	f.sayRestart()
 	f.startFill()
 	if err := f.render(); err != nil {
 		return err
@@ -1237,6 +1280,11 @@ func Run(o Options) error {
 			}
 		case c := <-f.voiceChecked:
 			f.voiceCheckDone(c)
+			if err := f.render(); err != nil {
+				return err
+			}
+		case l := <-f.voiceLines:
+			f.voiceProgressed(l)
 			if err := f.render(); err != nil {
 				return err
 			}
@@ -1299,6 +1347,8 @@ func Run(o Options) error {
 				return err
 			}
 			f.readFacts()
+			f.readJournal()
+			f.readChat()
 			if err := f.render(); err != nil {
 				return err
 			}
@@ -1424,10 +1474,22 @@ func (f *floor) key(b byte) (end bool, err error) {
 		return closed, nil
 	}
 	f.m.keyPressed()
+	if f.m.Restarted > 0 {
+		// Any key ends the restart line. R is the one that acts on it.
+		resume := b == 'R' && f.m.Typing == "" && !f.m.modal()
+		f.m.Restarted = 0
+		f.m.Message = ""
+		if resume {
+			if err := f.resumeAllEnded(); err != nil {
+				return false, err
+			}
+			return false, f.render()
+		}
+	}
 	if f.m.Typing != "" {
 		var closed bool
 		var err error
-		if f.m.isHeadless(f.m.Typing) {
+		if f.m.takesLine(f.m.Typing) {
 			closed, err = f.headlessKeys(b)
 		} else {
 			closed, err = f.typeKeys(b)
@@ -1656,6 +1718,8 @@ func (f *floor) treeKey(k key) {
 func (f *floor) up() {
 	m := f.m
 	switch {
+	case m.Journal != nil:
+		m.Journal = nil
 	case m.Tree != nil:
 		m.Tree = nil
 	case m.Peek != nil:
@@ -1758,6 +1822,17 @@ func (f *floor) newSize() (cols, rows int) {
 // less attach's status row, with the extra params added, and returns
 // the new pane id.
 func (f *floor) create(extra map[string]any) (string, error) {
+	res, err := f.createReply(extra)
+	if err != nil {
+		return "", err
+	}
+	id, _ := res["pane"].(string)
+	return id, nil
+}
+
+// createReply is create with the whole reply: the pane, its label and
+// directory, and why that directory.
+func (f *floor) createReply(extra map[string]any) (map[string]any, error) {
 	cols, rows := f.newSize()
 	params := map[string]any{"cwd": f.o.Cwd, "kind": "pty", "cols": cols, "rows": rows}
 	for k, v := range extra {
@@ -1765,13 +1840,12 @@ func (f *floor) create(extra map[string]any) (string, error) {
 	}
 	res, err := call(f.o.Socket, "pane.create", params)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	id, _ := res["pane"].(string)
-	if id == "" {
-		return "", errors.New("the server created no pane. Run: coppice pane list")
+	if id, _ := res["pane"].(string); id == "" {
+		return nil, errors.New("the server created no pane. Run: coppice pane list")
 	}
-	return id, nil
+	return res, nil
 }
 
 // peek opens the peek on the row under the cursor: the pane's visible text
@@ -1841,6 +1915,11 @@ func (f *floor) talk(line string) error {
 	if err := f.refresh(); err != nil {
 		return err
 	}
+	// The pane floor.talk names is the foreman: its window draws the chat.
+	if id != "" && id != m.ForemanID {
+		f.setForeman(id)
+	}
+	f.readChat()
 	cols, _ := f.o.Size()
 	if id != "" && windowCount(cols) > 0 && m.Tiles != nil {
 		if _, shown := m.Tiles.SlotOf(id); !shown {
@@ -2226,6 +2305,11 @@ func (f *floor) saveFloor() error {
 func (f *floor) attachTo(id string) error {
 	if f.m.isHeadless(id) {
 		return f.attachHeadless(id)
+	}
+	// The foreman's chat is a window: Enter on its row types there. Only
+	// a screen with no window for it, or its Screen view, attaches.
+	if f.m.chatWindow(id) && f.typeInTile(id) {
+		return nil
 	}
 	defer func() { f.fw.clear = true }()
 	attached := id

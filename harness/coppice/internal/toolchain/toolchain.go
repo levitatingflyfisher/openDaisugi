@@ -8,25 +8,40 @@ import (
 	"path/filepath"
 )
 
-// GhosttyPrefix is where scripts/toolchain.sh installs libghostty-vt.
+// GhosttyPrefix is where scripts/toolchain.sh installs libghostty-vt:
+// COPPICE_GHOSTTY_PREFIX when set; else ~/.local/ghostty-vt when a build is
+// already there (an older toolchain.sh put it there); else
+// $XDG_DATA_HOME/opendaisugi/ghostty-vt, with ~/.local/share for an unset
+// XDG_DATA_HOME. toolchain.sh and preflight.sh apply the same rule.
 func GhosttyPrefix() string {
 	if p := os.Getenv("COPPICE_GHOSTTY_PREFIX"); p != "" {
 		return p
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".local/ghostty-vt"
+		home = ""
 	}
-	return filepath.Join(home, ".local", "ghostty-vt")
+	legacy := filepath.Join(home, ".local", "ghostty-vt")
+	if hasPC(legacy) {
+		return legacy
+	}
+	data := os.Getenv("XDG_DATA_HOME")
+	if data == "" {
+		data = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(data, "opendaisugi", "ghostty-vt")
+}
+
+func hasPC(prefix string) bool {
+	_, err := os.Stat(filepath.Join(prefix, "share", "pkgconfig", "libghostty-vt-static.pc"))
+	return err == nil
 }
 
 // HaveGhosttyVT reports whether the static pkg-config file exists. That file is
 // what the cgo directive in go-libghostty resolves, so its presence is the
 // honest test of "can this package link".
 func HaveGhosttyVT() bool {
-	pc := filepath.Join(GhosttyPrefix(), "share", "pkgconfig", "libghostty-vt-static.pc")
-	_, err := os.Stat(pc)
-	return err == nil
+	return hasPC(GhosttyPrefix())
 }
 
 // SkipReason is empty when the build deps are present. Otherwise it is the

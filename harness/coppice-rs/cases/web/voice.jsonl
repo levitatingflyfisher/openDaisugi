@@ -1,0 +1,59 @@
+# Voice on the web server: --voice-url to a fake voice server, with the
+# web token or a voice token file, and the relay of its replies.
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "w1", "write": "{WORK}/voice-token", "text": "voice-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/usr/bin/python3", "{FIXTURES}/web/fake-voice.py", "{ADDR2}", "{DATA}/web/token"], "kind": "pty", "label": "voice"}
+{"id": "$id", "ok": true, "result": {"pane": "$v"}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false", "--voice-url", "http://{ADDR2}/"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "s1", "http": "GET", "url": "http://{ADDR}/api/voice/status", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "s2", "http": "POST", "url": "http://{ADDR}/api/voice/retry", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "h0", "http": "GET", "url": "http://{ADDR2}/", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 501}}
+{"id": "t1", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe?lang=en&x=1", "headers": {"Authorization": "Bearer pinned-web-token-0001", "Content-Type": "audio/webm"}, "body": "a clip"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t2", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "silence"}
+{"id": "$id", "ok": true, "result": {"status": 422}}
+{"id": "t3", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "plain"}
+{"id": "$id", "ok": true, "result": {"status": 500}}
+{"id": "t4", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": ""}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t4b", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe", "headers": {"Authorization": "Bearer pinned-web-token-0001", "Expect": "100-continue"}, "body": "a clip that waited"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# A voice token file: that token goes, not the web token.
+{"id": "v2", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false", "--voice-url", "http://{ADDR2}", "--voice-token-file", "{WORK}/voice-token"], "bg": "web2"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "t5", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "a clip", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 401}}
+{"id": "x2", "stop": "web2"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "v3", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false", "--voice-url", "http://{ADDR2}", "--voice-token-file", "{WORK}/missing-token"], "bg": "web3"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "s3", "http": "GET", "url": "http://{ADDR}/api/voice/status", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t6", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "a clip"}
+{"id": "$id", "ok": true, "result": {"status": 503}}
+{"id": "x3", "stop": "web3"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# A voice server on another machine with no token file of its own.
+{"id": "v4", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false", "--voice-url", "http://voice.test:7477"], "bg": "web4"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "s4", "http": "GET", "url": "http://{ADDR}/api/voice/status", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t7", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "a clip"}
+{"id": "$id", "ok": true, "result": {"status": 503}}
+{"id": "x4", "stop": "web4"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# A loopback voice server that does not answer.
+{"id": "v5", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false", "--voice-url", "http://127.0.0.1:1"], "bg": "web5"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "t8", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "a clip", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 502}}
+{"id": "x5", "stop": "web5"}
+{"id": "$id", "ok": true, "result": {"code": 0}}

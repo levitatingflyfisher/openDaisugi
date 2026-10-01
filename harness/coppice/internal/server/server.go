@@ -112,6 +112,8 @@ type Config struct {
 	// Voice says whether the server runs a voice server of its own. The
 	// zero value starts none until voice.start asks.
 	Voice VoiceConfig
+	// Foreman is the [foreman] table. The zero value is pane mode.
+	Foreman ForemanConfig
 }
 
 // EventQueue is how many unsent events one client may fall behind by. A PWA on
@@ -153,6 +155,13 @@ type Client struct {
 	// and agent.prompt refuse a pane marked here. A plain pane.attach, a
 	// pane.detach, or the frame pump forgetting the pane clears the mark.
 	viewOnly map[string]bool
+
+	// fitEnded marks, under mu, every pane whose fit for this connection
+	// a pane.resize ended. pane.attach does not fit such a pane for this
+	// connection again: the presence the resize sends would make a phone
+	// refit at once and undo the resize. A pane.detach, or the frame pump
+	// forgetting the pane, clears the mark, so a fresh attach fits again.
+	fitEnded map[string]bool
 
 	// tearing is 0 until this client's connection starts tearing down, then
 	// 1 for the rest of its life. teardownWriter reads it before every
@@ -228,6 +237,7 @@ func newClient(w io.Writer) *Client {
 		SubPanes:  map[string]bool{},
 		autoPanes: map[string]bool{},
 		viewOnly:  map[string]bool{},
+		fitEnded:  map[string]bool{},
 		events:    make(chan any, EventQueue),
 		dead:      make(chan struct{}),
 	}
@@ -310,12 +320,17 @@ type Handler func(c *Client, r *proto.Request) proto.Response
 // RestoreReport is what a restart actually achieved. It is
 // declared here because handleStatus returns it and Server owns the field.
 type RestoreReport struct {
-	Panes         int      `json:"panes"`
-	AlreadyClosed int      `json:"already_closed"`
-	Resumed       int      `json:"resumed"`
-	MarkedDone    int      `json:"marked_done"`
-	MarkedUnknown int      `json:"marked_unknown"`
-	Notes         []string `json:"notes"`
+	Panes         int `json:"panes"`
+	AlreadyClosed int `json:"already_closed"`
+	Resumed       int `json:"resumed"`
+	MarkedDone    int `json:"marked_done"`
+	MarkedUnknown int `json:"marked_unknown"`
+	// Resumable is how many of the records this restart marked ended are
+	// still in Recent and could still resume. It is filled when
+	// server.status reads the report, so it falls as they are resumed or
+	// forgotten.
+	Resumable int      `json:"resumable"`
+	Notes     []string `json:"notes"`
 }
 
 // Server declares every field it owns in one place, rather than letting
@@ -388,6 +403,14 @@ type Server struct {
 	liveMu sync.RWMutex
 	live   map[string]*LivePane
 
+	// dataMu and dataShut make sure a server that has closed writes
+	// nothing more into its data dir. Every write into it runs through
+	// writeData, which holds dataMu for reading and checks dataShut. Close
+	// takes dataMu for writing to set dataShut, so it waits for each write
+	// already in flight, and no write starts after it.
+	dataMu   sync.RWMutex
+	dataShut bool
+
 	// resumeMu guards resuming: the set of pane ids a pane.resume call
 	// currently has claimed. handlePaneResume claims an id before it
 	// reads the tree, and holds the claim for the whole call, so two
@@ -419,7 +442,15 @@ type Server struct {
 	// never held at once.
 	factsMu sync.Mutex
 	facts   map[string]*paneFacts
-	claims  map[string]string
+	// claims maps each transcript's real path to the pane that named it,
+	// for good. It is loaded from the data dir on first use.
+	claims       map[string]claimRec
+	claimsLoaded bool
+	// journal is the last verdicts a gate told the server. See journal.go.
+	journal verdictJournal
+	// saved caches what floor.facts read from the gateway turn journal.
+	saved        savedCache
+	claimsBroken bool
 	// factsEvery is the shortest time between two reads of one pane's
 	// transcript. A test sets it to zero.
 	factsEvery time.Duration
@@ -434,10 +465,16 @@ type Server struct {
 	// getenv reads the server's own environment, which every pane
 	// inherits. A test replaces it.
 	getenv func(string) string
+	// startVeto, when a test sets it, can refuse a pane's start before it
+	// runs, so a failed start can be tested without a broken machine.
+	startVeto func(layout.Pane) error
 	// outside caches the gateway address, its router and whether it
 	// answers, under outsideMu. See facts_stack.go.
 	outsideMu sync.Mutex
 	outside   outsideCache
+	// caps is what each gateway address said about the pane prefix, under
+	// outsideMu. See gatewayStamps.
+	caps map[string]capsAnswer
 
 	mu       sync.Mutex
 	ln       net.Listener
@@ -451,6 +488,8 @@ type Server struct {
 	// the same mu.
 	endedSweepStop chan struct{}
 	restore        RestoreReport
+	// restored holds the ids of the records Restore marked ended, under mu.
+	restored       map[string]bool
 	detectWarnings []string
 
 	// closeDone is closed once, by the first call to Close, after teardown
@@ -466,6 +505,12 @@ type Server struct {
 	// talkFields holds the owner's words on their way to the floor's
 	// foreman. See foreman.go.
 	talkFields
+	foremanChatFields
+	workerFields
+	// standingFields holds the pane foreman's tool socket.
+	standingFields
+	// chatFields holds the chat files and the watch for new messages.
+	chatFields
 
 	// promptFields holds the prompts that wait for a pane to be ready.
 	// See ready.go.
@@ -496,6 +541,12 @@ type Server struct {
 	// goroutine while a Close is already in flight.
 	afterTeardownSnapshot func()
 
+	// beforeDataWrite, when set, is called by every write into the data
+	// dir just before the write. It is nil in every real server. A test
+	// sets it before it starts any pane, so no goroutine reads it while it
+	// changes, and uses it to hold a write in flight while Close runs.
+	beforeDataWrite func()
+
 	// afterApplyState, when set, is called synchronously by ApplyState, on
 	// the same goroutine and before it returns, with the pane id and the
 	// event it just merged. It is nil in every real server and in every
@@ -518,6 +569,10 @@ type Server struct {
 	presenceGap func(paneID string)
 	// presenceMu orders presence events. See tellPresence.
 	presenceMu sync.Mutex
+	// fits holds, under fitMu, the size each fitted pane had before a
+	// client fitted it. See pane.attach with fit.
+	fitMu sync.Mutex
+	fits  map[string]fitHold
 	// beforeWorktreeRemove, when set, is called by task.close with each
 	// worktree path just before git is asked to remove it, after the panes
 	// closed. Test-only: it is how a test makes a worktree dirty in the
@@ -552,6 +607,23 @@ func (s *Server) LastRestore() RestoreReport {
 	return s.restore
 }
 
+// restoreStatus is the restore report with Resumable filled: the records
+// the restart marked ended that can still resume.
+func (s *Server) restoreStatus() RestoreReport {
+	rep := s.LastRestore()
+	s.mu.Lock()
+	ids := make(map[string]bool, len(s.restored))
+	for id := range s.restored {
+		ids[id] = true
+	}
+	s.mu.Unlock()
+	rep.Resumable = 0
+	if len(ids) > 0 {
+		rep.Resumable = s.resumableCount(ids)
+	}
+	return rep
+}
+
 func New(cfg Config) (*Server, error) {
 	if cfg.SocketPath == "" {
 		cfg.SocketPath = SocketPath()
@@ -568,6 +640,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.ForemanWait <= 0 {
 		cfg.ForemanWait = DefaultForemanWait
 	}
+	cfg.Foreman.fill()
 	if cfg.GateRoot == "" {
 		cfg.GateRoot = web.GateRoot(cfg.DataDir)
 	}
@@ -583,35 +656,39 @@ func New(cfg Config) (*Server, error) {
 		cfg: cfg, tree: layout.New(), states: state.NewStore(),
 		started: time.Now(), peerUID: peerUID, peerPID: peerPID, procStat: procStat,
 		handlers: map[string]Handler{}, clients: map[*Client]bool{},
-		live:           map[string]*LivePane{},
-		resuming:       map[string]bool{},
-		children:       map[string]map[string]*child{},
-		asks:           map[string]map[string]notedAsk{},
-		holds:          map[string]*hold{},
-		surfaced:       map[string][]string{},
-		typed:          map[string]bool{},
-		open:           map[string]bool{},
-		holdFor:        DefaultHoldFor,
-		plugPIDs:       map[int]string{},
-		plugExited:     map[int]bool{},
-		plugSpecs:      map[string]PluginSpec{},
-		listPIDs:       listPIDs,
-		facts:          map[string]*paneFacts{},
-		claims:         map[string]string{},
-		factsEvery:     time.Second,
-		pollWait:       50 * time.Millisecond,
-		pollDeadline:   5 * time.Second,
-		openTranscript: openRegular,
-		getenv:         os.Getenv,
-		closeDone:      make(chan struct{}),
-		talkFields:     talkFields{talkStop: make(chan struct{}), foremanWait: cfg.ForemanWait},
-		promptFields:   promptFields{prompts: map[string]*promptQueue{}, promptSending: map[string]bool{}, trusted: map[string]trustAnswer{}, trusting: map[string]bool{}},
+		live:              map[string]*LivePane{},
+		resuming:          map[string]bool{},
+		children:          map[string]map[string]*child{},
+		asks:              map[string]map[string]notedAsk{},
+		holds:             map[string]*hold{},
+		surfaced:          map[string][]string{},
+		typed:             map[string]bool{},
+		open:              map[string]bool{},
+		holdFor:           DefaultHoldFor,
+		plugPIDs:          map[int]string{},
+		plugExited:        map[int]bool{},
+		plugSpecs:         map[string]PluginSpec{},
+		listPIDs:          listPIDs,
+		facts:             map[string]*paneFacts{},
+		claims:            map[string]claimRec{},
+		factsEvery:        time.Second,
+		pollWait:          50 * time.Millisecond,
+		pollDeadline:      5 * time.Second,
+		openTranscript:    openRegular,
+		getenv:            os.Getenv,
+		closeDone:         make(chan struct{}),
+		talkFields:        talkFields{talkStop: make(chan struct{}), foremanWait: cfg.ForemanWait},
+		foremanChatFields: foremanChatFields{compactRetry: time.Minute},
+		promptFields:      promptFields{prompts: map[string]*promptQueue{}, promptSending: map[string]bool{}, trusted: map[string]trustAnswer{}, trusting: map[string]bool{}},
 		// Notes starts as [] rather than nil, so server.status reports
 		// "notes": [] for a server that has not restored anything yet -
 		// never called Restore, or called it against an empty data
 		// directory - instead of null.
 		restore: RestoreReport{Notes: []string{}},
 		voice:   newVoiceSup(cfg.Voice, cfg.DataDir),
+	}
+	if cfg.Foreman.Problem != "" {
+		s.Note(cfg.Foreman.Problem, "")
 	}
 	_ = s.Handle("server.status", s.handleStatus)
 	// Every handler must be registered before Serve starts (Handle refuses
@@ -627,7 +704,10 @@ func New(cfg Config) (*Server, error) {
 	s.RegisterEndedCommands()
 	s.RegisterProjectCommands()
 	s.RegisterVoiceCommands()
+	s.RegisterMachinesCommands()
+	s.RegisterSpeechCommands()
 	s.RegisterForemanCommands()
+	s.RegisterMessageCommands()
 	return s, nil
 }
 
@@ -738,6 +818,7 @@ func (s *Server) Listen() error {
 }
 
 func (s *Server) Serve() error {
+	closeInheritedOnExec()
 	s.mu.Lock()
 	ln := s.ln
 	s.serving = true
@@ -1032,9 +1113,9 @@ func (s *Server) handleStatus(c *Client, r *proto.Request) proto.Response {
 		"uptime_s":           int(time.Since(s.started).Seconds()),
 		"panes":              len(panes),
 		"panes_live":         live,
-		"resumable":          s.resumableCount(),
+		"resumable":          s.resumableCount(nil),
 		"restart_note":       RestartNote,
-		"restore":            s.LastRestore(),
+		"restore":            s.restoreStatus(),
 		"detection_warnings": s.DetectionWarnings(),
 	})
 }
@@ -1126,13 +1207,51 @@ func (s *Server) Close() error {
 	// too, before the lock goes away.
 	s.teardownLivePanes()
 
+	// The foreman's compactor stops and its chat closes before the data
+	// dir is shut.
+	// The turn loop ends before the chat closes: its last records are
+	// written, then nothing writes the log again.
+	s.turns.wg.Wait()
+	s.closeWorkers()
+	s.closeStanding()
+	s.closeForemanChat()
+
 	// The voice process goes before the lock, so a server started right
 	// after this one never finds the old voice server still running.
 	s.voice.stop()
 
+	// No write into the data dir may outlive the server: this waits for
+	// any write still in flight (a pump's terminal save, a sweep, a talk
+	// turn), and refuses every later one, before the lock is released.
+	s.shutData()
+
 	s.releaseStartLock()
 	close(s.closeDone)
 	return err
+}
+
+// writeData runs one write into the data dir, unless Close has shut the
+// data dir. It reports whether the write ran. A write must not call
+// writeData again: a second read lock behind a waiting Close deadlocks.
+func (s *Server) writeData(write func()) bool {
+	s.dataMu.RLock()
+	defer s.dataMu.RUnlock()
+	if s.dataShut {
+		return false
+	}
+	if h := s.beforeDataWrite; h != nil {
+		h()
+	}
+	write()
+	return true
+}
+
+// shutData waits for every write into the data dir in flight and refuses
+// every later one.
+func (s *Server) shutData() {
+	s.dataMu.Lock()
+	s.dataShut = true
+	s.dataMu.Unlock()
 }
 
 // waitForHandlers waits, up to handlerTeardownWait, for every in-flight

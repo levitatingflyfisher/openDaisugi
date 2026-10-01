@@ -82,9 +82,6 @@ impl Cache {
     /// Opens (and makes) the cache and evicts the rows of another prompt
     /// version.
     pub fn open(path: &str) -> Result<Cache, CacheErr> {
-        if path.contains('?') {
-            return Err(CacheErr::Sql("a cache path with '?' is not read the way Python reads it".into()));
-        }
         if let Some(parent) = std::path::Path::new(path).parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent).map_err(|e| CacheErr::Sql(e.to_string()))?;

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/switchyard"
 )
@@ -36,7 +35,7 @@ func (e *Env) planRouterUpdate(p *parsed, gateway bool) (map[string]any, error) 
 	if router != "switchyard" {
 		return update, e.checkRestate(update)
 	}
-	cfg, err := e.loadCfg("install", filepath.Join(e.home, ".opendaisugi", "config.yaml"))
+	cfg, err := e.loadCfg("install", filepath.Join(e.dataHome(), "config.yaml"))
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +78,7 @@ func (e *Env) planRouterUpdate(p *parsed, gateway bool) (map[string]any, error) 
 // binary cannot write back the way save_config would. A file pydantic
 // rejects is left to fail where Python fails, after the harness writes.
 func (e *Env) checkRestate(update map[string]any) error {
-	_, err := config.Dump(filepath.Join(e.home, ".opendaisugi", "config.yaml"), e.home, update)
+	_, err := config.Dump(filepath.Join(e.dataHome(), "config.yaml"), e.home, update)
 	if err != nil && !errors.Is(err, config.ErrInvalid) {
 		return e.refuse("install", fmt.Errorf("config.yaml is not one this binary rewrites: %w", err))
 	}
@@ -89,7 +88,7 @@ func (e *Env) checkRestate(update map[string]any) error {
 // applyRouterUpdate is cli._apply_router_update: the router fields saved,
 // and for switchyard the TOML file written beside them.
 func (e *Env) applyRouterUpdate(update map[string]any) error {
-	cfgPath := filepath.Join(e.home, ".opendaisugi", "config.yaml")
+	cfgPath := filepath.Join(e.dataHome(), "config.yaml")
 	if err := config.Save(cfgPath, e.home, update); err != nil {
 		if errors.Is(err, config.ErrInvalid) {
 			e.errf("daisugi install: pydantic_core._pydantic_core.ValidationError: %s does not validate\n", cfgPath)
@@ -110,7 +109,7 @@ func (e *Env) applyRouterUpdate(update map[string]any) error {
 	if err != nil {
 		return e.fail("install", err)
 	}
-	tomlPath, err := switchyard.WriteConfig(gateroot.Join(e.home, ".opendaisugi"), text, "switchyard.toml")
+	tomlPath, err := switchyard.WriteConfig(e.dataHome(), text, "switchyard.toml")
 	if err != nil {
 		return e.fail("install", err)
 	}

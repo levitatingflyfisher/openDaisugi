@@ -1,0 +1,37 @@
+# coppice web with no verb: the floor on loopback, signed in.
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "o1", "cli": ["web", "--no-open", "--listen", "{ADDR}"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g1", "http": "GET", "url": "http://{ADDR}/api/panes", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x1", "stop": "web", "signal": "INT"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# No server on the socket, and none may start: exit 3.
+{"id": "o2", "cli": ["web", "--no-open", "--listen", "{ADDR}"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 3}}
+# With no display, a browser cannot open: the URL is printed instead.
+{"id": "o3", "cli": ["web", "--listen", "{ADDR}"], "bg": "web2", "env": {"DISPLAY": null, "WAYLAND_DISPLAY": null}}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g2", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x2", "stop": "web2"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# The port is taken: serve says so.
+{"id": "o4", "cli": ["web", "--no-open", "--listen", "{ADDR}"], "bg": "web3"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g3", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "o5", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "x3", "stop": "web3"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# A first run mints the token it prints.
+{"id": "r0", "write": "{DATA}/web/token", "text": ""}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "o6", "cli": ["web", "--no-open", "--listen", "{ADDR}"], "bg": "web4"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g4", "http": "GET", "url": "http://{ADDR}/", "wait_ms": 8000, "same_as": "{FIXTURES}/web/static/index.html"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x4", "stop": "web4"}
+{"id": "$id", "ok": true, "result": {"code": 0}}

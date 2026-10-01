@@ -106,8 +106,14 @@ var verbSpecs = map[string]map[string]verbSpec{
 		"set-foreman": {task: true, flags: map[string]flagSpec{"pane": {wire: "pane", kind: "string"}}},
 	},
 	"agent": {
-		"list": {},
-		"get":  {pane: true},
+		// list --ended, forget and resume are the pane verbs of the same
+		// names under the word the screen uses. runVerb sends them as pane.
+		"list": {flags: map[string]flagSpec{"ended": {wire: "ended", kind: "bool", value: true}}},
+		"forget": {trailing: "join", trailingKey: "pane", flags: map[string]flagSpec{
+			"ended": {wire: "ended", kind: "bool", value: true},
+		}},
+		"resume": {pane: true},
+		"get":    {pane: true},
 		"prompt": {pane: true, trailing: "join", trailingKey: "text", flags: map[string]flagSpec{
 			"wait":    {wire: "wait", kind: "bool", value: true},
 			"until":   {wire: "until", kind: "string"},
@@ -307,6 +313,24 @@ func parseVerbArgs(group, verb string, rest []string) (params map[string]any, as
 		}
 	}
 	return params, asJSON, ""
+}
+
+// agentAsPane reports whether an agent verb is the pane verb of the same
+// name: forget and resume always, list only with --ended. The screens say
+// agent and the wire says pane, so a person who types the screen's word
+// gets the same action.
+func agentAsPane(group, verb string, params map[string]any) bool {
+	if group != "agent" {
+		return false
+	}
+	switch verb {
+	case "forget", "resume":
+		return true
+	case "list":
+		ended, _ := params["ended"].(bool)
+		return ended
+	}
+	return false
 }
 
 // socketCommand turns "pane send-text" into the wire command "pane.send_text".

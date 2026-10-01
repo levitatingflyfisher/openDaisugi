@@ -95,7 +95,7 @@ func TestTheFooterWrapsAndKeepsEveryKey(t *testing.T) {
 			}
 		}
 		joined := strings.Join(lines, " ")
-		for _, b := range Table() {
+		for _, b := range withoutMode(Table()) {
 			if !strings.Contains(joined, b.Keys+" "+b.Help) {
 				t.Fatalf("at %d columns the footer lacks %q: %q", cols, b.Keys+" "+b.Help, joined)
 			}

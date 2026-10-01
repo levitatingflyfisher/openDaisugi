@@ -6,15 +6,15 @@ package pathways
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	sqlite3 "github.com/mattn/go-sqlite3" // the SQLite driver, the amalgamation linked in
+
+	"daisugi-verify/internal/sqlpath"
 )
 
 // driverName is go-sqlite3 with memory-mapped reads on every connection:
@@ -71,10 +71,6 @@ var additiveColumns = [][2]string{
 // ignored, as the oracle ignores it.
 var droppedColumns = []string{"pitfalls_json", "validation_score"}
 
-// ErrPath is a database path the driver would misread: its DSN syntax
-// takes a '?' as the start of options.
-var ErrPath = errors.New("the pathway database path holds a '?'")
-
 // Store is PathwayStore over one database file.
 type Store struct {
 	db   *sql.DB
@@ -93,9 +89,6 @@ type Store struct {
 // additive column holds its default, a dropped column is gone, and a
 // file with no table holds no rows. It carries ReadAll, All and Get.
 func OpenReadOnly(dbPath string) (*Store, error) {
-	if strings.ContainsRune(dbPath, '?') {
-		return nil, ErrPath
-	}
 	abs, err := filepath.Abs(dbPath)
 	if err != nil {
 		return nil, err
@@ -146,17 +139,13 @@ func (s *Store) asMigrated(r Row) {
 // Open is PathwayStore(db_path): the parent directories made, the table
 // created when absent, and the additive and dropped columns applied.
 func Open(dbPath string) (*Store, error) {
-	if strings.ContainsRune(dbPath, '?') {
-		return nil, ErrPath
-	}
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o777); err != nil {
 		return nil, err
 	}
-	// Python's sqlite3.connect takes the path as a file name, never as a
-	// URI; the driver would read a leading "file:" as one.
-	dsn := dbPath
-	if strings.HasPrefix(dsn, "file:") {
-		dsn = "./" + dsn
+	// Python's sqlite3.connect takes the path as a file name.
+	dsn, err := sqlpath.DSN(dbPath, "")
+	if err != nil {
+		return nil, err
 	}
 	db, err := sql.Open(driverName, dsn)
 	if err != nil {

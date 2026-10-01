@@ -20,6 +20,18 @@ import sys as _sys
 import types as _types
 from pathlib import Path
 
+from opendaisugi.datahome import data_home
+
+# huggingface_hub reads this once, when it is imported. Unless it is set,
+# the library fetches its agent list from the Hub (/api/agent-harnesses) and
+# names the agent that runs it in its User-Agent. Every path that can
+# import huggingface_hub (the CLI, the matchers, the model downloads, the
+# LoRA trainer) imports this package first, so it is set here. A value the
+# user set, "0" included, is kept. HF_HUB_DISABLE_IMPLICIT_TOKEN is not
+# set: it would drop a saved `hf auth login` token, and a gated model the
+# user chose would not download.
+_os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
 # Silent-by-default library idiom: attach a NullHandler to the top-level
 # logger so importing opendaisugi never emits records unless the host
 # application explicitly configures logging. All submodules log to
@@ -30,7 +42,7 @@ logging.getLogger("opendaisugi").addHandler(logging.NullHandler())
 # caller passes no ``data_dir``. Kept a module attribute (not an inline literal)
 # so the test suite can redirect it to a tmp dir via one autouse fixture — a bare
 # ``Daisugi()`` in a test must never touch the user's real ``~/.opendaisugi``.
-DEFAULT_DATA_DIR = Path.home() / ".opendaisugi"
+DEFAULT_DATA_DIR = data_home()
 
 _LAZY: dict[str, tuple[str, str | None]] = {
     "ABResult": ("opendaisugi.gardener", "ABResult"),

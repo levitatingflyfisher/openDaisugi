@@ -24,7 +24,7 @@ export const NAMES_COMMAND = /\b(?:coppice|daisugi) [a-z][a-z-]*/;
 // after the command never gets typed.
 export const KNOWN = [
   'coppice server start', 'coppice server status', 'coppice server stop',
-  'coppice web token', 'coppice web serve', 'coppice task list',
+  'coppice web token', 'coppice web serve', 'coppice web cert tailscale', 'coppice task list',
   'coppice agent allow', 'coppice agent deny', 'coppice pane list',
   'daisugi voice serve', 'daisugi gateway', 'daisugi gate',
 ];
@@ -66,6 +66,8 @@ export function typeable(line) {
 export const shell = (command, label) => ({ kind: 'shell', label: label || 'Type it in a shell', command });
 export const reconnect = (label) => ({ kind: 'reconnect', label: label || 'Retry now' });
 export const settings = () => ({ kind: 'settings', label: 'Open Settings' });
+export const resumeAll = () => ({ kind: 'resume_all', label: 'Resume all' });
+export const showRecent = () => ({ kind: 'show_recent', label: 'Show them' });
 
 // message builds one message. Only text is required. away says the fix is
 // on the computer that runs coppice; clears says the message ends by
@@ -85,7 +87,21 @@ export const MESSAGES = {
   noToken: () => message('No token. Open Settings and paste one.', [settings()]),
   notConnected: () => message('Not connected. Check the token in Settings.', [reconnect(), settings()]),
   timeout: () => message('The server did not answer in 15 s. Check that coppice-server is running, then try again.', [reconnect()]),
+  // reconnecting is what the page says while it reconnects. A page that
+  // cannot reach the box at all says cannotReach instead (app.js).
   reconnecting: () => message('Reconnecting.', [reconnect()]),
+  // micNeedsHttps is what the mic says on a page that is not a secure
+  // context: the browser gives it no microphone, and the fix is on the box.
+  micNeedsHttps: () => message('The mic needs https here. ' + cap(AWAY) + ', run coppice web serve --tls tailscale, then open the address it prints on this phone.', [], true),
+  // phoneCert is the header's warning when the phone's tailscale
+  // certificate is close to its end. Renew types the command in a shell.
+  phoneCert: (days) => message(phoneCertText(days), [shell('coppice web cert tailscale', 'Renew')]),
+  // restarted is the one line after a start that found agents which
+  // stopped with the old server and can come back.
+  restarted: (n) => {
+    const k = Number(n) || 0;
+    return message(k + (k === 1 ? ' agent' : ' agents') + ' stopped when coppice restarted.', [resumeAll(), showRecent()]);
+  },
   banned: () => message('Too many bad tokens. Waiting one minute.', [], false, true),
   // gateNotInstalled is the floor header's hint when no harness has a
   // daisugi gate hook and no agent is guarded. Its button types the
@@ -96,6 +112,9 @@ export const MESSAGES = {
   // reports for it. Setting the mode rewrites each harness's hook
   // settings, so it stays a command the owner runs, named in words.
   gateOff: () => message('No gate hook reports for this agent. ' + cap(AWAY) + ', run daisugi install --gate, then start the agent again.', [], true),
+  // modeOff is what the daisugi details say under the mode row: the mode
+  // is set there, but turning the gate off stays a typed command.
+  modeOff: () => message('Turning the gate off stays a command. ' + cap(AWAY) + ', run daisugi gate disarm.', [], true),
   unreadable: () => message('coppice-server sent a reply the phone could not read. Run coppice server status.', [shell('coppice server status')]),
   // shellOffline is what a shell fix says when there is no connection to
   // start a shell with.
@@ -109,10 +128,56 @@ export const MESSAGES = {
     if (away) return message(String(text || '') + ' Do this ' + AWAY + '.', [], true);
     return message(text, [command ? shell(command, 'Type the fix in a shell') : null, voiceRetry()]);
   },
+  // voiceFetching is what the mic says while voice gets its speech model:
+  // bytes done and in all, in megabytes (10**6, rounded half up, as
+  // daisugi voice status rounds). voiceReady ends it.
+  voiceFetching: (done, total) => message('Getting the speech model, ' + megabytes(done) + ' of ' + megabytes(total) + ' MB.', [], false, true),
+  voiceReady: () => message('Voice is ready.', [], false, true),
 };
+
+// megabytes is a byte count in megabytes, rounded half up.
+export function megabytes(n) {
+  return Math.floor((Number(n) + 500000) / 1000000);
+}
 
 // voiceRetry is the action that asks the server to start voice again.
 export const voiceRetry = () => ({ kind: 'voice', label: 'Retry' });
+
+// pageHost is the host name the page was loaded from, or '' when there is
+// no location to read.
+export function pageHost() {
+  try {
+    return (typeof location !== 'undefined' && location && location.hostname) || '';
+  } catch {
+    return '';
+  }
+}
+
+// isOwnBox is true for a host name that is this computer: the page then
+// runs on the box itself, so there is no other machine to wake.
+function isOwnBox(host) {
+  const h = String(host || '').replace(/^\[|\]$/g, '');
+  return h === '' || h === 'localhost' || h === '::1' || /^127\./.test(h);
+}
+
+// cannotReach is the line the page shows while it cannot reach the box.
+// On a phone it says the two fixes that are on the phone: Tailscale on,
+// when the page came from a .ts.net name, and the box asleep or off. On
+// the box itself it only says it reconnects. Both carry Retry.
+export function cannotReach(host) {
+  if (isOwnBox(host)) return message('Reconnecting.', [reconnect()]);
+  const ts = /\.ts\.net\.?$/i.test(String(host)) ? ' Turn on Tailscale on this phone.' : '';
+  return message('Cannot reach the box.' + ts + ' The box may be asleep or off.', [reconnect()]);
+}
+
+// phoneCertText is the warning for days left on the phone's certificate.
+function phoneCertText(days) {
+  const n = Number(days);
+  if (!Number.isFinite(n)) return 'The phone certificate runs out soon.';
+  if (n < 0) return 'The phone certificate has run out. The phone cannot reach the box until it is renewed.';
+  if (n === 0) return 'The phone certificate runs out today.';
+  return 'The phone certificate runs out in ' + n + (n === 1 ? ' day.' : ' days.');
+}
 
 function cap(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);

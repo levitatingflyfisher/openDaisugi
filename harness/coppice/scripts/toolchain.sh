@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # harness/coppice/scripts/toolchain.sh
-# Installs the build-time toolchain for coppice into $HOME/.local. No sudo.
-# Undo the two global Go settings with: go env -u GOTOOLCHAIN PKG_CONFIG
+# Installs the build-time toolchain for coppice under
+# ${XDG_DATA_HOME:-$HOME/.local/share}/opendaisugi. No sudo. It changes no
+# global Go setting and puts nothing on PATH: it prints the lines a build needs.
 set -euo pipefail
 
 # Map this host to one of the platform names Zig's own release tarballs use
@@ -59,24 +60,69 @@ else
   sha256_check() { shasum -a 256 -c -; }
 fi
 
-prefix="${COPPICE_GHOSTTY_PREFIX:-$HOME/.local/ghostty-vt}"
-work="${COPPICE_BUILD_DIR:-$HOME/.local/share/coppice-build}"   # real disk; /tmp may be RAM
-mkdir -p "$HOME/.local/bin" "$work"
+# Everything goes under the XDG data directory. A libghostty-vt an older
+# version of this script built at ~/.local/ghostty-vt is kept and used
+# (internal/toolchain.GhosttyPrefix applies the same rule).
+data="${XDG_DATA_HOME:-$HOME/.local/share}/opendaisugi"
+if [ -n "${COPPICE_GHOSTTY_PREFIX:-}" ]; then
+  prefix="$COPPICE_GHOSTTY_PREFIX"
+elif [ -f "$HOME/.local/ghostty-vt/share/pkgconfig/libghostty-vt-static.pc" ]; then
+  prefix="$HOME/.local/ghostty-vt"
+else
+  prefix="$data/ghostty-vt"
+fi
+work="${COPPICE_BUILD_DIR:-$data/coppice-build}"   # real disk; /tmp may be RAM
+mkdir -p "$work"
 
-# 1. Zig 0.16, checksum-verified.
-if ! command -v zig >/dev/null 2>&1; then
-  echo "installing zig $ZIG_VERSION ($ZIG_PLATFORM) into $HOME/.local"
+# 1. Zig 0.16, checksum-verified, under $data. Nothing goes on the user's
+#    PATH; this script puts it first on its own PATH, so the pinned zig is
+#    the one used even when another zig is installed.
+zig_dir="$data/zig-$ZIG_VERSION"
+if [ ! -x "$zig_dir/zig" ]; then
+  echo "installing zig $ZIG_VERSION ($ZIG_PLATFORM) into $zig_dir"
   curl -fsSL "$ZIG_URL" -o "$work/zig.tar.xz"
   echo "$ZIG_SHA256  $work/zig.tar.xz" | sha256_check
   tar -xJf "$work/zig.tar.xz" -C "$work"
-  rm -rf "$HOME/.local/zig-$ZIG_VERSION"
-  mv "$work/zig-$ZIG_PLATFORM-$ZIG_VERSION" "$HOME/.local/zig-$ZIG_VERSION"
-  ln -sf "$HOME/.local/zig-$ZIG_VERSION/zig" "$HOME/.local/bin/zig"
+  rm -rf "$zig_dir"
+  mv "$work/zig-$ZIG_PLATFORM-$ZIG_VERSION" "$zig_dir"
   rm -f "$work/zig.tar.xz"
 fi
 
-# 2. CMake, from uv so nothing is installed system-wide.
-command -v cmake >/dev/null 2>&1 || uv tool install cmake
+# 2. CMake 4.4.3, the binary inside the official PyPI wheel, checked
+#    against the sha256 PyPI publishes, under $data. No pip, no uv tool, no
+#    shim on PATH; used even when another cmake is installed. Only the
+#    x86_64-linux wheel has been downloaded and checked through this
+#    script; the other two hashes are taken as PyPI publishes them.
+CMAKE_VERSION="4.4.3"
+cmake_pypi="https://files.pythonhosted.org/packages"
+case "$ZIG_PLATFORM" in
+  x86_64-linux)
+    CMAKE_URL="$cmake_pypi/0b/d0/18fe62f0bddc8b9bb71ba55762ee48a224f8344101c34350d969f6e0d327/cmake-4.4.3-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+    CMAKE_SHA256="bae3c4954623ec4d62e62c70443f0da7988b733111c2871fcc6a31ead5137e20"
+    cmake_in_wheel="cmake/data/bin" ;;
+  aarch64-linux)
+    CMAKE_URL="$cmake_pypi/fc/64/c227d8a26f17c82b0864faafb9f4a2db0eb425f613367eaad1e9d6260eef/cmake-4.4.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+    CMAKE_SHA256="520ff2ba3afb7a1e34a0ab222c0f4e89ad334dc7462814886e099bdf6ba8cbb3"
+    cmake_in_wheel="cmake/data/bin" ;;
+  x86_64-macos|aarch64-macos)
+    CMAKE_URL="$cmake_pypi/da/2e/78cc0dab93ad407e4b126ab6a3c8a6fc3df89011b49e910c5a5e9bda78a6/cmake-4.4.3-py3-none-macosx_10_10_universal2.whl"
+    CMAKE_SHA256="6c95b37116bb5c714656e4f76931ebdcb739209a1aee91cf51408ccfe137694e"
+    cmake_in_wheel="cmake/data/CMake.app/Contents/bin" ;;
+esac
+cmake_dir="$data/cmake-$CMAKE_VERSION"
+cmake_bin="$cmake_dir/$cmake_in_wheel"
+if [ ! -x "$cmake_bin/cmake" ]; then
+  echo "installing cmake $CMAKE_VERSION into $cmake_dir"
+  curl -fsSL "$CMAKE_URL" -o "$work/cmake.whl"
+  echo "$CMAKE_SHA256  $work/cmake.whl" | sha256_check
+  rm -rf "$cmake_dir"
+  python3 -m zipfile -e "$work/cmake.whl" "$cmake_dir"
+  chmod +x "$cmake_bin"/*
+  rm -f "$work/cmake.whl"
+fi
+
+# The steps below use the pinned zig and cmake, whatever else is on PATH.
+export PATH="$zig_dir:$cmake_bin:$PATH"
 
 # 3. libghostty-vt at the commit go-libghostty fetches.
 if [ ! -f "$prefix/share/pkgconfig/libghostty-vt-static.pc" ]; then
@@ -89,18 +135,11 @@ if [ ! -f "$prefix/share/pkgconfig/libghostty-vt-static.pc" ]; then
   ( cd "$work/ghostty" && zig build -Demit-lib-vt --prefix "$prefix" )
 fi
 
-# 4. A pkg-config wrapper, so a bare `go test ./...` finds the .pc file.
-#    It APPENDS to PKG_CONFIG_PATH, so every other Go module on this box keeps working.
-cat > "$HOME/.local/bin/coppice-pkg-config" <<WRAP
-#!/usr/bin/env bash
-export PKG_CONFIG_PATH="\${PKG_CONFIG_PATH:+\$PKG_CONFIG_PATH:}$prefix/share/pkgconfig"
-exec pkg-config "\$@"
-WRAP
-chmod +x "$HOME/.local/bin/coppice-pkg-config"
-
-# 5. Two global Go settings. Undo with: go env -u GOTOOLCHAIN PKG_CONFIG
-go env -w GOTOOLCHAIN=auto
-go env -w PKG_CONFIG="$HOME/.local/bin/coppice-pkg-config"
-
-echo "done. Run harness/coppice/scripts/preflight.sh to confirm."
-echo "to undo the global Go settings: go env -u GOTOOLCHAIN PKG_CONFIG"
+# 4. No global setting and nothing on the user's PATH. A build needs these
+#    lines in its own environment (a shell, a CI step); nothing else on
+#    this box changes.
+echo "done. A coppice build needs these in its environment:"
+echo "  export PATH=\"$zig_dir:$cmake_bin:\$PATH\""
+echo "  export GOTOOLCHAIN=auto"
+echo "  export PKG_CONFIG_PATH=\"$prefix/share/pkgconfig\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}\""
+echo "Then run harness/coppice/scripts/preflight.sh to confirm."

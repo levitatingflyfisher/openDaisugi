@@ -1,0 +1,26 @@
+[package]
+name = "coppice-rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "coppice"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151", features = ["preserve_order", "raw_value", "arbitrary_precision"] }
+libc = "=0.2.189"
+toml = { version = "=0.8.23", default-features = false, features = ["parse"] }
+regex = { version = "=1.13.1", default-features = false, features = ["std", "unicode"] }
+# TLS for coppice web serve, and the P-256 keys and signatures of the
+# local CA. The versions and features clients/rust already locks.
+rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = { version = "=1.15.1", features = ["std"] }
+ring = "=0.17.14"
+
+[profile.release]
+debug = false
+strip = "symbols"

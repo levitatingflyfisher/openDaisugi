@@ -354,3 +354,31 @@ def test_ask_gate_carries_the_callers_coppice_data_dir_on_the_request(tmp_path):
     _ask(sock_path, "read", {"path": "/x"}, extra_env={"COPPICE_DATA_DIR": "cdata"})
     assert captured[0]["coppice_data_dir"] == "/srv/cdata"
     assert "coppice_data_dir" not in captured[1]
+
+
+@_NODE
+@pytest.mark.parametrize("var", ["OPENDAISUGI_HOME", "XDG_DATA_HOME"])
+def test_the_socket_is_found_under_a_moved_data_home(tmp_path, var):
+    """With no OPENDAISUGI_GATE_SOCK, the extension finds the gate where the
+    data home rule puts it (opendaisugi.datahome), as daisugi gate serve does."""
+    data = tmp_path / "moved" if var == "OPENDAISUGI_HOME" else tmp_path / "moved" / "opendaisugi"
+    (data / "gate").mkdir(parents=True)
+    (tmp_path / "home").mkdir()
+    _serve(data / "gate" / "gate.sock", _FakeGateHandler)
+    result = subprocess.run(
+        [
+            "node",
+            "--experimental-strip-types",
+            str(HERE / "run_tool_call.mjs"),
+            "read",
+            json.dumps({"path": "/x"}),
+            "/repo",
+        ],
+        cwd=HERE,
+        env={"HOME": str(tmp_path / "home"), var: str(tmp_path / "moved"), **_ENV_BASE},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {"allow": True, "reason": ""}

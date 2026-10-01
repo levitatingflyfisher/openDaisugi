@@ -121,7 +121,7 @@ func TestALeftWindowFillsAndTheCursorStaysOnALiveRow(t *testing.T) {
 
 func TestStartOnANarrowScreenKeepsTheKeysOnTheRail(t *testing.T) {
 	m := startModel()
-	f := testFloor(m, 100)
+	f := testFloor(m, 80)
 	f.startFill()
 	if m.Typing != "" || m.Talking {
 		t.Fatalf("typing %q talking %v, want the rail", m.Typing, m.Talking)

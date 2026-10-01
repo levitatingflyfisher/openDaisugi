@@ -1,0 +1,15 @@
+# With no speak_url the browser speaks: status says so and speech.say has
+# no server to ask.
+{"id":"s0","cmd":"speech.status"}
+{"id":"$id","ok":true,"result":{"mode":"browser"}}
+{"id":"a1","cmd":"speech.say","text":"Hello."}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"No speech server is set. Set [voice] speak_url in coppice.toml, then start the coppice server again."}}
+# A pane may not read aloud, nor ask how: the owner's key and bandwidth.
+{"id":"p1","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"],"label":"kid"}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"h1","cmd":"hello","role":"pane","pane":"$c"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$c"}}
+{"id":"r1","cmd":"speech.say","text":"Hello."}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator reads aloud."}}
+{"id":"r2","cmd":"speech.status"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator reads aloud."}}

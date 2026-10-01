@@ -175,7 +175,7 @@ func TestAgentRunsEndToEndWithClaudeCodeModelFake(t *testing.T) {
 }
 
 func TestClaudeArgsRequestsJSONOutputAndBindsModelSafely(t *testing.T) {
-	args := claudeArgs("claude", "haiku")
+	args := claudeArgs("claude", "haiku", false, "", nil)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "--output-format json") {
 		t.Fatalf("want --output-format json in argv, got %v", args)

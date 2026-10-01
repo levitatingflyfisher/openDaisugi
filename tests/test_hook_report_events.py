@@ -38,7 +38,7 @@ def _states(seen: list[str]) -> list[str]:
 
 
 def test_allow_reports_working_with_verdict_allow(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     seen = []
     monkeypatch.setattr(
@@ -56,7 +56,7 @@ def test_allow_reports_working_with_verdict_allow(tmp_path, monkeypatch):
 def test_deny_without_ask_reports_working_not_blocked(tmp_path, monkeypatch):
     """A denied call is not 'blocked' — the agent continues, it just lost
     this one tool call. 'blocked' means waiting on a human."""
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     seen = []
     monkeypatch.setattr(
@@ -72,7 +72,7 @@ def test_deny_without_ask_reports_working_not_blocked(tmp_path, monkeypatch):
 
 
 def test_ask_posted_reports_blocked_before_the_wait(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     ask.write_presence(root, pid=os.getpid())
     seen = []
@@ -99,7 +99,7 @@ def test_ask_posted_reports_blocked_before_the_wait(tmp_path, monkeypatch):
 
 
 def test_ask_timeout_also_resolves_to_working(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     ask.write_presence(root, pid=os.getpid())
     seen = []
@@ -123,7 +123,7 @@ def test_ask_row_tool_is_a_string_when_the_hook_reported_no_tool_name(tmp_path, 
     string, or PaneStateEvent.from_json and Go's ParseStateEvent both
     reject the whole event as malformed, and the floor never learns the
     pane blocked at all."""
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     ask.write_presence(root, pid=os.getpid())
     seen = []
@@ -152,7 +152,7 @@ def test_ask_row_harness_session_id_is_a_string_or_none(tmp_path, monkeypatch):
     PaneStateEvent.from_json and Go's ParseStateEvent both reject the
     whole event as malformed. The unpinned gate checks the call against
     the default envelope, whatever the payload's session_id holds."""
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     ask.write_presence(root, pid=os.getpid())
     seen = []
@@ -179,7 +179,7 @@ def test_report_failure_never_changes_the_verdict(tmp_path, monkeypatch):
     path — not report_state, which the implementation already calls from
     inside _report_and_append_state's own try/except; a monkeypatch there
     would never reach the call sites this test is meant to protect."""
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
 
     def _boom(*_a, **_k):
@@ -199,7 +199,7 @@ def test_blocked_report_failure_still_posts_the_ask_and_waits(tmp_path, monkeypa
     must not skip the wait — the ask must still be answerable by a real
     operator. Patches the whole build/deliver/append helper (the real
     escape point _report_blocked calls), not report_state alone."""
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     ask.write_presence(root, pid=os.getpid())
 
@@ -229,7 +229,7 @@ def test_report_escape_cannot_flip_a_audit_would_deny_to_allow(tmp_path, monkeyp
     mode-selected failure policy — that outer handler would otherwise
     rewrite an ALREADY-FINAL verdict: in audit mode, turning a real
     would_deny=True record into a fabricated 'gate I/O error' allow."""
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
 
     def _boom(*_a, **_k):
@@ -246,7 +246,7 @@ def test_report_escape_cannot_flip_a_audit_would_deny_to_allow(tmp_path, monkeyp
 
 
 def test_state_entries_land_in_the_session_tree(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     monkeypatch.setattr("opendaisugi._state_report.report_state", lambda ev, **_k: "none")
     gate_and_contract(json.dumps(_payload(tmp_path)).encode(), root=root, mode="enforce")
@@ -263,7 +263,7 @@ def test_state_entries_do_not_move_the_head(tmp_path, monkeypatch):
     _NO_MOVE) — the NEXT tool call has to parent off the previous verdict,
     not off a state node, or the tree screen and rewind logic (tui_tree.py)
     mis-render a state entry as a checkpoint's or a call's parent."""
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     monkeypatch.setattr("opendaisugi._state_report.report_state", lambda ev, **_k: "none")
     gate_and_contract(
@@ -539,7 +539,7 @@ def test_cli_hook_report_rejects_a_malformed_event(tmp_path):
     runner = CliRunner()
     res = runner.invoke(
         app,
-        ["hook", "report", "--root", str(tmp_path / "gate")],
+        ["hook", "report", "--root", str(tmp_path / "gate-root")],
         input=json.dumps({"state": "not-a-real-state"}),
     )
     assert res.exit_code == 1
@@ -563,7 +563,7 @@ def test_cli_hook_report_accepts_a_valid_event(tmp_path, monkeypatch):
         "detail": "",
     }
     res = runner.invoke(
-        app, ["hook", "report", "--root", str(tmp_path / "gate")], input=json.dumps(row)
+        app, ["hook", "report", "--root", str(tmp_path / "gate-root")], input=json.dumps(row)
     )
     assert res.exit_code == 0
     t = SessionTree.open(tmp_path / "sessions", "s9")

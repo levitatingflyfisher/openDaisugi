@@ -297,17 +297,14 @@ func (s *Store) readBundles() ([]found, error) {
 			out = append(out, found{name: n})
 			continue
 		}
-		v, exc, why := pyyaml.Load(string(raw))
-		if why != nil {
-			var why2 *pyyaml.Unsupported
-			if v, why2 = pyyaml.LoadDumped(string(raw)); why2 != nil {
-				// YAML this binary does not read is skipped, as the oracle
-				// skips a file it cannot parse: a bundle is never admitted
-				// on a reading the oracle might not share (L-3).
-				out = append(out, found{name: n})
-				continue
-			}
-			exc = nil
+		text := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
+		v, exc, why := pyyaml.Load(text)
+		if why != nil || (exc == nil && !pyyaml.Plain(v)) {
+			// A value this binary does not model is skipped, as the oracle
+			// skips a file it cannot parse: a bundle is never admitted on
+			// a reading the oracle might not share (L-3).
+			out = append(out, found{name: n})
+			continue
 		}
 		if exc != nil {
 			out = append(out, found{name: n})

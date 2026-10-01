@@ -172,7 +172,14 @@ impl Env {
             let (me, _) = install::hook_path(&me, &self.env, &|tool: &str| install::mise_which(&env, tool));
             let entry = install::hook_entry(
                 &me,
-                &HookOptions { mode: mode.into(), root: root.clone(), format: "claude".into(), session: Some(key.clone()), ask },
+                &HookOptions {
+                    mode: mode.into(),
+                    root: root.clone(),
+                    format: "claude".into(),
+                    captures_root: None,
+                    session: Some(key.clone()),
+                    ask,
+                },
             );
             match install::plan_claude_gate(&settings, &entry) {
                 Ok(e) => edit = e,

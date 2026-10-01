@@ -71,6 +71,10 @@ pub struct Prepared {
     /// When `prepare` began; `finish` books the time from here as the
     /// record's elapsed_ms. None books none.
     pub started: Option<std::time::Instant>,
+    /// The coppice pane and floor the turn came from, or empty. The proxy
+    /// takes them from the request path; `finish` stamps the record.
+    pub pane: String,
+    pub floor: String,
 }
 
 impl Gateway {
@@ -149,7 +153,7 @@ impl Gateway {
         if d.downgraded {
             out.set("model", d.model.clone());
         }
-        Ok(Prepared { decision: d, outbound: out, task, ask, started: None })
+        Ok(Prepared { decision: d, outbound: out, task, ask, started: None, pane: String::new(), floor: String::new() })
     }
 
     /// The external and off modes: the body goes as it came (external
@@ -184,7 +188,7 @@ impl Gateway {
         };
         let task = latest_user_text(body)?;
         let ask = new_user_text(body)?;
-        Ok(Prepared { decision: d, outbound: out, task, ask, started: None })
+        Ok(Prepared { decision: d, outbound: out, task, ask, started: None, pane: String::new(), floor: String::new() })
     }
 
     /// `_external_decision`: the decision an external turn is booked with
@@ -227,6 +231,8 @@ impl Gateway {
         let s = measure(&self.prices, &d, usage)?;
         let mut rec = record_turn(&d, &s, &p.task, &p.ask, now_ns.div_euclid(1_000_000_000) as i64)?;
         rec.elapsed_ms = p.started.map(|t| pyjson::round(t.elapsed().as_secs_f64() * 1000.0, 3));
+        rec.pane = p.pane.clone();
+        rec.floor = p.floor.clone();
         if !self.journal_path.is_empty() {
             append_line(&self.journal_path, &rec.json()).map_err(|_| Raise::Raise)?;
         }

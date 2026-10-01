@@ -1,0 +1,11 @@
+# daisugi agent-profiles bundle fails: its last line of complaint is the
+# reason, the same words in Go and Rust, and no key is in them.
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/web/bin/fake-daisugi
+#!env FAKE_BUNDLE_FILE={FIXTURES}/web/speech-bundle.json
+#!env FAKE_BUNDLE_FAIL=the bundle is locked
+#!config [voice]
+#!config enabled = false
+#!config speak_url = "http://127.0.0.1:9"
+#!config speak_profile = "tts"
+{"id":"a1","cmd":"speech.say","text":"Hello."}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"The agent profiles could not be read, so the speech server at 127.0.0.1:9 gets no key: daisugi agent-profiles bundle failed: the bundle is locked."}}

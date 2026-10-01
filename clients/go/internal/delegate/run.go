@@ -130,6 +130,9 @@ type record struct {
 	quotes, dropped                                  int
 	kept                                             *int
 	keptDollars                                      any
+	notEstimated                                     bool
+	form                                             *string
+	applied                                          any
 }
 
 func intOrNil(p *int) any {
@@ -169,7 +172,8 @@ func (r *record) object() *pyjson.Object {
 		Set("quotes", pyjson.Int{Text: strconv.Itoa(r.quotes)}).
 		Set("dropped", pyjson.Int{Text: strconv.Itoa(r.dropped)}).
 		Set("frontier_tokens_kept", intOrNil(r.kept)).Set("frontier_dollars_kept", r.keptDollars).
-		Set("estimated", true).Set("task_ok", nil).Set("kind", "delegate")
+		Set("estimated", !r.notEstimated).Set("task_ok", nil).Set("kind", "delegate").
+		Set("form", strPtr(r.form)).Set("applied", r.applied)
 }
 
 // JournalPath is delegate.journal_path.
@@ -198,21 +202,46 @@ func appendRecord(dataDir string, r *record) {
 	}
 }
 
-// Result is delegate.Result as the tool returns it.
+// result is delegate.Result as the tool returns it.
 func result(ok bool, mode, path string, reason any, worker any, lines any, a *Answer, minLines string) *pyjson.Object {
 	o := pyjson.NewObject().Set("ok", ok).Set("mode", mode).Set("path", path).Set("reason", reason).
 		Set("worker", worker).Set("lines", lines)
 	if a == nil {
-		return o.Set("answer", nil).Set("answer_cut", false).Set("quotes", []any{}).
-			Set("dropped", pyjson.Int{Text: "0"}).Set("untrusted", nil).Set("exact_text", nil)
+		return withDraft(o.Set("answer", nil).Set("answer_cut", false).Set("quotes", []any{}).
+			Set("dropped", pyjson.Int{Text: "0"}).Set("untrusted", nil).Set("exact_text", nil), nil)
 	}
 	qs := make([]any, len(a.Quotes))
 	for i, q := range a.Quotes {
 		qs[i] = q
 	}
-	return o.Set("answer", a.Answer).Set("answer_cut", a.Cut).Set("quotes", qs).
+	return withDraft(o.Set("answer", a.Answer).Set("answer_cut", a.Cut).Set("quotes", qs).
 		Set("dropped", pyjson.Int{Text: strconv.Itoa(a.Dropped)}).Set("untrusted", UntrustedNote).
-		Set("exact_text", ExactTextNote(minLines))
+		Set("exact_text", ExactTextNote(minLines)), nil)
+}
+
+// withDraft sets Result's draft fields: null, or the draft's.
+func withDraft(o *pyjson.Object, d *Draft) *pyjson.Object {
+	if d == nil {
+		return o.Set("form", nil).Set("applies", nil).Set("apply_reason", nil).Set("draft", nil)
+	}
+	var why any
+	if d.Why != "" {
+		why = d.Why
+	}
+	info := ""
+	if d.Form == "diff" {
+		info = "diff"
+	}
+	return o.Set("form", d.Form).Set("applies", d.Applies).Set("apply_reason", why).Set("draft", Fence(d.Text, info))
+}
+
+// draftResult is delegate.Result for a code write's draft.
+func draftResult(mode, path string, worker, lines any, d *Draft) *pyjson.Object {
+	o := pyjson.NewObject().Set("ok", true).Set("mode", mode).Set("path", path).Set("reason", nil).
+		Set("worker", worker).Set("lines", lines).
+		Set("answer", nil).Set("answer_cut", false).Set("quotes", []any{}).
+		Set("dropped", pyjson.Int{Text: "0"}).Set("untrusted", DraftNote).Set("exact_text", nil)
+	return withDraft(o, d)
 }
 
 // Worker makes the worker call: llm_client.complete with a base URL.
@@ -264,17 +293,19 @@ func LoadDefaultEnvelope(root string) (env *Envelope, ok bool) {
 // hands the call back.
 func Run(path, question, mode, dataDir string, getenv func(string) (string, bool), call Worker) (*pyjson.Object, error) {
 	t0 := time.Now()
-	rec := &record{at: time.Now().UTC().Format("2006-01-02T15:04:05Z"), mode: mode, path: path,
+	rec := &record{at: NowISO(), mode: mode, path: path,
 		workerDollars: nil, keptDollars: nil}
 	shown := path
+	writing := mode == "code_write"
+	rec.notEstimated = writing
 	refuse := func(reason string, worker, lines any) (*pyjson.Object, error) {
 		rec.reason, rec.hasReason = reason, true
 		rec.elapsedMS = float64(time.Since(t0).Nanoseconds()) / 1e6
 		appendRecord(dataDir, rec)
 		return result(false, mode, shown, reason, worker, lines, nil, ""), nil
 	}
-	if mode != "bulk_read" {
-		return refuse("mode "+pystr.Repr(mode)+" is not built; the one mode is bulk_read", nil, nil)
+	if mode != "bulk_read" && mode != "code_write" {
+		return refuse("mode "+pystr.Repr(mode)+" is not built; the modes are bulk_read and code_write", nil, nil)
 	}
 	if pystr.Strip(question) == "" {
 		return refuse("the question is empty", nil, nil)
@@ -301,12 +332,17 @@ func Run(path, question, mode, dataDir string, getenv func(string) (string, bool
 	if env != nil && env.Stakes == "physical" {
 		return refuse("the delegate is refused under physical stakes", nil, nil)
 	}
-	m, why := MeasureFile(norm)
-	if m == nil {
-		return refuse("the file cannot be delegated: "+why, nil, nil)
+	var m *Measure
+	var lines any
+	if !writing || Lexists(norm) {
+		got, why := MeasureFileFollow(norm, !writing)
+		if got == nil {
+			return refuse("the file cannot be delegated: "+why, nil, nil)
+		}
+		m = got
+		rec.fileBytes, rec.fileLines = &m.Size, &m.Lines
+		lines = pyjson.Int{Text: strconv.Itoa(m.Lines)}
 	}
-	rec.fileBytes, rec.fileLines = &m.Size, &m.Lines
-	lines := pyjson.Int{Text: strconv.Itoa(m.Lines)}
 	rt, err := RouteDelegate(dataDir, env, allowRemote, getenv)
 	if err != nil {
 		return nil, &Unsupported{"a local_tier1.json the port's JSON reader does not model"}
@@ -330,8 +366,19 @@ func Run(path, question, mode, dataDir string, getenv func(string) (string, bool
 	if rt.BaseURL != nil {
 		base = *rt.BaseURL
 	}
-	reply, err := call(rt.Model, base, Messages(question, basename(norm), m.Text),
-		llm.BodyOpts{MaxTokens: WorkerMaxTokens, JSONObject: true}, WorkerTimeoutS)
+	var fileText *string
+	if m != nil {
+		fileText = &m.Text
+	}
+	var msgs []llm.Message
+	opts := llm.BodyOpts{MaxTokens: WorkerMaxTokens, JSONObject: true}
+	if writing {
+		msgs = WriterMessages(question, basename(norm), fileText)
+		opts.MaxTokens = WriterMaxTokens
+	} else {
+		msgs = Messages(question, basename(norm), m.Text)
+	}
+	reply, err := call(rt.Model, base, msgs, opts, WorkerTimeoutS)
 	if err != nil {
 		var le *llm.Error
 		if e, isLLM := err.(*llm.Error); isLLM {
@@ -344,6 +391,23 @@ func Run(path, question, mode, dataDir string, getenv func(string) (string, bool
 	}
 	rec.workerIn, rec.workerOut = reply.InputTokens, reply.OutputTokens
 	rec.workerDollars = PriceWorker(rt, reply.InputTokens, reply.OutputTokens)
+	if writing {
+		d, why, unsupported := CheckDraft(reply.Text, fileText)
+		if unsupported {
+			return nil, &Unsupported{"a worker reply nested deeper than this binary reads"}
+		}
+		if d != nil && pystr.HasSurrogate(d.Text) {
+			return nil, &Unsupported{"a worker draft that holds a lone surrogate"}
+		}
+		if d == nil {
+			return refuse(why, worker, lines)
+		}
+		rec.ok = true
+		rec.form, rec.applied = &d.Form, d.Applies
+		rec.elapsedMS = float64(time.Since(t0).Nanoseconds()) / 1e6
+		appendRecord(dataDir, rec)
+		return draftResult(mode, shown, worker, lines, d), nil
+	}
 	a, why, unsupported := CheckReply(reply.Text, m.Text)
 	if unsupported {
 		return nil, &Unsupported{"a worker reply nested deeper than this binary reads"}
@@ -408,3 +472,6 @@ func basename(p string) string {
 
 // StripFence is delegate._strip_fence.
 func StripFence(text string) string { return stripFence(text) }
+
+// NowISO is delegate.now_iso.
+func NowISO() string { return time.Now().UTC().Format("2006-01-02T15:04:05Z") }

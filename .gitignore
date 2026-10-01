@@ -41,3 +41,4 @@ gateway-spike-log/
 # samples embed corpus content, so the cache is never committed.
 .gate-cache/
 harness/coppice/.smoke/
+.speed/

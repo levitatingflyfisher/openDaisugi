@@ -1,0 +1,7 @@
+# floor.machines when the agent profiles cannot be read (no daisugi): the
+# machines still list, with no profile on any, and profiles_line says the
+# profiles are not known, so an empty list is never read as a fact.
+#!env PATH={FIXTURES}/web/bin:/usr/bin:/bin
+#!env COPPICE_DAISUGI_BIN={WORK}/no-daisugi
+{"id":"m1","cmd":"floor.machines"}
+{"id":"$id","ok":true,"result":{"tailscale":"ok","machines":[{"name":"box","online":true,"os":"linux","self":true,"profiles":[]}],"profiles_line":"The agent profiles are not known. Check that daisugi runs, then open Machines again."}}

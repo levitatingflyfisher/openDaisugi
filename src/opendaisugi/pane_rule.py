@@ -7,6 +7,9 @@ take the phone's bearer token and call the phone's answer route. This
 module finds all three in a tool call. The gate denies such a call before
 any envelope check, in every mode.
 
+A wire call of ``agent.set_mode`` counts as an allow: it lowers an agent
+from enforcing to watching, which only the operator may do (F11-R-11).
+
 ``coppice agent deny`` is not an allow and passes here. A task foreman
 denies the asks it holds that way, and coppice-server lets a pane deny
 only an ask it holds now. The server knows a pane only by the caller's
@@ -28,6 +31,32 @@ already trusts, a TLS leaf or tailscale private key would let it stand in
 for the phone server, and the voice server's bearer token opens that
 server the same way the web token opens this one. A public certificate or
 a config file that holds no secret is left to the envelope.
+
+The chat and the journal are private, not keys, but they hold the owner's
+whole working life: ``chat/`` keeps the owner's words to the floor's
+foreman, one ``YYYY-MM-DD.jsonl`` file a day, and ``journal/verdicts.jsonl``
+keeps the gate's verdicts. The door takes a chat day file or the journal
+file by name, as it takes a key, and the two directories by their place
+under the default data directory (``opendaisugi/coppice/chat`` and
+``.../journal``) in any text. Under a data directory a pane names through
+COPPICE_DATA_DIR, a search of either directory is refused as for any
+directory that holds a secret, and a read inside it, through ``cd`` or
+the call's cwd, is the floor rule's. ``$COPPICE_DATA_DIR``, which every
+pane has, ``$OPENDAISUGI_HOME`` and the XDG homes expand as ``$HOME``
+does. What is not seen is a path a program builds at run time, or one a
+variable the gate does not expand holds.
+
+The foreman's own directories are private the same way. Its log dir
+(``main/``, ``tree/``, ``view.json``, ``turns.jsonl``, ``work/``) sits
+beside the coppice data dir under each data home, and under each
+COPPICE_DATA_DIR; its turn dir is ``coppice/foreman`` under the state
+home. The door takes the dir by its place in any text, and a file read
+whose path is the dir or lies under it, through any tool and from any
+cwd, is denied; Glob included, since the log holds the owner's words and
+the file names in it say which node they sit in. The floor rule counts the
+log dir too, so a shell word that names it and a ``cd`` into it are
+refused (not the turn dir: the pane-mode foreman works from it). The search
+rule counts both, so a search rooted above one is refused.
 
 The check reads the call's text. It finds the command through the shell
 decomposition when that parses, and through plain text matches always, so
@@ -71,16 +100,27 @@ from typing import Any
 
 REFUSAL = "a pane can propose. It cannot allow."
 
+# The refusal of the chat verbs on the wire: they read, they do not allow.
+CHAT_REFUSAL = "the chat and an agent's messages are the operator's to read."
+
 _ASK_DIRS = ("asks", "answers")
 
 # coppice, then any words that do not end a command, then agent allow.
 _ALLOW_TEXT = re.compile(r"\bcoppice\b[^\n;&|]*?\bagent\b[\s'\"]+(allow)\b")
 # The wire verb as a request names it, in JSON or in a program's dict, or
 # the CLI words as a list in a program. A bare mention, as in a grep for
-# the verb name, is left to the envelope.
+# the verb name, is left to the envelope. agent.set_mode counts as an allow
+# (F11-R-11): it lowers an agent to watching, and a pane may not, so the
+# gate refuses a typed call of it in every mode, as coppice refuses it
+# from a pane.
 _WIRE_TEXT = re.compile(
-    r"['\"]?(cmd|method)\\?['\"]?\s*[:=]\s*\\?['\"]agent\.(allow)\\?['\"]"
+    r"['\"]?(cmd|method)\\?['\"]?\s*[:=]\s*\\?['\"]agent\.(allow|set_mode)\\?['\"]"
     r"|['\"]agent['\"]\s*,\s*['\"](allow)['\"]"
+)
+# The chat verbs on the wire, in JSON or in a program's dict: the chat and
+# an agent's messages are the operator's to read.
+_CHAT_WIRE_TEXT = re.compile(
+    r"['\"]?(cmd|method)\\?['\"]?\s*[:=]\s*\\?['\"](floor\.chat|pane\.messages)\\?['\"]"
 )
 # A deny in the CLI form or the wire form.
 _DENY_TEXT = re.compile(
@@ -89,7 +129,9 @@ _DENY_TEXT = re.compile(
     r"|['\"]agent['\"]\s*,\s*['\"]deny['\"]"
 )
 # Another server or another socket than the pane's own.
-_OTHER_SERVER = re.compile(r"(^|[\s'\"])--(remote|socket)(=|[\s'\"]|$)|\bXDG_RUNTIME_DIR\b|\bHOME=")
+_OTHER_SERVER = re.compile(
+    r"(^|[\s'\"])--(remote|socket)(=|[\s'\"]|$)|\bXDG_RUNTIME_DIR\b|\bHOME=|\bOPENDAISUGI_HOME=|\bXDG_DATA_HOME="
+)
 # Programs that run a command outside the caller's process tree or session.
 _WRAPPERS = (
     "ssh|mosh|setsid|systemd-run|nohup|at|batch|tmux|screen|dtach|abduco|zellij|byobu"
@@ -144,9 +186,18 @@ _SECRET_NAMES = (
 )
 _SECRET_FILE = re.compile(
     r"(^|[^A-Za-z0-9_])"
-    r"(web/token|web/ca/ca\.key|web/ca/leaf\.key|web/tls/tailscale\.key|voice/token)"
+    r"(web/token|web/ca/ca\.key|web/ca/leaf\.key|web/tls/tailscale\.key|voice/token"
+    r"|chat/[0-9]{4}-[0-9]{2}-[0-9]{2}\.jsonl|journal/verdicts\.jsonl)"
     r"\b"
 )
+# The chat and journal directories under the default data directory, in
+# any text: ~/.opendaisugi/coppice, or $XDG_DATA_HOME/opendaisugi/coppice.
+_PRIVATE_DIR_TEXT = re.compile(r"opendaisugi/coppice/(chat|journal)($|[/ \t\n\r'\"`;&|)])")
+# The foreman's log dir under the default data home and its turn dir under
+# the state home, in any text. The log dir holds the owner's whole log of
+# words to the foreman, its summaries, the turn records and the workers'
+# session files.
+_FOREMAN_DIR_TEXT = re.compile(r"(opendaisugi|coppice)/foreman($|[/ \t\n\r'\"`;&|)*])")
 _WEB_ANSWER_ROUTE = "/api/ask/answer"
 
 # A gate directory's ask files in a relative or home spelling.
@@ -194,16 +245,62 @@ def _commands(command: str) -> list[str]:
 def web_door(text: str) -> bool:
     """True when text asks for the phone's token or its answer route, or
     names any other secret file the coppice data directory holds: the
-    local CA's key, a TLS leaf or tailscale key, or the voice token."""
+    local CA's key, a TLS leaf or tailscale key, the voice token, a chat
+    day file or the journal, or the chat or journal directory under the
+    default data directory."""
     return bool(
-        _WEB_TOKEN_CMD.search(text) or _SECRET_FILE.search(text) or _WEB_ANSWER_ROUTE in text
+        _WEB_TOKEN_CMD.search(text)
+        or _SECRET_FILE.search(text)
+        or _PRIVATE_DIR_TEXT.search(text)
+        or _FOREMAN_DIR_TEXT.search(text)
+        or _WEB_ANSWER_ROUTE in text
     )
+
+
+def json_unescaped(text: str) -> str:
+    """text with JSON string escapes decoded once: ``\\uXXXX`` (not a
+    surrogate) becomes its character, and a backslash before any other
+    character drops, so ``\\/`` and ``\\.`` read as ``/`` and ``.``."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and i + 1 < n:
+            nxt = text[i + 1]
+            hexd = text[i + 2 : i + 6]
+            if (
+                nxt == "u"
+                and len(hexd) == 4
+                and all(h in "0123456789abcdefABCDEF" for h in hexd)
+                and not 0xD800 <= int(hexd, 16) <= 0xDFFF
+            ):
+                out.append(chr(int(hexd, 16)))
+                i += 6
+                continue
+            out.append(nxt)
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def chat_wire_hit(payload: dict[str, Any], record: dict[str, Any] | None) -> bool:
+    """True when a shell line sends floor.chat or pane.messages on the
+    coppice wire, as typed or with its JSON escapes decoded."""
+    if not record or record.get("step_type") != "shell":
+        return False
+    command = str(record.get("command") or "")
+    return bool(_CHAT_WIRE_TEXT.search(command) or _CHAT_WIRE_TEXT.search(json_unescaped(command)))
 
 
 def shell_allows(command: str) -> bool:
     """True when a shell line runs an allow through coppice or on the wire,
-    or opens the web door."""
-    if web_door(command):
+    or opens the web door, as typed or with its data dir variables
+    expanded."""
+    from opendaisugi.floor_config import _expand_home
+
+    if web_door(command) or web_door(_expand_home(command)):
         return True
     for cmd in _commands(command):
         try:
@@ -212,7 +309,11 @@ def shell_allows(command: str) -> bool:
             words = cmd.split()
         if _is_allow_words(words):
             return True
-    return bool(_ALLOW_TEXT.search(command) or _WIRE_TEXT.search(command))
+    return bool(
+        _ALLOW_TEXT.search(command)
+        or _WIRE_TEXT.search(command)
+        or _WIRE_TEXT.search(json_unescaped(command))
+    )
 
 
 def _roots(root: Path | None) -> list[Path]:
@@ -272,7 +373,7 @@ def path_names_secret(raw: str, cwd: str) -> bool:
 
 # Each directory, under a coppice data directory, that holds a secret
 # file: the data directory itself and each directory on the way down.
-_SECRET_DIRS = ("", "web", "web/ca", "web/tls", "voice")
+_SECRET_DIRS = ("", "web", "web/ca", "web/tls", "voice", "chat", "journal")
 # Tools that print file names only, never contents.
 _NAMES_ONLY = frozenset({"Glob"})
 # Tools that open only the one file their path names.
@@ -304,6 +405,21 @@ def path_holds_secret(raw: str, cwd: str) -> bool:
         p = Path(cwd or os.getcwd()) / p
     dirs = _secret_dirs()
     return os.path.normpath(str(p)) in dirs or str(p.resolve(strict=False)) in dirs
+
+
+def path_in_foreman(raw: str, cwd: str) -> bool:
+    """True when a path, as typed, normalized and resolved from cwd, is a
+    foreman directory or lies under one."""
+    from opendaisugi.floor_config import foreman_dirs
+
+    if not raw:
+        return False
+    p = Path(_home_spellings(raw)).expanduser()
+    if not p.is_absolute():
+        p = Path(cwd or os.getcwd()) / p
+    cands = (os.path.normpath(str(p)), str(p.resolve(strict=False)))
+    dirs = [str(d) for d in foreman_dirs()]
+    return any(c == d or c.startswith(d + "/") for d in dirs for c in cands)
 
 
 def _search_refuses(command: str, cwd: str) -> bool:
@@ -405,20 +521,24 @@ def pane_rule_hit(
             return path_touches_asks(str(record.get("path") or ""), cwd, root)
         if step == "file_read":
             path = str(record.get("path") or "")
-            if web_door(path) or path_names_secret(path, cwd):
+            if web_door(path) or path_names_secret(path, cwd) or path_in_foreman(path, cwd):
                 return True
             tool = str(record.get("tool_name") or "")
             if tool in _NAMES_ONLY:
-                return False
+                return path_in_foreman(cwd, cwd)
             if path_holds_secret(path, cwd):
                 return True
             if tool not in _ONE_FILE:
                 from opendaisugi.search_rule import search_paths
 
                 paths = search_paths(payload)
-                if paths is None or any(path_holds_secret(p, cwd) for p in paths):
+                if paths is None or any(
+                    path_holds_secret(p, cwd) or path_in_foreman(p, cwd) for p in paths
+                ):
                     return True
-            return tool not in _ONE_FILE and path_holds_secret(cwd, cwd)
+            return tool not in _ONE_FILE and (
+                path_holds_secret(cwd, cwd) or path_in_foreman(cwd, cwd)
+            )
         if step == "mcp":
             return any(
                 web_door(v)

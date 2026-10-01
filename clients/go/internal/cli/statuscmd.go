@@ -62,7 +62,7 @@ func (e *Env) dataDir(p *parsed) string {
 	if p.has("--data-dir") {
 		return gateroot.PathStr(p.str("--data-dir", ""))
 	}
-	return gateroot.Join(e.home, ".opendaisugi")
+	return e.dataHome()
 }
 
 // status is onboarding.StatusReport.
@@ -101,7 +101,7 @@ func (e *Env) statusCmd(args []string) error {
 	// The matcher comes from ~/.opendaisugi/config.yaml, as the pathway
 	// commands read it. The binary carries lexical and potion only; under
 	// any other matcher it reuses no pathway, so it says so (C-12).
-	home := gateroot.Join(e.home, ".opendaisugi/config.yaml")
+	home := gateroot.Join(e.dataHome(), "config.yaml")
 	hcfg, herr := config.Load(home)
 	key := "lexical"
 	if herr == nil {

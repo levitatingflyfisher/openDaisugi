@@ -103,6 +103,10 @@ type Prepared struct {
 	// Started is when Prepare began; Finish books the time from here as
 	// the record's elapsed_ms. The zero time books none.
 	Started time.Time
+	// Pane and Floor are the coppice pane and floor the turn came from,
+	// or empty. The proxy takes them from the request path; Finish stamps
+	// the record.
+	Pane, Floor string
 }
 
 // Prepare is Gateway.prepare. An error is a raise: the proxy then
@@ -269,6 +273,7 @@ func (g *Gateway) Finish(p *Prepared, usage any, answer string, now time.Time) (
 	if err != nil {
 		return Record{}, err
 	}
+	rec.Pane, rec.Floor = p.Pane, p.Floor
 	if g.JournalPath != "" {
 		if err := appendLine(g.JournalPath, rec.JSON()); err != nil {
 			return Record{}, err

@@ -69,8 +69,8 @@ def test_every_stage_names_at_least_one_module(tmp_path):
         assert all(m.name for m in s.modules)
 
 
-# --- the voice engine stage: faster-whisper ACTIVE by selection + package,
-# parakeet AVAILABLE by package presence alone ------------------------------
+# --- the voice engine stage: an engine is ACTIVE when it is the one the
+# config means (VO-13) and it is there --------------------------------------
 
 
 def test_voice_stage_marks_faster_whisper_active_when_selected_and_installed(tmp_path):
@@ -92,42 +92,101 @@ def test_voice_stage_marks_faster_whisper_possible_when_the_package_is_missing(
     assert fw.state == POSSIBLE
 
 
-def test_voice_stage_marks_parakeet_possible_when_sherpa_onnx_is_missing(tmp_path):
-    # sherpa-onnx is not installed in this dev/test env.
-    stage = next(s for s in detect_stages(tmp_path) if s.key == "voice_engine")
-    parakeet = {m.name: m for m in stage.modules}["parakeet"]
-    assert parakeet.state == POSSIBLE
+def _voice(tmp_path, which=lambda _: None, config=None, hardware="16,8,0"):
+    from opendaisugi.config import save_config
+    from opendaisugi.voice.engines import HARDWARE_ENV
+
+    if config is not None:
+        save_config(config, tmp_path / "config.yaml")
+    env = {HARDWARE_ENV: hardware, "XDG_RUNTIME_DIR": str(tmp_path / "run")}
+    stage = next(
+        s
+        for s in detect_stages(tmp_path, home=tmp_path / "home", which=which, env=env)
+        if s.key == "voice_engine"
+    )
+    return {m.name: m for m in stage.modules}
 
 
-def test_voice_stage_marks_parakeet_available_when_sherpa_onnx_is_importable(tmp_path, monkeypatch):
-    import importlib.util
+def test_voice_stage_lists_the_four_engines(tmp_path):
+    # VO-8: the map lists every engine pick_engine builds.
+    assert list(_voice(tmp_path)) == ["faster-whisper", "moonshine", "parakeet", "whisper.cpp"]
 
-    real_find_spec = importlib.util.find_spec
 
-    def _present(name, *a, **k):
-        if name == "sherpa_onnx":
-            return object()
-        return real_find_spec(name, *a, **k)
+def test_parakeet_carries_its_model_attribution_and_is_active_on_a_desktop(tmp_path):
+    p = _voice(tmp_path)["parakeet"]
+    assert p.state == POSSIBLE
+    assert p.note == (
+        "needs parakeet-cli on PATH (scripts/install.sh); "
+        "model NVIDIA Parakeet-TDT-0.6B v2, CC-BY-4.0"
+    )
+    on = _voice(tmp_path, which=lambda n: "/x" if n.endswith("-cli") else None)
+    assert on["parakeet"].state == ACTIVE
+    assert (
+        on["parakeet"].note == "parakeet-cli on PATH; model NVIDIA Parakeet-TDT-0.6B v2, CC-BY-4.0"
+    )
+    assert on["moonshine"].state == AVAILABLE
 
-    monkeypatch.setattr(importlib.util, "find_spec", _present)
-    stage = next(s for s in detect_stages(tmp_path) if s.key == "voice_engine")
-    parakeet = {m.name: m for m in stage.modules}["parakeet"]
-    assert parakeet.state == AVAILABLE
-    # Never ACTIVE from this stage alone: a present package says nothing
-    # about whether the model directory itself is there too.
-    assert parakeet.state != ACTIVE
+
+def test_moonshine_is_possible_without_moonshine_cli(tmp_path):
+    m = _voice(tmp_path)["moonshine"]
+    assert m.state == POSSIBLE
+    assert m.note == "needs moonshine-cli on PATH (scripts/install.sh)"
+
+
+def test_moonshine_is_active_with_no_voice_config_and_no_faster_whisper(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", None)
+    by_name = _voice(tmp_path, which=lambda n: "/x" if n == "moonshine-cli" else None)
+    assert by_name["moonshine"].state == ACTIVE
+    assert by_name["moonshine"].note == "moonshine-cli on PATH; small, fetched on first use"
+    assert by_name["faster-whisper"].state == POSSIBLE
+
+
+def test_a_saved_default_config_still_means_moonshine_without_faster_whisper(tmp_path, monkeypatch):
+    import sys
+
+    from opendaisugi.config import Config
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", None)
+    by_name = _voice(
+        tmp_path,
+        which=lambda n: "/x" if n == "moonshine-cli" else None,
+        config=Config(matcher_model="lexical"),
+    )
+    assert by_name["moonshine"].state == ACTIVE
+
+
+def test_moonshine_is_available_when_faster_whisper_is_the_default(tmp_path):
+    # faster-whisper is installed here, so a small box with no voice config runs it.
+    by_name = _voice(
+        tmp_path, which=lambda n: "/x" if n == "moonshine-cli" else None, hardware="1,1,0"
+    )
+    assert by_name["moonshine"].state == AVAILABLE
+    assert by_name["faster-whisper"].state == ACTIVE
+
+
+def test_whisper_cpp_is_active_only_when_selected_and_on_path(tmp_path):
+    from opendaisugi.config import Config
+
+    cfg = Config(voice_engine="whisper.cpp", voice_model="/m/ggml.bin")
+    on_path = lambda n: "/x" if n == "whisper-cli" else None  # noqa: E731
+    assert _voice(tmp_path, which=on_path, config=cfg)["whisper.cpp"].state == ACTIVE
+    assert _voice(tmp_path, config=cfg)["whisper.cpp"].state == POSSIBLE
+    assert _voice(tmp_path, config=cfg)["whisper.cpp"].note == "needs whisper-cli on PATH"
 
 
 def test_voice_stage_tag_flips_with_voice_engine_selection(tmp_path):
-    from opendaisugi.config import Config, save_config
+    from opendaisugi.config import Config
 
-    save_config(Config(voice_engine="parakeet"), tmp_path / "config.yaml")
-    stage = next(s for s in detect_stages(tmp_path) if s.key == "voice_engine")
-    by_name = {m.name: m for m in stage.modules}
-    # Selecting parakeet never promotes it past AVAILABLE without the
-    # package (still missing here), and drops faster-whisper to AVAILABLE
-    # even though its package is installed, since it is no longer selected.
-    assert by_name["parakeet"].state == POSSIBLE
+    by_name = _voice(
+        tmp_path,
+        which=lambda n: "/x" if n == "moonshine-cli" else None,
+        config=Config(voice_engine="moonshine"),
+    )
+    # Selecting moonshine drops faster-whisper to AVAILABLE even though its
+    # package is installed, since it is no longer selected.
+    assert by_name["moonshine"].state == ACTIVE
     assert by_name["faster-whisper"].state == AVAILABLE
 
 
@@ -325,7 +384,7 @@ def test_render_wiring_passes_home_and_which_through_to_detect_stages(tmp_path, 
     supports."""
     calls = []
 
-    def _fake_detect_stages(data_dir, *, home=None, which=None):
+    def _fake_detect_stages(data_dir, *, home=None, which=None, parakeet_ok=True):
         calls.append((data_dir, home, which))
         return []
 
@@ -345,7 +404,7 @@ def test_wiring_json_passes_home_and_which_through_to_detect_stages(tmp_path, mo
     developer box the way render_wiring() already could."""
     calls = []
 
-    def _fake_detect_stages(data_dir, *, home=None, which=None):
+    def _fake_detect_stages(data_dir, *, home=None, which=None, parakeet_ok=True):
         calls.append((data_dir, home, which))
         return []
 
@@ -599,3 +658,18 @@ def test_minilm_row_needs_sentence_transformers_even_when_a_matcher_runs(tmp_pat
         row = stage.modules[0]
         assert row.state == POSSIBLE, (key, row)
         assert "[search]" in row.note, (key, row)
+
+
+def test_wiring_passes_parakeet_ok_through_to_detect_stages(tmp_path, monkeypatch):
+    """The layer may not import voice (ADR-0020), so the caller hands in
+    whether Parakeet can run here and both renderers pass it on."""
+    seen: list[bool] = []
+
+    def _fake_detect_stages(data_dir, *, home=None, which=None, parakeet_ok=True):
+        seen.append(parakeet_ok)
+        return []
+
+    monkeypatch.setattr("opendaisugi.modules.detect_stages", _fake_detect_stages)
+    render_wiring(tmp_path, parakeet_ok=False)
+    wiring_json(tmp_path, parakeet_ok=False)
+    assert seen == [False, False]

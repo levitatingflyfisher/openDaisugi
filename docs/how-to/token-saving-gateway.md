@@ -89,6 +89,22 @@ dropped ([ADR-0013](../adr/)).
    events in passing — it never buffers the stream to measure it.
 4. **Journals the turn** to `~/.opendaisugi/gateway/turns.jsonl`.
 
+A harness can name its pane. A base URL of the form
+`<gateway>/pane/<floor>/<pane>` (the floor is 16 lower-case hex digits and the
+pane is `w<n>:p<n>`, as coppice names them) is routed as the plain
+`<gateway>/...` path: the gateway takes the prefix off before it routes, so the
+upstream never sees it, and it adds `"pane"` and `"floor"` to that turn's
+journal line. A line with no well-formed prefix has neither key.
+
+The gateway says that it takes the prefix: `GET /_caps` from the same machine
+answers `{"pane_prefix": true}`. Like `/_reload`, it is answered by the gateway
+itself, loopback only, and never sent on to the model provider. coppice asks once
+for each gateway address, and sets the prefix on the base URL of an agent it
+starts only when the answer is yes, so its floor can show the tokens saved for each
+agent. An older gateway has no such route and does not strip the prefix; coppice
+then leaves the base URL plain, and the pane works as before with no savings figure
+of its own. Restart the gateway after you update daisugi to turn it on.
+
 If the cheap model returns a 4xx on the swapped body (say a `max_tokens` above its
 ceiling), the turn is retried once on the original model before the client sees
 anything — a pre-dispatch decision, so a committed stream is never unwound. A turn

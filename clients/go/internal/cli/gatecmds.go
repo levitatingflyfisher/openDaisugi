@@ -14,6 +14,7 @@ import (
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/journal"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/tree"
 	"daisugi-verify/internal/verify"
 )
 
@@ -25,7 +26,7 @@ func (e *Env) root(p *parsed) string {
 	if p.has("--root") {
 		return gateroot.PathStr(p.str("--root", ""))
 	}
-	return gateroot.Join(e.home, ".opendaisugi/gate")
+	return gateroot.Join(e.dataHome(), "gate")
 }
 
 // cmdHelp prints a command's help from its options.
@@ -370,6 +371,8 @@ func (e *Env) gateRegister(args []string) error {
 		{names: []string{"--session"}, value: true, metavar: "TEXT",
 			help: "Bind to one session id; omit to register the default envelope."},
 		rootOpt,
+		{names: []string{"--parent"}, value: true, metavar: "TEXT",
+			help: "Register a child of this session: the edge to it is proved first, and a refused edge registers nothing."},
 	}
 	p, err := parseArgs(args, opts, 1)
 	if err != nil {
@@ -392,6 +395,11 @@ func (e *Env) gateRegister(args []string) error {
 	// yaml.safe_load reads the file, JSON included, as YAML 1.1: to it
 	// 1e-09 is a string, not a number.
 	y, err := config.ParseYAML(text)
+	var yerr *config.YAMLError
+	if errors.As(err, &yerr) {
+		// safe_load raises: the oracle's traceback names the exception.
+		return e.fail("gate register", yerr)
+	}
 	if err != nil {
 		return e.refuse("gate register", errors.New("the envelope uses YAML this binary does not read yet"))
 	}
@@ -412,6 +420,12 @@ func (e *Env) gateRegister(args []string) error {
 		return e.refuse("gate register", err)
 	}
 	session := p.str("--session", "")
+	if p.has("--parent") {
+		env, err = e.provedChild(env, session, p.str("--parent", ""), e.root(p))
+		if err != nil {
+			return err
+		}
+	}
 	path, followed, err := gateroot.Register(env, session, e.root(p))
 	e.noteFile(path, followed)
 	if err != nil {
@@ -512,6 +526,8 @@ func yamlToJSON(v config.Value) (any, error) {
 		return pyjson.Float(f), nil
 	case config.Str:
 		return v.Text, nil
+	case config.Other:
+		return nil, errors.New("the envelope holds a date")
 	case config.Seq:
 		out := make([]any, len(v.Items))
 		for i, it := range v.Items {
@@ -567,4 +583,31 @@ func pyStr(v any) (string, bool) {
 		return x, true
 	}
 	return "", false
+}
+
+// provedChild is cli._proved_child: the child as it registers once the
+// edge from parent is proved, or a one-line refusal and exit 1.
+func (e *Env) provedChild(env *pyjson.Object, session, parent, root string) (*pyjson.Object, error) {
+	refuse := func(why string) (*pyjson.Object, error) {
+		e.errf("not registered: %s\n", why)
+		return nil, exit(1)
+	}
+	if parent == "" {
+		return refuse("--parent needs a session id")
+	}
+	if session == "" {
+		return refuse("--parent needs --session; the starter names the child's session")
+	}
+	if !tree.ValidSession(session) {
+		return refuse("the child's session id " + tree.Q(session) + " is not one the tree takes")
+	}
+	if st, err := os.Stat(gateroot.Join(gateroot.EnvelopesDir(root), gateroot.SafeSessionID(session)+".json")); err == nil && st != nil {
+		return refuse("session " + session + " is registered already")
+	}
+	penv := tree.LoadRegistered(parent, root)
+	res := tree.EdgeOK(penv, env, tree.DefaultTimeoutMs)
+	if !res.Holds {
+		return refuse("the edge from " + parent + " to " + session + " is refused: " + strings.Join(res.Reasons, "; "))
+	}
+	return tree.WithKey(res.Child, "parent_envelope", penv.Value("id")), nil
 }

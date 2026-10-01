@@ -22,7 +22,7 @@ func pluginRefusal(id, verb string) string {
 var readVerbs = map[string]bool{
 	"pane.list": true, "session.list": true, "pane.read": true, "task.list": true,
 	"agent.list": true, "agent.get": true, "server.status": true, "floor.notes": true,
-	"pane.explain": true, "floor.facts": true,
+	"pane.explain": true, "floor.facts": true, "floor.journal": true,
 }
 
 // eventVerbs manage a subscription. A plugin holds them when it listens to

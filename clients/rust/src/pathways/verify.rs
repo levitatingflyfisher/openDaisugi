@@ -104,6 +104,24 @@ pub fn verify(plan_v: &Value, env_v: &Value, strict: Option<bool>, timeout_ms: u
     if done(&out) {
         return Ok(out);
     }
+    // The delegation proof reads the typed copy, which clamps an int past
+    // i64 (`to_serde`): with one in the caller's envelope or a contract,
+    // refuse rather than prove over a wrong numeral.
+    let skills: Vec<&Value> = match plan_v.as_obj().map(|o| o.value("steps")) {
+        Some(Value::List(l)) => l
+            .iter()
+            .filter_map(|s| s.as_obj())
+            .filter(|s| s.value("type").as_str() == Some("skill"))
+            .map(|s| s.value("contract_envelope"))
+            .filter(|c| c.as_obj().is_some())
+            .collect(),
+        _ => vec![],
+    };
+    if !skills.is_empty() && (wide_int(env_v) || skills.iter().any(|c| wide_int(c))) {
+        return Err(unreadable(
+            "an int past 2^63 in an envelope a skill delegation proof reads, which this binary does not hold exactly",
+        ));
+    }
     let delegations = crate::verify::check_skill_delegations(
         &plan,
         &env,
@@ -144,7 +162,10 @@ pub fn verify(plan_v: &Value, env_v: &Value, strict: Option<bool>, timeout_ms: u
         let r = if forced { Ok(Check::Unknown) } else { with_main(|c| check(c)).and_then(|r| r) };
         match r {
             Err(e) => out.violations.push(Violation::plan("z3").msg(format!("Z3 could not run the {which}: {}", e.0))),
-            Ok(Check::Unsat) => out.violations.push(Violation::plan("z3").msg(*unsat_msg)),
+            // z3's unsat_core() with no tracked assertions prints "[]".
+            Ok(Check::Unsat) => out.violations.push(
+                Violation::plan("z3").msg(*unsat_msg).with(Object::new().with("unsat_core", "[]"), None),
+            ),
             Ok(Check::Sat) => {}
             Ok(Check::Unknown) => {
                 let text = format!("{exceeded} {timeout_ms}ms");
@@ -170,7 +191,8 @@ pub fn verify(plan_v: &Value, env_v: &Value, strict: Option<bool>, timeout_ms: u
         Some(Value::List(l)) => l.iter().map(dumped_step).collect(),
         _ => vec![],
     };
-    let mut stage = Stage::for_plan(&genv, steps, strict);
+    let task = plan_v.as_obj().and_then(|o| o.value("task").as_str()).unwrap_or("").to_string();
+    let mut stage = Stage::for_plan(&genv, &task, steps, strict);
     let vs = match stage.run() {
         Ok(vs) => vs,
         Err(Fault::Undecided(why)) => return Err(unreadable(why)),
@@ -184,17 +206,12 @@ pub fn verify(plan_v: &Value, env_v: &Value, strict: Option<bool>, timeout_ms: u
     };
     out.warnings.append(&mut stage.warnings);
     for v in vs {
-        // The strict-mode opaque violation carries its detail, as the Go
-        // port words it; every other one is still refused where a caller
-        // writes it.
-        let opaque = v
-            .detail
-            .as_ref()
-            .is_some_and(|d| d.value("reason").as_str() == Some("opaque_unrecognized"));
+        // Each predicate violation carries the detail the stage words, as
+        // the Go port words it.
         let pv = Violation::plan("predicate").msg(v.message);
-        out.violations.push(match (opaque, v.detail) {
-            (true, Some(d)) => pv.with(d, None),
-            _ => pv,
+        out.violations.push(match v.detail {
+            Some(d) => pv.with(d, None),
+            None => pv,
         });
     }
     // Stage 2c: the robotics trajectory checks.
@@ -530,41 +547,53 @@ fn is_none(v: &Value) -> bool {
     matches!(v, Value::Null)
 }
 
-/// Names a postcondition or invariant that the stage-2 check below does
-/// not decide the oracle's way (an expr it does not evaluate, or one that
-/// asks a model), or "" when it decides every enforced one. A caller
+/// Names an enforced invariant or postcondition whose expr is a dict that
+/// does not parse as a predicate, or "" when there is none. The oracle
+/// raises a ValidationError out of verify there (a traceback); a caller
 /// refuses such an envelope before anything runs.
 pub fn stage2_refusal(env: &Value) -> String {
     let o = env.as_obj().cloned().unwrap_or_default();
-    for inv in list_of(o.value("invariants")) {
-        let Some(inv) = inv.as_obj() else { continue };
-        if crate::gate::pyjson::dumps(inv.value("expr"), true).contains("\"llm_check\"") {
-            return format!("invariant '{}' asks a model (llm_check)", text_of(inv.value("type")));
-        }
-    }
-    for pc in list_of(o.value("postconditions")) {
-        let Some(pc) = pc.as_obj() else { continue };
-        if !matches!(pc.value("enforce"), Value::Bool(true)) {
-            continue;
-        }
-        let expr = pc.value("expr");
-        if is_none(expr) {
-            continue;
-        }
-        let kind = text_of(pc.value("type"));
-        if expr.as_obj().is_none() {
-            return format!("postcondition '{kind}' has an expr that is not a dict");
-        }
-        let text = crate::gate::pyjson::dumps(expr, true);
-        if text.contains("\"llm_check\"") || text.contains("\"alias\"") {
-            return format!("postcondition '{kind}' asks a model or names an alias");
-        }
-        let parsed = to_serde(expr).map_err(|e| e.to_string()).and_then(|v| crate::predicate::parse_expression(&v));
-        if parsed.is_err() {
-            return format!("postcondition '{kind}' has an expr this binary does not read");
+    let unread = |expr: &Value| {
+        expr.as_obj().is_some()
+            && to_serde(expr).map_err(|e| e.to_string()).and_then(|v| crate::predicate::parse_expression(&v)).is_err()
+    };
+    for (label, key) in [("invariant", "invariants"), ("postcondition", "postconditions")] {
+        for it in list_of(o.value(key)) {
+            let Some(it) = it.as_obj() else { continue };
+            if !matches!(it.value("enforce"), Value::Bool(true)) {
+                continue;
+            }
+            if unread(it.value("expr")) {
+                return format!("{label} '{}' has an expr this binary does not read", text_of(it.value("type")));
+            }
         }
     }
     String::new()
+}
+
+/// The model a stage-2 llm_check asks: `run_llm_check(rule, payload)` over
+/// the pseudo-plan of one completed step, through the world the command
+/// set. A failed call is the error the evaluator raises; a call this
+/// binary does not make the oracle's way ends in " is not in this binary
+/// yet".
+fn stage2_llm(task: &Value, step: &Value) -> impl Fn(&str) -> Result<bool, String> {
+    let payload = Object::new().with("task", task.clone()).with("steps", Value::List(vec![dumped_step(step)]));
+    move |rule: &str| match crate::gate::llm::command_llm_check(rule, &payload) {
+        None => Err("llm_check is not reproducible offline (network/model call)".into()),
+        Some(Ok(res)) if res.errored => Err(res.reason),
+        Some(Ok(res)) => Ok(res.satisfied),
+        Some(Err(Fault::Undecided(w))) => Err(format!("{w} is not in this binary yet")),
+        Some(Err(Fault::Raised(e))) => Err(e.msg),
+    }
+}
+
+/// An evaluation error every caller words as the oracle does: an
+/// llm_check that failed or was blocked, and an alias left unresolved.
+fn worded_eval_error(m: &str) -> bool {
+    !m.ends_with(" is not in this binary yet")
+        && (m.starts_with("error: llm_check call failed: ")
+            || m.starts_with("llm_check blocked for physical stakes")
+            || m.starts_with("unresolved alias reference '"))
 }
 
 /// A number of a postcondition field compared with `n`: `lo <= n` when
@@ -649,7 +678,21 @@ pub fn verify_completed_step(step: &Value, env: &Value, strict: Option<bool>) ->
             }
             continue;
         }
-        let parsed = to_serde(expr).map_err(|e| e.to_string()).and_then(|v| crate::predicate::parse_expression(&v));
+        if expr.as_obj().is_none() {
+            out.push(format!(
+                "postcondition '{kind}' evaluation error: unknown predicate op: '{}'",
+                crate::gate::pyjson::py_type_name(expr)
+            ));
+            continue;
+        }
+        if past_u64(expr) || past_u64(&dumped_step(step)) {
+            // Fails closed: this evaluator holds ints to 64 bits.
+            out.push(format!(
+                "postcondition '{kind}' evaluation error: an int past 64 bits, which this binary does not compare exactly"
+            ));
+            continue;
+        }
+        let parsed = to_serde_u64(expr).map_err(|e| e.to_string()).and_then(|v| crate::predicate::parse_expression(&v));
         let expr = match parsed {
             Ok(e) => e,
             Err(e) => {
@@ -657,20 +700,68 @@ pub fn verify_completed_step(step: &Value, env: &Value, strict: Option<bool>) ->
                 continue;
             }
         };
-        let steps = match to_serde(&dumped_step(step)) {
+        let steps = match to_serde_u64(&dumped_step(step)) {
             Ok(s) => vec![s],
             Err(e) => {
                 out.push(format!("postcondition '{kind}' evaluation error: {e}"));
                 continue;
             }
         };
-        match crate::predicate::evaluate_predicate(&expr, &steps, &stakes) {
+        let ask = stage2_llm(o.value("task"), step);
+        match crate::predicate::evaluate_predicate_with(&expr, &steps, &stakes, Some(&ask)) {
             Ok(true) => {}
             Ok(false) => out.push(format!("postcondition '{kind}' violated on completed step {step_id}")),
             Err(e) => out.push(format!("postcondition '{kind}' evaluation error: {e}")),
         }
     }
     out
+}
+
+/// Whether `v` holds an int past i64: `to_serde` clamps one to the
+/// nearest i64 bound, so two of them could compare equal (or read as
+/// another float) where Python's exact ints do not. A check that compares
+/// such a copy refuses first.
+pub(crate) fn wide_int(v: &Value) -> bool {
+    match v {
+        Value::Int(t) => t.parse::<i64>().is_err(),
+        Value::List(l) | Value::Tuple(l) => l.iter().any(wide_int),
+        Value::Obj(o) => o.keys().iter().any(|k| wide_int(o.value(k))),
+        _ => false,
+    }
+}
+
+/// Whether `v` holds an int past 64 bits (signed or not), which
+/// `to_serde_u64` cannot hold.
+pub(crate) fn past_u64(v: &Value) -> bool {
+    match v {
+        Value::Int(t) => t.parse::<i64>().is_err() && t.parse::<u64>().is_err(),
+        Value::List(l) | Value::Tuple(l) => l.iter().any(past_u64),
+        Value::Obj(o) => o.keys().iter().any(|k| past_u64(o.value(k))),
+        _ => false,
+    }
+}
+
+/// `to_serde` for stage 2's evaluator: an int to 64 bits, signed or not,
+/// held exactly (an int in 2^63..2^64 is a u64, not clamped to i64).
+/// The caller refuses an int past that first (`past_u64`).
+fn to_serde_u64(v: &Value) -> Result<serde_json::Value, PwErr> {
+    Ok(match v {
+        Value::Int(t) => match t.parse::<u64>() {
+            Ok(n) => serde_json::Value::Number(n.into()),
+            Err(_) => to_serde(v)?,
+        },
+        Value::List(l) | Value::Tuple(l) => {
+            serde_json::Value::Array(l.iter().map(to_serde_u64).collect::<Result<_, _>>()?)
+        }
+        Value::Obj(o) => {
+            let mut m = serde_json::Map::new();
+            for k in o.keys() {
+                m.insert(k.clone(), to_serde_u64(o.value(k))?);
+            }
+            serde_json::Value::Object(m)
+        }
+        _ => to_serde(v)?,
+    })
 }
 
 /// Python's `rc == expected` for a JSON value and an int's text.
@@ -832,23 +923,40 @@ pub fn stage2_violations(step: &Object, env: &Object) -> Result<Vec<Value>, Stri
             }
             continue;
         }
+        let eval_error = |m: String| {
+            stage2_violation(
+                format!("postcondition '{kind}' evaluation error: {m}"),
+                Object::new().with("postcondition", kind.as_str()).with("step_id", step_id.clone()),
+            )
+        };
         if expr.as_obj().is_none() {
-            return Err(format!("postcondition '{kind}' has an expr that is not a dict"));
+            // _normalize_expr passes a non-dict through; evaluation then
+            // raises on its Python type.
+            out.push(eval_error(format!("unknown predicate op: '{}'", crate::gate::pyjson::py_type_name(expr))));
+            continue;
         }
-        let text = crate::gate::pyjson::dumps(expr, true);
-        if text.contains("\"llm_check\"") || text.contains("\"alias\"") {
-            return Err(format!("postcondition '{kind}' asks a model or names an alias"));
+        let step_v = Value::Obj(step.clone());
+        if past_u64(expr) || past_u64(&dumped_step(&step_v)) {
+            return Err(format!(
+                "postcondition '{kind}' compares an int past 64 bits, which this binary does not hold exactly"
+            ));
         }
-        let pexpr = to_serde(expr)
+        let pexpr = to_serde_u64(expr)
             .map_err(|e| e.to_string())
             .and_then(|v| crate::predicate::parse_expression(&v))
             .map_err(|_| format!("postcondition '{kind}' has an expr this binary does not read"))?;
-        let steps = to_serde(&dumped_step(&Value::Obj(step.clone())))
+        let steps = to_serde_u64(&dumped_step(&step_v))
             .map(|s| vec![s])
             .map_err(|_| "a step the verifier does not read".to_string())?;
-        let ok = crate::predicate::evaluate_predicate(&pexpr, &steps, &stakes).map_err(|_| {
-            format!("postcondition '{kind}' meets an evaluation error this binary does not word")
-        })?;
+        let ask = stage2_llm(env.value("task"), &step_v);
+        let ok = match crate::predicate::evaluate_predicate_with(&pexpr, &steps, &stakes, Some(&ask)) {
+            Ok(ok) => ok,
+            Err(m) if worded_eval_error(&m) => {
+                out.push(eval_error(m));
+                continue;
+            }
+            Err(_) => return Err(format!("postcondition '{kind}' meets an evaluation error this binary does not word")),
+        };
         if !ok {
             out.push(stage2_violation(
                 format!("postcondition '{kind}' violated on completed step {id_text}"),

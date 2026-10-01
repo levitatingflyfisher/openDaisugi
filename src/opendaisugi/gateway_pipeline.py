@@ -51,6 +51,10 @@ class PreparedTurn:
     # When prepare() began, on the monotonic clock. finish() books the time
     # from here to the end of the turn as the record's elapsed_ms.
     started: float | None = None
+    # The coppice pane this turn came from and its floor, or empty. The
+    # proxy takes them from the request path; finish() stamps the record.
+    pane: str = ""
+    floor: str = ""
 
 
 ROUTER_MODES = ("rules", "external", "off")
@@ -232,7 +236,13 @@ class Gateway:
             else round((time.monotonic() - prepared.started) * 1000, 3)
         )
         record = record_turn(
-            decision, saving, task=prepared.task, ask=prepared.ask, elapsed_ms=elapsed
+            decision,
+            saving,
+            task=prepared.task,
+            ask=prepared.ask,
+            elapsed_ms=elapsed,
+            pane=prepared.pane or None,
+            floor=prepared.floor or None,
         )
         if self.journal is not None:
             self.journal.append(record)

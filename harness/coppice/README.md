@@ -31,11 +31,13 @@ once. `scripts/install.sh` here only calls it. Then `daisugi install --gate` wir
 `coppice` opens the floor in the terminal, and `coppice web` opens it in the browser. The install
 stamps each binary with the checkout's `git describe`; a plain `go build` reports the commit.
 
-`toolchain.sh` installs Zig and CMake under `~/.local`, no sudo, and builds `libghostty-vt` from
-source into `~/.local/ghostty-vt`. Override that destination with `COPPICE_GHOSTTY_PREFIX`. It
-also writes a pkg-config wrapper at `~/.local/bin/coppice-pkg-config` and two global Go settings,
-`GOTOOLCHAIN=auto` and `PKG_CONFIG=coppice-pkg-config`, so a plain `go build` links. Undo both
-with `go env -u GOTOOLCHAIN PKG_CONFIG`.
+`toolchain.sh` installs Zig 0.16.0 and CMake 4.4.3, each checked by sha256, no sudo, and
+builds `libghostty-vt` from source, all under `${XDG_DATA_HOME:-~/.local/share}/opendaisugi`.
+A build an older version left at `~/.local/ghostty-vt` is kept and used. Override the
+destination with `COPPICE_GHOSTTY_PREFIX`. It writes nothing onto PATH and changes no global Go
+setting. It prints the lines a build needs in its environment: a `PATH` with the pinned zig and
+cmake first, `GOTOOLCHAIN=auto`, and a `PKG_CONFIG_PATH` that names the prefix's
+`share/pkgconfig`.
 
 There is one thing the installer cannot give you: pkg-config itself. If `preflight.sh` reports it
 missing, install `pkgconf` or `pkg-config` from your distribution's own package manager. That one
@@ -43,6 +45,23 @@ step needs sudo; nothing else here does, as long as `COPPICE_GHOSTTY_PREFIX` poi
 can already write.
 
 Pins and their reasons, including the unix-only build, are in `PINS.md`.
+
+### The Rust coppice
+
+`harness/coppice-rs` is a second coppice, written in Rust: the same command line, the same wire,
+the same floor on a terminal and in the browser, and the same pinned `libghostty-vt`, linked
+through its C API. Its binary is also named `coppice`. `clients/coppice_compare.py` replays every
+case against a Go and a Rust server side by side and counts each difference, and the floor on a
+terminal is compared as a screen (`clients/ADJUDICATIONS.md`, CP-R-1 to CP-R-45). Go stays the
+default. To build and install the Rust one in its place (you need cargo as well):
+
+```
+COPPICE_PORT=rust ../../scripts/install.sh
+```
+
+`COPPICE_PORT=rust scripts/release.sh VERSION` puts it in the release tarball in place of the Go
+one, with its own `NOTICE`. It links `libgcc_s` as well as libc. `harness/coppice-rs/PINS.md`
+lists its crates and why each is there.
 
 ## First run
 
@@ -77,10 +96,14 @@ and any words after the name are appended to the configured args for that one pa
 
 The floor is one screen: the rail of agents on the left and windows on the right, each window
 one agent live. There are as many windows as fit at 80 columns each beside the rail: one at
-120 columns, two at 200. When the floor opens, the windows fill with the agents that need you,
+119 columns, two at 200. From 88 to 118 columns the rail is slim: 6 columns a row, the window
+number, the state dot and two letters of the label, so one window of 80 columns or more still
+shows and takes keys. The top bar then names the row under the cursor in full. When the peek,
+the project picker or the task tree is open on a slim screen, it takes the whole width. When
+the floor opens, the windows fill with the agents that need you,
 then the working ones, then the rest, and the keys start in the first agent that needs you, or
-else the first window. On a screen too narrow for windows the keys start on the rail. They
-never start on the prompt line.
+else the first window. Under 88 columns, a screen too narrow for windows, the keys start on the
+rail and Space peeks. They never start on the prompt line.
 
 At 100 columns or wider, a dim row under the top bar shows the floor's facts, the same ones the
 web page's header shows: the agents by daisugi mode, the gateway, how many work, how many need
@@ -116,10 +139,30 @@ keystrokes. A double click or `zoom` there just gives its window the keys again,
 when the screen has no room for one, and `coppice attach` on one prints one line pointing at the
 floor or `coppice agent prompt` instead.
 
+The chat is a window too. The floor's foreman (the pane `floor.facts` names) draws the chat from
+`floor.chat` in its window, in place of its terminal: `you` and `foreman` lines, a tool use as one
+dim line, and the same input line as a headless agent's, marked `> `, with `Tell the foreman. Type
+and press Enter.` while it holds nothing. Enter there sends the words with `floor.talk`, never keys
+to the foreman's terminal. The header names a word before the close mark: `Screen` shows the
+foreman's terminal, and `Chat` brings the chat back. Click the word, or press Tab in the chat
+line. In the chat line, a Tab with more bytes behind it (a paste) is a space. The chat takes a
+window the way an agent does, and an agent only takes a free window. When the floor opens, the
+windows fill with the agents that need you first, then the foreman while it holds a reply no window
+has shown, then the rest. Later, a reply takes a free window only. With none free, the foreman's
+rail row shows the state `reply` (a `*` in place of the dot on the slim rail) and nothing moves; a filled,
+locked or focused window is never taken. In its Screen view the footer says `click Chat to read
+the chat`. When the server refuses `floor.chat` (it counts a process inside one of its own panes as
+a pane), the window says why and to run the floor outside a coppice pane. The rail rows, the slim
+rail and the number keys treat the foreman as any other agent. A server in
+chat mode has no foreman pane, so it has no chat window on the desk yet; the prompt line and the
+phone's chat still talk to it.
+
 The rail is a tree. With tasks, each task has one header with its state counts, as `▾
 trellis-fix  1 needs · 2 working`, and its agents under it. Agents with no task group by
-project, the base name of their directory, after the task groups. A task with no live agent
-has no header. Groups and agents keep the order they were made in, so neither a header nor a
+project, the base name of their directory, after the task groups. A subtask nests under its
+task, indented two spaces a level, and its agents count in the task's header too; folding a
+task folds its subtasks. A task with no live agent has no header, unless a subtask under it
+has one. Groups and agents keep the order they were made in, so neither a header nor a
 row moves when a state changes; the bar's count, an amber header and `shift-tab` show who needs
 you. Enter or Space on a header folds the group to that one line.
 
@@ -127,11 +170,17 @@ On the rail the keys are these, and the footer prints them, wrapped to fit. `Ent
 the row's agent fills a window and takes the keys, or on a narrow floor it attaches full screen.
 `1` to `9` put the row's agent in that window; each row shows its window's number. `n` starts
 the default harness near the selected row, in that row's directory, and `N` opens the project
-picker, where a number or Enter starts one in that project. `r` renames the row on the prompt
+picker, where a number, `0` for the tenth project, or Enter starts one in that project. Each picker row shows the state counts of its agents, `trellis  1 needs · 2 working`. `r` renames the row on the prompt
 line: it starts with the old label, Enter keeps the new one, and Esc keeps the old.
 `ctrl-w` asks `Stop <label>? Enter stops it, Esc keeps it.` and Enter stops the agent. The ×
-at the end of every row and window header asks the same. `shift-tab` goes to the next agent
-that needs you. `Space` peeks at the row, or on a floor with windows fills one. `ctrl-t` opens
+at the end of every row and window header asks the same. `m` sets the daisugi mode of an agent
+a gate hook reports for, and the footer names it only on such an agent: on an enforcing agent
+it asks `Watch only? The gate will log the calls of <label> and stop none. While it watches, it can also change the gate for other agents. Enter yes, Esc no.`, and
+Enter lowers it to watching from its next tool call; on an agent set to watching it goes back
+to the gate's own mode at once. When the whole gate watches (the hook runs in audit), `m`
+says so and lowers nothing. Turning the gate off stays the command `daisugi gate disarm`. `shift-tab` goes to the next agent
+that needs you. `j` opens the journal of gate verdicts over the windows (Up and Down scroll,
+`Esc` or `j` closes it). `Space` peeks at the row, or on a floor with windows fills one. `ctrl-t` opens
 the prompt line, where Enter runs the line. `ctrl-\` records a voice clip for the row's agent
 (see Voice); the footer names it when there is room. `Esc` goes up one level: it closes the tree, closes
 the peek, lets the prompt go, or pops the rail out of one task. Up and Down move the cursor.
@@ -147,7 +196,8 @@ never acts on another one.
 The Recent fold at the foot of the rail, closed by default, shows its count. Enter opens it: it
 lists the ended agents with `Resume all` and `Clear all`. Enter on an ended row resumes it,
 and `ctrl-w` forgets it. A window's header shows a second line with the agent's loop, model,
-router, daisugi mode, last gate verdict and tokens, when the server knows them.
+router, daisugi mode, last gate verdict and tokens, when the server knows them. While an agent
+set to watching has not made its next tool call, the mode reads `enforcing → watching`.
 
 A task is the unit of work above the pane: a label, a parent or none, a directory or a git
 worktree, and a model name or none. A task with children is a team. `coppice task create
@@ -161,7 +211,7 @@ you`. The count is the count inside the task. `Esc` pops back one level. A tree 
 pushed shows only that task's subtree.
 
 The floor has a foreman too: one agent you talk to about all your projects. Type a sentence at
-the prompt line (`ctrl-t`), type or say it on the phone's tell bar, or run `coppice floor talk
+the prompt line (`ctrl-t`), type or say it in the web page's chat bar, or run `coppice floor talk
 TEXT`. If no foreman runs, the first sentence starts one: your default harness, labelled
 `foreman`, in its own scratch directory `$XDG_STATE_HOME/coppice/foreman` (or
 `~/.local/state/coppice/foreman`), which never counts as a project. That directory is outside the
@@ -181,6 +231,16 @@ every ask stays yours. Type `foreman claude` at the prompt line to start one wit
 your choice instead; the server starts it and gives it the page the same way. Type `foreman`
 alone to see which pane it is, or that none runs yet. At most 32
 sentences wait for it.
+
+The server keeps the chat with the foreman. Each sentence you send goes first to
+`<data dir>/chat/YYYY-MM-DD.jsonl` (mode 0600), so it shows at once and outlives a foreman that
+ended. `floor.chat` reads your lines from there and the foreman's replies from its own
+transcript, merged by time; `pane.messages` reads one agent's transcript. Tool calls show as the
+tool's name and one line of its input, never its output. Only you read them: a pane reads only
+its own messages, and a named web token reads neither. A damaged chat file moves to
+`<name>.broken-<UTC time>` and the chat starts fresh, with one line that says where it went. The
+daisugi gate refuses an agent's read of the chat and journal files, as it refuses a read of the
+web token.
 
 A task can have a foreman: a pane that hears the asks of the task's panes before you do. Push
 into the task and type `foreman claude` at the prompt line to open one there, or run `coppice task set-foreman t1
@@ -341,6 +401,7 @@ command for one JSON object instead of a table or a line.
 | `coppice pane explain PANE` | show which manifest rule matched, and every rule that did not |
 | `coppice pane fork PANE [--label TEXT]` | start a headless pane that resumes a copy of the pane's session |
 | `coppice pane forget PANE\|--ended` | remove one Recent pane's record, or every one of them; a live pane refuses |
+| `coppice agent list --ended`, `agent forget AGENT\|--ended`, `agent resume AGENT` | the same as the `pane` forms: the screens say agent, so the command line does too |
 | `coppice pane resume PANE` | start a new pane from a Recent one - resuming its session when the harness allows it, fresh otherwise - and remove the old record |
 | `coppice pane rename PANE LABEL...` | change a pane's label in place; works on a live pane and on a Recent one alike |
 | `coppice new [PROJECT] [--no-attach]` | start the default harness in a project (by name or path), or here with no `PROJECT`, and attach; `--no-attach` prints the pane id instead |
@@ -369,9 +430,40 @@ command for one JSON object instead of a table or a line.
 | `coppice web [--no-open] [--listen ADDR]` | start the server if needed, serve the floor on this machine only, and open it in the browser, signed in |
 | `coppice web cert init [--name NAME]... [--ip ADDR]... [--ca-dir DIR] [--ca-listen ADDR] [--qr url\|pem\|off]` | make the local CA if there is none, issue a server certificate, and print a QR that installs the CA on a phone |
 | `coppice web cert show [--ca-dir DIR]` | print what the current certificate covers and when it expires |
-| `coppice web cert tailscale NAME.TAILNET.ts.net [--dir DIR]` | ask tailscale for a Let's Encrypt certificate and write it where `web serve --tls tailscale` looks for it |
-| `coppice web serve [--listen ADDR] [--tls tailscale\|localca\|files\|off] [--cert FILE --key FILE] [--ca-dir DIR] [--ca-listen ADDR] [--external-url URL] [--gate-root DIR] [--voice-url URL [--voice-token-file FILE]] [--ntfy URL --ntfy-topic NAME --ntfy-token-env VAR] [--persist\|--forget] [--web-push] [--qr]` | serve the phone client, minting a token on the first run |
+| `coppice web cert tailscale [NAME.TAILNET.ts.net] [--dir DIR]` | ask tailscale for a Let's Encrypt certificate, for this box's MagicDNS name when no name is given; with no `--dir`, into the pair the running or saved `web serve --tls tailscale` uses, else where it looks by default |
+| `coppice web serve [--listen ADDR] [--tls tailscale\|localca\|files\|off] [--cert FILE --key FILE] [--ca-dir DIR] [--ca-listen ADDR] [--external-url URL] [--gate-root DIR] [--voice-url URL [--voice-token-file FILE]] [--ntfy URL --ntfy-topic NAME --ntfy-token-env VAR] [--persist\|--forget] [--web-push] [--qr]` | serve the phone client, minting a token on the first run; with `--tls tailscale`, get and renew the certificate and listen on the tailnet and loopback only |
 | `coppice web token [--rotate] [--url URL] [--qr] [--listen ADDR]` | print the current bearer token, its sign-in URL, and a QR to scan |
+
+`coppice web serve --tls tailscale --persist` is the whole phone setup, one command on the box.
+It reads this box's MagicDNS name and tailnet address from `tailscale status --json`, runs
+`tailscale cert` when there is no certificate or it has under 30 days left, and checks again
+once a day while it serves; a renewed certificate is served from the next connection. If a
+renewal fails while the certificate on disk is still good, it says so once and serves that
+one. It never writes over a `--cert` or `--key` file that is not a PEM certificate or key: it
+refuses in one line. It listens on the tailnet address and on 127.0.0.1 only, never on the
+LAN. Only an address inside Tailscale's ranges (100.64.0.0/10, fd7a:115c:a1e0::/48) counts as
+a tailnet address; any other address tailscale reports is skipped with one log line. A
+`--listen` with no host, such as `:9443`, keeps that and sets the port; a `--listen` with a
+host, such as `0.0.0.0:8443`, listens there and nowhere else, and a host that is not loopback
+or a tailnet address gets a warning line. It prints the sign-in QR for
+`https://NAME.TAILNET.ts.net:8443` and one line that says where it listens. The first
+certificate also prints `This name is now in public certificate logs: NAME.`, because Let's
+Encrypt logs every name it signs; pick a MagicDNS name with no personal words. With
+`--persist` the next `coppice` start serves the phone the same way. A saved phone server that
+starts before tailscale is up serves 127.0.0.1 at once and binds the tailnet address once
+tailscale has it, trying again after 2 s, then 4 s, up to every 60 s, with one log line when
+it starts to wait and one when it binds; with no good certificate on disk yet it waits before
+it serves anything. A tailnet address the box will not bind, such as an IPv6 address on a box
+with IPv6 off, is skipped with one log line; a serve in the terminal stops only when no
+tailnet address binds. With no tailscale on PATH it says so in one line and exits 1. Under 7
+days left on the certificate of a phone server that runs now or is saved, `floor.facts`
+carries `phone_cert_days`, and the header (on a phone, the rail) warns with Renew, which types
+`coppice web cert tailscale` in a shell; with no `--dir` that command renews the pair the
+running or saved serve uses. When the phone cannot reach the box it says so, with `Turn on
+Tailscale on this phone.` on a `.ts.net` address, `The box may be asleep or off.`, and Retry.
+Over plain http from another machine the browser gives no microphone, so the mic says `The mic
+needs https here.` and names the fix on the box. MagicDNS and HTTPS must be on in the Tailscale
+admin console, once per tailnet.
 
 `coppice web` puts the floor on a phone over HTTPS. From 900 px the page is one screen: the
 rail on the left, and live windows filling the rest. The page makes as many windows as fit at a
@@ -409,6 +501,15 @@ harness near the selected agent in one click, and the new agent takes a window w
 keys. The `▾` beside it lists the projects, pinned first, and starts one there; `More...`
 opens the full form.
 
+The chat bar, `Tell the foreman`, sits at the foot of the rail, above Recent. Everything typed
+or said in it goes to the floor's foreman through `floor.talk`, which starts the foreman when
+none runs. Plumbing needs a leading slash: `/claude` (or another harness name) opens that
+harness, and `/close NAME` closes an agent by label or id. Only a slash and a harness name or
+a terminal floor verb is plumbing: any other line, "/etc/hosts looks wrong" too, goes to the
+foreman. A sentence led by `claude` is talk,
+so "claude, can you check trellis" never starts a new claude. The terminal floor's prompt
+line keeps its own words. The microphone only fills the bar.
+
 Each window header has two lines: the name and the last verdict, then a stack bar with the
 state word and the directory after it. The bar runs in steps: the loop (the harness), the
 daisugi mode (`enforcing`, `watching` or `off`), the router (`gateway`, `switchyard` or
@@ -419,24 +520,44 @@ not the gate's health, so it shows only in the mark. A field the
 server does not know reads `model ?`, never a guess. A click on a step opens its details under
 the header, with an outline on the step: daisugi shows the mode, whether it is armed, and the
 last verdict with its clause and a Journal button; the model shows its tokens; the router
-shows the gateway and whether it answers. No step can be swapped from here yet, and each says
-so. A light pulses on the loop while the agent works and on daisugi while an ask waits for
+shows the gateway and whether it answers. The daisugi details set the agent's mode: Watch only
+asks once (`Watch only? The gate will log the calls of <label> and stop none. While it watches, it can also change the gate for other agents.`), then the gate logs
+that agent's calls and stops none, from its next tool call; Enforce puts it back to the gate's
+own mode at once. When the whole gate watches (the hook runs in audit), or when the installed
+hook names another gate root with `--root`, the row says so in one line and offers no button;
+`m` in the TUI says the same. Off
+is never offered: turning the gate off stays the command `daisugi gate disarm`. The model and router steps swap from their details. The model step of a claude agent in a terminal lists `opus`, `sonnet` and `haiku`; a pick sends `/model NAME` through the ready queue, so it lands only at an idle prompt (with no verdict from the screen it waits in the queue too, and is never typed at once), and the status line says so. The model step of a headless sprig agent takes a typed name: the turns after it run with `--model NAME`, and the pane's record keeps the name, so a resume or a restart runs them on it again (a `model` field on `agent.prompt` does the same). The router step of a claude agent offers `Direct` and `Through the gateway` (switchyard is a setting of the gateway, so the step shows its word after the swap). A router swap asks first (`Restarts <label> and resumes its conversation. A turn in progress ends.`, with Resume and Keep), then stops the agent and resumes its conversation in a new window with the new base URL in its env: `ANTHROPIC_BASE_URL`, set to the vendor's own address for Direct, never removed. The agent comes back enforcing, and the swap is refused for an agent with no conversation to resume yet, and for the gateway when nothing answers there (the web greys that choice out). When the new start fails, the swap tries one plain resume on the old router and says the router did not change, with the cause; when that fails too, the reply says the agent is in the ended list and gives `coppice pane resume <id>`. The restarted agent's base URL
+carries its pane (`<gateway>/pane/<floor>/<pane>`), which the gateway takes off and writes on its turn record,
+so the header's `saved` figure can count the tokens saved for each agent. coppice sets the prefix only when the
+gateway says it takes it (`GET /_caps` answers `{"pane_prefix": true}`); an older gateway keeps the plain URL, and
+the pane works as before with no figure of its own until the gateway runs the new daisugi. Every other harness keeps the line `Swap is not built yet.` In the TUI, `s` opens the prompt line with `swap <label>:`; type `model NAME` or `router direct` or `router gateway`. The loop step cannot be swapped from here yet. A light pulses on the loop while the agent works and on daisugi while an ask waits for
 you. Beside the name, `✓`, `✕` or `⧗` (an ask) is the last verdict; its tip names the tool and
 clause, on hover and while the mark has the focus, and a click opens the daisugi details. An agent with no stack shows its harness word instead.
 Reply on an ask gives that window the keys, so the answer is typed into the agent there.
 
+`floor.machines` lists the boxes on the tailnet: which are up, which profiles point at each,
+and how fast each answers (see PROTOCOL.md, The machines view). The web floor shows it as
+Machines, a read-only panel beside Settings (a bottom sheet on a phone): an online dot, the
+name and system of each box, and under it the profiles that point there with the time each
+answers, or `No profile points here.` With tailscale absent or off the panel says so in one
+line. Nothing in it changes anything; adding a box and the access rules stay in Tailscale's
+console.
+
 The bar at the top carries the floor facts, read every five seconds with a fresh pane list:
 how many agents are in each daisugi mode, such as `daisugi · 2 enforcing · 1 off`, whether
 the gateway answers, how many agents
-work and need you, and tokens today. The views (Tree, Kanban, Colony, Shift log, Grid, Inbox)
+work and need you, tokens today, and, only when the gateway reports one for the agents on
+this floor, the frontier tokens it saved today (`saved 12.3k`). The gateway has to name the
+agent on a turn for this; with no such figure the bar shows no saved number. The views (Tree, Kanban, Colony, Shift log, Grid, Inbox)
 and the Journal open as a panel over every window but the first column. The panel takes the
 focus and gives it back when it closes; `×` closes it, and
 so does `Esc` while the rail has the keys (in a window `Esc` is the agent's). An old
 `#/view/...` link opens the same panel. The colony can be pinned as a strip above the
 windows, one row of 45 px; at 1440 by 900 even that costs a row of windows. The journal lists gate verdicts.
-The server keeps no verdict history, so it reads the shift log's events of the last two
-hours and each last verdict the page saw, and a verdict made while an agent kept working
-shows only if the page saw it as the last one; the panel says this.
+The server keeps 100 verdicts per agent, 500 in all, oldest first out, that a gate or an agent's loop report told it, newest first, in
+`journal/verdicts.jsonl` under the data dir (mode 0600), so a page opened after a deny, and
+a server restart, still see them; the panel says this. `floor.journal` returns the same list.
+It holds the verdicts a gate reports and the ones read from a sprig agent's session tree.
 
 Every error or warning carries a fix: a button that retries the connection, opens Settings,
 resumes or forgets an ended agent, or opens a shell agent with a command typed and not run,
@@ -445,22 +566,47 @@ the computer that runs coppice. While the page cannot reach the box it keeps the
 picture, dimmed, and retries.
 
 On a phone (under 600 px wide, or under 900 px wide and 500 px tall, which is a phone on
-its side) home is the overview: the colony strip when the server lists the colony, the
-agents that need you in a small queue at the top with Deny and Look, and the agent list
-grouped as the rail groups it. A tap on an agent slides its sheet in from the right over
-most of the screen. The overview stays live under it and in sight at the left edge. The
-sheet shows the agent's live terminal at a readable size (a cell at least 7 px wide; a
-wider terminal scrolls sideways), its stack bar and gate mark, and its ask with Deny and
-Allow or the name field. An ask a harness holds itself, such as OpenCode's permission
+its side) home is the overview, one column. From the top: the facts line (how many agents
+work and need you), the colony strip when the server lists the colony, the agents that need
+you as cards with Deny and Look, a fold such as `▸ 7 agents · 3 projects` that opens the
+agent list in place, grouped as the rail groups it, and then the chat with the foreman. The
+chat bar is docked at the bottom of the screen, above the on-screen keyboard. The chat shows
+what you said to the floor's foreman and what it said back, from `floor.chat`, and reads
+again when the server sends a `messages` event for it. A sentence you send shows at once,
+marked `sent` when the server takes it and `read` when `floor.chat` marks its line read: the
+foreman's transcript recorded the sentence, so its turn started. An agent a reply names, by label or id, is a chip. On the desk the chat is a window: the
+foreman's window draws this same list in place of its terminal, with an input line of its own
+that sends `floor.talk`. `Screen` in its header shows the foreman's terminal and `Chat` brings
+the chat back. A reply no window has shown takes a free window only, as an agent does; with none
+free, the foreman's roster row says `new reply`, and a click on it opens the chat. The chat is for the owner's own
+sign-in: a named web token sees `The chat is for the owner's own sign-in.` No chat text is
+stored on the phone. A tap on an agent (a card, a row in the fold, or a chip in the chat)
+slides its sheet in from the right over most of the screen. The overview stays live under it and in sight at the left edge. The
+sheet of an agent whose transcript the server reads (a Claude or sprig agent whose hook
+reported one) opens on a reading view: the conversation as messages, wrapped to the phone,
+with `From the transcript.` and a Screen button above it. Tool use is one dim line, and no
+tool output shows. The reading view holds no attach, so no frames stream to the phone. An
+agent with no transcript opens on its live terminal. Screen shows the live terminal and
+Messages brings the reading view back. One constant, `READING_FIRST` in `dock.js`, opens
+every sheet on the screen instead. The screen is drawn at a readable size (a cell at least 7 px wide). The phone asks
+the server to fit the agent to the sheet (`pane.attach` with `fit`). The server resizes the
+agent only when no other client is attached, so an agent open in your terminal or on the
+desk keeps its size; the line above the screen says `Sized to this phone.` or `Also open on
+the desktop, so not resized.` When the sheet detaches or goes back to the reading view, the
+agent gets its old size back. A resize from your terminal or the desk ends the fit and
+keeps its size: the phone does not fit that agent again until you close the sheet and open
+it again. The sheet also shows the agent's stack bar and gate mark,
+and its ask with Deny and Allow or the name field, over either view. An ask a harness holds itself, such as OpenCode's permission
 prompt, gets the same controls: the page sends `agent.allow` or `agent.deny` to
 coppice-server over its own connection, and the server answers the harness. A swipe right on the sheet, a tap on the edge, or the back arrow
 goes back; on the terminal body a swipe right scrolls until the body is at its left end.
-Nothing leaves the page, and the phone never resizes an agent.
+Nothing leaves the page.
 
 The sheet's bottom bar holds Keys, a text field, Mic and Enter. The keyboard's own Enter
 types the text into the agent's input and does not press Enter, so you can read it there
 first. The Enter button types what the field holds, if anything, and presses Enter, in
-one request. Keys opens a drawer with Esc, Tab, the four arrows, ctrl-c and Enter. A
+one request. The status line then says where the words went, such as `Sent to build.`, and
+opening a sheet clears an older line. Keys opens a drawer with Esc, Tab, the four arrows, ctrl-c and Enter. A
 headless agent has no terminal to type into, so it takes whole messages: on its sheet
 either Enter sends the field as one message and there is no key drawer, and its window on
 a wider page sends it no keys and has a line under it whose Enter sends the message. The
@@ -488,7 +634,7 @@ ends on its own, or that a restart finds closed, moves to Recent instead: `coppi
 or `--ended` removes a record from Recent for good. `coppice pane resume PANE` starts a fresh
 pane in its place, resuming its session when the harness allows it (a headless harness that
 recorded a session id, or a pty one whose `[harness.<name>]` table has `resume_args`) and starting
-clean otherwise; either way it removes the old record. `coppice server status` says how many
+clean otherwise; either way it removes the old record. After a restart that stopped agents which can come back, the web page and the TUI say so once: `4 agents stopped when coppice restarted.` with Resume all and Show them (the TUI footer offers `R resume all` until a key is pressed). The count is `restore.resumable` in `server.status`: only the agents that restart stopped, so it falls as you resume or forget them, and a line already on the status line is never replaced. `coppice server status` says how many
 Recent panes it could actually resume, in its `resumable` count. Nothing older than seven days
 stays in Recent: the server clears it out when it starts and once an hour after.
 
@@ -498,7 +644,7 @@ A project is a directory the operator works in. `coppice project add DIR` pins o
 `coppice.toml`'s `projects` list; `coppice project rm DIR` unpins it. `coppice project list`
 shows the pinned ones first, then the ten directories a pane most recently started in that are
 not already pinned - the server keeps that second list itself, in its data directory, so it
-survives a restart. `add` and `rm` rewrite the whole config file through the same path `coppice
+survives a restart. A row whose directory is gone carries `missing`; the New menu and the picker draw it dim with `(missing)` and a Remove action (`x` in the TUI picker), which runs `project.remove`. That verb is for the operator only: a named web token is refused. Remove rewrites `coppice.toml` the same way `project rm` does, so a comment you added by hand goes with it. The path must be absolute. `pane.create` answers with the `cwd`, the `label` and, for a one-click New, `why` that directory was chosen, and the status line says it: `Started claude-glean in /src/glean (your last project).` `add` and `rm` rewrite the whole config file through the same path `coppice
 open` already uses to write a freshly discovered harness table: every field coppice itself knows
 survives the rewrite, but a comment you hand-added, and any key coppice does not recognize, does
 not - only the leading `# coppice config...` line and coppice's own fields are kept.
@@ -531,7 +677,13 @@ Voice needs no setup. When `daisugi` is on PATH and has its voice extra
 listens on a loopback port the server picks, checks a token the server writes to
 `<data dir>/voice/token`, and logs to `<data dir>/voice/voice.log`. It stops with the server.
 When it stops on its own, the server starts it once more; when it stops again, voice is down
-until you retry. The first start can take a minute while the model loads.
+until you retry. The first start can fetch the speech model. While it does, `voice.status`
+carries `fetch {done, total}`, and the mic and the TUI say `Getting the speech model, 41 of 160
+MB.`, then `Voice is ready.` The page says nothing about voice until the first Mic press. The
+mic beside the chat box fills the box and never sends. When voice is down because daisugi has no
+speech engine, the fix names the install line for the daisugi it found (`daisugi voice status
+--json` says which): the Python one gets the pip line, and a Go or Rust one gets no pip line.
+The Python faster-whisper engine shows no download progress, because it fetches its model itself.
 
 In the TUI, the talk key records a clip for the selected agent: the agent whose window has the
 keys, or else the row under the cursor. The key is `ctrl-\` unless `[keys] talk` names another
@@ -557,10 +709,76 @@ enabled = false                   # start no voice server
 url = "http://127.0.0.1:7477"     # use this one; the server starts none
 token_file = "/path/to/token"     # the token that server checks; default the web token file
 args = ["--data-dir", "/some/dir"]  # added to daisugi voice serve
+speak_url = "http://127.0.0.1:8880"  # read the foreman's replies aloud; see below
+speak_model = "kokoro"            # sent to the speech server (optional)
+speak_voice = "af_heart"          # sent to the speech server (optional)
+speak_profile = "tts"             # an agent profile whose key it gets (optional)
 
 [keys]
 talk = "ctrl-g"
 ```
+
+The foreman answers aloud. A reply is spoken when the message it answers came
+by voice, or always when Settings has "Read replies aloud" on (kept per
+browser). With no `speak_url` the page speaks with the browser's own voice,
+which stops when the screen locks. With `speak_url`, the page asks that server
+for each sentence, through the coppice server, and plays the audio the socket
+sends; if the server fails, the browser's voice speaks that reply and one line
+says why. The address is an OpenAI-style speech server (`POST
+/v1/audio/speech`), such as Kokoro-FastAPI, on this box, another box on the
+tailnet, or a cloud service. It takes no key in the address; a key comes from
+the operator agent profile that `speak_profile` names, and it goes only over
+https or to this box or the tailnet. Each reply's text goes to that address.
+See
+`docs/how-to/foreman-aloud.md`. `speech.status` and `speech.say` are in
+PROTOCOL.md.
+
+### The foreman as a chat
+
+By default the floor's foreman is a harness pane. The `[foreman]` table turns
+it into one chat that never ends: each sentence you say is logged, and a
+fresh model call answers it. Nothing carries over between turns except the
+log. A summary tree keeps the log small enough to read in full each turn.
+
+```toml
+[foreman]
+mode = "chat"               # "pane" is the default
+compactor_profile = "default"  # an agent profile; default is Claude Code
+compactor_model = "haiku"   # empty: haiku, or the profile's own model
+turn_profile = ""           # empty or "default": Claude Code; else an agent profile
+turn_model = ""             # empty: Claude Code's own default, or the profile's model
+```
+
+The log lives in `foreman/` beside the coppice data dir (or in
+`<data dir>/foreman` when you start with `--data-dir`), mode 0600, and the
+gate keeps agents out of it. `coppice foreman log|view|zoom|date|stats` read
+it. The foreman has four tools and no other: `zoom`, `date`, `spawn` and
+`status`. `zoom` opens a node of the chat (`id`, `n`), or, given a worker's
+`label`, returns the newest 32 KiB of that worker's own log once it has ended. `spawn` needs an envelope file for the project at
+`<config dir>/envelopes/<project>.json`:
+`{"envelope": {...}, "tokens": N, "turns": N}`. A worker's report comes back
+as one message in the chat.
+
+`turn_profile` says where each turn runs. Empty is Claude Code. Any other
+value is the name of a profile in your `agent_profiles` (the Anthropic API,
+or an OpenAI-style server on this machine or another), and the turn runs
+there through sprig with the same four tools. The key goes
+to sprig on a pipe, never in an argument or a file. A missing profile fails
+the turn with one note that names it. `turn_model` picks the model; empty is
+the profile's own. See [the foreman on any
+model](../../docs/how-to/foreman-any-model.md).
+
+In pane mode the foreman can be any harness. When the harness can take an
+MCP server (Claude Code, OpenCode), the floor mounts the same four tools in
+it, on a standing socket (`tools.sock` in the log dir, open for every pane
+foreman) that only the pane foreman's process tree can use. Pi has no MCP
+client of its own and gets a note. By hand:
+`coppice foreman tools --standing`. See [bring your own
+foreman](../../docs/how-to/bring-your-own-foreman.md).
+
+Chat mode is opt-in. The Go and the Rust coppice both carry it, with the
+same log, the same turns and the same tools, and both keep the `[foreman]`
+table when they save the config.
 
 ## Security
 

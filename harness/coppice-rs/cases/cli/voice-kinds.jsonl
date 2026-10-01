@@ -1,0 +1,64 @@
+# The voice fix names the install line for the daisugi it found, and a
+# starting voice shows the model download. The fake daisugi says its kind
+# from $HOME/fake-voice-kind; each step writes its files, then restarts the
+# server so voice starts under them.
+#!env PATH={FIXTURES}/cli/voicebin:/usr/bin:/bin
+# CP-R-30: the voice server's URL names a port the kernel picked.
+#!mask url
+#!config [voice]
+#!config args = ["--extra", "1"]
+#!retry 8000
+{"id": "r", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "ready"}}
+# A Go daisugi that cannot find its speech engine: no pip line.
+{"id": "k1", "write": "{HOME}/fake-voice-kind", "text": "go\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "m1", "write": "{HOME}/fake-voice-mode", "text": "noengine\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+#!retry 8000
+{"id": "d1", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down", "reason": "Voice needs a speech engine, and daisugi cannot find one.", "fix": "Install the opendaisugi-voice package, or build the engines with scripts/install.sh", "command": ""}}
+# A Rust daisugi that has no voice serve: no pip line.
+{"id": "k2", "write": "{HOME}/fake-voice-kind", "text": "rust\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "m2", "write": "{HOME}/fake-voice-mode", "text": "nohelp\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+#!retry 8000
+{"id": "d2", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down", "reason": "This daisugi cannot serve voice.", "fix": "Update daisugi", "command": ""}}
+# A Python daisugi without its extra keeps the pip line.
+{"id": "k3", "write": "{HOME}/fake-voice-kind", "text": "python\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "m3", "write": "{HOME}/fake-voice-mode", "text": "notinstalled\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+#!retry 8000
+{"id": "d3", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down", "reason": "Voice needs daisugi's voice extra.", "fix": "Install it with pip install 'opendaisugi[voice]'", "command": "pip install 'opendaisugi[voice]'"}}
+# A daisugi that cannot say its kind is taken for the Python one.
+{"id": "k4", "write": "{HOME}/fake-voice-kind", "text": "\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "m4", "write": "{HOME}/fake-voice-mode", "text": "nohelp\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+#!retry 8000
+{"id": "d4", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down", "reason": "This daisugi cannot serve voice.", "fix": "Update opendaisugi and install its voice extra", "command": "pip install --upgrade 'opendaisugi[voice]'"}}
+# A starting voice shows the model download, then is ready.
+{"id": "k5", "write": "{HOME}/fake-voice-kind", "text": "go\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "f5", "write": "{HOME}/fake-voice-fetch", "text": "41000000 160000000\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "m5", "write": "{HOME}/fake-voice-mode", "text": "slow\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+#!retry 8000
+{"id": "s5", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "starting", "ready": false, "fetch": {"done": 41000000, "total": 160000000}}}
+{"id": "g5", "write": "{HOME}/fake-voice-go", "text": "go\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!retry 8000
+{"id": "r5", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "ready", "ready": true}}

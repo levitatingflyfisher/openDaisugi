@@ -245,3 +245,26 @@ func TestVoiceDownCarriesTheCommandAndOffIsAway(t *testing.T) {
 		t.Fatalf("%v", body)
 	}
 }
+
+// A voice that is getting its speech model carries how far it is, so the mic
+// can say so.
+func TestVoiceStatusCarriesTheModelFetchWhileStarting(t *testing.T) {
+	_, d := newFakeServer(t, voiceReplies(map[string]any{
+		"state": "starting", "ready": false, "reason": "Voice is starting. The first start can take a minute.",
+		"fix": "Wait a moment", "fetch": map[string]any{"done": 41000000, "total": 160000000},
+	}))
+	ts, _, tok := newTestServer(t, Options{Dial: d})
+	req, _ := http.NewRequest("GET", ts.URL+"/api/voice/status", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	json.NewDecoder(resp.Body).Decode(&body)
+	f, _ := body["fetch"].(map[string]any)
+	if f["done"] != float64(41000000) || f["total"] != float64(160000000) {
+		t.Fatalf("fetch = %v in %v", body["fetch"], body)
+	}
+}

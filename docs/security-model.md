@@ -235,12 +235,13 @@ trust surface — meant to be auditable in an afternoon:
 - **Pinned, small dependency surface.** Runtime deps are declared in
   `pyproject.toml`; optional extras (torch, mujoco, sentence-transformers) are
   opt-in and not pulled by the core.
-- **Allowlist-based, commit-pinned model resolution.** Local/remote model
-  resolution goes through a trusted-org allowlist with list-first lookup and
-  commit pinning (`model_registry`) rather than fetching arbitrary refs.
+- **Commit-pinned model resolution.** `daisugi models pin` resolves the repo
+  you name with a list-first lookup (never a guessed file name) and pins it to
+  an immutable commit (`model_registry`); nothing downloads without `--pull`.
 - **No telemetry of any kind.** The library emits nothing over the network on
   its own behalf. The only egress is the LLM calls you configure (envelope
-  generation, distillation, delegation); runtime *verification* and the
+  generation, distillation, delegation) and the Hugging Face API when you run
+  `daisugi models search` or `models pin`; runtime *verification* and the
   call-time *gate* never call out.
 - **What is and is not signed — stated honestly.** Distilled pathway bundles
   are cryptographically signed and verified against a trusted-signer registry

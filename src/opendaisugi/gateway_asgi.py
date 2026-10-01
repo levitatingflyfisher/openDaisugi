@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import signal
 from dataclasses import replace
 from pathlib import Path
@@ -32,6 +33,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from opendaisugi.datahome import data_home
 from opendaisugi.gateway import _strictly_cheaper, estimate_prefix_tokens
 from opendaisugi.gateway_openai import (
     OpenAIUsageSniffer,
@@ -296,6 +298,22 @@ class ConfigReloader:
         return self._load()
 
 
+# A coppice pane's base URL carries its pane: <gateway>/pane/<floor>/<pane>.
+# The floor is 16 lower-case hex digits and the pane is w<n>:p<n>. The
+# gateway takes the prefix off before it routes, so the upstream never sees
+# it, and stamps the turn record with the pane and the floor.
+_PANE_PREFIX = re.compile(r"/pane/([0-9a-f]{16})/(w[0-9]{1,9}:p[0-9]{1,9})(?=/|\Z)", re.ASCII)
+
+
+def split_pane_path(path: str) -> tuple[str, str, str]:
+    """(floor, pane, path without the prefix). A path with no well-formed
+    prefix comes back unchanged with an empty floor and pane."""
+    m = _PANE_PREFIX.match(path)
+    if m is None:
+        return "", "", path
+    return m.group(1), m.group(2), path[m.end() :] or "/"
+
+
 def _is_loopback(client) -> bool:
     """True only for a connection from this machine's loopback address.
 
@@ -353,7 +371,9 @@ def make_gateway_app(
         if scope["type"] != "http":
             return
 
-        if scope["path"] == "/_reload":
+        floor, pane, path = split_pane_path(scope["path"])
+
+        if path == "/_reload":
             if reloader is None:
                 await _send_json(send, 404, {"error": "no reloader configured"})
                 return
@@ -366,7 +386,21 @@ def make_gateway_app(
             await _send_json(send, 200, {"reloaded": reloader.reload()})
             return
 
-        wire = "openai" if is_openai_wire(scope["path"]) else "anthropic"
+        if path == "/_caps":
+            # What this gateway understands, for coppice to read before it
+            # stamps a pane prefix on a base URL. Local, like /_reload: an
+            # older gateway has no such route and forwards it, so silence or
+            # an error is the 'no'.
+            if str(scope.get("method", "")).upper() != "GET":
+                await _send_json(send, 405, {"error": "caps accepts GET"})
+                return
+            if not _is_loopback(scope.get("client")):
+                await _send_json(send, 403, {"error": "caps is loopback only"})
+                return
+            await _send_json(send, 200, {"pane_prefix": True})
+            return
+
+        wire = "openai" if is_openai_wire(path) else "anthropic"
         if wire == "openai":
             active_gateway = openai_gateway
         else:
@@ -383,7 +417,7 @@ def make_gateway_app(
         if (
             wire == "anthropic"
             and upstream_kind != "anthropic"
-            and scope["path"].rstrip("/") == _COUNT_TOKENS_PATH
+            and path.rstrip("/") == _COUNT_TOKENS_PATH
         ):
             await _answer_count_tokens_locally(send, body_bytes, upstream_kind)
             return
@@ -399,14 +433,16 @@ def make_gateway_app(
         # A count_tokens preflight is not a turn. Outside rules mode it still
         # goes to the upstream with the route id, but it is not journaled.
         record_prepared = prepared
+        if record_prepared is not None and pane:
+            record_prepared = replace(record_prepared, pane=pane, floor=floor)
         if (
             active_gateway is not None
             and getattr(active_gateway, "router_mode", "rules") != "rules"
-            and scope["path"].rstrip("/") == _COUNT_TOKENS_PATH
+            and path.rstrip("/") == _COUNT_TOKENS_PATH
         ):
             record_prepared = None
         headers = _forward_request_headers(scope)
-        url = (openai_base if wire == "openai" else base) + scope["path"]
+        url = (openai_base if wire == "openai" else base) + path
         if scope.get("query_string"):
             url += "?" + scope["query_string"].decode("latin-1")
 
@@ -693,7 +729,7 @@ def serve_gateway(
             "(or: pip install 'opendaisugi[gateway]')"
         ) from None
 
-    resolved_dir = data_dir or (Path.home() / ".opendaisugi")
+    resolved_dir = data_dir or data_home()
     config_path = resolved_dir / "config.yaml"
 
     def _rebuild(config):

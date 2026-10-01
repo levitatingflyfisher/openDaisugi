@@ -37,6 +37,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -61,6 +62,7 @@ from gate_cases import (  # noqa: E402 - sibling module, run as a script
     canonical_json,
     case_id,
     envelope,
+    floor_key,
     host_verdict,
     payload,
 )
@@ -351,6 +353,18 @@ def prepare(case: dict[str, Any], workdir: Path) -> None:
         sd = data / "sessions"
         sd.mkdir(exist_ok=True)
         (sd / f"{sid}.jsonl").write_text(text, encoding="utf-8")
+    # Markers under agents/: {FLOOR} is the floor key of the socket the
+    # request names, {FLOOR=<sock>} that of another socket.
+    own = str(((case.get("request") or {}).get("fields") or {}).get("coppice_sock") or "")
+    for rel, text in (st.get("agent_modes") or {}).items():
+        rel = re.sub(
+            r"\{FLOOR(?:=([^}]*))?\}",
+            lambda m: floor_key(m.group(1) if m.group(1) else own.replace("{ROOT}", root)),
+            rel,
+        )
+        f = gate_root / "agents" / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
 
 
 def _norm_text(s: str, root: str, srv: str) -> str:
@@ -545,6 +559,7 @@ def state(
     config: str | None = None,
     sessions: dict[str, str] | None = None,
     disarmed: bool = False,
+    agent_modes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     return {
         "disarmed": disarmed,
@@ -554,6 +569,8 @@ def state(
         },
         "config": config,
         "sessions": sessions or {},
+        # Only when a case has them, so every other case's id stays.
+        **({"agent_modes": agent_modes} if agent_modes else {}),
     }
 
 
@@ -823,6 +840,20 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
             tags=["client"],
         )
     )
+    # The envelope's deadline holds on the resident path too.
+    for name, deadline in (
+        ("client deadline passed", 1000000000),
+        ("client deadline ahead", 4000000000),
+    ):
+        add(
+            req(
+                name,
+                client_argv(),
+                payload("Read", {"file_path": "/work/a"}),
+                st=state(envelopes={"default": envelope(deadline=deadline)}),
+                tags=["client", "deadline"],
+            )
+        )
     add(req("client empty stdin", client_argv(), "", tags=["client", "deny"]))
     add(req("client not json stdin", client_argv(), "{x", tags=["client", "deny"]))
     add(
@@ -918,6 +949,23 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
             tags=["data_dir", "deny"],
         )
     )
+    # On a resident call the caller's data dir is its pane's
+    # COPPICE_DATA_DIR, in any parameter expansion.
+    for name, line in (
+        ("var chat", "cat $COPPICE_DATA_DIR/chat/*"),
+        ("braced default chat", "cat ${COPPICE_DATA_DIR:-x}/chat/*"),
+        ("var cp journal", "cp -r $COPPICE_DATA_DIR/journal /work/x"),
+        ("var web", "cat $COPPICE_DATA_DIR/web/*"),
+    ):
+        add(
+            req(
+                f"data dir {name}",
+                client_argv(),
+                bash(line),
+                fields={"coppice_data_dir": "/srv/cdata"},
+                tags=["data_dir", "deny"],
+            )
+        )
 
     # -- reports: coppice and herdr -------------------------------------------
     rd = payload("Read", {"file_path": "/work/a"})
@@ -973,6 +1021,40 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
         )
     )
     add(req("coppice pane only", client_argv(), rd, fields={"coppice_pane": "w1:p2"}, coppice="ok"))
+    # F11: a resident call reads the marker of the pane its request names,
+    # never the server's own pane (F11-R-2).
+    outside = payload("Read", {"file_path": "/etc/passwd"})
+    for name, modes, fields, group in (
+        ("watching", {"{FLOOR}/w1:p2.mode": "watching\n"}, COP, "plain"),
+        ("enforcing", {"{FLOOR}/w1:p2.mode": "enforcing\n"}, COP, "plain"),
+        ("other pane", {"{FLOOR}/w1:p3.mode": "watching\n"}, COP, "plain"),
+        (
+            "other floor",
+            {"{FLOOR=/run/coppice/floor-b.sock}/w1:p2.mode": "watching\n"},
+            COP,
+            "plain",
+        ),
+        ("no sock", {"{FLOOR=}/w1:p2.mode": "watching\n"}, {"coppice_pane": "w1:p2"}, "plain"),
+        (
+            "bad shape",
+            {"{FLOOR}/w1:p2.mode": "watching\n"},
+            {"coppice_sock": "{ROOT}/c.sock", "coppice_pane": "../agents/w1:p2"},
+            "plain",
+        ),
+        ("server pane", {"{FLOOR=}/w5:p5.mode": "watching\n"}, None, "paneenv"),
+    ):
+        add(
+            req(
+                f"agent mode resident {name}",
+                client_argv(),
+                outside,
+                group=group,
+                st=state(agent_modes=modes),
+                fields=fields,
+                coppice="ok" if fields else None,
+                tags=["agent_mode"],
+            )
+        )
     add(
         req(
             "coppice sock missing",
@@ -1837,12 +1919,28 @@ def run_all(
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, default=FIXTURE_DIR)
+    ap.add_argument(
+        "--only",
+        default="",
+        help="run only the cases whose name contains this; keep every other "
+        "case's line from the fixture as it is",
+    )
     args = ap.parse_args()
     cases = build_cases() + scenario_cases()
     names = [c["name"] for c in cases]
     dup = {n for n in names if names.count(n) > 1}
     if dup:
         raise SystemExit(f"duplicate case names: {sorted(dup)}")
+    kept: list[dict[str, Any]] = []
+    if args.only:
+        wanted = set(names)
+        fixture = args.out / "cases.jsonl"
+        if fixture.exists():
+            for ln in fixture.read_text(encoding="utf-8").splitlines():
+                old = json.loads(ln)
+                if args.only not in old["name"] and old["name"] in wanted:
+                    kept.append(old)
+        cases = [c for c in cases if args.only in c["name"]]
 
     def show(i: int, c: dict[str, Any], o: dict[str, Any]) -> None:
         brief = o.get("reply", "")[:90] if c["kind"] == "request" else "scenario"
@@ -1862,6 +1960,7 @@ def main() -> int:
         body.pop("port_expect_note", None)
         body["id"] = case_id(body)
         out_lines.append(body)
+    out_lines.extend(kept)
     out_lines.sort(key=lambda c: c["id"])
     args.out.mkdir(parents=True, exist_ok=True)
     path = args.out / "cases.jsonl"

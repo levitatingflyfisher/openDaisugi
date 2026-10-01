@@ -374,10 +374,41 @@ fn anthropic_error(msg: &str) -> Object {
     o
 }
 
+/// Takes the pane prefix off a path: the floor, the pane and the path
+/// without the prefix. A coppice pane's base URL is
+/// <gateway>/pane/<floor>/<pane>, with the floor 16 lower-case hex digits
+/// and the pane w<n>:p<n>. A path with no well-formed prefix comes back
+/// unchanged with an empty floor and pane.
+pub fn split_pane_path(path: &str) -> (String, String, String) {
+    fn digits(s: &str) -> bool {
+        (1..=9).contains(&s.len()) && s.bytes().all(|c| c.is_ascii_digit())
+    }
+    let none = || (String::new(), String::new(), path.to_string());
+    let Some(rest) = path.strip_prefix("/pane/") else { return none() };
+    let Some((floor, rest)) = rest.split_once('/') else { return none() };
+    if floor.len() != 16 || !floor.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
+        return none();
+    }
+    let (pane, tail) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, ""),
+    };
+    let ok = pane
+        .strip_prefix('w')
+        .and_then(|r| r.split_once(":p"))
+        .is_some_and(|(w, p)| digits(w) && digits(p));
+    if !ok {
+        return none();
+    }
+    let tail = if tail.is_empty() { "/" } else { tail };
+    (floor.to_string(), pane.to_string(), tail.to_string())
+}
+
 impl Server {
     /// The ASGI app for one request.
     pub fn serve(&self, r: &Request, out: &mut Out) {
-        if r.path == "/_reload" {
+        let (floor, pane, path) = split_pane_path(&r.path);
+        if path == "/_reload" {
             match &self.reloader {
                 None => send_json(out, 404, &err_obj("no reloader configured")),
                 Some(_) if !r.method.eq_ignore_ascii_case("POST") => send_json(out, 405, &err_obj("reload accepts POST")),
@@ -390,7 +421,19 @@ impl Server {
             }
             return;
         }
-        let openai = is_openai_wire(&r.path);
+        if path == "/_caps" {
+            if !r.method.eq_ignore_ascii_case("GET") {
+                send_json(out, 405, &err_obj("caps accepts GET"));
+            } else if !is_loopback(&r.peer) {
+                send_json(out, 403, &err_obj("caps is loopback only"));
+            } else {
+                let mut o = Object::new();
+                o.set("pane_prefix", true);
+                send_json(out, 200, &o);
+            }
+            return;
+        }
+        let openai = is_openai_wire(&path);
         let gw: Option<Shared> = if openai {
             self.openai.clone()
         } else {
@@ -402,7 +445,7 @@ impl Server {
             }
             g
         };
-        let count_tokens = r.path.trim_end_matches('/') == COUNT_TOKENS_PATH;
+        let count_tokens = path.trim_end_matches('/') == COUNT_TOKENS_PATH;
         if !openai && self.upstream_kind != "anthropic" && count_tokens {
             count_tokens_locally(out, &r.body);
             return;
@@ -414,6 +457,13 @@ impl Server {
             },
             None => (r.body.clone(), None, stream_flag(&r.body)),
         };
+        let mut prepared = prepared;
+        if let Some(p) = prepared.as_mut() {
+            if !pane.is_empty() {
+                p.pane = pane.clone();
+                p.floor = floor.clone();
+            }
+        }
         let mut rec = prepared.clone();
         if let Some(g) = &gw {
             if count_tokens && g.lock().map(|g| g.router_mode != MODE_RULES).unwrap_or(true) {
@@ -421,7 +471,7 @@ impl Server {
             }
         }
         let base = if openai { &self.openai_base } else { &self.upstream_base };
-        let mut url = format!("{}{}", base.trim_end_matches('/'), r.path);
+        let mut url = format!("{}{}", base.trim_end_matches('/'), path);
         if !r.query.is_empty() {
             url.push('?');
             url.push_str(&r.query);
@@ -714,6 +764,30 @@ pub fn handle(app: &Server, mut s: TcpStream, life: &Life) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_pane_path_reads_a_well_formed_prefix_only() {
+        let floor = "0123456789abcdef";
+        let some = |p: &str, rest: &str| (floor.to_string(), p.to_string(), rest.to_string());
+        let none = |path: &str| (String::new(), String::new(), path.to_string());
+        assert_eq!(split_pane_path(&format!("/pane/{floor}/w1:p2/v1/messages")), some("w1:p2", "/v1/messages"));
+        assert_eq!(
+            split_pane_path(&format!("/pane/{floor}/w12:p345/v1/chat/completions")),
+            some("w12:p345", "/v1/chat/completions")
+        );
+        assert_eq!(split_pane_path(&format!("/pane/{floor}/w1:p2")), some("w1:p2", "/"));
+        for bad in [
+            "/v1/messages".to_string(),
+            "/pane/0123456789ABCDEF/w1:p2/v1/messages".to_string(),
+            "/pane/0123456789abcde/w1:p2/v1/messages".to_string(),
+            format!("/pane/{floor}/w1:p2x/v1/messages"),
+            format!("/pane/{floor}/w1:p/v1/messages"),
+            format!("/pane/{floor}/w1234567890:p1/v1/messages"),
+            format!("/x/pane/{floor}/w1:p2/v1/messages"),
+        ] {
+            assert_eq!(split_pane_path(&bad), none(&bad), "{bad}");
+        }
+    }
 
     #[test]
     fn answer_headers_drop_hop_by_hop_and_join_repeats() {

@@ -48,6 +48,9 @@ type voiceState struct {
 	// so Retry cannot help.
 	Command string `json:"command,omitempty"`
 	Away    bool   `json:"away,omitempty"`
+	// Fetch is {done, total} in bytes while voice, starting, gets its
+	// speech model.
+	Fetch map[string]any `json:"fetch,omitempty"`
 }
 
 // offBox is what voice says when --voice-url names another machine and
@@ -125,6 +128,9 @@ func (s *Server) askVoice(r *http.Request, verb string) (voiceState, *voiceTarge
 	str := func(k string) string { v, _ := res[k].(string); return v }
 	ready, _ := res["ready"].(bool)
 	st := voiceState{Ready: ready, State: str("state"), Command: str("command")}
+	if f, ok := res["fetch"].(map[string]any); ok && st.State == "starting" {
+		st.Fetch = f
+	}
 	if st.State == "off" {
 		// Voice is off by the coppice server's own config. Retry cannot
 		// change that; the fix is on the box.

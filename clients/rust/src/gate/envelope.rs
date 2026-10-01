@@ -47,6 +47,16 @@ pub struct Envelope {
     pub dump: Object,
 }
 
+impl Envelope {
+    /// `Envelope.deadline`: the validated float, or None.
+    pub fn deadline(&self) -> Option<f64> {
+        match self.dump.value("deadline") {
+            Value::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+}
+
 impl Runner {
     /// `gate.load_envelope`: a named session's own file only, never
     /// default; with no session, default. `None` means none is registered.
@@ -208,7 +218,8 @@ fn envelope(v: &mut Val, x: &In) -> R<Option<Envelope>> {
             Some(Value::Str("surface".into())),
             literal(&["surface", "strict", "allow"]),
             o,
-        )
+        )?;
+        field(v, &root, x, "deadline", Some(Value::Null), opt(float), o)
     })?;
     let mut dump = match dump {
         Some(Value::Obj(d)) if v.errs.is_empty() => d,
@@ -220,6 +231,10 @@ fn envelope(v: &mut Val, x: &In) -> R<Option<Envelope>> {
     non_finite(&Value::Obj(dump.clone()), &root, &mut v.errs)?;
     if !v.errs.is_empty() {
         return Ok(None);
+    }
+    // The deadline is left out of the dump when absent or null.
+    if dump.value("deadline").is_null() {
+        dump.remove("deadline");
     }
     // `id` has a default factory: `env_` and eight hex digits.
     if dump.value("id").is_null() {

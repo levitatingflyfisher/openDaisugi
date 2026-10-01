@@ -186,6 +186,14 @@ func Validate(in *pyjson.Object) (*pyjson.Object, error) {
 		return nil, err
 	}
 	out.Set("shell_interpreter_policy", policy)
+	// The deadline is left out when absent or null, as the oracle dumps it.
+	deadline, err := optFloat(in, "deadline")
+	if err != nil {
+		return nil, err
+	}
+	if deadline != nil {
+		out.Set("deadline", deadline)
+	}
 	return out, nil
 }
 

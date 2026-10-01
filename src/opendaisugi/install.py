@@ -558,6 +558,59 @@ def _refuse_unknown_gate_hooks(settings_path: Path) -> None:
 _GATE_HOOK_SUBSTR = "opendaisugi.gate"
 
 
+def _upgraded_gate_command(old_command: str) -> str | None:
+    """An older install's gate hook command, brought up to today's form,
+    or None when it is not an older form of ours. Two upgrades: the slow
+    `-m opendaisugi.gate` entry becomes `-m opendaisugi.gate_client`
+    (ADR-0017), and `-I` is put before `-m` (in place of an earlier `-P`),
+    so the hook never imports a module from the agent's working directory
+    or PYTHONPATH (SX-R-9)."""
+    if not isinstance(old_command, str) or gate_hook_args(old_command) is None:
+        return None
+    new = old_command
+    if "opendaisugi.gate_client" not in new:
+        new = new.replace(_GATE_HOOK_SUBSTR, "opendaisugi.gate_client", 1)
+    if " -I -m opendaisugi.gate_client" not in new:
+        new = new.replace(" -P -m opendaisugi.gate_client", " -m opendaisugi.gate_client", 1)
+        new = new.replace(" -m opendaisugi.gate_client", " -I -m opendaisugi.gate_client", 1)
+    return new if new != old_command else None
+
+
+_NOT_ISOLATED_NOTE = (
+    " That hook also runs Python without -I, so it can import a module from the"
+    " agent's working directory: run `daisugi install --uninstall` and then"
+    " `daisugi install --gate` to replace it."
+)
+
+
+def _not_isolated_note(commands) -> str:
+    """The extra words for the "different mode/config" warning when a gate
+    hook there runs the Python module (`-m opendaisugi.gate...`) without
+    -I: it can import a module from the agent's working directory or
+    PYTHONPATH (SX-R-9). A plain text test, so the ports can say the same."""
+    for c in commands:
+        if (
+            isinstance(c, str)
+            and gate_hook_kind(c) is not None
+            and ("-m opendaisugi.gate" in c or "-mopendaisugi.gate" in c)
+            and " -I -m " not in c
+        ):
+            return _NOT_ISOLATED_NOTE
+    return ""
+
+
+def _absolute_gate_root(root: Path) -> Path:
+    """The gate root an installed hook bakes. A relative one would resolve
+    against the hook's cwd, which is the agent's workspace, so it is
+    refused."""
+    if not Path(root).is_absolute():
+        raise ValueError(
+            f"the gate root {str(root)!r} is not an absolute path; set HOME, "
+            "OPENDAISUGI_HOME or XDG_DATA_HOME to an absolute path"
+        )
+    return Path(root)
+
+
 def _patch_claude_gate(
     settings_path: Path,
     *,
@@ -590,12 +643,13 @@ def _patch_claude_gate(
     Instead it warns — the honest signal is "run --uninstall first", not a
     config file that quietly disagrees with what the user just asked for.
     """
-    from opendaisugi.gate import DEFAULT_GATE_ROOT, gate_settings_json
+    from opendaisugi import gate as _gate
+    from opendaisugi.gate import gate_settings_json
 
     kwargs: dict = {
         "mode": "enforce" if enforce else "audit",
         "fmt": "claude",
-        "root": root if root is not None else DEFAULT_GATE_ROOT,
+        "root": _absolute_gate_root(root if root is not None else _gate.DEFAULT_GATE_ROOT),
         "ask": ask,
     }
     if python is not None:
@@ -642,13 +696,7 @@ def _patch_claude_gate(
         # name is rewritten; a genuinely different mode/root/config still
         # warns, unchanged (the existing idempotent-by-presence contract).
         def _is_upgradeable(old_command: str) -> bool:
-            if not isinstance(old_command, str) or gate_hook_args(old_command) is None:
-                return False
-            if "opendaisugi.gate_client" in old_command:
-                return False  # already the new module — nothing to upgrade
-            return (
-                old_command.replace(_GATE_HOOK_SUBSTR, "opendaisugi.gate_client", 1) == gate_command
-            )
+            return _upgraded_gate_command(old_command) == gate_command
 
         rewritten = False
         for entry in pre:
@@ -664,7 +712,8 @@ def _patch_claude_gate(
         warnings.warn(
             f"a gate hook is already installed in {settings_path} with a "
             f"different mode/config; run `daisugi install --uninstall` first "
-            f"if you want to change it (idempotent by presence, not content).",
+            f"if you want to change it (idempotent by presence, not content)."
+            + _not_isolated_note(existing_commands),
             UserWarning,
             stacklevel=2,
         )
@@ -1149,11 +1198,13 @@ def _patch_codex_gate(hooks_path: Path, *, enforce: bool = False) -> list[Path]:
     open, but a dead gate process does not block. Same idempotency/backup
     discipline as ``_patch_claude_gate``.
     """
+    from opendaisugi import gate as _gate
     from opendaisugi.gate import gate_settings_json
 
-    gate_entry = json.loads(gate_settings_json(mode="enforce" if enforce else "audit"))["hooks"][
-        "PreToolUse"
-    ][0]
+    root = _absolute_gate_root(_gate.DEFAULT_GATE_ROOT)
+    gate_entry = json.loads(gate_settings_json(mode="enforce" if enforce else "audit", root=root))[
+        "hooks"
+    ]["PreToolUse"][0]
     gate_entry["matcher"] = ".*"
 
     existed = hooks_path.exists()
@@ -1178,7 +1229,23 @@ def _patch_codex_gate(hooks_path: Path, *, enforce: bool = False) -> list[Path]:
         if h.get("type") == "command"
     }
     if any(gate_hook_kind(c) is not None for c in existing_commands):
-        return []
+        # An older form of the same hook is brought up to today's command
+        # in place (as for Claude Code); any other gate hook is left alone.
+        rewritten = False
+        for entry in pre:
+            for h in entry.get("hooks", []):
+                if (
+                    h.get("type") == "command"
+                    and _upgraded_gate_command(h.get("command", ""))
+                    == gate_entry["hooks"][0]["command"]
+                ):
+                    h["command"] = gate_entry["hooks"][0]["command"]
+                    rewritten = True
+        if not rewritten:
+            return []
+        _backup(hooks_path)
+        hooks_path.write_text(json.dumps(hooks_cfg, indent=2) + "\n")
+        return [hooks_path]
     if existed:
         _backup(hooks_path)
     pre.append(gate_entry)

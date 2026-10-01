@@ -408,3 +408,28 @@ def test_a_relative_coppice_data_dir_is_not_sent(tmp_path):
     _before(gate.path, "read", {"filePath": "/proj/a.txt"}, {"COPPICE_DATA_DIR": "cdata"})
     ((req, _payload),) = gate.gate_requests()
     assert "coppice_data_dir" not in req
+
+
+# --- the socket under a moved data home --------------------------------------------------
+
+
+@pytest.mark.parametrize("var", ["OPENDAISUGI_HOME", "XDG_DATA_HOME"])
+def test_the_socket_is_found_under_a_moved_data_home(tmp_path, var):
+    """With no OPENDAISUGI_GATE_SOCK, the plugin finds the gate where the
+    data home rule puts it (opendaisugi.datahome), as daisugi gate serve does."""
+    data = tmp_path / "moved" if var == "OPENDAISUGI_HOME" else tmp_path / "moved" / "opendaisugi"
+    (data / "gate").mkdir(parents=True)
+    (tmp_path / "home").mkdir()
+    gate = _Gate(data / "gate" / "gate.sock", _reply(0))
+    step = {"do": "before", "tool": "read", "args": {"filePath": "/proj/a.txt"}}
+    result = subprocess.run(
+        ["node", "--experimental-strip-types", str(HERE / "drive.mjs"), json.dumps(step)],
+        cwd=HERE,
+        env={"HOME": str(tmp_path / "home"), var: str(tmp_path / "moved"), **_ENV_BASE},
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {"threw": False}
+    assert len(gate.gate_requests()) == 1

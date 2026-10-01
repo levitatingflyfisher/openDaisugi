@@ -124,3 +124,22 @@ func TestAGateBlockStaysBlockedWhileTheProcessSpeaks(t *testing.T) {
 		t.Fatalf("gate hold lost to the process source: %v", row)
 	}
 }
+
+// A read computes the process fact from the last write and the read's own
+// clock, not from the last tick (CP-R-50). A pane that printed and was seen
+// to print lists as working at once; the 1 s tick used to leave "no output
+// yet" for up to a second after the output was on the screen.
+func TestAReadAfterOutputSeesTheOutputAtOnce(t *testing.T) {
+	s := newPaneServer(t)
+	for i := 0; i < 5; i++ {
+		id := createShellPane(t, s, "sh", "-c", "echo ready; exec sleep 30")
+		got := roundTrip(t, s, `{"id":"1","cmd":"pane.wait_output","pane":"`+id+`","contains":"ready","timeout_ms":10000}`)
+		if !got[0].OK {
+			t.Fatalf("wait_output: %+v", got[0].Error)
+		}
+		row := rowFor(t, listPanes(t, s), id)
+		if row["state"] != "working" || row["detail"] != "output in the last 5 s" {
+			t.Fatalf("run %d: a read after the output listed %v / %v", i, row["state"], row["detail"])
+		}
+	}
+}

@@ -62,6 +62,11 @@ func contains(xs []string, s string) bool {
 // errors meets it: an invalid file ends the run with pydantic's error.
 func (e *Env) loadCfg(cmd, path string) (config.Config, error) {
 	cfg, err := config.Load(path)
+	var yerr *config.YAMLError
+	if errors.As(err, &yerr) {
+		e.errf("daisugi %s: %s\n", cmd, yerr.Error())
+		return cfg, exit(1)
+	}
 	if errors.Is(err, config.ErrInvalid) {
 		e.errf("daisugi %s: pydantic_core._pydantic_core.ValidationError: %s does not validate\n", cmd, path)
 		return cfg, exit(1)
@@ -101,7 +106,7 @@ func (e *Env) gatewayCmd(args []string) error {
 	host := p.str("--host", "127.0.0.1")
 	upstream := p.str("--upstream", "https://api.anthropic.com")
 	cheap := p.str("--cheap-model", "claude-haiku-4-5")
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	capture := p.flag("--capture-answers")
 	localFlag := p.str("--local-model", "")
 	openaiUp := p.str("--openai-upstream", "https://api.openai.com")
@@ -139,7 +144,7 @@ func (e *Env) gatewayCmd(args []string) error {
 	}
 	if !p.has("--upstream-kind") {
 		// The recorded kind counts only when --upstream names that host.
-		cfg, err := e.loadCfg(cmd, filepath.Join(e.home, ".opendaisugi", "config.yaml"))
+		cfg, err := e.loadCfg(cmd, filepath.Join(e.dataHome(), "config.yaml"))
 		if err != nil {
 			return err
 		}

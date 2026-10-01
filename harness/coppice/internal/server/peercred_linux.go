@@ -54,6 +54,28 @@ func peerPID(c *net.UnixConn) (int, error) {
 	return int(ucred.Pid), nil
 }
 
+// procStartTime is a pid's start time, field 22 of /proc/<pid>/stat, in
+// clock ticks since boot. A pid the kernel gives again to a new process
+// has a new start time.
+func procStartTime(pid int) (uint64, bool) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return 0, false
+	}
+	s := string(b)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 {
+		return 0, false
+	}
+	// The fields after the name start at field 3, so field 22 is the 20th.
+	f := strings.Fields(s[i+1:])
+	if len(f) < 20 {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(f[19], 10, 64)
+	return v, err == nil
+}
+
 // procStat reads a pid's parent and session from /proc/<pid>/stat. The
 // command name sits in parentheses and may hold spaces, so the fields are
 // read after the last closing parenthesis.

@@ -1,10 +1,12 @@
 package sprig
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -77,8 +79,12 @@ type BashTool struct{}
 
 func (BashTool) Name() string { return "bash" }
 func (BashTool) Run(in map[string]any) (string, error) {
-	out, err := exec.Command("sh", "-c", str(in["cmd"])).CombinedOutput()
-	return string(out), err
+	cmd := exec.Command("sh", "-c", str(in["cmd"]))
+	cmd.Env = ChildEnv("")
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := runInGroup(cmd)
+	return out.String(), err
 }
 
 // DefaultTools is the whole tool surface — exactly four, keyed by name.
@@ -89,4 +95,48 @@ func DefaultTools() map[string]Tool {
 		"edit":  EditTool{},
 		"bash":  BashTool{},
 	}
+}
+
+// AllToolNames is the four tools in sprig's own order: the order a prompt
+// lists them in, and the default of --tools.
+var AllToolNames = []string{"read", "write", "edit", "bash"}
+
+// WallToolNames is every name --tools takes, in sprig's order: the four
+// tools and spawn, which needs --tree-cmd.
+var WallToolNames = []string{"read", "write", "edit", "bash", "spawn"}
+
+// ParseToolWall reads a --tools value: a comma list of tool names. It
+// returns the named tools once each, in sprig's order. An empty value or
+// a name that is not a tool is an error, worded for one line on stderr.
+func ParseToolWall(list string) ([]string, error) {
+	if list == "" {
+		return nil, fmt.Errorf("--tools is empty; name one or more of read, write, edit, bash, spawn")
+	}
+	want := map[string]bool{}
+	for _, name := range strings.Split(list, ",") {
+		if !slices.Contains(WallToolNames, name) {
+			return nil, fmt.Errorf("--tools: unknown tool %q; the tools are read, write, edit, bash, spawn", name)
+		}
+		want[name] = true
+	}
+	var wall []string
+	for _, name := range WallToolNames {
+		if want[name] {
+			wall = append(wall, name)
+		}
+	}
+	return wall, nil
+}
+
+// ToolsFor is the tool map for a wall: only the named tools. A call to any
+// other tool is then refused as an unknown tool.
+func ToolsFor(wall []string) map[string]Tool {
+	all := DefaultTools()
+	tools := map[string]Tool{}
+	for _, name := range wall {
+		if t, ok := all[name]; ok { // a name that is no tool is left out
+			tools[name] = t
+		}
+	}
+	return tools
 }

@@ -225,7 +225,7 @@ impl Env {
             return self.cmd_help(CMD, "", "Cron-friendly one-shot gardener. Skips if last run is within --min-interval.", &opts);
         }
         let min_interval = self.click_int(CMD, &p, "--min-interval", 3600)?;
-        let dir = p.str("--data-dir", &format!("{}/.opendaisugi", self.home));
+        let dir = p.str("--data-dir", &self.data_home());
         let stamp = format!("{dir}/.gardener-last-run");
         let now = now_seconds();
         let last = read_stamp(&stamp).map_err(|e| self.pw_err(CMD, e))?;
