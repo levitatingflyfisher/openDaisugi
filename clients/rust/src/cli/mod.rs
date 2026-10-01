@@ -23,6 +23,8 @@ mod gatecmds;
 mod gatewaycmd;
 mod graftcmd;
 mod rankcmd;
+mod treecmd;
+mod voicecmd;
 pub mod gateroot;
 pub mod install;
 mod installcmd;
@@ -32,9 +34,13 @@ pub mod journal;
 mod journalcmd;
 mod journalparse;
 pub mod lprobe;
+#[cfg(feature = "mujoco")]
+pub mod robotprobe;
 mod mcpcmd;
+mod modelscmd;
 mod modulescmd;
 mod onboardcmd;
+mod packcmd;
 mod orchestratecmd;
 mod pathwayscmd;
 mod registrycmd;
@@ -48,6 +54,7 @@ mod setupcmd;
 mod startcmd;
 mod statuscmd;
 mod tendcmd;
+mod verifycmd;
 mod weaveattempts;
 mod weavecmd;
 pub mod words;
@@ -402,8 +409,8 @@ More
 const NOT_IN_BINARY: &[&str] = &[
     "help", "bench",
     "conformance", "coppice",
-    "lora", "models",
-    "verify", "viz", "voice", "gate replay", "gate audit",
+    "lora export", "models pin",
+    "viz", "gate replay", "gate audit",
 ];
 
 const ROOT_HELP: &str = "Usage: daisugi [OPTIONS] COMMAND [ARGS]...
@@ -476,10 +483,18 @@ Envelopes:
 Run:
   orchestrate      Run a prompt end to end: decompose, size, supervised execute, synthesize.
   run              Execute a plan against an envelope under runtime supervision.
+  verify           Verify an action plan against a safety envelope.
 
 Setup:
   onboard          Turn existing agent transcripts into verified traces and pathways.
   tiers setup      Detect hardware, recommend a local model, and optionally qualify and wire it.
+  models list      List the curated models, the default for this box, and the one in use.
+  models search    Search the Hugging Face API for models, filtered by size and license.
+  models use       Record the model the garden uses. Any id, path or GGUF file is accepted.
+  pack list        List the ML packs and which are installed.
+  pack install     Install a pack: a pinned Python, a venv, the locked wheels.
+  pack run         Run one job (selftest, train, vla-chunk) in a pack's worker.
+  lora train       Train a LoRA adapter in the train pack.
   mcp serve        Serve the openDaisugi tools over MCP stdio.
 
 Registry and release:
@@ -635,6 +650,12 @@ impl Env {
             }
         };
         self.home = home;
+        // Every verify this command runs asks a model for an llm_check, as
+        // the oracle's evaluator does.
+        crate::gate::llm::set_command_check(crate::gate::llm::CommandCheck {
+            env: self.env.clone(),
+            home: self.home.clone(),
+        });
         match args[0].as_str() {
             "gate" => return self.gate(&args[1..]),
             "install" => return self.install(&args[1..]),
@@ -648,6 +669,7 @@ impl Env {
             "router" => return self.router(&args[1..]),
             "graft" => return self.graft(&args[1..]),
             "rank" => return self.rank_cmd(&args[1..]),
+            "tree" => return self.tree_cmd(&args[1..]),
             "route" => return self.route(&args[1..]),
             "config" => return self.config_cmd(&args[1..]),
             "status" => return self.status_cmd(&args[1..]),
@@ -655,11 +677,15 @@ impl Env {
             "journal" => return self.journal(&args[1..]),
             "generate-envelope" => return self.generate_envelope(&args[1..]),
             "run" => return self.run_cmd(&args[1..]),
+            "verify" => return self.verify_cmd(&args[1..]),
             "weave" => return self.weave_cmd(&args[1..]),
             "orchestrate" => return self.orchestrate_cmd(&args[1..]),
             "mcp" => return self.mcp_cmd(&args[1..]),
             "onboard" => return self.onboard(&args[1..]),
             "tiers" => return self.tiers(&args[1..]),
+            "models" => return self.models(&args[1..]),
+            "pack" => return self.pack(&args[1..]),
+            "lora" => return self.lora(&args[1..]),
             "setup" => return self.setup_moved(&args[1..]),
             "modules" => return self.modules_cmd(&args[1..]),
             "dashboard" => return self.dashboard_cmd(&args[1..]),
@@ -667,6 +693,7 @@ impl Env {
             "registry" => return self.registry_cmd(&args[1..]),
             "batch" => return self.batch_cmd(&args[1..]),
             "release" => return self.release_cmd(&args[1..]),
+            "voice" => return self.voice_cmd(&args[1..]),
             _ => {}
         }
         if NOT_IN_BINARY.contains(&args[0].as_str()) {

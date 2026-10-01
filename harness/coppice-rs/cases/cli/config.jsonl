@@ -1,0 +1,145 @@
+# The commands that read and write coppice.toml: project add, list and rm,
+# open and new, and what Save writes back.
+#!config default = "sh"
+#!config [harness.sh]
+#!config command = "/bin/sh"
+#!config args = ["-c", "sleep 600"]
+# Projects: pin, list, unpin, from coppice.toml.
+{"id": "j0", "cli": ["project"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "j1", "cli": ["project", "bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "j2", "cli": ["project", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "j3", "cli": ["project", "add"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "j4", "cli": ["project", "add", "."]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "j5", "cli": ["project", "add", "{START}"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "j6", "cli": ["project", "add", "{WORK}/nope"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "j7", "cli": ["project", "add", "{HOME}/.config/coppice/coppice.toml"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "j8", "cli": ["project", "add", "{FIXTURES}"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "j9", "cli": ["project", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "j10", "cli": ["project", "list", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "j11", "cli": ["project", "list", "--bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "j12", "file": "{HOME}/.config/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "j13", "cli": ["project", "rm"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "j14", "cli": ["project", "rm", "{WORK}/nope"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "j15", "cli": ["project", "rm", "{FIXTURES}"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "j16", "file": "{HOME}/.config/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+# open and new with a config that has a harness.
+{"id": "o1", "cli": ["open"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "o2", "cli": ["open", "sh"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "o3", "cli": ["sh", "-x"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "o4", "cli": ["open", "nope"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "o5", "cli": ["nope"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "o6", "cli": ["new", "--no-attach"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "o7", "cli": ["new"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "o8", "cli": ["new", "a", "b"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "o9", "cli": ["new", "start", "--no-attach"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "o10", "cli": ["new", "{START}", "--no-attach"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "o11", "cli": ["new", "nosuch"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "o12", "cli": ["new", "--no-attach", "{FIXTURES}"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "o13", "cli": ["pane", "list", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# open and new with no config file: the harnesses on PATH.
+{"id": "q1", "cli": ["new"], "env": {"XDG_CONFIG_HOME": "{WORK}/empty"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "q2", "cli": ["open", "pi"], "env": {"XDG_CONFIG_HOME": "{WORK}/empty"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "q3", "cli": ["pi"], "env": {"XDG_CONFIG_HOME": "{WORK}/empty"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "q4", "cli": ["open", "zz"], "env": {"XDG_CONFIG_HOME": "{WORK}/fresh", "PATH": "{FIXTURES}/cli/bin:/usr/bin:/bin"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "q5", "cli": ["zz"], "env": {"XDG_CONFIG_HOME": "{WORK}/fresh", "PATH": "{FIXTURES}/cli/bin:/usr/bin:/bin"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "q6", "file": "{WORK}/fresh/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": {"missing": true}}
+{"id": "q7", "cli": ["open", "pi", "--flag"], "env": {"XDG_CONFIG_HOME": "{WORK}/fresh", "PATH": "{FIXTURES}/cli/bin:/usr/bin:/bin"}}
+{"id": "$id", "ok": true, "result": {"code": "*"}}
+{"id": "q8", "file": "{WORK}/fresh/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "q9", "cli": ["new", "--no-attach"], "env": {"XDG_CONFIG_HOME": "{WORK}/fresh2", "PATH": "{FIXTURES}/cli/bin:/usr/bin:/bin"}}
+{"id": "$id", "ok": true, "result": {"code": "*"}}
+{"id": "q10", "file": "{WORK}/fresh2/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "q11", "cli": ["new"], "env": {"XDG_CONFIG_HOME": "{WORK}/nodefault"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# A config with no default harness.
+{"id": "q12", "write": "{WORK}/nodef/coppice/coppice.toml", "text": "[harness.sh]\ncommand = \"/bin/sh\"\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "q13", "cli": ["new"], "env": {"XDG_CONFIG_HOME": "{WORK}/nodef"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# project add writes the whole file back: what Save keeps and drops.
+{"id": "x0a", "write": "{WORK}/v0/coppice/coppice.toml", "text": ""}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "x0b", "cli": ["project", "add", "{START}"], "env": {"XDG_CONFIG_HOME": "{WORK}/v0"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "x0c", "file": "{WORK}/v0/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "x1a", "write": "{WORK}/v1/coppice/coppice.toml", "text": "plugins = []\n[harness]\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "x1b", "cli": ["project", "add", "{START}"], "env": {"XDG_CONFIG_HOME": "{WORK}/v1"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "x1c", "file": "{WORK}/v1/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "x2a", "write": "{WORK}/v2/coppice/coppice.toml", "text": "default = \"a\"\nplugins = [\"tree\"]\ngateway = \"http://127.0.0.1:1\"\nprojects = [\"/x\"]\n[harness.b]\ncommand = \"b\"\nargs = []\nstate = \"hooks\"\n[harness.a]\ncommand = \"a\"\nresume_args = [\"--resume\", \"{session}\"]\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "x2b", "cli": ["project", "add", "{START}"], "env": {"XDG_CONFIG_HOME": "{WORK}/v2"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "x2c", "file": "{WORK}/v2/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "x3a", "write": "{WORK}/v3/coppice/coppice.toml", "text": "[keys]\ntalk = \"ctrl-g\"\n[voice]\nurl = \"http://127.0.0.1:9/\"\ntoken_file = \"/t\"\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "x3b", "cli": ["project", "add", "{START}"], "env": {"XDG_CONFIG_HOME": "{WORK}/v3"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "x3c", "file": "{WORK}/v3/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "x4a", "write": "{WORK}/v4/coppice/coppice.toml", "text": "[keys]\nleave = \"ctrl-]\"\n[voice]\nenabled = true\nargs = []\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "x4b", "cli": ["project", "add", "{START}"], "env": {"XDG_CONFIG_HOME": "{WORK}/v4"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "x4c", "file": "{WORK}/v4/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "x5a", "write": "{WORK}/v5/coppice/coppice.toml", "text": "[voice]\nenabled = false\nargs = [\"--data-dir\", \"/q\"]\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "x5b", "cli": ["project", "add", "{START}"], "env": {"XDG_CONFIG_HOME": "{WORK}/v5"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "x5c", "file": "{WORK}/v5/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "x6a", "write": "{WORK}/v6/coppice/coppice.toml", "text": "[plugin.a]\ns = \"q\\\"b\\\\c\\td\\u0001\u00e9\\u007f\"\nf1 = 1.0\nf2 = 1e20\nf4 = -0.5\nf5 = 1e-7\nf6 = 2.5e300\ni = 9007199254740993\nneg = -3\nt = true\nd = 1979-05-27T07:32:00Z\nd2 = 1979-05-27T07:32:00.5+02:00\nmixed = [1, \"a\", 2.5, false]\nnested = [[1, 2], [\"a\"]]\nempty = []\n\"key with space\" = 1\nk-ey_1 = 2\n\"\" = 3\nit = {x = 1, y = \"z\"}\narr = [{p = 1}, {p = 2}]\n[[plugin.a.aot]]\nz = 1\n[[plugin.a.aot]]\nz = 2\n[plugin.a.aot.sub]\nw = 1\n[plugin.b]\n[plugin.\"c.d\"]\nv = 1\n[plugin.e.f.g]\nh = 1\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "x6b", "cli": ["project", "add", "{START}"], "env": {"XDG_CONFIG_HOME": "{WORK}/v6"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "x6c", "file": "{WORK}/v6/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "x7a", "write": "{WORK}/v7/coppice/coppice.toml", "text": "[plugin.tree]\nlist = [[{a = 1}]]\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "x7b", "cli": ["project", "add", "{START}"], "env": {"XDG_CONFIG_HOME": "{WORK}/v7"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "x7c", "file": "{WORK}/v7/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": "*"}

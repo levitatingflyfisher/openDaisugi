@@ -1,0 +1,34 @@
+# project.list: the pinned projects of coppice.toml first, in file order and
+# without a repeat, then the directories panes last started in that are not
+# pinned, newest first, and the default harness. A pane.create with no cwd
+# and no argv starts in the newest recent directory.
+#!config default = "claude"
+#!config projects = ["{FIXTURES}/screens", "{FIXTURES}/screens", "/", "{WORK}/gone"]
+#!config [harness.claude]
+#!config command = "/bin/sleep"
+#!config args = ["600"]
+{"id":"1","cmd":"project.list"}
+{"id":"$id","ok":true,"result":{"projects":[{"path":"*","name":"screens","pinned":true},{"path":"/","name":"/","pinned":true},{"path":"*","name":"gone","pinned":true}],"default":"claude"}}
+{"id":"2","cmd":"pane.create","cwd":"{FIXTURES}/claude","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":true,"result":{"pane":"$a"}}
+{"id":"3","cmd":"pane.create","cwd":"{FIXTURES}/claude/projects/../projects","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":true,"result":{"pane":"$b"}}
+{"id":"4","cmd":"pane.create","cwd":"{FIXTURES}/screens","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"5","cmd":"pane.create","cwd":"{FIXTURES}/claude","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":true,"result":{"pane":"$d"}}
+{"id":"6","cmd":"pane.create","cwd":"{WORK}/gone","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"*"}}
+{"id":"7","cmd":"project.list"}
+{"id":"$id","ok":true,"result":{"projects":[{"path":"*","pinned":true},{"path":"/","pinned":true},{"path":"*","pinned":true},{"path":"*","name":"claude","pinned":false},{"path":"*","name":"projects","pinned":false}],"default":"claude"}}
+{"id":"8","cmd":"pane.create"}
+{"id":"$id","ok":true,"result":{"pane":"$e"}}
+{"id":"9","cmd":"pane.create","near":"$b"}
+{"id":"$id","ok":true,"result":{"pane":"$f"}}
+{"id":"10","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$a"},{"id":"$b"},{"id":"$c"},{"id":"$d"},{"id":"$e","label":"claude-claude","harness":"claude"},{"id":"$f","label":"claude-projects","harness":"claude"}],"path":"*"}}
+{"id":"11","cmd":"pane.create","cwd":"{FIXTURES}/claude","harness":"claude"}
+{"id":"$id","ok":true,"result":{"pane":"$g"}}
+{"id":"12","cmd":"pane.list","pane":"$g"}
+{"id":"$id","ok":true,"result":"*"}
+#!tree

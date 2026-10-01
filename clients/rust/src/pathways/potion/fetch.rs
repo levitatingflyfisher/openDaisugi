@@ -91,6 +91,16 @@ fn parse_url(url: &str) -> Result<Url, String> {
 /// The body of `url`, following redirects. A redirect never goes from
 /// https to http. The body is at most `size` bytes.
 pub fn get(url: &str, size: u64, proxies: &netproxy::Urllib) -> Result<Vec<u8>, String> {
+    match get_reply(url, size, proxies)? {
+        (_, 200, body) => Ok(body),
+        (last, status, _) => Err(format!("GET {last}: {status}")),
+    }
+}
+
+/// The URL last asked, the status and the body of `url`, following
+/// redirects as `get` does. Any status other than a redirect is an
+/// answer; Err is a request that got none.
+pub fn get_reply(url: &str, size: u64, proxies: &netproxy::Urllib) -> Result<(String, u16, Vec<u8>), String> {
     let mut url = url.to_string();
     let first_tls = parse_url(&url)?.tls;
     for _ in 0..=MAX_HOPS {
@@ -100,7 +110,6 @@ pub fn get(url: &str, size: u64, proxies: &netproxy::Urllib) -> Result<Vec<u8>, 
         }
         let (status, headers, body) = get_once(&u, size, proxies)?;
         match status {
-            200 => return Ok(body),
             301 | 302 | 303 | 307 | 308 => {
                 let loc = headers
                     .iter()
@@ -118,7 +127,7 @@ pub fn get(url: &str, size: u64, proxies: &netproxy::Urllib) -> Result<Vec<u8>, 
                     return Err(format!("GET {url}: a redirect this binary does not follow"));
                 };
             }
-            _ => return Err(format!("GET {url}: {status}")),
+            _ => return Ok((url, status, body)),
         }
     }
     Err(format!("GET {url}: more than {MAX_HOPS} redirects"))
@@ -176,7 +185,7 @@ fn get_once(u: &Url, size: u64, proxies: &netproxy::Urllib) -> Result<Reply, Str
             headers.push((k, v));
         }
     }
-    if status == 200 {
+    if (200..300).contains(&status) {
         if chunked {
             body = crate::gate::llm::dechunk(&body).ok_or("a chunked reply that could not be read")?;
         } else if let Some(n) = length {

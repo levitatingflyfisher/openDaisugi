@@ -1,0 +1,86 @@
+# The page: every file the Go tree ships, byte for byte, with the headers
+# a page that holds a token carries, and the mux's own answers.
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g1", "http": "GET", "url": "http://{ADDR}/", "wait_ms": 8000, "same_as": "{FIXTURES}/web/static/index.html"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g2", "http": "GET", "url": "http://{ADDR}/app.js", "same_as": "{FIXTURES}/web/static/app.js"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g3", "http": "GET", "url": "http://{ADDR}/app.css", "same_as": "{FIXTURES}/web/static/app.css"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g4", "http": "GET", "url": "http://{ADDR}/floor.js", "same_as": "{FIXTURES}/web/static/floor.js"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g5", "http": "GET", "url": "http://{ADDR}/manifest.webmanifest", "same_as": "{FIXTURES}/web/static/manifest.webmanifest"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g6", "http": "GET", "url": "http://{ADDR}/sw.js", "same_as": "{FIXTURES}/web/static/sw.js"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g7", "http": "GET", "url": "http://{ADDR}/icons/icon-192.png", "same_as": "{FIXTURES}/web/static/icons/icon-192.png"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g8", "http": "GET", "url": "http://{ADDR}/icons/icon-512.png", "same_as": "{FIXTURES}/web/static/icons/icon-512.png"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g9", "http": "GET", "url": "http://{ADDR}/tiles.js", "same_as": "{FIXTURES}/web/static/tiles.js"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g10", "http": "GET", "url": "http://{ADDR}/roster.js", "same_as": "{FIXTURES}/web/static/roster.js"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g11", "http": "GET", "url": "http://{ADDR}/pane.js", "same_as": "{FIXTURES}/web/static/pane.js"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "g12", "http": "HEAD", "url": "http://{ADDR}/"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "g13", "http": "HEAD", "url": "http://{ADDR}/app.js"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+# FileServer sends /index.html to ./, and never serves a name under _.
+{"id": "g14", "http": "GET", "url": "http://{ADDR}/index.html"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "g15", "http": "GET", "url": "http://{ADDR}/_tests/tiles.test.mjs"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "g16", "http": "GET", "url": "http://{ADDR}/_icongen/main.go"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "g17", "http": "GET", "url": "http://{ADDR}/nope.js"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "g18", "http": "GET", "url": "http://{ADDR}/icons/"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "g19", "http": "GET", "url": "http://{ADDR}/icons"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+# The mux: a wrong method, an unclean path, a path with a query.
+{"id": "m1", "http": "POST", "url": "http://{ADDR}/"}
+{"id": "$id", "ok": true, "result": {"status": 405}}
+{"id": "m2", "http": "PUT", "url": "http://{ADDR}/app.js", "body": "x"}
+{"id": "$id", "ok": true, "result": {"status": 405}}
+{"id": "m3", "http": "GET", "url": "http://{ADDR}/icons/../app.js"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "m4", "http": "GET", "url": "http://{ADDR}//app.js"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "m5", "http": "GET", "url": "http://{ADDR}/app.js?v=2", "same_as": "{FIXTURES}/web/static/app.js"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "m6", "http": "GET", "url": "http://{ADDR}/./app.js"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "m7", "http": "DELETE", "url": "http://{ADDR}/api/panes"}
+{"id": "$id", "ok": true, "result": {"status": 405}}
+{"id": "m8", "http": "GET", "url": "http://{ADDR}/api/ask/answer"}
+{"id": "$id", "ok": true, "result": {"status": 405}}
+{"id": "m9", "http": "OPTIONS", "url": "http://{ADDR}/"}
+{"id": "$id", "ok": true, "result": {"status": 405}}
+{"id": "m10", "http": "GET", "url": "http://{ADDR}/app%2Ejs"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "m11", "http": "GET", "url": "http://{ADDR}/api"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+# Ranges and conditions, as http.ServeContent answers them.
+{"id": "r1", "http": "GET", "url": "http://{ADDR}/chips.js", "headers": {"Range": "bytes=0-9"}}
+{"id": "$id", "ok": true, "result": {"status": 206}}
+{"id": "r2", "http": "GET", "url": "http://{ADDR}/chips.js", "headers": {"Range": "bytes=999999-"}}
+{"id": "$id", "ok": true, "result": {"status": 416}}
+{"id": "r3", "http": "GET", "url": "http://{ADDR}/chips.js", "headers": {"If-Modified-Since": "Mon, 02 Jan 2006 15:04:05 GMT"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+# HTTP/1.0: the reply says 1.0 and the connection closes after it.
+{"id": "v1a", "http": "GET", "url": "http://{ADDR}/chips.js", "proto": "HTTP/1.0"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "v1b", "http": "GET", "url": "http://{ADDR}/nope", "proto": "HTTP/1.0"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "v1c", "http": "GET", "url": "http://{ADDR}/", "proto": "HTTP/2.0"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "v1d", "http": "GET", "url": "http://{ADDR}/", "host": ""}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}

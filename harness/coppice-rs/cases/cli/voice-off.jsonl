@@ -1,0 +1,7 @@
+# Voice off in coppice.toml: status says so, and start starts nothing.
+{"id": "s", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "off"}}
+{"id": "v", "cmd": "voice.start"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "s2", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "off"}}

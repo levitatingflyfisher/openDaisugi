@@ -1,0 +1,69 @@
+# View plugins on the web server: the list, each view's files under the
+# view's own policy, the shared library, and what is never served.
+#!plugins userviews
+#!config plugins = ["tree", "minimap", "myview"]
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "l1", "http": "GET", "url": "http://{ADDR}/api/views", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f1", "http": "GET", "url": "http://{ADDR}/plugins/tree/"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f2", "http": "GET", "url": "http://{ADDR}/plugins/tree/index.html"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f3", "http": "GET", "url": "http://{ADDR}/plugins/tree/tree.js"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f4", "http": "GET", "url": "http://{ADDR}/plugins/tree/tree.css"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f5", "http": "GET", "url": "http://{ADDR}/plugins/tree/manifest.json"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f6", "http": "GET", "url": "http://{ADDR}/plugins/tree/_tests/x.js"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "f7", "http": "GET", "url": "http://{ADDR}/plugins/tree"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "f8", "http": "GET", "url": "http://{ADDR}/plugins/nosuch/"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "f9", "http": "GET", "url": "http://{ADDR}/plugins/myview/"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f10", "http": "GET", "url": "http://{ADDR}/plugins/myview/app.js"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f11", "http": "GET", "url": "http://{ADDR}/plugins/myview/_secret.js"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "f12", "http": "GET", "url": "http://{ADDR}/plugins/myview/sub/x.css"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f13", "http": "GET", "url": "http://{ADDR}/plugins/myview/sub/blob.bin"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f14", "http": "GET", "url": "http://{ADDR}/plugins/myview/sub"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "f15", "http": "GET", "url": "http://{ADDR}/plugins/myview/sub/"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "f16", "http": "GET", "url": "http://{ADDR}/plugins/myview/../tree/tree.js"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "f17", "http": "GET", "url": "http://{ADDR}/plugins/myview/%2e%2e/tree/tree.js"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "f18", "http": "HEAD", "url": "http://{ADDR}/plugins/myview/app.js"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f19", "http": "POST", "url": "http://{ADDR}/plugins/myview/app.js"}
+{"id": "$id", "ok": true, "result": {"status": 405}}
+{"id": "f20", "http": "GET", "url": "http://{ADDR}/plugins/myview/manifest.json"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "f21", "http": "GET", "url": "http://{ADDR}/plugins/myview/.hidden"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "f22", "http": "GET", "url": "http://{ADDR}/plugins/myview/app.js", "headers": {"Range": "bytes=2-5"}}
+{"id": "$id", "ok": true, "result": {"status": 206}}
+# The shared library: top-level JavaScript files only.
+{"id": "b1", "http": "GET", "url": "http://{ADDR}/plugins/_lib/view.js"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "b2", "http": "GET", "url": "http://{ADDR}/plugins/_lib/layout.js"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "b3", "http": "GET", "url": "http://{ADDR}/plugins/_lib/notice.py"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "b4", "http": "GET", "url": "http://{ADDR}/plugins/_lib/_tests/x.js"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "b5", "http": "GET", "url": "http://{ADDR}/plugins/_lib/nope.js"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "b6", "http": "GET", "url": "http://{ADDR}/plugins/_lib/"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}

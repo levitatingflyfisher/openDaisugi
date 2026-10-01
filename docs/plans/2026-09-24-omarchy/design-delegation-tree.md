@@ -1,8 +1,13 @@
 # Design: the delegation tree, each edge proved
 
-Status: **Proposed**, 2026-09-26. sprig is on hold with the owner, so nothing here is decided.
-Some parts of the rule do not depend on sprig (see the recommendation), but the owner decides
-those too. Nothing here is built. The code facts below were read on 2026-09-26.
+Status: **Built in part**, 2026-09-30. The owner adopted every recommendation in "Open
+questions" (owner rulings AT-1 to AT-7, marked there). Recommendation steps 1 to 3 are built in
+Python, Go and Rust: `edge_ok`, the deadline field, proof at registration, the tree ledger with
+its budgets and asks, and the agentic step's child envelope (rulings TR-R-1 to TR-R-12 in
+`clients/ADJUDICATIONS.md`; see "Built, 2026-09-30" below). Step 4 (coppice) is not built: the
+adversarial test of the session binding in coppice comes first. Step 5 (sprig) waits for sprig.
+The code facts in the next sections were read on 2026-09-26; where a fact changed since, the text
+says so.
 
 Source: `strategy-2026-09-26.md`, section "A tree of agents, each edge proved".
 
@@ -64,16 +69,16 @@ findings are the core of this design.
 | Robot bounds | Yes (`_robot_capability_violation`) | Yes (reuses the same function) |
 | Invariants | Yes, compiled; opaque ones surfaced, or denied under strict | Parent's set must be a subset of the child's, by value |
 | Postconditions | No | Yes, superset |
-| `max_execution_time_s`, `max_output_size_mb` | **No** | Yes |
-| `stakes` (no downgrade) | **No** | Yes |
-| `custom_step_allowlist` | **No** | **No** |
+| `max_execution_time_s`, `max_output_size_mb` | **No** (yes since f9e202e7) | Yes |
+| `stakes` (no downgrade) | **No** (yes since f9e202e7) | Yes |
+| `custom_step_allowlist` | **No** (yes since f9e202e7) | **No** |
 | `shell_interpreter_policy` | Read from the outer only | No |
 | Depth | Any | **Depth 1 only**: fails if `parent.parent_envelope` is set |
 | Ported to Go and Rust | Yes (`clients/go/internal/verify/subsumption.go`, `clients/rust/src/subsumption.rs`) | **No** |
 
 Consequences:
 
-- **No single call proves a tree edge.** Z3 subsumption misses budgets and stakes. A child could
+- **No single call proved a tree edge** (2026-09-26; `tree.edge_ok` is that call now). Z3 subsumption misses budgets and stakes. A child could
   lower its stakes from `high` to `low` and so turn strict mode off for itself
   (`verify.resolve_strict`). Inheritance catches that, but it compares globs as strings, so a
   child glob `src/app/**` under a parent `src/**` is refused though it is narrower.
@@ -88,14 +93,16 @@ Consequences:
 - **Parity.** Only the Z3 half is ported. The full edge rule needs the Python oracle, then Go and
   Rust with the same golden cases.
 
-### Lenient mode fails open on two paths
+### Lenient mode fails open on two paths (one left)
 
 `verify.check_skill_delegations` lets two cases through as warnings in lenient mode:
 
 - a `SkillStep` with no `contract_envelope` (an opaque skill), and
-- a Z3 timeout during subsumption, when a `warnings_out` list is given.
+- a Z3 timeout during subsumption, when a `warnings_out` list is given. (Since fixed: a timeout
+  is a violation in every mode, in all three clients.)
 
-Also, the main Z3 query in `envelope_subsumes` raises `VerificationTimeout` on `unknown`; it
+Also (2026-09-26; since fixed: it returns `holds=False, timed_out=True`), the main Z3 query in
+`envelope_subsumes` raises `VerificationTimeout` on `unknown`; it
 does not return `holds=False`. (The file, network and MCP axes, in `_patterns_subsume`, already
 return a deny on `unknown`.) Callers must turn the raise into a deny.
 
@@ -119,7 +126,8 @@ declares no envelope, at every stakes level.** It must not reuse the lenient pat
 ### The gate never proves anything when an envelope is registered
 
 `gate.register_envelope` writes the envelope file for a session id, or as `default`.
-`gate.load_envelope` loads the exact session, then falls back to `default`. No containment check
+`gate.load_envelope` loads the exact session, then falls back to `default` (2026-09-26; since
+SEC-3 a pinned session gets its own envelope or none, and the payload never selects one). No containment check
 runs at registration. The session id comes from the harness's hook payload, which is untrusted
 input.
 
@@ -127,7 +135,8 @@ input.
   session.
 - coppice and sprig have no such pin. In a shared gate root, a child that names another session's
   id might get that session's envelope. **Not verified**; this needs an adversarial test.
-- A child pane whose session has no registered envelope gets `default`, whatever the parent had.
+- A child pane whose session has no registered envelope gets `default`, whatever the parent had
+  (true only for an unpinned gate since SEC-3; a pinned one denies).
 
 ### coppice: the tree exists, with no envelopes on it
 
@@ -320,13 +329,15 @@ The same edge relation serves a swarm, but not the whole rule. Say this plainly:
 | coppice read-only view of harness subagents | Exists |
 | sprig loop, out-of-process gate, one task per process | Exists (on hold) |
 | sprig fleet, flat board, operator override | Exists (on hold) |
-| Full edge rule (`edge_ok`), any depth, strict, fail closed | Designed here |
-| `custom_step_allowlist` in the edge check | Missing |
-| Proof at envelope registration, in a root the child cannot write | Missing |
-| Session binding the child cannot choose | Missing; the current risk is not verified |
-| Envelope on a coppice task, check on `pane.create` from a pane | Missing |
-| sprig spawn tool | Missing |
-| Budget split down the tree | Missing |
+| Full edge rule (`edge_ok`), any depth, strict, fail closed | **Built** 2026-09-30, Python, Go, Rust (TR-R-2, TR-R-3) |
+| `custom_step_allowlist` in the edge check | **Built** (TR-R-2) |
+| Proof at envelope registration, in a root the child cannot write | **Built**: `gate register --parent`, `tree spawn` (TR-R-8, TR-R-4); the gate denies an agent's registration (TR-R-9) |
+| Session binding the child cannot choose | Built at the gate (the pin, SEC-3); the coppice risk is not verified yet |
+| Envelope on a coppice task, check on `pane.create` from a pane | Missing (step 4) |
+| sprig spawn tool | Missing (step 5) |
+| Budget split down the tree | **Built**: the tree ledger (TR-R-5) |
+| Deadline down the tree | **Built**: an envelope field, proved per edge, not enforced at call time (TR-R-1) |
+| `AgenticExecutor` child envelope, proved | **Built**, Python (TR-R-10) |
 | Ranking primitive | To be written |
 | Go and Rust ports of the edge rule | Missing |
 
@@ -377,18 +388,18 @@ without a task gets its own task's envelope at most.
 
 Put the rule in daisugi first, and make it harness neutral. This part does not need sprig.
 
-1. **daisugi: `edge_ok(parent, child)`**, as defined above. Strict always, fail closed on timeout
+1. **Built 2026-09-30.** **daisugi: `edge_ok(parent, child)`**, as defined above. Strict always, fail closed on timeout
    and on a missing envelope, no depth limit, `custom_step_allowlist` included. Python oracle
    first, with golden cases, then Go and Rust.
-2. **daisugi: prove at registration.** A registration that names a parent envelope runs `edge_ok`
+2. **Built 2026-09-30.** **daisugi: prove at registration.** A registration that names a parent envelope runs `edge_ok`
    and refuses on failure. Only the operator registers an envelope with no parent (a root). Under
    a tree, a child session with no exact registered envelope is denied, never given `default`.
    The starter, not the child, picks the session binding.
-3. **Fix the one-level paths to match.** `AgenticExecutor` accepts a narrower child envelope and
+3. **Built 2026-09-30.** **Fix the one-level paths to match.** `AgenticExecutor` accepts a narrower child envelope and
    proves it; the lenient paths in `check_skill_delegations` do not apply at tree edges.
-4. **coppice: Option 3.** An envelope on the task; the proof on `task.create` and `pane.create`;
+4. **Not built.** **coppice: Option 3.** An envelope on the task; the proof on `task.create` and `pane.create`;
    asks keep today's rule (nearest foreman may deny, only the operator may allow).
-5. **sprig: later.** When the owner resumes sprig, Option 1 (an agent-first mode with a `spawn`
+5. **Not built.** **sprig: later.** When the owner resumes sprig, Option 1 (an agent-first mode with a `spawn`
    tool) on top of the same daisugi call. Option 2 is worth doing only if coppice or other tools
    need one protocol for pi and sprig; it does not help the edge rule.
 
@@ -397,19 +408,60 @@ session-binding risk in coppice, because if it is real it is a gap today, with n
 
 ## Open questions for the owner
 
-1. **Is the tree rule wanted before sprig resumes?** Steps 1 to 4 do not need sprig. Or does the
+The owner adopted every recommendation below on 2026-09-30 (owner rulings AT-1 to AT-7 in
+`clients/ADJUDICATIONS.md`; each is marked).
+
+1. **Owner ruling AT-1: yes, before sprig.** **Is the tree rule wanted before sprig resumes?** Steps 1 to 4 do not need sprig. Or does the
    whole design wait with sprig?
-2. **Budget location:** in the envelope (A) or a tree ledger (B)? Recommendation: B for tokens and
+2. **Owner ruling AT-2: B for tokens and turns, A for the deadline.** **Budget location:** in the envelope (A) or a tree ledger (B)? Recommendation: B for tokens and
    turns, A for the deadline.
-3. **Multi-hop holds:** nearest foreman then operator (A), or each ancestor in turn (B)?
+3. **Owner ruling AT-3: A.** **Multi-hop holds:** nearest foreman then operator (A), or each ancestor in turn (B)?
    Recommendation: A.
-4. **Strict at every edge:** always, whatever the stakes? Recommendation: yes. It will refuse
+4. **Owner ruling AT-4: yes.** **Strict at every edge:** always, whatever the stakes? Recommendation: yes. It will refuse
    children whose envelopes use unsupported globs or opaque invariants, which the parent model must
    then rewrite.
-5. **Physical stakes:** keep the refusal of LLM-driven children under `stakes='physical'`?
+5. **Owner ruling AT-5: keep it.** **Physical stakes:** keep the refusal of LLM-driven children under `stakes='physical'`?
    Recommendation: keep it. A swarm tree is a tree of envelopes over controllers, with a separate
    design for joint motion across siblings.
-6. **The failed-proof loop:** how many narrower proposals may a parent make before the child ask
+6. **Owner ruling AT-6: three, then ask.** **The failed-proof loop:** how many narrower proposals may a parent make before the child ask
    goes to a human? Recommendation: three, then ask.
-7. **sprig fleet's operator override:** keep it as an operator-only action, or remove it in favor
+7. **Owner ruling AT-7: fold it into coppice's rules when sprig resumes.** **sprig fleet's operator override:** keep it as an operator-only action, or remove it in favor
    of coppice's allow rules? Recommendation: fold it into coppice's rules when sprig resumes.
+
+## Built, 2026-09-30
+
+Recommendation steps 1 to 3, in Python (the oracle), Go and Rust; the rulings are TR-R-1 to
+TR-R-12 in `clients/ADJUDICATIONS.md`.
+
+- **The edge rule.** `tree.edge_ok(parent, child)` (`src/opendaisugi/tree.py`; Go
+  `internal/tree`, Rust `src/tree.rs`) checks every part of "The full edge rule" in a fixed order
+  and reports each failing part, strict, at any depth, failing closed on a missing envelope and on
+  a proof that does not finish. Reasons never name a solver model, so all three clients print the
+  same ones; Python callers still get Z3's counterexample. Z3 decides the shell and invariant
+  query only when an invariant with an expr can change it; otherwise the head rule decides it
+  exactly (TR-R-3).
+- **The deadline.** `Envelope.deadline` (Unix seconds), hidden from the model's schema and left
+  out of dumps when absent. A child's is at or before its parent's; a child with none takes the
+  parent's. It is proved per edge, and since 2026-10-01 the gate denies a call after the
+  deadline of the envelope that checks it (SW-4).
+- **Registration.** `daisugi gate register --parent P` proves the edge before it registers.
+  `daisugi tree root` (the operator) and `daisugi tree spawn` (the starter) register under a
+  session the caller names, never `default`. The gate denies an agent's shell line that runs
+  `gate register`, `gate init`, `start` or a tree verb that writes (TR-R-9), read per simple
+  command (SW-2). `gate disarm` and the other verbs that change enforcement are denied too (SW-1).
+- **The tree ledger.** `<data dir>/tree/ledger.jsonl`, append-only, under a lock: the starter
+  reserves a child's tokens and turns from its own remaining budget, gets the unspent part back at
+  `tree end`, and is refused a child that asks for more than remains. `daisugi tree status`
+  shows the tree, text or `--json` (TR-R-5).
+- **The failed-proof loop.** After three refused proposals from one parent, the next refused one
+  is an ask; the operator answers with `daisugi tree answer`. An allowed child is marked not
+  proved against its parent, and it must still fit inside the root of its branch, so an allow
+  never widens the tree past its root (TR-R-7).
+- **The one-level path.** `AgenticExecutor` proves an agentic step's `child_envelope` before the
+  sub-agent starts, derives the tool wall from it and registers it under a session it picks
+  (TR-R-10).
+
+Evidence: 134 tree cases (`clients/tree_cases.py`) and 31 gate cases agree in Go and Rust;
+every other compare still agrees. Not built: step 4 (coppice), whose first job is an adversarial
+test of the session binding in coppice; step 5 (sprig); sequence invariants across a plan. The
+deadline at call time was built on 2026-10-01 (SW-4).

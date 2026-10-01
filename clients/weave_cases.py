@@ -91,6 +91,101 @@ def lay_out(tree: dict[str, Any], home: Path, t0: float) -> None:
 garden_cases.lay_out = lay_out
 
 
+# ---------------------------------------------------------------------------
+# The sub-agent of an agentic step
+# ---------------------------------------------------------------------------
+
+# The fake `claude` of this suite. A call without --settings is the
+# garden suite's fake. A call with --settings is an agentic step's
+# sub-agent: its key leaves out the settings value (it names a fresh
+# gate root and the gate's own program, which differ run to run and side
+# to side), its log entry holds the settings with the program and the root
+# written as placeholders, the answer's tool calls are run through the
+# settings' PreToolUse command as the host runs a hook, and the log entry
+# holds each verdict and the envelopes registered in the gate root.
+AGENTIC_CLAUDE = r"""#!{PYTHON}
+import hashlib, json, os, shlex, subprocess, sys, time
+argv = sys.argv[1:]
+data = sys.stdin.buffer.read()
+entry = {"kind": "claude"}
+key_argv = argv
+if "--settings" in argv:
+    i = argv.index("--settings")
+    settings = json.loads(argv[i + 1])
+    key_argv = argv[: i + 1] + ["<SETTINGS>"] + argv[i + 2 :]
+    hook = settings["hooks"]["PreToolUse"][0]["hooks"][0]
+    command = hook["command"]
+    words = shlex.split(command[command.index(" --mode ") :])
+    root = words[words.index("--root") + 1]
+    norm = lambda s: s.replace(root, "{GATEROOT}")
+    shown = json.loads(json.dumps(settings))
+    h = shown["hooks"]["PreToolUse"][0]["hooks"][0]
+    h["command"] = "<GATE>" + norm(command[command.index(" --mode ") :])
+    entry["settings"] = shown
+    entry["root_mode"] = oct(os.stat(root).st_mode & 0o777)
+    entry["cwd"] = os.getcwd()
+key = hashlib.sha256(json.dumps(key_argv).encode() + b"\0" + data).hexdigest()
+entry.update({"argv": key_argv, "stdin": data.decode("utf-8", "surrogateescape"), "key": key})
+table = json.load(open(os.environ["FAKE_MODEL_TABLE"], encoding="utf-8"))
+ans = table.get(key)
+if ans is not None and "--settings" in argv:
+    verdicts = []
+    for call in ans.get("calls", []):
+        payload = {
+            "session_id": "sub-agent-1",
+            "transcript_path": "",
+            "cwd": os.getcwd(),
+            "hook_event_name": "PreToolUse",
+            "tool_name": call["tool_name"],
+            "tool_input": call["tool_input"],
+        }
+        p = subprocess.run(["/bin/sh", "-c", command], input=json.dumps(payload).encode(),
+                           capture_output=True, timeout=120)
+        verdicts.append({"exit": p.returncode,
+                         "stdout": norm(p.stdout.decode("utf-8", "replace")),
+                         "stderr": norm(p.stderr.decode("utf-8", "replace"))})
+    entry["verdicts"] = verdicts
+    registered = {}
+    d = os.path.join(root, "envelopes")
+    if os.path.isdir(d):
+        entry["envelopes_mode"] = oct(os.stat(d).st_mode & 0o777)
+        for name in sorted(os.listdir(d)):
+            f = os.path.join(d, name)
+            registered[name] = {"mode": oct(os.stat(f).st_mode & 0o777),
+                                "text": open(f, encoding="utf-8").read()}
+    entry["registered"] = registered
+with open(os.environ["FAKE_MODEL_LOG"], "a", encoding="utf-8") as f:
+    f.write(json.dumps(entry) + "\n")
+if ans is None:
+    sys.stderr.write("fake claude: no recorded answer for " + key + "\n")
+    sys.exit(97)
+if ans.get("sleep"):
+    time.sleep(ans["sleep"])
+sys.stdout.write(ans.get("stdout", ""))
+sys.stderr.write(ans.get("stderr", ""))
+sys.exit(ans.get("exit", 0))
+"""
+garden_cases.FAKE_CLAUDE = AGENTIC_CLAUDE
+_generic_make_answer = garden_cases.make_answer
+
+
+def make_answer(spec: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """garden_cases.make_answer, and an ``agentic`` reply: the sub-agent's
+    JSON result, with the tool calls it makes first."""
+    if "agentic" in spec:
+        ans = {
+            "stdout": garden_cases.claude_envelope(
+                spec["agentic"], is_error=spec.get("is_error", False)
+            )
+        }
+        ans["calls"] = spec.get("calls", [])
+        return "claude", ans
+    return _generic_make_answer(spec)
+
+
+garden_cases.make_answer = make_answer
+
+
 def cmd_for(case: dict[str, Any], binary: str | None) -> list[str]:
     return PY_CLI if binary is None else [binary]
 
@@ -567,7 +662,9 @@ def build_cases() -> list[dict[str, Any]]:
         )
     )
 
-    # Agentic steps (WV-4) and parallel levels (K2-4): the ports refuse both.
+    # Agentic steps (WV-4): `claude -p` under the call-time gate, the tool
+    # wall from the child envelope, which is proved inside the caller's
+    # first. The sub-agent's tool calls run through the gate's own hook.
     agentic = {
         "id": "g",
         "type": "agentic",
@@ -577,6 +674,106 @@ def build_cases() -> list[dict[str, Any]]:
         "depends_on": [],
     }
     add(wv("agentic no workspace", [agentic], shell_rw, flags=("--yes", "--json")))
+    ag = {**agentic, "workspace": W, "tools": ["Read", "Bash"]}
+    reads = [
+        {"tool_name": "Read", "tool_input": {"file_path": f"{W}/a.txt"}},
+        {"tool_name": "Read", "tool_input": {"file_path": "/etc/passwd"}},
+        {"tool_name": "Bash", "tool_input": {"command": "cat a.txt"}},
+        {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}},
+    ]
+    wfile = {"w/a.txt": {"text": "a\n"}}
+    add(
+        wv(
+            "agentic runs",
+            [ag],
+            shell_rw,
+            before=wfile,
+            replies=[{"agentic": "fixed it", "calls": reads}],
+        )
+    )
+    add(
+        wv(
+            "agentic runs json",
+            [ag, sh("after", "printf done", ["g"])],
+            shell_rw,
+            before=wfile,
+            flags=("--yes", "--json"),
+            replies=[{"agentic": "fixed it\nline two", "calls": reads[:2]}],
+        )
+    )
+    add(
+        wv(
+            "agentic max turns and args",
+            [{**ag, "max_turns": 3}],
+            shell_rw,
+            before=wfile,
+            env={"DAISUGI_CLAUDE_ARGS": "--verbose"},
+            replies=[{"agentic": "ok"}],
+        )
+    )
+    add(
+        wv(
+            "agentic is error",
+            [ag],
+            shell_rw,
+            replies=[{"agentic": "it went wrong", "is_error": True}],
+        )
+    )
+    add(wv("agentic not json", [ag], shell_rw, replies=[{"claude_raw": "I did it."}]))
+    add(
+        wv(
+            "agentic claude fails",
+            [ag],
+            shell_rw,
+            replies=[{"claude_raw": "", "stderr": "boom", "exit": 3}],
+        )
+    )
+    add(wv("agentic no claude", [ag], shell_rw, no_claude=True))
+    narrow_child = env_doc(
+        2,
+        file_read=[f"{W}/**"],
+        shell=False,
+    )
+    add(
+        wv(
+            "agentic child narrower",
+            [{**ag, "child_envelope": narrow_child}],
+            shell_rw,
+            before=wfile,
+            replies=[{"agentic": "read it", "calls": reads}],
+        )
+    )
+    add(
+        wv(
+            "agentic child backs no tool",
+            [{**ag, "tools": ["Bash"], "child_envelope": narrow_child}],
+            shell_rw,
+        )
+    )
+    add(
+        wv(
+            "agentic child wider",
+            [
+                {
+                    **ag,
+                    "child_envelope": env_doc(
+                        3, file_read=["/**"], shell=True, shell_allowlist=["cat"]
+                    ),
+                }
+            ],
+            shell_rw,
+        )
+    )
+    add(
+        wv(
+            "agentic odd step id",
+            [{**ag, "id": "../g h"}],
+            shell_rw,
+            before=wfile,
+            replies=[{"agentic": "ok", "calls": reads[:1]}],
+        )
+    )
+    # Parallel levels (K2-4): the ports refuse them.
     add(
         wv(
             "max parallel two",
@@ -822,6 +1019,27 @@ def build_cases() -> list[dict[str, Any]]:
             replies=risks,
         )
     )
+    # A resumed run that runs an undoable write below the open choice: the
+    # card's switch cost counts that run's receipt (RK-R-9). The first run
+    # stops at the read of a file that is not there yet; a gate register
+    # writes it (a second plan would mint its hash in a random order); the
+    # resumed run reads it and writes.
+    flag = f"{W}/gr/envelopes/default.json"
+    resumed = wv(
+        "attempts resumed run counts in the switch cost",
+        [two_plain, rd("g", flag, ["t"]), wr("w", to, "done", ["g"])],
+        shell_rw,
+        env=API,
+        replies=risks,
+    )
+    weave_argv = resumed["argv"][:4]
+    resumed["pre"] = [
+        [*weave_argv, "--yes"],
+        ["gate", "register", "e.yaml", "--root", "w/gr"],
+        [*weave_argv, "--yes", "--resume"],
+    ]
+    resumed["argv"] = ["rank", "queue", "--json"]
+    add(resumed)
     for label, step in (
         ("on a shell step", {**sh("a", "true"), "attempts": 2}),
         ("one", {**task("t", "x"), "attempts": 1}),

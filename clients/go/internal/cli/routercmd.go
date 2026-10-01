@@ -131,6 +131,7 @@ const routerHelp = `Usage: daisugi router [OPTIONS] COMMAND [ARGS]...
   or the built-in rules router.
 
 Commands:
+  label   Record whether a session's task succeeded: the outcome a graft trial counts.
   status  Show the router choice, the Switchyard binary, each running child, and recent turns.
   stop    Stop every switchyard-server that a gateway started and left running.
 `
@@ -146,6 +147,8 @@ func (e *Env) router(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "label":
+		return e.routerLabel(args[1:])
 	case "status":
 		return e.routerStatus(args[1:])
 	case "stop":
@@ -248,6 +251,10 @@ func (e *Env) routerStatus(args []string) error {
 	if err != nil {
 		return e.refuse(cmd, err)
 	}
+	tr, err := trialState(dataDir)
+	if err != nil {
+		return e.refuse(cmd, err)
+	}
 	if p.flag("--json") {
 		o := pyjson.NewObject().Set("router", cfg.GatewayRouter)
 		if binary != "" {
@@ -292,6 +299,11 @@ func (e *Env) routerStatus(args []string) error {
 			ws[i] = w.object()
 		}
 		o.Set("weeks", ws).Set("escalation_built", false).Set("delegate", dstate)
+		if tr != nil {
+			o.Set("trial", tr.object())
+		} else {
+			o.Set("trial", nil)
+		}
 		e.out("%s\n", pyjson.Dumps(o, true))
 		return nil
 	}
@@ -379,6 +391,11 @@ func (e *Env) routerStatus(args []string) error {
 	}
 	for _, ln := range dlines {
 		e.out("%s\n", ln)
+	}
+	if tr != nil {
+		for _, ln := range trialLines(tr) {
+			e.out("%s\n", ln)
+		}
 	}
 	return nil
 }

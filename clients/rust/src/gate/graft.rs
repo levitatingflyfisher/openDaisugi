@@ -85,6 +85,12 @@ impl Runner {
             return Ok(out);
         }
         let norm = normpath(&path);
+        // A code write reads its target only when the target exists.
+        let writes_new =
+            matches!(rec.arguments.value("mode"), Value::Str(m) if m == "code_write") && !delegate::lexists(&norm);
+        if writes_new {
+            return self.delegate_send(p, d, env, root, call_cwd, tool_name, &norm);
+        }
         let read = self.synthetic_record(p, "Read", "file_read", "path", &norm)?;
         let mut got = self.evaluate_record(p, &read, env, root.clone(), call_cwd.clone())?;
         if got.would_deny {
@@ -92,6 +98,23 @@ impl Runner {
             got.reason = format!("delegate reads {norm}: {}", got.reason);
             return Ok(got);
         }
+        self.delegate_send(p, d, env, root, call_cwd, tool_name, &norm)
+    }
+
+    /// `gate._delegate_send`: the network send of a delegate call to a
+    /// remote worker.
+    #[allow(clippy::too_many_arguments)]
+    fn delegate_send(
+        &self,
+        p: &Object,
+        d: Decision,
+        env: &Envelope,
+        root: Option<Workspace>,
+        call_cwd: Option<String>,
+        tool_name: String,
+        norm: &str,
+    ) -> R<Decision> {
+        let _f = frame();
         let allow_remote = delegate::acting_rule(&self.root).is_some_and(|r| r.allow_remote);
         let rt = self.route_delegate(env, allow_remote);
         if rt.ok && rt.tier.as_deref() == Some("remote") {
@@ -110,7 +133,7 @@ impl Runner {
 
     /// `gate._maybe_graft`: a deny_redirect graft on an allowed whole read
     /// of a large file.
-    pub fn maybe_graft(&self, p: &Object, d: Decision, env: &Envelope) -> R<Decision> {
+    pub fn maybe_graft(&self, p: &Object, d: Decision, env: &Envelope, session_id: &Value) -> R<Decision> {
         let _f = frame();
         if self.fmt != "claude" || !d.allow || d.would_deny {
             return Ok(d);
@@ -146,6 +169,11 @@ impl Runner {
             .as_object()
             .with("lines", Value::Int(m.lines.to_string()))
             .with("file_lines_over", Value::Int(rule.min_lines.clone()));
+        let mut arm = "";
+        if rule.state == "audit" || rule.state == "trial" {
+            arm = delegate::arm_of(&rule, &safe_session_value(session_id)?);
+            graft.set("arm", arm);
+        }
         let rt = self.route_delegate(env, rule.allow_remote);
         let mut out = d;
         if !rt.ok {
@@ -187,9 +215,15 @@ impl Runner {
             out.graft = Some(graft);
             return Ok(out);
         }
-        if rule.state != "active" {
+        if rule.state == "audit" {
             graft.set("applied", false);
             graft.set("why", "the rule is in audit: the read is not denied");
+            out.graft = Some(graft);
+            return Ok(out);
+        }
+        if rule.state == "trial" && arm == "control" {
+            graft.set("applied", false);
+            graft.set("why", "the session is in the trial's control arm: the read is not denied");
             out.graft = Some(graft);
             return Ok(out);
         }

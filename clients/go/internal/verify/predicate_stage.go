@@ -42,6 +42,9 @@ type predicateItem struct {
 	target   *string
 	rawExpr  json.RawMessage
 	enforce  bool
+	// description is the item's description: a str for an invariant,
+	// None (nil) or a str for a postcondition.
+	description any
 }
 
 // checkPredicateItem ports verify._check_predicate_item. `aliases` is
@@ -69,7 +72,7 @@ func checkPredicateItem(item predicateItem, plan ActionPlan, env Envelope, stric
 			if reason := roboticsBackingMissing(item.typeName, env.Permissions); reason != "" {
 				return []Violation{V("predicate", fmt.Sprintf(
 					"invariant '%s' is declared but its backing permission (%s) is absent; the check no-ops and the invariant is unenforced — add the bound or remove the invariant",
-					item.typeName, reason))}
+					item.typeName, reason)).With(kv(item.label, item.typeName, "reason", "robotics_invariant_unbacked"), nil)}
 			}
 		}
 		dischargedElsewhere := (item.label == "invariant" && recognizedOpaqueTypes[item.typeName]) ||
@@ -92,7 +95,7 @@ func checkPredicateItem(item predicateItem, plan ActionPlan, env Envelope, stric
 			// _normalize_expr passes a non-dict through; evaluation then
 			// raises on its Python type.
 			return []Violation{V("predicate", fmt.Sprintf("%s '%s' evaluation error: unknown predicate op: '%s'",
-				item.label, item.typeName, pyTypeName(probe)))}
+				item.label, item.typeName, pyTypeName(probe))).With(kv(item.label, item.typeName), nil)}
 		}
 	}
 	expr, err := ParseExpression(item.rawExpr)
@@ -103,7 +106,9 @@ func checkPredicateItem(item predicateItem, plan ActionPlan, env Envelope, stric
 	if alias, ok := expr.(AliasRef); ok {
 		// Unresolved alias: this client never carries a registry.
 		return []Violation{V("predicate", fmt.Sprintf(
-			"%s '%s' references unresolved alias '%s'; pass an AliasRegistry via aliases= to verify()", item.label, item.typeName, alias.Name))}
+			"%s '%s' references unresolved alias '%s'; pass an AliasRegistry via aliases= to verify()", item.label, item.typeName, alias.Name)).
+			With(kv(item.label, item.typeName, "reason", "unresolved_alias", "alias", alias.Name,
+				"suggested_remediation", "register the alias in an AliasRegistry and pass aliases= to verify()"), nil)}
 	}
 
 	// Vacuity check. The oracle wraps this in try/except Exception ->
@@ -120,12 +125,16 @@ func checkPredicateItem(item predicateItem, plan ActionPlan, env Envelope, stric
 	}
 	if vacuity == Contradiction {
 		return []Violation{V("predicate", fmt.Sprintf(
-			"%s '%s' can never be satisfied (unsatisfiable); the envelope can never pass — fix the predicate", item.label, item.typeName))}
+			"%s '%s' can never be satisfied (unsatisfiable); the envelope can never pass — fix the predicate", item.label, item.typeName)).
+			With(kv(item.label, item.typeName, "reason", "contradiction", "suggested_remediation",
+				fmt.Sprintf("this %s is unsatisfiable (always false); the envelope can never pass — fix the predicate", item.label)), nil)}
 	}
 	if vacuity == Tautology {
 		if strict {
 			return []Violation{V("predicate", fmt.Sprintf(
-				"%s '%s' is a tautology (constrains nothing); tighten the predicate or remove it", item.label, item.typeName))}
+				"%s '%s' is a tautology (constrains nothing); tighten the predicate or remove it", item.label, item.typeName)).
+				With(kv(item.label, item.typeName, "reason", "tautology", "suggested_remediation",
+					fmt.Sprintf("this %s constrains nothing; tighten the predicate or remove it", item.label)), nil)}
 		}
 		if warnings != nil {
 			*warnings = append(*warnings, fmt.Sprintf("%s '%s' is a tautology (constrains nothing); "+
@@ -135,10 +144,17 @@ func checkPredicateItem(item predicateItem, plan ActionPlan, env Envelope, stric
 
 	ok, evalErr := EvaluatePredicate(expr, plan, env)
 	if evalErr != nil {
-		return []Violation{V("predicate", fmt.Sprintf("%s '%s' evaluation error: %v", item.label, item.typeName, evalErr))}
+		v := V("predicate", fmt.Sprintf("%s '%s' evaluation error: %v", item.label, item.typeName, evalErr))
+		if strings.HasSuffix(evalErr.Error(), " is not in this binary yet") {
+			// A model call the binary does not make the oracle's way: a
+			// caller that stores the violation refuses it.
+			return []Violation{v}
+		}
+		return []Violation{v.With(kv(item.label, item.typeName), nil)}
 	}
 	if !ok {
-		return []Violation{V("predicate", fmt.Sprintf("%s '%s' violated", item.label, item.typeName))}
+		return []Violation{V("predicate", fmt.Sprintf("%s '%s' violated", item.label, item.typeName)).
+			With(kv(item.label, item.typeName, "description", item.description), nil)}
 	}
 	return nil
 }
@@ -157,11 +173,17 @@ func CheckPredicateInvariantsPin(plan ActionPlan, env Envelope, strict bool, pin
 	for _, inv := range env.Invariants {
 		violations = append(violations, checkPredicateItem(predicateItem{
 			label: "invariant", typeName: inv.Type, target: inv.Target, rawExpr: inv.Expr, enforce: inv.Enforce,
+			description: inv.Description,
 		}, plan, env, strict, pin, base, warnings)...)
 	}
 	for _, pc := range env.Postconditions {
+		var desc any
+		if pc.Description != nil {
+			desc = *pc.Description
+		}
 		violations = append(violations, checkPredicateItem(predicateItem{
 			label: "postcondition", typeName: pc.Type, rawExpr: pc.Expr, enforce: pc.Enforce,
+			description: desc,
 		}, plan, env, strict, pin, base, warnings)...)
 	}
 	return violations

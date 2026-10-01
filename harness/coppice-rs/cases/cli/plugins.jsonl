@@ -1,0 +1,53 @@
+# Plugins: what loads and what does not, a policy that runs verbs as a
+# plugin, the shipped policies' work directory, and a hello as a plugin.
+#!plugins userplugs
+#!config plugins = ["probe", "crash", "noexec", "badjson", "allowy", "mismatch", "viewrun", "nopage", "coppice.x", "tree", "nosuch", "../evil", "syntax", "typeerr", "listensframe", "needsreport", "badverb", "policypage", "ringpolicy", "badkind", "escape", "absrun", "nofile", "trailing", "empty", "upper", "ringview", "arrtype", "ringtype", "cfgtype", "toparr", "probe", "turn-budget", "minimap"]
+#!config [plugin.probe]
+#!config s = "operator"
+#!config extra = 2
+#!config when = 1979-05-27T07:32:00Z
+#!config [plugin.probe.deep]
+#!config k = [1, 2]
+# What each plugin that did not load says, in the enabled order.
+{"id": "pr", "log": "plugins: plugin ", "prefix": true}
+{"id": "$id", "ok": true, "result": "*"}
+# The probe policy runs its verbs as a plugin and notes each answer.
+#!retry 10000
+{"id": "n", "cmd": "floor.notes"}
+{"id": "$id", "ok": true, "result": {"notes": ["*", "*", "*", "*", "*", "*", "*", "*", "*", "*", "*", "*", "*", "*", "*", "*", "*", "*", "*", "*"]}}
+#!retry 5000
+{"id": "f", "log": "plugin=probe"}
+{"id": "$id", "ok": true, "result": {"lines": ["time={MASKED} level=INFO msg=\"plugins: plugin finished\" plugin=probe"]}}
+# A policy that fails, and one whose program cannot start.
+#!retry 5000
+{"id": "x", "log": "plugin=crash", "first": 1}
+{"id": "$id", "ok": true, "result": {"lines": ["*"]}}
+{"id": "x2", "log": "crash: failing", "first": 1}
+{"id": "$id", "ok": true, "result": {"lines": ["crash: failing on purpose"]}}
+#!retry 5000
+{"id": "ne", "log": "plugin=noexec", "first": 1}
+{"id": "$id", "ok": true, "result": {"lines": ["*"]}}
+# The shipped policies run from a fresh copy beside the shared library.
+{"id": "ls", "ls": "{HOME}/.local/share/coppice/plugins"}
+{"id": "$id", "ok": true, "result": "*"}
+# A hello may name an enabled plugin, which then holds only its verbs.
+{"id": "h0", "cmd": "hello", "role": "plugin", "plugin": "nosuch"}
+{"id": "$id", "ok": false, "error": {"code": "bad_request"}}
+{"id": "h1", "cmd": "hello", "role": "plugin", "plugin": "minimap"}
+{"id": "$id", "ok": false, "error": {"code": "bad_request"}}
+{"id": "h2", "cmd": "task.create", "label": "before"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "h3", "cmd": "hello", "role": "plugin", "plugin": "probe"}
+{"id": "$id", "ok": true, "result": {"role": "plugin", "plugin": "probe"}}
+{"id": "h4", "cmd": "task.create", "label": "after"}
+{"id": "$id", "ok": false, "error": {"code": "unauthorized"}}
+{"id": "h5", "cmd": "task.list"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "h6", "cmd": "agent.allow", "pane": "w1:p1", "ask": "a"}
+{"id": "$id", "ok": false, "error": {"code": "unauthorized"}}
+{"id": "h7", "cmd": "events.subscribe", "kinds": ["note"]}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "h8", "cmd": "events.subscribe", "kinds": ["layout"]}
+{"id": "$id", "ok": false, "error": {"code": "unauthorized"}}
+{"id": "h9", "cmd": "hello", "role": "plugin", "plugin": "crash"}
+{"id": "$id", "ok": false, "error": {"code": "bad_request"}}

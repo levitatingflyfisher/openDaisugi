@@ -14,6 +14,7 @@ import (
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/journal"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/tree"
 	"daisugi-verify/internal/verify"
 )
 
@@ -370,6 +371,8 @@ func (e *Env) gateRegister(args []string) error {
 		{names: []string{"--session"}, value: true, metavar: "TEXT",
 			help: "Bind to one session id; omit to register the default envelope."},
 		rootOpt,
+		{names: []string{"--parent"}, value: true, metavar: "TEXT",
+			help: "Register a child of this session: the edge to it is proved first, and a refused edge registers nothing."},
 	}
 	p, err := parseArgs(args, opts, 1)
 	if err != nil {
@@ -412,6 +415,12 @@ func (e *Env) gateRegister(args []string) error {
 		return e.refuse("gate register", err)
 	}
 	session := p.str("--session", "")
+	if p.has("--parent") {
+		env, err = e.provedChild(env, session, p.str("--parent", ""), e.root(p))
+		if err != nil {
+			return err
+		}
+	}
 	path, followed, err := gateroot.Register(env, session, e.root(p))
 	e.noteFile(path, followed)
 	if err != nil {
@@ -567,4 +576,31 @@ func pyStr(v any) (string, bool) {
 		return x, true
 	}
 	return "", false
+}
+
+// provedChild is cli._proved_child: the child as it registers once the
+// edge from parent is proved, or a one-line refusal and exit 1.
+func (e *Env) provedChild(env *pyjson.Object, session, parent, root string) (*pyjson.Object, error) {
+	refuse := func(why string) (*pyjson.Object, error) {
+		e.errf("not registered: %s\n", why)
+		return nil, exit(1)
+	}
+	if parent == "" {
+		return refuse("--parent needs a session id")
+	}
+	if session == "" {
+		return refuse("--parent needs --session; the starter names the child's session")
+	}
+	if !tree.ValidSession(session) {
+		return refuse("the child's session id " + tree.Q(session) + " is not one the tree takes")
+	}
+	if st, err := os.Stat(gateroot.Join(gateroot.EnvelopesDir(root), gateroot.SafeSessionID(session)+".json")); err == nil && st != nil {
+		return refuse("session " + session + " is registered already")
+	}
+	penv := tree.LoadRegistered(parent, root)
+	res := tree.EdgeOK(penv, env, tree.DefaultTimeoutMs)
+	if !res.Holds {
+		return refuse("the edge from " + parent + " to " + session + " is refused: " + strings.Join(res.Reasons, "; "))
+	}
+	return tree.WithKey(res.Child, "parent_envelope", penv.Value("id")), nil
 }

@@ -93,7 +93,7 @@ jobs:
           export CGO_CFLAGS="-O2 -g -DOPENDAISUGI_NATIVE=$(scripts/native.sh --print-key)"
           mkdir -p "$RUNNER_TEMP/bin"
           cp daisugi daisugi-gate conform "$RUNNER_TEMP/bin/"
-          for p in pathway-probe gateway-probe recall-probe fake-upstream l-probe; do
+          for p in pathway-probe gateway-probe recall-probe fake-upstream l-probe voice-probe alias-probe; do
             go build -trimpath -o "$RUNNER_TEMP/bin/$p" "./cmd/$p"
           done
 
@@ -169,7 +169,7 @@ jobs:
       - name: Collect the binaries
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          for b in daisugi daisugi-gate conform pathway-probe gateway-probe recall-probe l-probe; do
+          for b in daisugi daisugi-gate conform pathway-probe gateway-probe recall-probe l-probe voice-probe alias-probe; do
             cp "clients/rust/target/release/$b" "$RUNNER_TEMP/bin/"
           done
 
@@ -192,7 +192,7 @@ jobs:
       fail-fast: false
       matrix:
         lang: [go, rust]
-        suite: [gate, cli, pathway, garden, gateway, gate_server, k2, k3, k4, l, f, weave, rank]
+        suite: [gate, cli, pathway, garden, gateway, gate_server, k2, k3, k4, l, f, weave, rank, tree, models, voice, alias]
     env:
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
@@ -232,6 +232,8 @@ jobs:
           DAISUGI_F_SCRATCH: ${{ runner.temp }}/runs/f
           DAISUGI_WEAVE_SCRATCH: ${{ runner.temp }}/runs/weave
           DAISUGI_RANK_SCRATCH: ${{ runner.temp }}/runs/rank
+          DAISUGI_MODELS_SCRATCH: ${{ runner.temp }}/runs/models
+          DAISUGI_VOICE_SCRATCH: ${{ runner.temp }}/runs/voice
           # Both carry K3; each refuses the same 4 cases, as ruled (K3-9,
           # K3-13).
           K3_MAX_REFUSED: "4"
@@ -255,18 +257,250 @@ jobs:
             garden)  uv run --no-sync python clients/garden_compare.py --binary "$B/daisugi" ;;
             gateway) uv run --no-sync python clients/gateway_compare.py --binary "$B/daisugi" ;;
             gate_server) uv run --no-sync python clients/gate_server_compare.py --binary "$B/daisugi" --port "${{ matrix.lang }}" ;;
-            k2)      uv run --no-sync python clients/k2_compare.py --binary "$B/daisugi" --max-refused 7 ;;
+            k2)      uv run --no-sync python clients/k2_compare.py --binary "$B/daisugi" --max-refused 6 ;;
             k3)      uv run --no-sync python clients/k3_compare.py --binary "$B/daisugi" --max-refused "$K3_MAX_REFUSED" ;;
             k4)      uv run --no-sync python clients/k4_compare.py --binary "$B/daisugi" --max-refused "$K4_MAX_REFUSED" ;;
             # L_ARGS is a flag list: split on purpose.
             # shellcheck disable=SC2086
             l)       uv run --no-sync python clients/l_compare.py --binary "$B/daisugi" $L_ARGS ;;
             f)       uv run --no-sync python clients/f_compare.py --binary "$B/daisugi" --max-refused "$F_MAX_REFUSED" ;;
-            # Both refuse the agentic case and --max-parallel 2 (WV-R-10).
-            weave)   uv run --no-sync python clients/weave_compare.py --binary "$B/daisugi" --max-refused 2 ;;
+            # Both refuse --max-parallel 2 (WV-R-10); both run agentic steps (PG-3).
+            weave)   uv run --no-sync python clients/weave_compare.py --binary "$B/daisugi" --max-refused 1 ;;
             # Go and Rust carry rank and refuse none of its cases.
             rank)    uv run --no-sync python clients/rank_compare.py --binary "$B/daisugi" --max-refused 0 ;;
+            # Go and Rust carry the delegation tree and refuse none of its cases.
+            tree)    uv run --no-sync python clients/tree_compare.py --binary "$B/daisugi" --max-refused 0 ;;
+            # Go and Rust carry the model catalog and refuse none of its cases.
+            models)  uv run --no-sync python clients/models_compare.py --binary "$B/daisugi" --max-refused 0 ;;
+            # Go and Rust carry the voice bridge and refuse none of its cases.
+            voice)   uv run --no-sync python clients/voice_compare.py --binary "$B/daisugi" --probe "$B/voice-probe" --max-refused 0 ;;
+            # The alias registry, a library part no command reaches, on its probe.
+            alias)   uv run --no-sync python clients/alias_compare.py --probe "$B/alias-probe" ;;
           esac
+
+  # The robotics executors over MuJoCo (internal/mujoco and
+  # internal/robotics in Go, src/mujoco and src/robotics in Rust). They
+  # build only with the mujoco tag and feature, so the jobs above never
+  # link MuJoCo. This job installs the pinned MuJoCo release (native.sh
+  # --mujoco checks its SHA-256) and Mesa's EGL for offscreen rendering,
+  # runs both ports' own tests, builds both robot-probes and compares them
+  # with the oracle's committed robotics cases, and the render cases with
+  # each other (RB-R-4). The oracle's expectations are recorded, so the
+  # mujoco wheel is not installed here. The same build option holds the
+  # SmolVLA executor over ONNX Runtime (internal/ort and internal/smolvla,
+  # src/ort and src/smolvla): native.sh --onnxruntime installs the pinned
+  # release, and the tests of the wrappers, the tokenizer and the
+  # processing run here. The SmolVLA graphs are not fetched in CI, so the
+  # tests that need them skip, and the closed-loop compare
+  # (clients/vla_compare.py, rulings VL-R-6 and VL-R-7) runs on a box that
+  # holds the pinned model.
+  robotics:
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: "4"
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: clients/go/go.sum
+      - uses: ./.github/actions/native-prefix
+        id: native
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+      - name: Install Mesa's EGL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl-dev libegl-mesa0 libgl1-mesa-dri
+      - name: Install the pinned MuJoCo and ONNX Runtime
+        run: |
+          clients/go/scripts/native.sh --mujoco
+          clients/go/scripts/native.sh --onnxruntime
+          echo "LD_LIBRARY_PATH=$PWD/clients/go/.mujoco/lib:$PWD/clients/go/.onnxruntime/lib" >> "$GITHUB_ENV"
+      - name: Set the Z3 build environment
+        run: |
+          . clients/rust/tools/z3-build-env.sh
+          for v in CXX CXXSTDLIB DAISUGI_LIBCXX_DIR CFLAGS RUSTFLAGS; do
+            echo "$v=${!v}" >> "$GITHUB_ENV"
+          done
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: clients/rust -> target
+          key: native-${{ steps.native.outputs.stamp }}
+          save-if: "false"
+
+      - name: Go tests and probe
+        working-directory: clients/go
+        run: |
+          export CGO_CFLAGS="-O2 -g -DOPENDAISUGI_NATIVE=$(scripts/native.sh --print-key)"
+          go test -tags mujoco -count=1 ./internal/mujoco ./internal/robotics ./internal/verify ./internal/ort ./internal/smolvla
+          mkdir -p "$RUNNER_TEMP/bin"
+          go build -tags mujoco -trimpath -o "$RUNNER_TEMP/bin/robot-probe-go" ./cmd/robot-probe
+          go build -tags mujoco -trimpath -o "$RUNNER_TEMP/bin/vla-probe-go" ./cmd/vla-probe
+
+      - name: Rust tests and probe
+        working-directory: clients/rust
+        run: |
+          . tools/z3-build-env.sh
+          cargo test --release --locked --features mujoco --lib -- mujoco:: robotics ort:: smolvla::
+          cargo build --release --locked --features mujoco --bin robot-probe --bin vla-probe
+          cp target/release/robot-probe "$RUNNER_TEMP/bin/robot-probe-rust"
+
+      - name: Check the shipped daisugi does not link MuJoCo
+        working-directory: clients/go
+        run: |
+          export CGO_CFLAGS="-O2 -g -DOPENDAISUGI_NATIVE=$(scripts/native.sh --print-key)"
+          go build -trimpath -o "$RUNNER_TEMP/daisugi-go" ./cmd/daisugi
+          if ldd "$RUNNER_TEMP/daisugi-go" | grep -q libmujoco; then echo "daisugi links MuJoCo"; exit 1; fi
+          if ldd "$RUNNER_TEMP/daisugi-go" | grep -q libonnxruntime; then echo "daisugi links ONNX Runtime"; exit 1; fi
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: "true"
+      - name: Install the oracle
+        run: uv sync --locked --extra dev
+      - name: Compare robotics
+        run: |
+          uv run --no-sync python clients/robotics_compare.py \
+            --probe "$RUNNER_TEMP/bin/robot-probe-go" --probe "$RUNNER_TEMP/bin/robot-probe-rust"
+
+  # The Rust coppice (harness/coppice-rs): its own tests, then every
+  # compare suite replayed against a Go and a Rust server side by side
+  # (clients/coppice_compare.py): the protocol corpus, the cases under
+  # harness/coppice-rs/cases, and the suites built from the Go testdata's
+  # screens, events and adapters, and the keys suite. Both link the native
+  # prefix's libghostty-vt, so both read screens with the same engine. Every
+  # slice is built, and the Rust binary is named coppice, as Go's is; none
+  # of the cases is refused. The floor on a terminal is compared as a
+  # screen: each side's floor runs in a pane of a second scratch server and
+  # is read through that server's terminal (cases/tui). Some cases restart both servers on their
+  # own data dirs and compare the data dirs as file trees, some make a
+  # scratch git repo for task worktrees, some run headless panes on fake
+  # harnesses (bash, and stdlib python3 for opencode), and the command-line
+  # cases run each binary as a client, on a pseudo terminal for attach and
+  # against a tmux server on a scratch socket for the tmux mirror. The web
+  # cases start each side's phone server on loopback ports from 18600 to
+  # 18999, with stdlib python3 fakes for ntfy and voice; 6a's 395 web cases
+  # made the compare longer, hence the hour.
+  coppice-rs:
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/native-prefix
+        id: native
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: harness/coppice/go.sum
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: harness/coppice-rs -> target
+          key: native-${{ steps.native.outputs.stamp }}
+      # setup-go restores the Go build cache the coppice workflow saved
+      # under the same go.sum key. A new PKG_CONFIG_PATH does not change
+      # Go's cache key, so Go reuses libghostty's cached cgo package, which
+      # names that workflow's .ghostty-vt library, and the link fails. The
+      # prefix's content key in CGO_CFLAGS changes the cache key, as in
+      # release.sh and the go job.
+      - name: Build the Go coppice against the native prefix
+        working-directory: harness/coppice
+        env:
+          PKG_CONFIG_PATH: ${{ steps.native.outputs.prefix }}/share/pkgconfig
+        run: |
+          export CGO_CFLAGS="-O2 -g -DOPENDAISUGI_NATIVE=$(../../clients/go/scripts/native.sh --print-key)"
+          go build -o "$RUNNER_TEMP/coppice-go" ./cmd/coppice
+      - name: Build and test the Rust coppice
+        working-directory: harness/coppice-rs
+        env:
+          COPPICE_GHOSTTY_PREFIX: ${{ steps.native.outputs.prefix }}
+        run: |
+          cargo build --release --locked
+          cargo test --release --locked
+      - name: Install tmux for the tmux mirror cases
+        run: command -v tmux || (sudo apt-get update && sudo apt-get install -y tmux)
+      - name: Compare the Go and Rust coppice
+        run: |
+          python3 clients/coppice_compare.py --go "$RUNNER_TEMP/coppice-go" \
+            --rust harness/coppice-rs/target/release/coppice --max-refused 0
+      # The TUI half of the end-to-end suite needs node and bash only; the
+      # e2e job runs it, and the web half, against the Go tarball.
+      - name: The TUI end to end against the Rust coppice
+        working-directory: harness/coppice/e2e
+        env:
+          E2E_DIR: ${{ runner.temp }}/e2e-rs
+        run: COPPICE_BIN="$GITHUB_WORKSPACE/harness/coppice-rs/target/release/coppice" ./run.sh tui
+
+  # The Rust sprig (harness/sprig-rs): its own tests, then every case of
+  # clients/sprig_compare.py run on the Go sprig and the Rust sprig side by
+  # side, with fake claude, fake gate and fake API (over http, and over
+  # https through a scratch CA openssl makes). Both are stamped with one
+  # version so --version compares. The real-gate cases run through the Go
+  # and the Rust daisugi the go and rust jobs built; none is refused.
+  sprig-rs:
+    needs: [go, rust]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: harness/sprig/go.sum
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: harness/sprig-rs -> target
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bin-go
+          path: ${{ runner.temp }}/daisugi-go
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bin-rust
+          path: ${{ runner.temp }}/daisugi-rust
+      - name: Build the Go sprig
+        working-directory: harness/sprig
+        run: |
+          out="$RUNNER_TEMP/sprig-go"
+          mkdir -p "$out"
+          go build -trimpath -ldflags="-X main.version=0.0.0-compare" -o "$out/sprig" ./cmd/sprig
+          for c in sprig-hook sprig-mcp weave; do go build -trimpath -o "$out/$c" "./cmd/$c"; done
+          go test -p 1 ./...
+      - name: Build and test the Rust sprig
+        working-directory: harness/sprig-rs
+        env:
+          SPRIG_VERSION: 0.0.0-compare
+        run: |
+          cargo build --release --locked
+          cargo test --release --locked
+      - name: Compare the Go and Rust sprig
+        run: |
+          chmod +x "$RUNNER_TEMP"/daisugi-go/* "$RUNNER_TEMP"/daisugi-rust/*
+          python3 clients/sprig_compare.py --go "$RUNNER_TEMP/sprig-go" \
+            --rust harness/sprig-rs/target/release \
+            --daisugi "go=$RUNNER_TEMP/daisugi-go/daisugi" \
+            --daisugi "rust=$RUNNER_TEMP/daisugi-rust/daisugi" --max-refused 0
 
   # The release tarball and the coppice end-to-end suite. release.sh builds
   # coppice, sprig and daisugi as a release does; smoke-tarball.sh unpacks

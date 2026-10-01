@@ -44,7 +44,7 @@ they stay open.
 
 | ID | Question | Provisional ruling | Reversible? | Blocks building? | Retires when |
 |---|---|---|---|---|---|
-| RT-1 | How code-write writes | (a) the delegate writes the file as a `file_write` effect, verified against the envelope and gated like any write. | easy | no | The owner confirms or overturns it, or router part 0 is built with the delegate's writes gated as `file_write`. |
+| RT-1 | How code-write writes | Owner: (b), a draft the frontier reviews and applies with its own gated Write. | easy | no | Retired 2026-10-01: built as a draft (SW-6 to SW-9); the tool writes nothing. |
 | RT-2 | The delegate tool's name | `delegate`, a bare name like `recall` and `run_plan` on the `opendaisugi` server. | easy (unreleased) | no | The owner confirms or overturns it, or the `delegate` tool ships in a release (then the name is fixed). |
 | RT-3 | How an outside runner reaches the router | `daisugi route --json`, widened to take a step. It exists in Python, Go and Rust. The only outside runner named is weave, so this is Proposed. | easy | yes (weave on hold) | weave resumes and the owner rules on how it reaches the router. Moot for weave 2026-09-30: weave is a daisugi command and calls the route rule in process (WV-R-5). |
 
@@ -54,13 +54,13 @@ The design is **Proposed** as a whole. Its recommendation says steps 1 to 4 do n
 
 | ID | Question | Provisional ruling | Reversible? | Blocks building? | Retires when |
 |---|---|---|---|---|---|
-| AT-1 | Is the tree rule wanted before sprig resumes? | Yes for the daisugi and coppice parts: steps 1 to 3 now (`edge_ok`, prove at registration, fix the one-level paths); step 4 (coppice Option 3) after the session-binding adversarial test. The sprig part (step 5) stays Proposed. | easy (additive, fail closed) | no for daisugi and coppice; sprig part: yes | The owner confirms or overturns it. The daisugi and coppice part also retires when steps 1 to 4 are built; the sprig part waits for sprig to resume. |
+| AT-1 | Is the tree rule wanted before sprig resumes? | Yes for the daisugi and coppice parts: steps 1 to 3 now (`edge_ok`, prove at registration, fix the one-level paths); step 4 (coppice Option 3) after the session-binding adversarial test. The sprig part (step 5) stays Proposed. | easy (additive, fail closed) | no for daisugi and coppice; sprig part: yes | Confirmed by the owner 2026-09-30. Steps 1 to 3 built 2026-09-30 (TR-R-1 to TR-R-12); step 4 (coppice) waits for the session-binding adversarial test; the sprig part waits for sprig to resume. |
 | AT-2 | Budget location | B, a tree ledger, for tokens and turns. A, a field in the envelope, for the deadline only, proved per edge. | hard for the envelope deadline field (envelope schema in three clients); the ledger is easy | no | Retired 2026-09-28: owner confirmed (deadline in the envelope, budgets in the ledger). |
-| AT-3 | Multi-hop holds | A: nearest foreman, then the operator (today's rule). | easy | no | The owner confirms or overturns it, or multi-hop holds are built in coppice. |
-| AT-4 | Strict at every edge, whatever the stakes | Yes. Unsupported globs and opaque invariants are refused; the parent model rewrites them. | easy (loosening later is simple) | no | The owner confirms or overturns it, or `edge_ok` is built with the strict rule. |
-| AT-5 | Refuse LLM-driven children under `stakes='physical'` | Keep the refusal. | easy (status quo) | no | The owner confirms or overturns it. |
-| AT-6 | Failed-proof loop | Three narrower proposals from the parent, then the ask goes to a human. | easy | no | The owner confirms or overturns it, or the failed-proof loop is built. |
-| AT-7 | sprig fleet's operator override | Fold it into coppice's allow rules when sprig resumes. Proposed. | easy | yes (sprig on hold) | sprig resumes and the owner rules on the override. |
+| AT-3 | Multi-hop holds | A: nearest foreman, then the operator (today's rule). | easy | no | Confirmed by the owner 2026-09-30. |
+| AT-4 | Strict at every edge, whatever the stakes | Yes. Unsupported globs and opaque invariants are refused; the parent model rewrites them. | easy (loosening later is simple) | no | Retired 2026-09-30: owner confirmed; `edge_ok` is built strict (TR-R-2). |
+| AT-5 | Refuse LLM-driven children under `stakes='physical'` | Keep the refusal. | easy (status quo) | no | Retired 2026-09-30: owner confirmed; `tree spawn` refuses under a physical parent (TR-R-6). |
+| AT-6 | Failed-proof loop | Three narrower proposals from the parent, then the ask goes to a human. | easy | no | Retired 2026-09-30: owner confirmed; built (TR-R-7). |
+| AT-7 | sprig fleet's operator override | Fold it into coppice's allow rules when sprig resumes. Proposed. | easy | yes (sprig on hold) | Confirmed by the owner 2026-09-30; built when sprig resumes. |
 
 ## Ranking (`design-ranking.md`)
 
@@ -86,9 +86,9 @@ The design is **Proposed** as a whole. Its recommendation says steps 1 to 4 do n
 | GR-3 | Rival rewriting hooks | Refuse to install grafts beside an unknown PreToolUse hook, with a warning naming it. Add the post-call input check on Claude Code as detection. The gate itself still installs. | easy | no | The owner confirms or overturns it, or the rival-hook refusal and the post-call check are built. Partly built 2026-09-30: the refusal is `daisugi graft install` (GR-R-2); the post-call check is not built. |
 | GR-4 | The delegate's form | `daisugi-delegate` executable for shapes (a) and (b); the `delegate` MCP tool for shape (c); both call one library. | easy (unreleased) | no | The owner confirms or overturns it, or the delegate library and its two front ends are built. The library (`delegate.py`) and the MCP tool are built (2026-09-30); `daisugi-delegate` waits for shape (a). |
 | GR-5 | Where rules live | The gate root beside envelopes, one file per rule. | easy (rules are data the bots write) | no | Retired 2026-09-30: built, `<gate root>/grafts/*.json` (RP-1). |
-| GR-6 | What promotion measures | Billed cost per successful task, with no drop in success; quota tokens shown beside it. | easy | no | The owner confirms or overturns it, or the promotion meter is built. |
-| GR-7 | Trial split | Per session. | easy | no | The owner confirms or overturns it, or the trial split is built. |
-| GR-8 | Fix the operator-edit gap (edited input skips the second `_decide`) now or with stage 2 | Now, on the security queue. It is a fail-closed fix and does not wait for grafts. | easy (it tightens) | no | The same fix lands in Go and Rust (Python fixed in 6a0ad499). Then it is done work, not a ruling. |
+| GR-6 | What promotion measures | Billed cost per successful task, with no drop in success; quota tokens shown beside it. | easy | no | Retired 2026-10-01: the promotion meter is built (SW-14, SW-15). |
+| GR-7 | Trial split | Per session. | easy | no | Retired 2026-10-01: the per-session split is built (SW-13). |
+| GR-8 | Fix the operator-edit gap (edited input skips the second `_decide`) now or with stage 2 | Now, on the security queue. It is a fail-closed fix and does not wait for grafts. | easy (it tightens) | no | Retired 2026-10-01: the fix is in Python, Go (`recheckEdit`) and Rust (`recheck_edit`), with the `operator edit` gate cases (SW-5). |
 
 ## Dialects (`design-dialects.md`)
 
@@ -144,6 +144,9 @@ These are the owner's own rulings, not provisional rulings.
 - **Ranking.** RK-10 above: never block on a choice unless the next step is irreversible; an
   asynchronous review queue of cards. It retires RK-2, RK-3, RK-4 and RK-9.
 - **Confirmed:** DI-1, DI-10, WV-1, WV-5, AT-2, GR-2. **Changed:** DS-3 (lexical default).
+- **Delegation tree (2026-09-30).** The owner adopted every recommendation of the design's open
+  questions: AT-1, AT-3, AT-4, AT-5, AT-6 and AT-7 are confirmed. Steps 1 to 3 are built
+  (rulings TR-R-1 to TR-R-12 in `clients/ADJUDICATIONS.md`).
 
 ## Dependency sweep (2026-09-26)
 

@@ -19,6 +19,7 @@ import os
 import platform
 import shutil
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 _log = logging.getLogger("opendaisugi.hardware")
@@ -98,6 +99,12 @@ def _detect_gpu() -> tuple[float, str | None]:
             return round(props.total_memory / 1e9, 1), torch.cuda.get_device_name(0)
     except Exception:
         pass
+    return detect_gpu_smi()
+
+
+def detect_gpu_smi() -> tuple[float, str | None]:
+    """(vram_gb, gpu_name) from nvidia-smi alone, with no torch import.
+    (0.0, None) when there is none. The voice bridge reads this one."""
     smi = shutil.which("nvidia-smi")
     if smi:
         try:
@@ -168,7 +175,9 @@ def recommend_model(profile: HardwareProfile) -> ModelRecommendation:
         f"(run the candidate against the real envelope schema and check the pass rate) "
         f"before trusting it as Tier-1; the model family is your pick, not a verified default."
     )
-    families = ["Qwen2.5", "Gemma", "Llama", "Phi"] if params_b_max >= 3 else ["Qwen2.5", "Gemma"]
+    families = (
+        ["Granite", "Ministral", "Gemma", "Llama"] if params_b_max >= 3 else ["Granite", "Llama"]
+    )
     return ModelRecommendation(
         size_class=size_class,
         params_b_max=params_b_max,
@@ -179,3 +188,100 @@ def recommend_model(profile: HardwareProfile) -> ModelRecommendation:
         rationale=rationale,
         provisional=True,
     )
+
+
+# The engine a box with no voice choice gets, by its hardware (ruling
+# VO-17). Parakeet wants a desktop: 8 GB of RAM leaves about 2 GB for its
+# model and runtime, and it decodes on 4 cores. Moonshine small wants
+# about 0.5 GB.
+PARAKEET_MIN_RAM_GB = 8.0
+PARAKEET_MIN_CPUS = 4
+MOONSHINE_MIN_RAM_GB = 2.0
+# A test sets this to "RAM_GB,CPUS,VRAM_GB" (RAM_GB may be empty for
+# unknown), so no test or case reads the real box. The voice engine
+# choice and the model catalog's default read it; nothing else does.
+HARDWARE_ENV = "OPENDAISUGI_VOICE_HARDWARE"
+
+# The names the voice package's pins give these (a test checks they
+# agree): the layer may not import the voice package (ADR-0020).
+PARAKEET_DEFAULT_MODEL = "v2"
+MOONSHINE_DEFAULT_MODEL = "small"
+PARAKEET_BINARY = "parakeet-cli"
+MOONSHINE_BINARY = "moonshine-cli"
+
+_LABELS = {
+    ("parakeet", PARAKEET_DEFAULT_MODEL): "Parakeet v2",
+    ("moonshine", MOONSHINE_DEFAULT_MODEL): "Moonshine small",
+    ("faster-whisper", "tiny.en"): "faster-whisper tiny.en",
+}
+# The program each engine of the tiers needs. faster-whisper is never
+# skipped: it is a tier only where its package imports.
+_NEEDS = {"parakeet": PARAKEET_BINARY, "moonshine": MOONSHINE_BINARY}
+
+
+@dataclass(frozen=True)
+class VoiceHardware:
+    ram_gb: float | None
+    cpus: int
+    vram_gb: float
+
+
+def detect_voice_hardware(env: Mapping[str, str] | None = None) -> VoiceHardware:
+    """Total RAM, CPUs online and GPU memory, from the probe tiers setup uses.
+    ``env`` (default os.environ) is read for HARDWARE_ENV only."""
+    raw = (os.environ if env is None else env).get(HARDWARE_ENV)
+    if raw:
+        ram, cpus, vram = raw.split(",")
+        return VoiceHardware(float(ram) if ram else None, int(cpus), float(vram))
+    return VoiceHardware(_detect_ram_gb(), os.cpu_count() or 1, detect_gpu_smi()[0])
+
+
+def hardware_order(hw: VoiceHardware) -> list[str]:
+    """The tiers this hardware can run, best first: parakeet, moonshine, tiny."""
+    ram = hw.ram_gb
+    if ram is not None and ram >= PARAKEET_MIN_RAM_GB and hw.cpus >= PARAKEET_MIN_CPUS:
+        return ["parakeet", "moonshine", "tiny"]
+    if ram is not None and ram >= MOONSHINE_MIN_RAM_GB:
+        return ["moonshine", "tiny"]
+    return ["tiny"]
+
+
+def _hardware_text(hw: VoiceHardware) -> str:
+    ram = "an unknown amount of RAM" if hw.ram_gb is None else f"{hw.ram_gb:g} GB of RAM"
+    cores = "1 core" if hw.cpus == 1 else f"{hw.cpus} cores"
+    text = f"{ram} and {cores}"
+    if hw.vram_gb > 0:
+        text += f", and a GPU with {hw.vram_gb:g} GB (no GPU engine is built yet)"
+    return text
+
+
+def choose_engine(
+    hw: VoiceHardware, installed: set[str], faster_whisper: bool
+) -> tuple[str, str, str]:
+    """The engine, model and one line for a box with no voice choice.
+
+    The tiers come from the hardware. The tiny tier is faster-whisper
+    tiny.en where its package imports, else Moonshine small (whisper.cpp
+    has no model this project fetches). The first tier that is installed
+    wins; with none installed, the first tier, whose engine then says what
+    is missing. ``installed`` holds the engine names whose program is on
+    PATH or whose package imports.
+    """
+    picks: list[tuple[str, str]] = []
+    for tier in hardware_order(hw):
+        if tier == "parakeet":
+            pick = ("parakeet", PARAKEET_DEFAULT_MODEL)
+        elif tier == "moonshine" or not faster_whisper:
+            pick = ("moonshine", MOONSHINE_DEFAULT_MODEL)
+        else:
+            pick = ("faster-whisper", "tiny.en")
+        if pick not in picks:
+            picks.append(pick)
+    chosen = next((p for p in picks if p[0] in installed), picks[0])
+    line = (
+        f"No voice engine is set, so voice uses {_LABELS[chosen]}: "
+        f"this box has {_hardware_text(hw)}."
+    )
+    if chosen != picks[0]:
+        line += f" {_LABELS[picks[0]]} would come first, but {_NEEDS[picks[0][0]]} is not on PATH."
+    return chosen[0], chosen[1], line

@@ -59,6 +59,9 @@ pub(super) struct Shared {
     pub steps: Vec<Object>,
     pub attempts: BTreeMap<String, usize>,
     pub outputs: BTreeMap<String, Object>,
+    /// The open cards this run picked up on resume, as (choice id, ranking
+    /// id); their `resumed` rows wait for the run id.
+    pub resumed_cards: Vec<(String, String)>,
 }
 
 fn choice(cid: Value, chosen: Value, status: Value, recorded: bool, ranking: Value) -> Value {
@@ -182,6 +185,7 @@ impl Shared {
                     Value::Null,
                 );
                 self.choices.set(sid, c);
+                self.resumed_cards.push((card.id(), rid.clone()));
             }
             return;
         }

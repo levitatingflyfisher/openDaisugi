@@ -188,6 +188,9 @@ pub struct Field {
     pub schema: Schema,
     /// `None`: required.
     pub default: Option<fn() -> Value>,
+    /// Left out of the result when its value is None, as a pydantic field
+    /// with `exclude_if=lambda v: v is None` dumps.
+    pub omit_none: bool,
 }
 
 pub struct Model {
@@ -200,11 +203,15 @@ pub struct Model {
 }
 
 fn req(name: &'static str, schema: Schema) -> Field {
-    Field { name, schema, default: None }
+    Field { name, schema, default: None, omit_none: false }
 }
 
 fn def(name: &'static str, schema: Schema, d: fn() -> Value) -> Field {
-    Field { name, schema, default: Some(d) }
+    Field { name, schema, default: Some(d), omit_none: false }
+}
+
+fn omit_none(name: &'static str, schema: Schema) -> Field {
+    Field { name, schema, default: Some(null), omit_none: true }
 }
 
 fn list(s: Schema) -> Schema {
@@ -453,6 +460,7 @@ fn build() -> Models {
             def("cache_key", nullable(Str), null),
             def("stakes", Literal(&["low", "medium", "high", "physical"]), || Value::Str("low".into())),
             def("shell_interpreter_policy", Literal(&["surface", "strict", "allow"]), || Value::Str("surface".into())),
+            omit_none("deadline", nullable(Float)),
         ],
     };
     let action_plan = Model {
@@ -622,6 +630,7 @@ fn build() -> Models {
                 req("workspace", Str),
                 def("tools", list(Str), empty_list),
                 def("max_turns", nullable(Int), null),
+                omit_none("child_envelope", nullable(Schema::Model(Id::Envelope))),
             ],
         ),
         (
@@ -643,7 +652,7 @@ fn build() -> Models {
             def("metadata", dict(Any), empty_dict),
             def("postcondition", nullable(Schema::Model(Id::Postcondition)), null),
             def("preferred_model", nullable(Str), null),
-            Field { name: "type", schema: Literal(step_tag(tag)), default: Some(step_default(tag)) },
+            Field { name: "type", schema: Literal(step_tag(tag)), default: Some(step_default(tag)), omit_none: false },
         ];
         fields.extend(own);
         steps.order.push(tag);
@@ -1327,12 +1336,19 @@ impl Model {
                         msg: "Field required".into(),
                         input: whole.clone().unwrap_or(Value::Null),
                     }),
-                    Some(d) => out.push_new(f.name.to_string(), d()),
+                    Some(d) => {
+                        let v = d();
+                        if !(f.omit_none && matches!(v, Value::Null)) {
+                            out.push_new(f.name.to_string(), v);
+                        }
+                    }
                 },
                 Some(x) => {
                     let (y, e) = f.schema.take(x, &Loc::Key(loc, f.name), mode);
                     errs.extend(e);
-                    out.push_new(f.name.to_string(), y);
+                    if !(f.omit_none && matches!(y, Value::Null)) {
+                        out.push_new(f.name.to_string(), y);
+                    }
                 }
             }
         }

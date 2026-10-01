@@ -184,8 +184,8 @@ class Config(BaseModel):
     # reports a visible device. A Pascal GPU (sm_61) has crashed other torch-based
     # inference under CUDA before, see ADR-0019. CUDA is opt-in and verified,
     # never auto-detected.
-    voice_engine: str = "faster-whisper"  # faster-whisper | parakeet
-    voice_model: str = "tiny.en"  # a faster-whisper model id, or for parakeet a local model dir
+    voice_engine: str = "faster-whisper"  # faster-whisper | moonshine | parakeet | whisper.cpp
+    voice_model: str = "tiny.en"  # faster-whisper id, ggml file, Moonshine or Parakeet model
     voice_device: str = "cpu"  # cpu | cuda
     voice_compute_type: str = "int8"
     # The optional cleanup pass is off by default. It never uses a paid model

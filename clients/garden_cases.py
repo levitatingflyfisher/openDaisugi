@@ -549,6 +549,8 @@ def base_env(home: Path, work: Path) -> dict[str, str]:
         "HF_HUB_OFFLINE": "1",
         "XDG_CACHE_HOME": str(home / ".cache"),
         "TMPDIR": str(work / "tmp"),
+        # The voice engine choice reads this, never the real box (VO-17).
+        "OPENDAISUGI_VOICE_HARDWARE": "16,8,0",
     }
 
 

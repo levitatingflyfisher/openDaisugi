@@ -43,6 +43,12 @@ class FakeEngine:
         self.calls.append(wav_16k_mono)
         return Transcript(text=self.text, segments=[], duration_s=1.0, rtf=0.1)
 
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
 
 class UnavailableEngine:
     name = "fake"

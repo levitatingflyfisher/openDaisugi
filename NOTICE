@@ -1,0 +1,60 @@
+openDaisugi
+Copyright the openDaisugi contributors. See LICENSE.
+
+This repository holds no model weights. The voice bridge fetches some on
+first use, and builds some third-party code from source. Their terms
+follow.
+
+Parakeet-TDT-0.6B v2
+  The speech model the voice bridge uses on a desktop (voice_engine:
+  parakeet). Made by NVIDIA and published at
+  https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2 under the Creative
+  Commons Attribution 4.0 International license (CC-BY-4.0),
+  https://creativecommons.org/licenses/by/4.0/.
+  The voice bridge fetches the F16 GGUF conversion of NVIDIA's original
+  .nemo file published at https://huggingface.co/cstr/parakeet-tdt-0.6b-v2-GGUF
+  (byte for byte what CrispASR's converter makes from NVIDIA's file; see
+  ruling VO-16 in clients/ADJUDICATIONS.md) and quantizes it to Q4_K on
+  the user's box. That conversion and quantization change the number
+  format of the weights and nothing else.
+
+Moonshine
+  The speech models of voice_engine: moonshine (tiny, small, medium
+  streaming English), by Moonshine AI, MIT license,
+  https://github.com/moonshine-ai/moonshine.
+
+CrispASR and ggml
+  clients/go/scripts/native.sh --parakeet builds parakeet-cli from five
+  source files of CrispASR (https://github.com/CrispStrobe/CrispASR, MIT
+  license) and the CPU backend of its ggml fork
+  (https://github.com/CrispStrobe/ggml, MIT license, a fork of
+  https://github.com/ggml-org/ggml). Their license files are installed
+  beside the binaries, under share/licenses.
+
+ONNX Runtime
+  native.sh --moonshine links Microsoft's ONNX Runtime release (MIT
+  license); its license and third-party notices are installed beside
+  moonshine-cli, under share/licenses. native.sh --onnxruntime installs the
+  same pinned 1.23.2 release for the SmolVLA executor (the mujoco build tag
+  and Cargo feature; the shipped binaries do not link it), with its license
+  and notices under share/licenses/onnxruntime.
+
+SmolVLA
+  The SmolVLA executor runs lerobot/smolvla_base
+  (https://huggingface.co/lerobot/smolvla_base, Apache License 2.0),
+  exported to ONNX by clients/vla_export.py, with the tokenizer of its
+  backbone HuggingFaceTB/SmolVLM2-500M-Video-Instruct
+  (https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct,
+  Apache License 2.0). Neither the weights nor the graphs are in this
+  repository; they are kept in the user's cache.
+
+MuJoCo
+  The physics library of the Go and Rust robotics executors (the mujoco
+  build tag and Cargo feature; the shipped binaries do not link it).
+  clients/go/scripts/native.sh --mujoco installs the official MuJoCo
+  3.12.0 release, checked against its published SHA-256, and the builds
+  with the mujoco tag or feature link its libmujoco.so dynamically.
+  Apache License 2.0, https://www.apache.org/licenses/LICENSE-2.0.
+  Copyright 2021 DeepMind Technologies Limited.
+  https://github.com/google-deepmind/mujoco. Its LICENSE and
+  THIRD_PARTY_NOTICES are installed with it, under share/licenses/mujoco.

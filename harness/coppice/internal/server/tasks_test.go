@@ -412,6 +412,32 @@ func TestTaskCloseNamesTheWayOutWhenRemovalFailsAfterPanesClosed(t *testing.T) {
 	}
 }
 
+// A task made from inside another task's worktree gets its worktree beside
+// that worktree. task.close removes the worktree at the path the task
+// recorded, not at a path built again from the main repo, so the close
+// works whether or not the outer task closed first.
+func TestTaskCloseRemovesAWorktreeMadeInsideAnotherWorktree(t *testing.T) {
+	s := newPaneServer(t)
+	repo := gitRepo(t)
+	outer, outerWt := createTask(t, s, `"label":"feat","cwd":"`+repo+`","worktree":true`)
+	inner, innerWt := createTask(t, s, `"label":"again","cwd":"`+outerWt+`","worktree":true`)
+	if want := filepath.Join(outerWt+"-worktrees", "again"); innerWt != want {
+		t.Fatalf("inner worktree = %q, want %q", innerWt, want)
+	}
+	got := roundTrip(t, s, `{"id":"1","cmd":"task.close","task":"`+outer+`"}`)
+	result(t, got[0])
+	got = roundTrip(t, s, `{"id":"2","cmd":"task.close","task":"`+inner+`"}`)
+	if !got[0].OK {
+		t.Fatalf("task.close of the inner task = %+v, want ok", got[0].Error)
+	}
+	if _, err := os.Stat(innerWt); !os.IsNotExist(err) {
+		t.Fatalf("the inner worktree is still on disk: %v", err)
+	}
+	if _, ok := listTasks(t, s)[inner]; ok {
+		t.Fatal("the inner task is still listed")
+	}
+}
+
 // A task label is cleaned like a pane label: every screen and the tree
 // draw it.
 func TestTaskCreateCleansItsLabel(t *testing.T) {

@@ -1,0 +1,27 @@
+# Subagents. A gate hook reports a subagent that started or stopped inside
+# a pane's harness. The pane's row lists it, read only, and each report is
+# a child event.
+#!watch child
+#!settle 300
+{"id":"1","cmd":"pane.report_child"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"pane.report_child needs pane. Run: coppice pane list"}}
+{"id":"2","cmd":"pane.report_child","pane":"w9:p9","child":"a1","state":"working"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"w9:p9\". Run: coppice pane list"}}
+{"id":"3","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"],"label":"lead"}
+{"id":"$id","ok":true,"result":{"pane":"$p"}}
+{"id":"4","cmd":"pane.report_child","pane":"$p","child":"  ","state":"working"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"pane.report_child needs child, the subagent id."}}
+{"id":"5","cmd":"pane.report_child","pane":"$p","child":"a1","state":"idle"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"state must be working or done"}}
+{"id":"6","cmd":"pane.report_child","pane":"$p","child":" a1 ","state":"working","label":"code \u001b[31mreviewer"}
+{"id":"$id","ok":true,"result":{"pane":"$p","child":"a1","state":"working"}}
+{"id":"7","cmd":"pane.report_child","pane":"$p","child":"b2","state":"working","label":"tests"}
+{"id":"$id","ok":true,"result":{"pane":"$p","child":"b2","state":"working"}}
+{"id":"8","cmd":"pane.report_child","pane":"$p","child":"a1","state":"done"}
+{"id":"$id","ok":true,"result":{"pane":"$p","child":"a1","state":"done"}}
+{"id":"9","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$p","children":[{"id":"b2","label":"tests","state":"working"},{"id":"a1","label":"*","state":"done"}]}],"path":"*"}}
+{"id":"10","cmd":"hello","role":"pane","pane":"w8:p8"}
+{"id":"$id","ok":true,"result":{"role":"pane"}}
+{"id":"11","cmd":"pane.report_child","pane":"$p","child":"c3","state":"working"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"a pane can propose. It cannot allow."}}

@@ -1,0 +1,48 @@
+# A headless codex pane runs one fake process per prompt. The first turn
+# runs `exec --json`, names its session, and ends idle; the second runs
+# `exec resume ID --json`. A prompt while a slow turn runs is refused. A
+# turn that exits without turn.completed ends idle with its exit code.
+# codex takes no raw stdin and cannot fork.
+#!env COPPICE_CODEX_BIN={FIXTURES}/adapters/fake-codex.sh
+#!watch state,note
+#!settle 300
+{"id":"1","cmd":"pane.create","kind":"headless","harness":"codex","cwd":"{WORK}","label":"cx","cmd_argv":["ignored"],"env":{"COPPICE_CODEX_FIXTURE":"{FIXTURES}/adapters/codex-stream.jsonl","COPPICE_CODEX_ECHO_ARGV":"{WORK}/codex-argv.txt"}}
+{"id":"$id","ok":true,"result":{"pane":"$cx"}}
+{"id":"2","cmd":"agent.prompt","pane":"$cx","text":"run the tests","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$cx","state":"idle","source":"headless"}}
+{"id":"3","cmd":"agent.get","pane":"$cx"}
+{"id":"$id","ok":true,"result":{"pane":"$cx","state":"idle","detail":"turn complete","harness_session_id":"cx-8f21"}}
+{"id":"4","cmd":"agent.prompt","pane":"$cx","text":"again"}
+{"id":"$id","ok":true,"result":{"pane":"$cx","sent":5}}
+#!retry 10000
+{"id":"5","cmd":"pane.read","pane":"$cx"}
+{"id":"$id","ok":true,"result":{"source":"visible","text":"[working] session cx-8f21\nChecking the tests.\nshell go test ./... (exit 0)\n[idle] turn complete\n[working] session cx-8f21\nChecking the tests.\nshell go test ./... (exit 0)\n[idle] turn complete"}}
+{"id":"6","cmd":"pane.send_text","pane":"$cx","text":"x"}
+{"id":"$id","ok":false,"error":{"code":"internal","message":"codex: this harness does not support that. Use agent prompt."}}
+{"id":"7","cmd":"pane.fork","pane":"$cx"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"codex cannot fork a session yet"}}
+{"id":"8","cmd":"pane.create","kind":"headless","harness":"codex","cwd":"{WORK}","label":"slow","env":{"COPPICE_CODEX_FIXTURE":"{FIXTURES}/adapters/codex-stream-thread.jsonl","COPPICE_CODEX_SLEEP":"1.5","COPPICE_CODEX_EXIT":"5"}}
+{"id":"$id","ok":true,"result":{"pane":"$slow"}}
+{"id":"9","cmd":"agent.prompt","pane":"$slow","text":"slow one"}
+{"id":"$id","ok":true,"result":{"pane":"$slow","sent":8}}
+{"id":"10","cmd":"agent.prompt","pane":"$slow","text":"too soon"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"codex: a turn is already running; wait for idle"}}
+{"id":"11","cmd":"agent.wait","pane":"$slow","until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$slow","state":"idle","source":"headless"}}
+{"id":"12","cmd":"agent.get","pane":"$slow"}
+{"id":"$id","ok":true,"result":{"pane":"$slow","harness_session_id":"th-9c14"}}
+{"id":"13","cmd":"pane.create","kind":"headless","harness":"codex","cwd":"{WORK}","label":"broken","env":{"COPPICE_CODEX_FIXTURE":"{FIXTURES}/adapters/fake-codex.sh","COPPICE_CODEX_EXIT":"7"}}
+{"id":"$id","ok":true,"result":{"pane":"$broken"}}
+{"id":"14","cmd":"agent.prompt","pane":"$broken","text":"break"}
+{"id":"$id","ok":true,"result":{"pane":"$broken","sent":5}}
+#!retry 10000
+{"id":"15","cmd":"agent.get","pane":"$broken"}
+{"id":"$id","ok":true,"result":{"pane":"$broken","state":"idle","detail":"turn ended without completion exit=7"}}
+{"id":"16","cmd":"pane.read","pane":"$broken"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"17","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/cat","codex-argv.txt"],"label":"show","cols":200}
+{"id":"$id","ok":true,"result":{"pane":"$show"}}
+{"id":"18","cmd":"pane.wait_output","pane":"$show","contains":"again","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"19","cmd":"pane.read","pane":"$show"}
+{"id":"$id","ok":true,"result":"*"}

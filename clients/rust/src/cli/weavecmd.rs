@@ -435,6 +435,28 @@ impl Hook for WeaveHook<'_> {
 
     fn started(&mut self, step: &Object, run_id: &str) -> Option<String> {
         self.shared.borrow_mut().run_id = run_id.to_string();
+        {
+            let mut sh = self.shared.borrow_mut();
+            if !sh.resumed_cards.is_empty() && !sh.data_dir.is_empty() {
+                let t = crate::rank::now();
+                let rows: Vec<Object> = sh
+                    .resumed_cards
+                    .iter()
+                    .map(|(cid, rid)| {
+                        Object::new()
+                            .with("choice_id", cid.as_str())
+                            .with("ranking_id", rid.as_str())
+                            .with("event", "resumed")
+                            .with("run_id", run_id)
+                            .with("ts", t)
+                    })
+                    .collect();
+                if let Err(e) = crate::rank::append_rows(&sh.data_dir, &rows) {
+                    return Some(format!("the resume of the open choice was not recorded: {e}"));
+                }
+                sh.resumed_cards.clear();
+            }
+        }
         let line = dumps(&Value::Obj(Object::new().with("run", run_id).with("step", str_of(step, "id").as_str())), true) + "\n";
         let res = (|| -> std::io::Result<()> {
             if let Some(dir) = std::path::Path::new(&self.state).parent() {
@@ -602,9 +624,6 @@ impl Env {
         if max_par > 1 {
             return self.refuse(CMD, "--max-parallel above 1 is not in this binary yet (K2-4)");
         }
-        if steps.iter().any(|s| str_of(s, "type") == "agentic") {
-            return self.refuse(CMD, "an agentic step: this binary does not run one (K2-7)");
-        }
         let mut models = Object::new();
         let mut routed = vec![];
         for s in &steps {
@@ -663,6 +682,7 @@ impl Env {
             steps: list(plan.value("steps")).into_iter().filter_map(|s| s.as_obj().cloned()).collect(),
             attempts: spec.attempts.clone(),
             outputs: spec.outputs.clone(),
+            resumed_cards: vec![],
         }));
         let mut hook = WeaveHook {
             spec: &spec,
@@ -683,6 +703,20 @@ impl Env {
         }
         let llm = Rc::new(RefCell::new(self.llm_client()));
         executors.insert("task".into(), Box::new(WeaveTask { llm, outputs: spec.outputs.clone(), shared: shared.clone() }));
+        let me = match self.self_path() {
+            Ok(m) => m,
+            Err(e) => return self.fail(CMD, &e),
+        };
+        executors.insert(
+            "agentic".into(),
+            Box::new(supervise::agentic::Agentic {
+                envelope: env.clone(),
+                model: "haiku".into(),
+                claude: self.llm_client(),
+                self_path: me,
+                temp_dir: gettempdir(&self.env),
+            }),
+        );
         let terminal = tty(0) && tty(1);
         if terminal {
             self.flush();
@@ -784,4 +818,29 @@ impl Env {
             _ => exit(1),
         }
     }
+}
+
+/// `tempfile.gettempdir()`: the first of $TMPDIR, $TEMP, $TMP, /tmp,
+/// /var/tmp and /usr/tmp that is a directory a file can be made in, made
+/// absolute.
+fn gettempdir(env: &std::collections::HashMap<String, String>) -> String {
+    let mut dirs: Vec<String> =
+        ["TMPDIR", "TEMP", "TMP"].iter().filter_map(|k| env.get(*k).filter(|v| !v.is_empty()).cloned()).collect();
+    dirs.extend(["/tmp", "/var/tmp", "/usr/tmp"].iter().map(|s| s.to_string()));
+    for d in dirs {
+        let abs = if d.starts_with('/') {
+            d
+        } else {
+            match std::env::current_dir() {
+                Ok(c) => format!("{}/{d}", c.display()),
+                Err(_) => continue,
+            }
+        };
+        let probe = format!("{abs}/.daisugi-probe-{}", std::process::id());
+        if std::fs::OpenOptions::new().write(true).create_new(true).open(&probe).is_ok() {
+            let _ = std::fs::remove_file(&probe);
+            return abs;
+        }
+    }
+    "/tmp".into()
 }

@@ -1211,6 +1211,109 @@ def build_tool_cases() -> list[dict[str, Any]]:
             ),
         )
     )
+    # A postcondition that asks a model, an alias no registry resolves,
+    # and an expr that is not a dict.
+    judge = {"type": "judge", "expr": {"op": "llm_check", "rule": "is the output kind"}}
+    yes = json.dumps({"satisfied": True, "rationale": "kind"})
+    no = json.dumps({"satisfied": False, "rationale": "rude"})
+    out_step = sh("s1", "echo", metadata={"output": "fine", "rc": 0})
+    for name, replies, env in [
+        ("holds", [{"http": yes}], API),
+        ("not satisfied", [{"http": no}], API),
+        ("not json", [{"http": "maybe"}], API),
+        ("claude holds", [{"claude_raw": yes}], CC),
+        ("claude fails", [], CC),
+    ]:
+        add(
+            mcp(
+                f"mcp step llm_check {name}",
+                Session().call(
+                    "verify_completed_step", {"step": out_step, "envelope": env_doc(post=[judge])}
+                ),
+                env=env,
+                replies=replies or None,
+            )
+        )
+    add(
+        mcp(
+            "mcp step llm_check physical",
+            Session().call(
+                "verify_completed_step",
+                {"step": out_step, "envelope": env_doc(post=[judge], stakes="physical")},
+            ),
+            env=API,
+        )
+    )
+    alias = {"op": "alias", "name": "no_secrets", "args": {}}
+    add(
+        mcp(
+            "mcp step alias",
+            Session().call(
+                "verify_completed_step",
+                {
+                    "step": out_step,
+                    "envelope": env_doc(
+                        post=[
+                            {"type": "named", "expr": alias},
+                            {"type": "nested", "expr": {"op": "not", "child": alias}},
+                        ]
+                    ),
+                },
+            ),
+        )
+    )
+    add(
+        mcp(
+            "mcp step expr not a dict",
+            Session().call(
+                "verify_completed_step",
+                {
+                    "step": out_step,
+                    "envelope": env_doc(
+                        post=[{"type": "s", "expr": "x"}, {"type": "l", "expr": [1]}]
+                    ),
+                },
+            ),
+        )
+    )
+    add(
+        mcp(
+            "mcp verify llm_check invariant",
+            Session().call(
+                "verify_plan",
+                {
+                    "plan": plan_doc([sh("s1", "echo hi")]),
+                    "envelope": {
+                        **ECHO,
+                        "invariants": [
+                            {
+                                "type": "judge",
+                                "description": "d",
+                                "expr": {"op": "llm_check", "rule": "is it kind"},
+                            }
+                        ],
+                    },
+                },
+            ),
+            env=API,
+            replies=[{"http": no}],
+        )
+    )
+    add(
+        mcp(
+            "mcp verify alias invariant",
+            Session().call(
+                "verify_plan",
+                {
+                    "plan": plan_doc([sh("s1", "echo hi")]),
+                    "envelope": {
+                        **ECHO,
+                        "invariants": [{"type": "named", "description": "d", "expr": alias}],
+                    },
+                },
+            ),
+        )
+    )
     add(
         mcp(
             "mcp step invalid",
@@ -2205,7 +2308,7 @@ def build_delegate_cases() -> list[dict[str, Any]]:
     d("relative path", call({**q, "path": "work/big.py"}))
     d("tilde path", call({**q, "path": "~/work/big.py"}))
     d("empty question", call({**q, "question": "  "}))
-    d("code write mode", call({**q, "mode": "code_write"}))
+    d("unknown mode", call({**q, "mode": "edit"}))
     d("missing file", call({**q, "path": "{HOME}/work/none.py"}))
     d("a directory", call({**q, "path": "{HOME}/work"}))
     d(
@@ -2283,6 +2386,129 @@ def build_delegate_cases() -> list[dict[str, Any]]:
         env={**KEY, **px},
         fake_proxy={"mode": "forward"},
         replies=[{"http": reply(quotes=["def f2():"])}],
+    )
+    # Code write: the worker returns a draft; nothing is written.
+    w = {"path": big, "question": "Make f2 return 22.", "mode": "code_write"}
+
+    def draft(form: Any = "diff", text: Any = None, **extra: Any) -> str:
+        body: dict[str, Any] = {"form": form}
+        if text is not None:
+            body["text"] = text
+        body.update(extra)
+        return json.dumps(body)
+
+    ok_diff = (
+        "--- a/big.py\n+++ b/big.py\n@@ -5,2 +5,2 @@\n def f2():\n-    return 2\n+    return 22\n"
+    )
+    for name, reply_text in (
+        ("diff", draft(text=ok_diff)),
+        (
+            "diff two hunks",
+            draft(text="@@\n def f0():\n-    return 0\n+    return 9\n@@\n def f3():\n"),
+        ),
+        ("diff no match", draft(text="@@\n def f9():\n")),
+        ("diff second hunk no match", draft(text="@@\n-    return 1\n+    return 1\n@@\n def f\n")),
+        ("diff removes the last newline", draft(text="@@\n-\n")),
+        ("diff out of order", draft(text="@@\n def f3():\n@@\n def f1():\n")),
+        ("diff no hunk", draft(text="--- a\n+++ b\n")),
+        ("diff empty", draft(text="")),
+        ("diff only added", draft(text="@@\n+x\n")),
+        ("diff header junk", draft(text="Here is the diff:\n@@\n def f0():\n")),
+        ("diff bad line", draft(text="@@\n def f0():\n*x\n")),
+        ("diff backslash line", draft(text="@@\n-    return 3\n\\ No newline at end of file\n")),
+        ("diff blank context", draft(text="@@\n    return 0\n\n def f1():\n")),
+        ("diff no final newline", draft(text="@@\n def f1():")),
+        ("file", draft("file", "def f():\n    return 1\n")),
+        ("file empty", draft("file", "")),
+        ("file with ticks", draft("file", "x = '```'\ny = '````'\n")),
+        ("file unicode", draft("file", "s = '\u00e9\u4e2d'\n")),
+        ("fenced reply", "```json\n" + draft("file", "x\n") + "\n```"),
+        ("reply bad form", draft("patch", "x")),
+        ("reply form not a string", draft(1, "x")),
+        ("reply no text", draft("file")),
+        ("reply text not a string", draft("file", 5)),
+        ("reply not json", "here you go"),
+        ("reply a list", "[]"),
+    ):
+        d(f"code write {name}", call(w), replies=[{"chat": reply_text}])
+    new_target = {**w, "path": "{HOME}/work/sub/new.py", "question": "Write a hello function."}
+    d(
+        "code write new file",
+        call(new_target),
+        replies=[{"chat": draft("file", "def hello():\n    pass\n")}],
+    )
+    d("code write new file diff", call(new_target), replies=[{"chat": draft(text="@@\n+x\n")}])
+    d(
+        "code write crlf",
+        call({**w, "path": "{HOME}/work/crlf.py"}),
+        before={**local, "work/crlf.py": {"hex": "610d0a620d0a"}},
+        replies=[{"chat": draft(text="@@\n-a\r\n+c\r\n b\r\n")}],
+    )
+    d(
+        "code write crlf plain diff",
+        call({**w, "path": "{HOME}/work/crlf.py"}),
+        before={**local, "work/crlf.py": {"hex": "610d0a620d0a"}},
+        replies=[{"chat": draft(text="@@\n-a\n+c\n")}],
+    )
+    d(
+        "code write diff two places",
+        call({**w, "path": "{HOME}/work/twice.py"}),
+        before={**local, "work/twice.py": {"text": "a\nb\na\nb\n"}},
+        replies=[{"chat": draft(text="@@\n a\n-b\n+c\n")}],
+    )
+    d("code write a directory", call({**w, "path": "{HOME}/work"}))
+    d(
+        "code write link",
+        call({**w, "path": "{HOME}/work/link.py"}),
+        before={**local, "work/link.py": {"link": "{HOME}/work/big.py"}},
+        replies=[{"chat": draft(text=ok_diff)}],
+    )
+    # The draft limit counts characters: one two-byte character puts the
+    # draft over 512 KiB in bytes and leaves it at the limit in characters.
+    limit = 512 * 1024
+    d(
+        "code write draft at the limit",
+        call(w),
+        replies=[{"chat": draft("file", "\u00e9" + "x" * (limit - 1))}],
+    )
+    d(
+        "code write draft over the limit",
+        call(w),
+        replies=[{"chat": draft("file", "\u00e9" + "x" * limit)}],
+    )
+    d(
+        "code write latin file",
+        call({**w, "path": "{HOME}/work/latin.txt"}),
+        before={**local, "work/latin.txt": {"hex": "63616fe90a"}},
+    )
+    d("code write empty question", call({**w, "question": " "}))
+    d("code write relative path", call({**w, "path": "work/big.py"}))
+    d("code write no worker", call(w), before={k: v for k, v in local.items() if k != tier1})
+    d("code write worker http 500", call(w), replies=[{"http_status": 500, "body": "{}"}])
+    d(
+        "code write physical stakes",
+        call(w),
+        before={**local, f"{gate}/envelopes/default.json": env_file(stakes="physical")},
+    )
+    d(
+        "code write messages wire",
+        call(w),
+        before={**local, tier1: {"text": json.dumps({"model": "anthropic/claude-haiku-4-5"})}},
+        env=KEY,
+        replies=[{"http": draft(text=ok_diff)}],
+    )
+    d(
+        "code write remote granted",
+        call(w),
+        before=granted,
+        env={**px},
+        fake_proxy={"mode": "forward"},
+        replies=[{"chat": draft(text=ok_diff)}],
+    )
+    d(
+        "code write then read",
+        call(w).call("delegate", q),
+        replies=[{"chat": draft(text=ok_diff)}, {"chat": reply(quotes=["def f2():"])}],
     )
     return C
 

@@ -1,0 +1,34 @@
+# The facts a floor shows: a pane's stack (loop, model, router, daisugi
+# mode), its last gate verdict and its tokens, and floor.facts. A Claude
+# pane's transcript is read only when the pane's own connection names it,
+# under the Claude config directory the pane sees. The gateway is dialed
+# only on loopback, and nothing listens on port 1.
+#!config gateway = "http://127.0.0.1:1"
+#!config [harness.claude]
+#!config command = "/bin/sleep"
+#!config args = ["600"]
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","env":{"CLAUDE_CONFIG_DIR":"{FIXTURES}/claude","ANTHROPIC_BASE_URL":"http://localhost:1/v1"}}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"2","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"],"env":{"OPENAI_BASE_URL":"https://api.openai.com/v1"}}
+{"id":"$id","ok":true,"result":{"pane":"$d"}}
+{"id":"3","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":{"daisugi":{"mode":"off","armed":true,"enforcing":0,"watching":0,"off":1,"installed":false},"tokens_today":{"fresh":0,"cache_read":0,"cache_write":0,"out":0},"gateway":{"url":"http://127.0.0.1:1","answers":false}}}
+{"id":"4","cmd":"pane.report_state","pane":"$c","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$c","state":"working","source":"gate","detail":"PreToolUse","mode":"enforcing","verdict":{"decision":"allow","tool":"Bash","clause":"shell.allow[0]"},"transcript_path":"{FIXTURES}/claude/projects/demo/claude-transcript.jsonl"}}
+{"id":"$id","ok":true,"result":{"pane":"$c","state":"working","source":"gate"}}
+{"id":"5","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$c","stack":{"loop":"claude","router":"gateway","daisugi":{"mode":"enforcing","armed":true}},"gate":{"decision":"allow","tool":"Bash","clause":"shell.allow[0]"}},{"id":"$d","stack":{"router":"direct"}}],"path":"*"}}
+{"id":"6","cmd":"hello","role":"pane","pane":"$c"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$c"}}
+{"id":"7","cmd":"pane.report_state","pane":"$c","event":{"v":1,"ts":2,"session_id":"s","harness":"claude-code","pane":"$c","state":"idle","source":"gate","detail":"Stop","transcript_path":"{FIXTURES}/claude/projects/demo/../demo/claude-transcript.jsonl"}}
+{"id":"$id","ok":true,"result":{"pane":"$c","state":"idle","source":"gate"}}
+#!retry 3000
+{"id":"8","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$c","stack":{"loop":"claude","model":"claude-fake-2","router":"gateway","daisugi":{"mode":"enforcing","armed":true}},"tokens":{"fresh":13,"cache_read":300,"cache_write":20,"out":12}},{"id":"$d"}],"path":"*"}}
+{"id":"9","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":{"daisugi":{"mode":"enforcing","enforcing":1,"watching":0,"off":0},"tokens_today":{"fresh":13,"cache_read":300,"cache_write":20,"out":12}}}
+{"id":"10","cmd":"pane.report_state","pane":"$c","event":{"v":1,"ts":3,"session_id":"s","harness":"claude-code","pane":"$c","state":"idle","source":"gate","detail":"Stop","mode":"watching","transcript_path":"{FIXTURES}/claude-transcript-more.jsonl"}}
+{"id":"$id","ok":true,"result":{"pane":"$c","state":"idle"}}
+{"id":"11","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$c","stack":{"daisugi":{"mode":"watching"}},"tokens":{"fresh":13,"cache_read":300,"cache_write":20,"out":12}},{"id":"$d"}],"path":"*"}}
+{"id":"12","cmd":"pane.report_state","pane":"$c","event":{"v":1,"ts":4,"session_id":"s","harness":"claude-code","pane":"$c","state":"idle","source":"gate","detail":"Stop","mode":"sleepy"}}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"mode \"sleepy\" is not enforcing or watching"}}

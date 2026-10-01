@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -35,7 +33,7 @@ def test_pick_engine_defaults_to_faster_whisper_on_cpu(monkeypatch):
     captured = {}
 
     class FakeWhisperModel:
-        def __init__(self, model, device, compute_type):
+        def __init__(self, model, device, compute_type, **kw):
             captured["model"] = model
             captured["device"] = device
             captured["compute_type"] = compute_type
@@ -53,7 +51,7 @@ def test_pick_engine_forwards_a_non_default_compute_type(monkeypatch):
     captured = {}
 
     class FakeWhisperModel:
-        def __init__(self, model, device, compute_type):
+        def __init__(self, model, device, compute_type, **kw):
             captured["compute_type"] = compute_type
 
     monkeypatch.setattr("faster_whisper.WhisperModel", FakeWhisperModel, raising=False)
@@ -66,13 +64,11 @@ def test_pick_engine_raises_unknown_engine_for_a_bad_name():
         engines.pick_engine(Config(voice_engine="parkeet-typo"))
     message = str(exc_info.value)
     assert "faster-whisper" in message
-    assert "parakeet" in message
+    assert "sherpa-onnx" not in message
 
 
-def test_pick_engine_routes_to_parakeet_and_raises_when_sherpa_onnx_missing(monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, "sherpa_onnx", None)
-    with pytest.raises(engines.EngineUnavailable, match="pip install"):
-        engines.pick_engine(Config(voice_engine="parakeet", voice_model=str(tmp_path)))
+def test_parakeet_is_an_engine_again():
+    assert engines.ParakeetEngine.name == "parakeet"
 
 
 @requires_faster_whisper
@@ -81,7 +77,7 @@ def test_faster_whisper_engine_falls_back_to_cpu_when_cuda_unavailable(monkeypat
     captured = {}
 
     class FakeWhisperModel:
-        def __init__(self, model, device, compute_type):
+        def __init__(self, model, device, compute_type, **kw):
             captured["device"] = device
 
     monkeypatch.setattr("faster_whisper.WhisperModel", FakeWhisperModel, raising=False)
@@ -95,7 +91,7 @@ def test_faster_whisper_engine_keeps_cuda_when_available(monkeypatch):
     captured = {}
 
     class FakeWhisperModel:
-        def __init__(self, model, device, compute_type):
+        def __init__(self, model, device, compute_type, **kw):
             captured["device"] = device
 
     monkeypatch.setattr("faster_whisper.WhisperModel", FakeWhisperModel, raising=False)
@@ -112,7 +108,7 @@ def test_faster_whisper_transcribe_maps_segments_text_and_duration(monkeypatch):
             self.text = text
 
     class FakeWhisperModel:
-        def __init__(self, model, device, compute_type):
+        def __init__(self, model, device, compute_type, **kw):
             pass
 
         def transcribe(self, audio, language=None):
@@ -137,18 +133,6 @@ def test_faster_whisper_transcribe_maps_segments_text_and_duration(monkeypatch):
     assert result.rtf >= 0.0
 
 
-def test_parakeet_raises_when_sherpa_onnx_not_installed(monkeypatch):
-    monkeypatch.setitem(sys.modules, "sherpa_onnx", None)
-    with pytest.raises(engines.EngineUnavailable, match="pip install"):
-        engines.ParakeetEngine(Path("/nonexistent"))
-
-
-def test_parakeet_raises_when_model_files_are_missing(monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, "sherpa_onnx", types.SimpleNamespace(OfflineRecognizer=None))
-    with pytest.raises(engines.EngineUnavailable, match="Download and extract"):
-        engines.ParakeetEngine(tmp_path)
-
-
 @requires_faster_whisper
 @pytest.mark.voice_live
 def test_faster_whisper_transcribes_fixtures_within_the_recorded_wer_ceiling(tmp_path):
@@ -166,3 +150,110 @@ def test_faster_whisper_transcribes_fixtures_within_the_recorded_wer_ceiling(tmp
         assert wer <= pins.FIXTURE_MAX_WER[name], f"{name}: wer {wer:.3f}, got {result.text!r}"
         total_wer += wer
     assert total_wer / len(transcripts) <= pins.FIXTURE_MEAN_MAX_WER
+
+
+def _fake_whisper_cli(bin_dir: Path, body: str) -> Path:
+    """Write a fake whisper-cli into bin_dir. It runs body as /bin/sh."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    script = bin_dir / "whisper-cli"
+    script.write_text("#!/bin/sh\n" + body)
+    script.chmod(0o755)
+    return script
+
+
+def test_whisper_cpp_args_name_the_model_the_file_and_no_extra_output():
+    args = engines.whisper_cpp_args("/bin/whisper-cli", Path("/m/ggml.bin"), "/t/clip.wav", None)
+    assert args == [
+        "/bin/whisper-cli",
+        "-m",
+        "/m/ggml.bin",
+        "-f",
+        "/t/clip.wav",
+        "-l",
+        "auto",
+        "-nt",
+        "-np",
+    ]
+
+
+def test_whisper_cpp_args_pass_a_named_language():
+    args = engines.whisper_cpp_args("w", Path("m"), "f", "de")
+    assert args[args.index("-l") + 1] == "de"
+
+
+@pytest.mark.parametrize(
+    ("stdout", "text"),
+    [
+        ("\n hello world\n", "hello world"),
+        ("\n one\n two \n\n", "one two"),
+        ("", ""),
+        ("   \n\t\n", ""),
+        ("a\r\nb\r\n", "a b"),
+    ],
+)
+def test_whisper_cpp_output_joins_the_stripped_lines(stdout, text):
+    assert engines.whisper_cpp_text(stdout) == text
+
+
+def test_whisper_cpp_engine_is_unavailable_with_no_binary_on_path(monkeypatch, tmp_path):
+    model = tmp_path / "ggml.bin"
+    model.write_bytes(b"x")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    with pytest.raises(engines.EngineUnavailable, match="whisper-cli is not on PATH"):
+        engines.WhisperCppEngine(model)
+
+
+def test_whisper_cpp_engine_is_unavailable_with_no_model_file(monkeypatch, tmp_path):
+    _fake_whisper_cli(tmp_path / "bin", "exit 0\n")
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    with pytest.raises(engines.EngineUnavailable, match="model file missing"):
+        engines.WhisperCppEngine(tmp_path / "absent.bin")
+
+
+def test_whisper_cpp_engine_runs_the_binary_and_reads_its_text(monkeypatch, tmp_path):
+    log = tmp_path / "argv.txt"
+    _fake_whisper_cli(
+        tmp_path / "bin",
+        f'printf "%s\\n" "$@" > {log}\nprintf "\\n hello there\\n"\n',
+    )
+    model = tmp_path / "ggml.bin"
+    model.write_bytes(b"x")
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    engine = engines.WhisperCppEngine(model)
+    assert engine.name == "whisper.cpp"
+    result = engine.transcribe(make_wav(sr=16000, n_samples=8000))
+    assert result.text == "hello there"
+    assert result.segments == [{"start": 0.0, "end": 0.5, "text": "hello there"}]
+    assert result.duration_s == pytest.approx(0.5)
+    argv = log.read_text().splitlines()
+    assert argv[:2] == ["-m", str(model)]
+    assert argv[2] == "-f" and argv[3].endswith(".wav")
+    assert argv[4:] == ["-l", "auto", "-nt", "-np"]
+    assert not Path(argv[3]).exists(), "the temp clip must be removed"
+
+
+def test_whisper_cpp_engine_raises_when_the_binary_fails(monkeypatch, tmp_path):
+    _fake_whisper_cli(tmp_path / "bin", 'echo "error: bad model" >&2\nexit 3\n')
+    model = tmp_path / "ggml.bin"
+    model.write_bytes(b"x")
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    engine = engines.WhisperCppEngine(model)
+    with pytest.raises(RuntimeError, match="whisper-cli exited 3: error: bad model"):
+        engine.transcribe(make_wav(sr=16000, n_samples=1600))
+
+
+def test_pick_engine_routes_to_whisper_cpp(monkeypatch, tmp_path):
+    _fake_whisper_cli(tmp_path / "bin", "exit 0\n")
+    model = tmp_path / "ggml.bin"
+    model.write_bytes(b"x")
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    engine = engines.pick_engine(Config(voice_engine="whisper.cpp", voice_model=str(model)))
+    assert isinstance(engine, engines.WhisperCppEngine)
+
+
+def test_unknown_engine_names_the_valid_names():
+    with pytest.raises(
+        engines.UnknownEngine,
+        match="Valid names: faster-whisper, moonshine, parakeet, whisper.cpp[.]",
+    ):
+        engines.pick_engine(Config(voice_engine="nope"))

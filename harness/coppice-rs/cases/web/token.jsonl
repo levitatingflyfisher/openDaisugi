@@ -1,0 +1,81 @@
+# coppice web token: mint, print, name, list, revoke, and the refusals.
+# No phone server runs here. A minted token is random (CP-R-34).
+{"id": "t1", "cli": ["web", "token", "--qr=false"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stderr": "", "stdout": "*"}}
+{"id": "t2", "file": "{DATA}/web/token", "count": "\n"}
+{"id": "$id", "ok": true, "result": {"count": 0}}
+{"id": "ls1", "ls": "{DATA}/web"}
+{"id": "$id", "ok": true, "result": "*"}
+# A pinned token, so the sign-in line and the QR are the same on both sides.
+{"id": "w1", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "t3", "cli": ["web", "token", "--qr=false"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stderr": "", "stdout": "*"}}
+{"id": "t4", "cli": ["web", "token", "--qr=false", "--url", "http://coppice.test:9000/"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stderr": "", "stdout": "token     pinned-web-token-0001\nsign in   http://coppice.test:9000/#t=pinned-web-token-0001\n"}}
+{"id": "t5", "cli": ["web", "token", "--qr=false", "--listen", "127.0.0.1:7000"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stderr": "", "stdout": "*"}}
+{"id": "t6", "cli": ["web", "token", "--url", "http://coppice.test:9000"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stderr": "", "stdout": "*"}}
+{"id": "t7", "cli": ["web", "token", "--qr", "--url", "http://c.test"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stderr": "", "stdout": "*"}}
+# A token for a name.
+{"id": "n1", "cli": ["web", "token", "--for", "kid", "--qr=false", "--url", "http://c.test"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stderr": "", "stdout": "*"}}
+{"id": "n2", "cli": ["web", "token", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stderr": "", "stdout": "kid\n"}}
+{"id": "n3", "cli": ["web", "token", "--for", "abe", "--qr=false", "--url", "http://c.test"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stderr": "", "stdout": "*"}}
+{"id": "n4", "cli": ["web", "token", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stderr": "", "stdout": "abe\nkid\n"}}
+{"id": "n5", "file": "{DATA}/web/token-names.json", "count": "\"name\""}
+{"id": "$id", "ok": true, "result": {"count": 2}}
+{"id": "n6", "ls": "{DATA}/web"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "n7", "cli": ["web", "token", "--for", "kid", "--rotate", "--qr=false", "--url", "http://c.test"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "n8", "cli": ["web", "token", "list", "extra"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "n9", "cli": ["web", "token", "--revoke", "kid"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "Retired the token for kid.\n"}}
+{"id": "n10", "cli": ["web", "token", "--revoke", "kid"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "n11", "cli": ["web", "token", "--for", "bad name"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "n12", "cli": ["web", "token", "--for", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "n13", "cli": ["web", "token", "--qr=false", "stray"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "n14", "cli": ["web", "token", "--nope"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "n15", "cli": ["web", "token", "--revoke", "abe"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "n16", "cli": ["web", "token", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "No named tokens. Run: coppice web token --for NAME\n"}}
+# A names file that will not parse.
+{"id": "w2", "write": "{DATA}/web/token-names.json", "text": "{not json"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "b1", "cli": ["web", "token", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "b2", "cli": ["web", "token", "--for", "kid"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "b3", "cli": ["web", "token", "--qr=false", "--url", "http://c.test"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# The saved settings set the address the sign-in line names.
+{"id": "w3", "write": "{DATA}/web/web.json", "text": "{\"enabled\": true, \"listen\": \"127.0.0.1:7443\", \"tls\": \"off\", \"external_url\": \"\"}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "s1", "cli": ["web", "token", "--qr=false"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "token     pinned-web-token-0001\nsign in   http://127.0.0.1:7443/#t=pinned-web-token-0001\n"}}
+{"id": "w4", "write": "{DATA}/web/web.json", "text": "{\"enabled\": true, \"listen\": \"127.0.0.1:7443\", \"tls\": \"off\", \"external_url\": \"https://phone.test/\"}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "s2", "cli": ["web", "token", "--qr=false"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "token     pinned-web-token-0001\nsign in   https://phone.test/#t=pinned-web-token-0001\n"}}
+{"id": "w5", "write": "{DATA}/web/web.json", "text": "[1,2]"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "s3", "cli": ["web", "token", "--qr=false", "--url", "http://c.test"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# An empty token file is no token: a new one is minted.
+{"id": "w6", "write": "{DATA}/web/token", "text": "  \n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "e1", "cli": ["web", "token", "--qr=false", "--url", "http://c.test"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}

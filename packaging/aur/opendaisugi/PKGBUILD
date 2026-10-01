@@ -12,8 +12,19 @@
 # (ghostty). prepare() fetches ghostty's zig dependencies, which its
 # build.zig.zon pins by hash, and the Go modules, which go.sum pins.
 # build() then needs no network. Everything it writes stays in $srcdir.
+#
+# A split package. daisugi-ml is the train pack as a system pack: the
+# worker files and a manifest under /usr/lib/opendaisugi/packs/train,
+# laid out by scripts/system-pack.py, run by the system's Python with the
+# distribution's PyTorch and Hugging Face packages. package() builds no
+# virtual environment and runs no pip; `daisugi pack install train` stays
+# the path on other systems, and a pack the user installs comes first.
+# Of the names in its depends, python-pytorch (extra) and python-peft
+# (AUR) were checked; python-transformers, python-trl, python-datasets
+# and python-accelerate were not (ruling PK-R-9).
 
-pkgname=opendaisugi
+pkgbase=opendaisugi
+pkgname=(opendaisugi daisugi-ml)
 pkgver=0.43.0
 pkgrel=1
 _commit=
@@ -81,10 +92,23 @@ build() {
   tar -xzf "dist/opendaisugi-${pkgver}-linux-x86_64.tar.gz" -C "${srcdir}"
 }
 
-package() {
+package_opendaisugi() {
+  optdepends=('daisugi-ml: LoRA training (daisugi lora train) with the system PyTorch')
   cd "${srcdir}/opendaisugi-${pkgver}-linux-x86_64"
   install -Dm755 coppice sprig daisugi -t "${pkgdir}/usr/bin/"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
   install -Dm644 NOTICE-coppice NOTICE-sprig NOTICE-daisugi -t "${pkgdir}/usr/share/licenses/${pkgname}/"
   install -Dm644 README "${pkgdir}/usr/share/doc/${pkgname}/README"
+}
+
+package_daisugi-ml() {
+  pkgdesc='LoRA training for the daisugi binaries with the system PyTorch (the train pack)'
+  arch=('any')
+  provides=()
+  conflicts=()
+  depends=('opendaisugi' 'python' 'python-pytorch' 'python-transformers' 'python-peft'
+           'python-trl' 'python-datasets' 'python-accelerate')
+  cd "${srcdir}/openDaisugi"
+  python scripts/system-pack.py train "${pkgdir}/usr/lib/opendaisugi/packs" --python /usr/bin/python
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

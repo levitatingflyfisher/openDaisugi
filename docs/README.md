@@ -46,6 +46,7 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Hook integration](hook-integration.md)** — the passive-hook path.
 - **[Gate a live session](how-to/gate.md)** — the call-time gate: audit → report → enforce → disarm.
 - **[Use the phone](how-to/phone.md)**: the PWA coppice serves, both certificate paths, the token QR, and ntfy push.
+- **[Train a LoRA adapter from the Go or Rust daisugi](how-to/ml-pack.md)**: `daisugi pack install train`, then `daisugi lora train`; bundles for machines with no network, and the AUR `daisugi-ml`.
 - **[Record anywhere, land it in a pane](how-to/voice.md)**: `daisugi voice serve|ptt|arm|disarm`, previewed by default, direct send only when a pane is armed.
 - **[Hand model choice to NeMo Switchyard](how-to/router-switchyard.md)**: `daisugi gateway --router switchyard` runs Switchyard behind the gateway, and the gateway meters each turn by the target that served it.
 - **[Let `a && b` through](how-to/compound-shell.md)** — the compound-shell opt-in: what it admits, what stays rejected, what it recovers.

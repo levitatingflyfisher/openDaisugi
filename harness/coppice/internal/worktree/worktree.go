@@ -103,7 +103,16 @@ func Remove(repo, name string, keep bool) error {
 	if keep {
 		return nil
 	}
-	_, err := git(repo, "worktree", "remove", Path(repo, name))
+	return RemoveAt(repo, Path(repo, name))
+}
+
+// RemoveAt deletes the worktree checked out at path, one of repo's
+// worktrees. A caller that recorded the path Add returned passes it here:
+// a worktree added from inside another worktree sits beside that worktree,
+// not beside the main repo, so Path of the main repo does not name it.
+// Git's refusal of a dirty worktree is returned as is. The branch stays.
+func RemoveAt(repo, path string) error {
+	_, err := git(repo, "worktree", "remove", path)
 	return err
 }
 

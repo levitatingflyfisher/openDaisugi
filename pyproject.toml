@@ -104,11 +104,6 @@ mcp = [
     # mcp_server.py uses. Lift the bound when the server moves to 2.x.
     "mcp>=1.27,<2",
 ]
-# v0.45: the opt-in second engine, NeMo Parakeet-TDT via sherpa-onnx. Its model is a
-# roughly 460MB download. The voice bridge never fetches it automatically. See pins.py.
-voice-parakeet = [
-    "sherpa-onnx>=1.10",
-]
 # v0.44: the token-saving gateway's async transport — an OpenAI/Anthropic-compatible proxy
 # any harness points at via base_url. Pure-Python (httpx); the ASGI app runs under any
 # ASGI server (uvicorn, hypercorn). Absent => the routing/meter/journal layer still imports
@@ -163,9 +158,15 @@ artifacts = [
     "src/opendaisugi/skills/**/*.md",
     "src/opendaisugi/install_assets/**/*",
     "src/opendaisugi/viz_dag_template.html",
+    "src/opendaisugi/model_catalog.json",
     "src/opendaisugi/harness_pi/**/*",
     "src/opendaisugi/harness_opencode/**/*",
 ]
+
+# The pack catalog and locks (opendaisugi.pack.catalog finds them here in a
+# wheel install, and in packs/ in a checkout).
+[tool.hatch.build.targets.wheel.force-include]
+"packs" = "opendaisugi/pack/packs"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

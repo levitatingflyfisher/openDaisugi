@@ -924,6 +924,7 @@ port's own.
 | `src/cli/mcpcmd.rs` | `daisugi mcp serve` and the 11 tools |
 | `src/cli/onboardcmd.rs` | `daisugi onboard`: discovery, the split cache, the ingest, the report |
 | `src/cli/setupcmd.rs` | `daisugi tiers setup` and `daisugi setup` |
+| `src/cli/modelscmd.rs` | `daisugi models list`, `search` and `use`: the catalog (`model_catalog.json`, included at build time), the default by hardware, the Hugging Face search and its filters (MC-R-1 to MC-R-7); `models pin` is not in this binary |
 | `src/pathways/verify.rs` | `stage2_violations`: `verify_completed_step` with each violation's detail |
 | `src/tracejournal/runs.rs` | `receipts`: `receipts_for_run` as the Receipt model reads it |
 

@@ -544,11 +544,32 @@ func (r *runner) decideRecord(p *pyjson.Object, rec *record, toolName string, en
 		refusal = opencodeRefusal
 	case r.searchAboveSecretHit(cwd, rec):
 		refusal = searchRefusal
-	case rankRecordHit(rec):
+	case r.rankRecordHit(rec):
 		refusal = rankRefusal
+	case r.treeWriteHit(rec):
+		refusal = treeRefusal
+	case r.gateChangeHit(rec):
+		refusal = gateChangeRefusal
+	case r.labelHit(rec):
+		refusal = labelRefusal
 	}
 	if refusal != "" {
 		return hard(refusal)
+	}
+	if dir, hit := r.gateStateHit(cwd, rec); hit {
+		return hard(gateStateRefusal(dir))
+	}
+	if dl, ok := env.deadline(); ok && r.gateNow() > dl {
+		d := r.deny(deadlineReason(dl))
+		d.ToolName = toolName
+		if rec != nil {
+			d.StepType = rec.StepType
+			d.Detail = rec.Command
+			if d.Detail == "" {
+				d.Detail = rec.Path
+			}
+		}
+		return d
 	}
 	if rec == nil {
 		d := r.deny("unrecognized tool " + pyjson.Repr(toolName) +
@@ -726,7 +747,7 @@ func (r *runner) decide(stdin []byte) *plan {
 			}
 		}
 		if !d.Ask {
-			d = r.maybeGraft(p, d, env)
+			d = r.maybeGraft(p, d, env, sessionID)
 		}
 	}
 	sid := r.safeSession(sessionID)

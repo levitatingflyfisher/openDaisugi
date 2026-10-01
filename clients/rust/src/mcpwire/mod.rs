@@ -511,6 +511,7 @@ fn field(name: &'static str, schema: Schema, default: Option<fn() -> Value>) -> 
         name,
         schema,
         default,
+        omit_none: false,
     }
 }
 

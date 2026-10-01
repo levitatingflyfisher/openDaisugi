@@ -350,3 +350,65 @@ def test_a_gone_alternative_is_follow_up_only(tmp_path):
     assert res.exit_code == 3, res.output
     q = json.loads(_run("queue", "--data-dir", str(dd), "--json").output)
     assert q == {"cards": [], "decayed": 1}
+
+
+def _card_with_run(dd: Path, rows_after: list[dict] | None = None) -> None:
+    d = rank.rankings_dir(dd)
+    d.mkdir(parents=True, exist_ok=True)
+    row = {
+        "choice_id": "ch_000000000002",
+        "ranking_id": "r0",
+        "event": "opened",
+        "options": {
+            "survivors": [{"id": "a", "content_hash": "h-a"}, {"id": "b", "content_hash": "h-b"}],
+            "eliminated": [],
+        },
+        "chosen": "a",
+        "status": "provisional",
+        "facts": {"run": {"run_id": "run_a", "step": "t", "downstream": ["w", "x"]}},
+        "ts": time.time(),
+    }
+    lines = [row, *(rows_after or [])]
+    (d / "choices.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines))
+
+
+def _receipts(dd: Path, rows: list[tuple[str, str, str, float]]) -> None:
+    import sqlite3
+
+    db = dd / "journal" / "index.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE receipts (run_id TEXT, step_id TEXT, reversibility TEXT, timestamp REAL)"
+    )
+    con.executemany("INSERT INTO receipts VALUES (?, ?, ?, ?)", rows)
+    con.commit()
+    con.close()
+
+
+def test_switch_cost_counts_the_runs_that_resumed_the_card(tmp_path):
+    dd = tmp_path / "dd"
+    _receipts(dd, [("run_b", "w", "reversible", 10.0), ("run_c", "x", "irreversible", 20.0)])
+    _card_with_run(dd)
+    (card,) = rank.read_cards(dd)
+    assert card.resumed == []
+    assert rank.switch_cost(card, dd)["cost"] == "cheap"
+    resumed = {"choice_id": "ch_000000000002", "ranking_id": "r0", "event": "resumed"}
+    _card_with_run(dd, [{**resumed, "run_id": "run_b", "ts": 1.0}])
+    (card,) = rank.read_cards(dd)
+    assert card.resumed == ["run_b"]
+    sc = rank.switch_cost(card, dd)
+    assert sc["cost"] == "costly" and sc["undo_steps"] == 1
+    _card_with_run(
+        dd,
+        [
+            {**resumed, "run_id": "run_b", "ts": 1.0},
+            {**resumed, "run_id": "run_b", "ts": 2.0},
+            {**resumed, "run_id": 7, "ts": 2.0},
+            {**resumed, "run_id": "run_c", "ts": 3.0},
+        ],
+    )
+    (card,) = rank.read_cards(dd)
+    assert card.resumed == ["run_b", "run_c"]
+    sc = rank.switch_cost(card, dd)
+    assert sc["cost"] == "follow_up_only" and sc["fired_at"] == 20.0

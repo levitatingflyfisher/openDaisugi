@@ -7,6 +7,8 @@
 #   clients/go/scripts/native.sh                 # build (once) and link this checkout
 #   clients/go/scripts/native.sh --print-prefix  # print where the build goes, and stop
 #   clients/go/scripts/native.sh --print-key     # print the built prefix's content key
+#   clients/go/scripts/native.sh --mujoco        # install the pinned MuJoCo (robotics)
+#   clients/go/scripts/native.sh --onnxruntime   # install the pinned ONNX Runtime (VLA)
 #
 # The content key is the first 16 hex digits of the SHA-256 of the
 # prefix's manifest. The build scripts put it in CGO_CFLAGS, which Go
@@ -82,13 +84,67 @@ work="${DAISUGI_NATIVE_BUILD_DIR:-$cache/native-build}"   # real disk; /tmp may 
 jobs="${DAISUGI_NATIVE_JOBS:-2}"
 cc="${CC:-gcc}"
 
+# Moonshine, the speech engine of the voice bridge, at the v0.1.5 tag, and
+# ONNX Runtime, Microsoft's prebuilt CPU release for this architecture
+# (the SHA-256 GitHub publishes for the release asset). Moonshine vendors
+# that same release; native.sh copies Microsoft's own files over it.
+MOONSHINE_REPO="https://github.com/moonshine-ai/moonshine.git"
+MOONSHINE_COMMIT="234f60faa0eb388b01cdf7e60aca232af37aefda"
+ORT_VERSION="1.23.2"
+case "$(uname -m)" in
+  x86_64) ORT_ARCH=x64 ORT_DIR=x86_64 ORT_SHA256="1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b" ;;
+  aarch64) ORT_ARCH=aarch64 ORT_DIR=aarch64 ORT_SHA256="7c63c73560ed76b1fac6cff8204ffe34fe180e70d6582b5332ec094810241e5c" ;;
+  *) ORT_ARCH="" ORT_DIR="" ORT_SHA256="" ;;
+esac
+ORT_TGZ="onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}.tgz"
+ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${ORT_TGZ}"
+# Change this when a moonshine-cli build flag changes.
+MOONSHINE_FLAGS_REV="1"
+
+# Parakeet, the desktop speech engine (ruling VO-16): CrispASR's Parakeet
+# code at a pinned commit, with only the files of
+# clients/native/parakeet-cli/crispasr-files.sha256 checked out and each
+# checked against its SHA-256, and the ggml fork CrispASR builds on, at the
+# commit its submodule pins, with only the CPU backend checked out and the
+# whole tree checked against one SHA-256 (of the sorted sha256sum listing).
+CRISPASR_REPO="https://github.com/CrispStrobe/CrispASR.git"
+CRISPASR_COMMIT="7e2b030780df5c9ad7ede6ac1935bc783b037d18"
+GGML_REPO="https://github.com/CrispStrobe/ggml.git"
+GGML_COMMIT="2f5a80d258c46e6ac8eee95f1328c0f58376d7ee"
+GGML_TREE_SHA256="aa6369fd8fa3d6bc6d025acc2c87dd7a3bef529f2db1ca34ffad4a9d9bf4783e"
+# Change this when a parakeet-cli build flag changes.
+PARAKEET_FLAGS_REV="1"
+
+# MuJoCo, the official prebuilt release (the SHA-256 GitHub publishes
+# for the release asset). The version is the mujoco wheel's in uv.lock.
+MUJOCO_VERSION="3.12.0"
+case "$(uname -m)" in
+  x86_64) MUJOCO_ARCH=x86_64 MUJOCO_SHA256="a9367911e6d5eaeade17c2197304687421c1fc932cdf7bcd4cb8cfaf0374dcb2" ;;
+  aarch64) MUJOCO_ARCH=aarch64 MUJOCO_SHA256="08fd5627a2ef7d5a42580c40e014ab2c1a644f082010c584ca361a3ed8cad838" ;;
+  *) MUJOCO_ARCH="" MUJOCO_SHA256="" ;;
+esac
+MUJOCO_TGZ="mujoco-${MUJOCO_VERSION}-linux-${MUJOCO_ARCH}.tar.gz"
+MUJOCO_URL="https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/${MUJOCO_TGZ}"
+
 print_prefix=0
 print_key=0
+moonshine=0
+parakeet=0
+mujoco=0
+onnxruntime=0
 case "${1:-}" in
   --print-prefix) print_prefix=1 ;;
   --print-key) print_key=1 ;;
+  --moonshine) moonshine=1 ;;
+  --print-moonshine) moonshine=2 ;;
+  --parakeet) parakeet=1 ;;
+  --print-parakeet) parakeet=2 ;;
+  --mujoco) mujoco=1 ;;
+  --print-mujoco) mujoco=2 ;;
+  --onnxruntime) onnxruntime=1 ;;
+  --print-onnxruntime) onnxruntime=2 ;;
   "") ;;
-  *) echo "usage: native.sh [--print-prefix | --print-key]" >&2; exit 2 ;;
+  *) echo "usage: native.sh [--print-prefix | --print-key | --moonshine | --print-moonshine | --parakeet | --print-parakeet | --mujoco | --print-mujoco | --onnxruntime | --print-onnxruntime]" >&2; exit 2 ;;
 esac
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -108,9 +164,304 @@ fetch() { # url file sha256
   echo "$3  $work/$2" | sha256_check || { echo "native.sh: $2 does not match its pinned sha256" >&2; exit 1; }
 }
 
+# --mujoco installs MuJoCo, the physics library of the robotics executors,
+# into a prefix of its own, $cache/native/mujoco-<stamp>: include/mujoco,
+# lib/libmujoco.so.<version> (and the libmujoco.so link), the license and
+# third-party notices under share/, the stamp and manifest.sha256. Nothing
+# is compiled: it is the official prebuilt release for this
+# architecture, checked against the SHA-256 GitHub publishes for the
+# release asset. The version is the one the Python oracle's mujoco wheel
+# pins in uv.lock, and the wheel carries the same libmujoco.so, byte for
+# byte. The script then points clients/go/.mujoco at the prefix (a
+# git-ignored link), which is where the robotics cgo flags and the Rust
+# build look. --print-mujoco prints where it goes. Only curl and tar are
+# needed.
+if [ "$mujoco" -ne 0 ]; then
+  [ -n "$MUJOCO_SHA256" ] || { echo "native.sh: no pinned MuJoCo release for $(uname -m)" >&2; exit 1; }
+  jstamp="mujoco $MUJOCO_VERSION $MUJOCO_SHA256
+arch $(uname -m)"
+  jprefix="${DAISUGI_MUJOCO_PREFIX:-$cache/native/mujoco-$(printf '%s\n' "$jstamp" | sha256_of | cut -c1-16)}"
+  if [ "$mujoco" -eq 2 ]; then
+    echo "$jprefix"
+    exit 0
+  fi
+  jrebuild="rm -rf '$jprefix' && $0 --mujoco"
+  if [ -e "$jprefix/stamp" ] || [ -e "$jprefix/lib" ]; then
+    [ "$(cat "$jprefix/stamp" 2>/dev/null)" = "$jstamp" ] ||
+      { echo "native.sh: $jprefix holds another MuJoCo. To install again: $jrebuild" >&2; exit 1; }
+    (cd "$jprefix" && sha256_check < manifest.sha256) ||
+      { echo "native.sh: a file in $jprefix does not match manifest.sha256. To install again: $jrebuild" >&2; exit 1; }
+  else
+    for tool in curl tar; do
+      command -v "$tool" >/dev/null 2>&1 || { echo "native.sh: $tool is not on PATH" >&2; exit 1; }
+    done
+    mkdir -p "$work"
+    fetch "$MUJOCO_URL" "$MUJOCO_TGZ" "$MUJOCO_SHA256"
+    part="$jprefix.part"
+    rm -rf "$part"
+    mkdir -p "$part/share/licenses/mujoco"
+    tar -xzf "$work/$MUJOCO_TGZ" -C "$part" --strip-components=1 \
+      "mujoco-$MUJOCO_VERSION/include" "mujoco-$MUJOCO_VERSION/lib" \
+      "mujoco-$MUJOCO_VERSION/LICENSE" "mujoco-$MUJOCO_VERSION/THIRD_PARTY_NOTICES"
+    mv "$part/LICENSE" "$part/THIRD_PARTY_NOTICES" "$part/share/licenses/mujoco/"
+    [ -f "$part/lib/libmujoco.so.$MUJOCO_VERSION" ] ||
+      { echo "native.sh: the release holds no lib/libmujoco.so.$MUJOCO_VERSION" >&2; exit 1; }
+    (cd "$part" && find include lib share -type f | LC_ALL=C sort | while IFS= read -r f; do sha256_of "$f"; done) > "$part/manifest.sha256"
+    printf '%s\n' "$jstamp" > "$part/stamp"
+    mv "$part" "$jprefix"
+    rm -f "$work/$MUJOCO_TGZ"
+  fi
+  ln -sfn "$jprefix" "$gomod/.mujoco"
+  echo "mujoco: $jprefix"
+  exit 0
+fi
+
+# --onnxruntime installs ONNX Runtime, the inference library of the VLA
+# executors, into a prefix of its own, $cache/native/onnxruntime-<stamp>:
+# include/ (the C API headers), lib/libonnxruntime.so.<version> (and the
+# libonnxruntime.so and .so.1 links), the license and third-party notices
+# under share/, the stamp and manifest.sha256. Nothing is compiled: it is
+# Microsoft's prebuilt CPU release, the same pinned asset the voice bridge
+# uses. The script then points clients/go/.onnxruntime at the prefix (a
+# git-ignored link), where the VLA cgo flags and the Rust build look.
+# --print-onnxruntime prints where it goes. Only curl and tar are needed.
+if [ "$onnxruntime" -ne 0 ]; then
+  [ -n "$ORT_SHA256" ] || { echo "native.sh: no pinned ONNX Runtime release for $(uname -m)" >&2; exit 1; }
+  ostamp="onnxruntime $ORT_VERSION $ORT_SHA256
+arch $(uname -m)"
+  oprefix="${DAISUGI_ONNXRUNTIME_PREFIX:-$cache/native/onnxruntime-$(printf '%s\n' "$ostamp" | sha256_of | cut -c1-16)}"
+  if [ "$onnxruntime" -eq 2 ]; then
+    echo "$oprefix"
+    exit 0
+  fi
+  orebuild="rm -rf '$oprefix' && $0 --onnxruntime"
+  if [ -e "$oprefix/stamp" ] || [ -e "$oprefix/lib" ]; then
+    [ "$(cat "$oprefix/stamp" 2>/dev/null)" = "$ostamp" ] ||
+      { echo "native.sh: $oprefix holds another ONNX Runtime. To install again: $orebuild" >&2; exit 1; }
+    (cd "$oprefix" && sha256_check < manifest.sha256) ||
+      { echo "native.sh: a file in $oprefix does not match manifest.sha256. To install again: $orebuild" >&2; exit 1; }
+  else
+    for tool in curl tar; do
+      command -v "$tool" >/dev/null 2>&1 || { echo "native.sh: $tool is not on PATH" >&2; exit 1; }
+    done
+    mkdir -p "$work"
+    fetch "$ORT_URL" "$ORT_TGZ" "$ORT_SHA256"
+    part="$oprefix.part"
+    top="onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}"
+    rm -rf "$part"
+    mkdir -p "$part/share/licenses/onnxruntime"
+    tar -xzf "$work/$ORT_TGZ" -C "$part" --strip-components=1 \
+      "$top/include" "$top/lib/libonnxruntime.so.$ORT_VERSION" "$top/LICENSE" "$top/ThirdPartyNotices.txt"
+    mv "$part/LICENSE" "$part/ThirdPartyNotices.txt" "$part/share/licenses/onnxruntime/"
+    [ -f "$part/lib/libonnxruntime.so.$ORT_VERSION" ] ||
+      { echo "native.sh: the release holds no lib/libonnxruntime.so.$ORT_VERSION" >&2; exit 1; }
+    ln -s "libonnxruntime.so.$ORT_VERSION" "$part/lib/libonnxruntime.so.1"
+    ln -s "libonnxruntime.so.$ORT_VERSION" "$part/lib/libonnxruntime.so"
+    (cd "$part" && find include lib share -type f | LC_ALL=C sort | while IFS= read -r f; do sha256_of "$f"; done) > "$part/manifest.sha256"
+    printf '%s\n' "$ostamp" > "$part/stamp"
+    mv "$part" "$oprefix"
+  fi
+  ln -sfn "$oprefix" "$gomod/.onnxruntime"
+  echo "onnxruntime: $oprefix"
+  exit 0
+fi
+
 command -v zig >/dev/null 2>&1 || { echo "native.sh: zig $ZIG_VERSION is not on PATH; run harness/coppice/scripts/toolchain.sh" >&2; exit 1; }
 [ "$(zig version)" = "$ZIG_VERSION" ] || { echo "native.sh: zig is $(zig version), not $ZIG_VERSION" >&2; exit 1; }
 command -v "$cc" >/dev/null 2>&1 || { echo "native.sh: $cc is not on PATH (Arch: pacman -S gcc)" >&2; exit 1; }
+
+# --moonshine builds moonshine-cli (clients/native/moonshine-cli) into a
+# prefix of its own, $cache/native/moonshine-<stamp>: bin/moonshine-cli,
+# lib/libonnxruntime.so.1 (the program finds it through $ORIGIN/../lib),
+# the two licenses under share/, the stamp and manifest.sha256. Its stamp
+# hashes the Moonshine commit, the ONNX Runtime digest, the program's own
+# sources, zig, the architecture and the flags, so the Z3 prefix above is
+# never rebuilt for it. --print-moonshine prints where it goes. The build
+# needs cmake, git and curl, as the main build does.
+if [ "$moonshine" -ne 0 ]; then
+  [ -n "$ORT_SHA256" ] || { echo "native.sh: no pinned ONNX Runtime release for $(uname -m)" >&2; exit 1; }
+  src="$(cd "$gomod/../native/moonshine-cli" && pwd)"
+  mstamp="moonshine $MOONSHINE_COMMIT
+onnxruntime $ORT_SHA256
+sources $(cd "$src" && LC_ALL=C sha256_of CMakeLists.txt moonshine-cli.c no-diarizer.cpp no-zipvoice.cpp ../common/daisugi-native.h | sha256_of | cut -c1-64)
+zig $ZIG_VERSION
+arch $(uname -m)
+flags $MOONSHINE_FLAGS_REV"
+  mprefix="${DAISUGI_MOONSHINE_PREFIX:-$cache/native/moonshine-$(printf '%s\n' "$mstamp" | sha256_of | cut -c1-16)}"
+  if [ "$moonshine" -eq 2 ]; then
+    echo "$mprefix"
+    exit 0
+  fi
+  mrebuild="rm -rf '$mprefix' && $0 --moonshine"
+  if [ -e "$mprefix/stamp" ] || [ -e "$mprefix/bin" ]; then
+    [ "$(cat "$mprefix/stamp" 2>/dev/null)" = "$mstamp" ] ||
+      { echo "native.sh: $mprefix holds a build from other sources. To rebuild: $mrebuild" >&2; exit 1; }
+    (cd "$mprefix" && sha256_check < manifest.sha256) ||
+      { echo "native.sh: a file in $mprefix does not match manifest.sha256. To rebuild: $mrebuild" >&2; exit 1; }
+    echo "checked: $mprefix/bin/moonshine-cli"
+    exit 0
+  fi
+  for tool in cmake git curl; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "native.sh: $tool is not on PATH" >&2; exit 1; }
+  done
+  mkdir -p "$work/bin"
+  printf '#!/usr/bin/env bash\nexec zig c++ -mcpu=baseline "$@"\n' > "$work/bin/zig-c++"
+  printf '#!/usr/bin/env bash\nexec zig cc -mcpu=baseline "$@"\n' > "$work/bin/zig-cc"
+  chmod +x "$work/bin/zig-c++" "$work/bin/zig-cc"
+  fetch "$ORT_URL" "$ORT_TGZ" "$ORT_SHA256"
+  ort="$work/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}"
+  rm -rf "$ort"
+  tar -xzf "$work/$ORT_TGZ" -C "$work"
+  # Only core/ and the top-level files are checked out; blobs come on demand.
+  if [ ! -d "$work/moonshine/.git" ]; then
+    git clone --quiet --filter=blob:none --no-checkout "$MOONSHINE_REPO" "$work/moonshine"
+  fi
+  git -C "$work/moonshine" cat-file -e "$MOONSHINE_COMMIT^{commit}" 2>/dev/null ||
+    git -C "$work/moonshine" fetch --quiet --filter=blob:none origin "$MOONSHINE_COMMIT"
+  git -C "$work/moonshine" sparse-checkout set core
+  git -C "$work/moonshine" checkout --quiet --force --detach "$MOONSHINE_COMMIT"
+  [ "$(git -C "$work/moonshine" rev-parse HEAD)" = "$MOONSHINE_COMMIT" ] ||
+    { echo "native.sh: moonshine is not at $MOONSHINE_COMMIT" >&2; exit 1; }
+  # The build links Microsoft's release, not the copy in the Moonshine tree.
+  vend="$work/moonshine/core/third-party/onnxruntime"
+  cp -p "$ort/lib/libonnxruntime.so.$ORT_VERSION" "$vend/lib/linux/$ORT_DIR/libonnxruntime.so.1"
+  cp -p "$ort"/include/onnxruntime_*.h "$ort/include/cpu_provider_factory.h" "$vend/include/"
+  mapflags="-ffile-prefix-map=$work=/daisugi-build -fmacro-prefix-map=$work=/daisugi-build -fdebug-prefix-map=$work=/daisugi-build -ffile-prefix-map=$src=/daisugi-src -fmacro-prefix-map=$src=/daisugi-src"
+  # A build tree left by a stopped run is reused, so a rerun resumes.
+  cmake -S "$src" -B "$work/moonshine-build" \
+    -DMOONSHINE_CORE="$work/moonshine/core" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER="$work/bin/zig-cc" \
+    -DCMAKE_CXX_COMPILER="$work/bin/zig-c++" \
+    -DCMAKE_C_FLAGS="$mapflags" \
+    -DCMAKE_CXX_FLAGS="-fno-sanitize=undefined $mapflags"
+  cmake --build "$work/moonshine-build" --target moonshine-cli -j "$jobs"
+  part="$mprefix.part"
+  rm -rf "$part"
+  mkdir -p "$part/bin" "$part/lib" "$part/share/licenses/moonshine" "$part/share/licenses/onnxruntime"
+  cp "$work/moonshine-build/moonshine-cli" "$part/bin/moonshine-cli"
+  strip "$part/bin/moonshine-cli"
+  cp "$ort/lib/libonnxruntime.so.$ORT_VERSION" "$part/lib/libonnxruntime.so.1"
+  git -C "$work/moonshine" show "$MOONSHINE_COMMIT:LICENSE" > "$part/share/licenses/moonshine/LICENSE"
+  cp "$ort/LICENSE" "$ort/ThirdPartyNotices.txt" "$part/share/licenses/onnxruntime/"
+  (cd "$part" && find bin lib share -type f | LC_ALL=C sort | while IFS= read -r f; do sha256_of "$f"; done) > "$part/manifest.sha256"
+  printf '%s\n' "$mstamp" > "$part/stamp"
+  mv "$part" "$mprefix"
+  rm -rf "$work/moonshine-build" "$ort"
+  echo "done: $mprefix/bin/moonshine-cli"
+  exit 0
+fi
+
+# --parakeet builds parakeet-cli and parakeet-quantize
+# (clients/native/parakeet-cli) into a prefix of its own,
+# $cache/native/parakeet-<stamp>: bin/parakeet-cli, bin/parakeet-quantize,
+# the CrispASR and ggml licenses, the stamp and manifest.sha256. Both are
+# static apart from the C runtime. check-binary.sh must pass on both, or
+# nothing is installed. On x86_64 a CPU with AVX2, FMA, F16C and BMI2 gets
+# those in the ggml CPU backend (the stamp names the choice); every other
+# file is compiled for the baseline CPU, with -ffp-contract=off, so the
+# quantizer makes the same bytes on every box. --print-parakeet prints
+# where it goes.
+if [ "$parakeet" -ne 0 ]; then
+  src="$(cd "$gomod/../native/parakeet-cli" && pwd)"
+  common="$(cd "$gomod/../native/common" && pwd)"
+  isa=baseline
+  if [ "$(uname -m)" = x86_64 ] && grep -qw avx2 /proc/cpuinfo && grep -qw fma /proc/cpuinfo &&
+    grep -qw f16c /proc/cpuinfo && grep -qw bmi2 /proc/cpuinfo; then
+    isa=x86-64-v3
+  fi
+  pstamp="crispasr $CRISPASR_COMMIT
+crispasr-files $(sha256_of "$src/crispasr-files.sha256" | cut -c1-64)
+ggml $GGML_COMMIT $GGML_TREE_SHA256
+sources $(cd "$src" && LC_ALL=C sha256_of CMakeLists.txt parakeet-cli.c check-binary.sh ../common/daisugi-native.h | sha256_of | cut -c1-64)
+zig $ZIG_VERSION
+arch $(uname -m)
+isa $isa
+flags $PARAKEET_FLAGS_REV"
+  pprefix="${DAISUGI_PARAKEET_PREFIX:-$cache/native/parakeet-$(printf '%s\n' "$pstamp" | sha256_of | cut -c1-16)}"
+  if [ "$parakeet" -eq 2 ]; then
+    echo "$pprefix"
+    exit 0
+  fi
+  prebuild="rm -rf '$pprefix' && $0 --parakeet"
+  if [ -e "$pprefix/stamp" ] || [ -e "$pprefix/bin" ]; then
+    [ "$(cat "$pprefix/stamp" 2>/dev/null)" = "$pstamp" ] ||
+      { echo "native.sh: $pprefix holds a build from other sources. To rebuild: $prebuild" >&2; exit 1; }
+    (cd "$pprefix" && sha256_check < manifest.sha256) ||
+      { echo "native.sh: a file in $pprefix does not match manifest.sha256. To rebuild: $prebuild" >&2; exit 1; }
+    echo "checked: $pprefix/bin/parakeet-cli"
+    exit 0
+  fi
+  for tool in cmake git strings nm ldd; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "native.sh: $tool is not on PATH" >&2; exit 1; }
+  done
+  mkdir -p "$work/bin"
+  printf '#!/usr/bin/env bash\nexec zig c++ -mcpu=baseline -ffp-contract=off "$@"\n' > "$work/bin/zig-c++-nofma"
+  printf '#!/usr/bin/env bash\nexec zig cc -mcpu=baseline -ffp-contract=off "$@"\n' > "$work/bin/zig-cc-nofma"
+  chmod +x "$work/bin/zig-c++-nofma" "$work/bin/zig-cc-nofma"
+  # CrispASR: only the listed files, each checked.
+  cr="$work/crispasr"
+  if [ ! -d "$cr/.git" ]; then
+    git clone --quiet --filter=blob:none --no-checkout "$CRISPASR_REPO" "$cr"
+  fi
+  git -C "$cr" cat-file -e "$CRISPASR_COMMIT^{commit}" 2>/dev/null ||
+    git -C "$cr" fetch --quiet --filter=blob:none origin "$CRISPASR_COMMIT"
+  git -C "$cr" sparse-checkout set --no-cone $(awk '{print "/" $2}' "$src/crispasr-files.sha256")
+  git -C "$cr" -c submodule.recurse=false checkout --quiet --force --detach "$CRISPASR_COMMIT"
+  [ "$(git -C "$cr" rev-parse HEAD)" = "$CRISPASR_COMMIT" ] ||
+    { echo "native.sh: CrispASR is not at $CRISPASR_COMMIT" >&2; exit 1; }
+  (cd "$cr" && sha256_check < "$src/crispasr-files.sha256") ||
+    { echo "native.sh: a CrispASR file does not match crispasr-files.sha256" >&2; exit 1; }
+  extra="$(cd "$cr" && find . -type f -not -path './.git/*' | sed 's|^\./||' | LC_ALL=C sort |
+    comm -23 - <(awk '{print $2}' "$src/crispasr-files.sha256" | LC_ALL=C sort))"
+  [ -z "$extra" ] || { echo "native.sh: CrispASR files outside the list are checked out: $extra" >&2; exit 1; }
+  # ggml: the top files, cmake/, include/, the top of src/ and the CPU
+  # backend, without its LoongArch and SpacemiT code (China-based CPU
+  # makers; their files are compiled only for those CPUs anyway).
+  gg="$work/ggml"
+  if [ ! -d "$gg/.git" ]; then
+    git clone --quiet --filter=blob:none --no-checkout "$GGML_REPO" "$gg"
+  fi
+  git -C "$gg" cat-file -e "$GGML_COMMIT^{commit}" 2>/dev/null ||
+    git -C "$gg" fetch --quiet --filter=blob:none origin "$GGML_COMMIT"
+  git -C "$gg" sparse-checkout set --no-cone '/*' '!/*/' '/cmake/' '/include/' '/src/*' '!/src/*/' '/src/ggml-cpu/' '!/src/ggml-cpu/spacemit/' '!/src/ggml-cpu/arch/loongarch/'
+  git -C "$gg" checkout --quiet --force --detach "$GGML_COMMIT"
+  [ "$(git -C "$gg" rev-parse HEAD)" = "$GGML_COMMIT" ] ||
+    { echo "native.sh: ggml is not at $GGML_COMMIT" >&2; exit 1; }
+  got="$(cd "$gg" && find . -type f -not -path './.git/*' | LC_ALL=C sort | while IFS= read -r f; do sha256_of "$f"; done | sha256_of | cut -c1-64)"
+  [ "$got" = "$GGML_TREE_SHA256" ] ||
+    { echo "native.sh: the ggml tree hashes to $got, not the pinned $GGML_TREE_SHA256" >&2; exit 1; }
+  isaflags=()
+  if [ "$isa" = x86-64-v3 ]; then
+    isaflags=(-DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON)
+  fi
+  mapflags="-ffile-prefix-map=$work=/daisugi-build -fmacro-prefix-map=$work=/daisugi-build -fdebug-prefix-map=$work=/daisugi-build -ffile-prefix-map=$src=/daisugi-src -fmacro-prefix-map=$src=/daisugi-src -ffile-prefix-map=$common=/daisugi-common"
+  # A build tree left by a stopped run is reused, so a rerun resumes.
+  cmake -S "$src" -B "$work/parakeet-build" \
+    -DCRISPASR_SRC="$cr" -DGGML_SRC="$gg" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER="$work/bin/zig-cc-nofma" \
+    -DCMAKE_CXX_COMPILER="$work/bin/zig-c++-nofma" \
+    -DCMAKE_C_FLAGS="$mapflags" \
+    -DCMAKE_CXX_FLAGS="-fno-sanitize=undefined $mapflags" \
+    "${isaflags[@]}"
+  cmake --build "$work/parakeet-build" --target parakeet-cli parakeet-quantize -j "$jobs"
+  part="$pprefix.part"
+  rm -rf "$part"
+  mkdir -p "$part/bin" "$part/share/licenses/crispasr" "$part/share/licenses/ggml"
+  cp "$work/parakeet-build/parakeet-cli" "$work/parakeet-build/parakeet-quantize" "$part/bin/"
+  strip "$part/bin/parakeet-cli" "$part/bin/parakeet-quantize"
+  "$src/check-binary.sh" "$part/bin/parakeet-cli"
+  "$src/check-binary.sh" --rules "$part/bin/parakeet-quantize"
+  cp "$cr/LICENSE" "$part/share/licenses/crispasr/LICENSE"
+  cp "$gg/LICENSE" "$part/share/licenses/ggml/LICENSE"
+  (cd "$part" && find bin share -type f | LC_ALL=C sort | while IFS= read -r f; do sha256_of "$f"; done) > "$part/manifest.sha256"
+  printf '%s\n' "$pstamp" > "$part/stamp"
+  mv "$part" "$pprefix"
+  rm -rf "$work/parakeet-build"
+  echo "done: $pprefix/bin/parakeet-cli"
+  exit 0
+fi
 
 stamp="z3 $Z3_SHA256
 tree-sitter $TS_SHA256

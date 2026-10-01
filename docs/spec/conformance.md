@@ -191,8 +191,20 @@ by `clients/gate_cases.py` from the Python gate.
   `tier1` (the text of `{ROOT}/data/local_tier1.json`). 131 cases cover the
   limit escape, the line count, each rule field, the worker's host and
   grant, every format, an envelope that would deny the delegate call, and
-  the delegate call's path (RP-1 to RP-7). The gate cases now number
-  1,762; Go and Rust agree on all of them.
+  the delegate call's path (RP-1 to RP-7). 2026-10-01 added the gate
+  change rule and the per-command reading of the owner's verbs (`gate
+  change rule`, `tree rule compound`, `rank rule compound`, `owner chain`,
+  `label rule`, `owner rule shlex gap`; SW-1, SW-2, SW-12), the deadline at call time (`deadline`,
+  with `DAISUGI_GATE_NOW` in `env`; SW-4), the code write's gate check
+  (`graft delegate code write`; SW-9) and the graft trial (`graft trial`;
+  SW-13). Then the gate's own state (`gate state ...`, 157 cases; SW-17):
+  each write form into the gate root and the data dir's state paths, in
+  both modes, the reads and near misses that stay allowed (a sibling dir
+  with the same prefix, a read of the gate root), an operator ask, and
+  long `&&` and `sh -c` chains near the frame limit. Then an `llm_check`
+  through the claude-code backend (`llm claude ...`; PG-1): a fake
+  `claude`, laid out executable by the case, prints a fixed reply. The
+  gate cases now number 2,099; Go and Rust agree on all of them.
 
 Comparison is structural, field by field (`clients/gate_compare.py`), and
 each difference is classed by what it does to a host: **fail-open** (the
@@ -237,6 +249,10 @@ the Python store, matchers and CLI. They are synthetic and committed.
   (Go: `internal/verify/messages_test.go`; Rust:
   `pathways::verify::tests`); a refused skill delegation's message is the
   client's own.
+
+Three `import llm_check ...` cases put an envelope whose invariant asks a
+model through import, with no key, the old backend name and a port nothing
+listens on (PG-1).
 
 `clients/pathway_compare.py` compares a binary on all of them, checks
 that Python reads every database the binary wrote as the binary reads it,
@@ -326,26 +342,96 @@ and a receipt's `evidence_hash` are made stable: each hash is checked against
 its own row's evidence and recorded as `{HASH OK}` or `{HASH BAD}`.
 
 `clients/k2_compare.py --binary B` compares a client on all of them and checks
-that Python reads every journal and pathway store the client wrote. The Go
-and Rust binaries each agree on 109 of 116; the same 7 are refused as ruled
-(K2-3, K2-4, K2-5, K2-8, K2-R-1). CI runs it with `--max-refused 7`, so a
-binary that refused more would fail.
+that Python reads every journal and pathway store the client wrote. The
+cases include an `llm_check` on both backends (the fake `claude` and the
+fake model server answer only the exact payload) and aliases no registry
+resolves (PG-1, PG-2). The Go and Rust binaries each agree on 142 of 148;
+the same 6 are not ported as ruled (K2-3, K2-4, K2-5, K2-8, K2-R-1). CI runs
+it with `--max-refused 6`, so a binary that refused more would fail.
 
 ## weave cases
 
 `clients/fixtures/weave/`, written by `clients/weave_cases.py` from the
 oracle, checks `daisugi weave`: typed slots between steps, the plan's slot
 checks, the router's model for task steps, the filled step's rejection
-(halt and recompute), resume, and the agentic and parallel paths the ports
-refuse. The cases use the K2 cases' scratch HOME, fakes and normalization.
+(halt and recompute), resume, agentic steps, and the parallel path the
+ports refuse. The cases use the K2 cases' scratch HOME, fakes and
+normalization. For an agentic step the fake `claude` is a sub-agent: it
+runs each tool call of its answer through the gate hook its `--settings`
+name, and logs the verdicts and the envelopes registered in the gate root
+(PG-4).
 A case may run earlier commands with the same binary (`pre`), or lay out a
 state file with start marks for its plan file (`weave_marks`); a plan hash
 is minted like a run id (WV-R-11).
 
 `clients/weave_compare.py --binary B` compares a client as `k2_compare.py`
-does. The Go and Rust binaries each agree on 106 of 108; the same 2 are
+does. The Go and Rust binaries each agree on 119 of 120; the same 1 is
 refused as ruled (WV-R-10). A ranking id and a choice id are minted like a
 run id (RK-R-15).
+
+## Alias registry cases
+
+`clients/fixtures/alias/`, written by `clients/alias_cases.py` from the
+oracle in process, checks the alias registry (`aliases.AliasRegistry` and
+the seven system aliases), a library part no command reaches (PG-2, PG-5).
+Each case registers aliases in order, resolves expressions and looks
+names up, and records "ok", the resolved expression as `model_dump(mode=
+"json")` gives it, or the exception's class and text.
+
+`clients/alias_compare.py --probe P` runs a port's `alias-probe` on the
+cases file and compares each result as canonical JSON, so 1 and 1.0 differ.
+Go and Rust each agree on all 23.
+
+## Robotics cases
+
+`clients/fixtures/robotics/`, written by `clients/robotics_cases.py` from the
+oracle in process, checks the robotics executors (`executor_mujoco` and
+`vla_executor`), which no command of the oracle builds (RB-R-1). Each case
+is one of four kinds: a `MuJoCoExecutor` stepped directly (`steps`), a
+`Supervisor` with `robotics_executors` and, when the case names one, a
+`MockVLAExecutor` (`run`), the VLA scaffolding alone (`vla`), or an
+offscreen render (`render`). The scenes are the repository's two MJCF
+fixtures and three small ones in the fixture directory; the plans are the
+pick-place sequence, the dish-wash kit's moves as joint moves (RB-R-6),
+every step type, the IK reaching and failing, the torque and contact
+guards, `configure_from_envelope`, the mock policy, and supervised runs
+with receipts. A case records the results or the exception's class and
+text, the guard settings, the session and receipts of a run, and the final
+qpos, qvel, ctrl, contact count and named body and site positions. The
+oracle needs the mujoco wheel (3.12.0, pinned in `uv.lock`) with
+`MUJOCO_GL=disable` to write them; the compare does not.
+
+`clients/robotics_compare.py --probe P [--probe P2]` runs each port's
+`robot-probe` on the cases file and the repository root, drops the run's
+ids, times and durations, checks each receipt's `evidence_hash` against the
+oracle's `compute_evidence_hash` of that receipt's own evidence (RB-R-5),
+and compares each result with the expectation as canonical JSON, every
+float to the last bit (RB-R-3). The 5 render cases have no expectation:
+every probe must draw the same RGB bytes, and an image of one color fails
+(RB-R-4). The probes link `libmujoco.so` dynamically (`LD_LIBRARY_PATH`, or
+`--mujoco-lib`). Go and Rust each agree on all 74 oracle cases, and with
+each other on the 5 render cases. Before the executors were wired, the Go
+probe answered 77 of the 79 cases wrongly.
+
+## SmolVLA cases
+
+`clients/fixtures/vla/`, written by `clients/vla_cases.py` in the export
+environment (`clients/vla/requirements.txt`, with lerobot), checks the
+SmolVLA executor, which runs `lerobot/smolvla_base` from three pinned ONNX
+graphs (rulings VL-R-1 to VL-R-7). `tokens.json` holds the token ids of 30
+instructions, which each port's tokenizer test must give exactly;
+`process.json` the image resize, the time embeddings and the seeded noise,
+each within 1e-6; `chunk.json` one action chunk of the FP32 PyTorch policy,
+which each port's policy test must give within 1e-3; `loop.json` the
+oracle's closed loop in the pick-place scene, 5 runs with each run's state,
+image, chunk and qpos. `clients/vla_compare.py --probe P [--probe P2]
+--model DIR` runs each port's `vla-probe`: the replayed runs (each run's
+own state and image) and the first free run must be within 1e-3 of the
+oracle, and the two ports must agree with each other on every free run.
+The later free runs against the oracle are reported, not held (VL-R-7).
+Measured: replay 3.7e-6 at most in Go and Rust, the first free run 1.7e-6,
+and Go and Rust the same bits on all 5 free runs. The graphs are not in
+CI, so these run on a box that holds the pinned model.
 
 ## rank cases
 
@@ -363,6 +449,43 @@ Help texts and click's usage errors are left to the CLI cases (RK-R-11).
 `clients/rank_compare.py --binary B` compares a client as `garden_compare.py`
 does. The Go and Rust binaries each agree on all 135; CI runs it with
 `--max-refused 0`.
+
+## tree cases
+
+`clients/fixtures/tree/`, written by `clients/tree_cases.py` from the
+oracle, checks the delegation tree: `daisugi tree check` over every part of
+the edge rule (stakes, custom steps, budgets, the deadline, the interpreter
+policy, invariants and postconditions by value, robot bounds, globs, hosts,
+shell heads, opaque invariants, the Z3 proof) and its bad input; `tree
+root`, `spawn`, `end`, `answer` and `status` over a ledger and registered
+envelopes laid out as the commands write them (budgets reserved and given
+back, refusals, the fourth refused proposal as an ask, the operator's
+answer, rows that do not read or fit); and `gate register --parent`. Times
+are laid out relative to the run; deadlines lie in 2030, outside the
+normalizer's window (TR-R-12). No case calls a model.
+
+`clients/tree_compare.py --binary B` compares a client as `rank_compare.py`
+does. The Go and Rust binaries each agree on all 134; CI runs it with
+`--max-refused 0`. The gate cases `tree rule ...` (31) check the hard deny of
+the tree's write verbs, `gate register`, `gate init` and `start`.
+
+## Model catalog cases
+
+`clients/fixtures/models/`, written by `clients/models_cases.py` from the
+oracle, checks `daisugi models list`, `search` and `use`: the default for
+each hardware class (from `OPENDAISUGI_VOICE_HARDWARE`, never the box), a
+recorded choice and the files that do not read as one, ids of every kind
+kept as given (a Hugging Face id, a local path, a GGUF file, non-ASCII,
+spaces) and the blank id, and search's filters, encoding and errors.
+`search` talks to a fake Hugging Face API on loopback (`HF_ENDPOINT`) that
+answers only the exact request target the case names; the targets asked
+are part of the fixture. A dead port and `HF_HUB_OFFLINE` give the
+offline line; an HTTP status and answers that are not a JSON list give
+the others (MC-R-4). Help texts are left to the CLI cases.
+
+`clients/models_compare.py --binary B` compares a client as
+`rank_compare.py` does, and compares the targets asked. The Go and Rust
+binaries each agree on all 68; CI runs it with `--max-refused 0`.
 
 ## MCP server, onboarding and tiers setup cases (stage K3)
 
@@ -384,7 +507,9 @@ and normalization. Every case puts a fake `nvidia-smi` first on PATH.
   each with its own mtime. A trace id's hash of the transcript's path is
   written as the path it stands for (K3-12).
 - A setup case's hardware budget comes from the fake GPU; the CPU count and
-  memory are placeholders, so the fixtures replay on any box (K3-9).
+  memory are placeholders, so the fixtures replay on any box (K3-9). The
+  36 setup cases were recorded again on 2026-10-03 for the catalog's
+  candidate families and the step that names `daisugi models` (MC-R-1).
 
 `clients/k3_compare.py --binary B` compares a client on all of them and
 checks that Python reads every journal and pathway store the client wrote.
@@ -399,7 +524,15 @@ The 36 `delegate` cases (router part 0) lay out a file, a rule and
 on the fake model server (`OPENAI_API_BASE`); a remote worker names a
 `.invalid` host and is reached through the fake proxy, so no real host is
 named or reached. Each call's journal row is in the tree, its time as
-`{MS}` (RP-8 to RP-10).
+`{MS}` (RP-8 to RP-10). 41 `delegate code write` cases (SW-6 to SW-8) give
+the worker's draft as the fake server's reply: a whole file, diffs that
+apply and that do not (each reason the applier gives), a new target, line
+endings, a symlink, and the refusals. A code write refuses a symlinked
+target (SW-18), and two cases hold the 512 KiB draft limit in characters,
+not bytes (SW-19). Ten cases put an `llm_check`, an alias and an expr that
+is not a dict through `verify_completed_step` and `verify_plan` (PG-1,
+PG-2). The suite now holds 303 cases; Go and Rust each agree on 299, with
+the same 4 refused or not ported.
 
 ## Module map, dashboard and metrics cases (stage K4)
 
@@ -495,6 +628,129 @@ checks that Python reads every journal the client wrote. The Go and
 Rust binaries each agree on 198 of 199 and refuse the same 1 (F-4); CI
 runs it with `--max-refused 1` for both.
 
+## coppice protocol cases (stage I)
+
+The Rust coppice is checked against the Go coppice, not the Python
+oracle: Go is the reference. `clients/coppice_compare.py --go GO --rust
+RUST` replays each file of `harness/coppice/testdata/protocol` on one
+connection to a fresh Go server and a fresh Rust server, each in its own
+scratch HOME with its own socket and data dir. A case passes when both
+replies match the corpus line (the matcher in
+`tests/floor/protocol_match.py`) and the two replies are equal after each
+server's paths become placeholders and the per-process values (`pid`,
+`uptime_s`, `ts`, `quiet_for`, `ended_at`) are masked (CP-R-1, CP-R-2).
+A Rust reply of `no command` counts as refused; a Go reply that fails its
+corpus line is go-fail. Slice 1: 70 of 70 cases agree, none refused.
+
+Slice 2 adds three suites. `harness/coppice-rs/cases/<slice>/*.jsonl` are
+cases in the corpus format, with `#!` directives that add `coppice.toml`
+lines, open an event watch, or retry a read-only verb until its reply
+matches. The screens suite is built at run time from
+`harness/coppice/testdata/screens`: a fake harness draws each fixture in
+a pane exactly its size, and `pane.explain` must give the fixture's own
+state and rule. The events suite reports each `testdata/events` fixture
+for a pane of its own. The values that follow a tick or a clock are
+masked too (CP-R-13). Once per file the events both servers sent are
+compared through an event view that leaves out process and manifest
+state events and frames that are not full (CP-R-11). Slice 2: 307 of 307
+cases and 20 of 20 event views agree, none refused. CI runs every suite
+in the `coppice-rs` job with `--max-refused 0`.
+
+Slice 3 adds three directives. `#!repo` makes a scratch git repo per
+side, with a cleared environment. `#!tree` compares the two data dirs as
+file trees: each path, its type and mode, and its text after the
+normalization, with each `ended_at` and the start lock's pid masked
+(CP-R-19). `#!restart` stops both servers and starts them again on the
+same data dirs, keeping the names bound so far, so a restore is checked
+both by its replies and by the files it writes. Slice 3: 408 of 408
+cases, 25 of 25 event views and 9 of 9 tree views agree, none refused.
+
+Slice 4 adds headless panes. `#!env` sets a server's environment, so each
+adapter runs a fake harness (COPPICE_CLAUDE_BIN and the like), and
+`#!mask` masks one key in one file, which the ask deadline of pi and
+opencode needs (CP-R-25). The fakes are Go's for claude, codex and sprig,
+and two beside the cases in `harness/coppice-rs/cases/headless` for pi
+and opencode; the opencode fake replays Go's captured OpenCode stream.
+Each side's scratch HOME holds the OpenCode gate plugin. An adapters
+suite replays each stream fixture of `harness/coppice/testdata/adapters`
+in a headless pane. A minted sprig session id and the done of an
+operator close are normalized (CP-R-24, CP-R-26). Slice 4: 552 of 552
+cases, 35 of 35 event views and 17 of 17 tree views agree, none refused.
+
+Slice 5 adds the command line. A case line may be a local request the
+driver runs itself (`clients/coppice_local.py`): a run of the side's own
+binary with the socket and data dir the driver names, compared by its
+exit code, stdout and stderr; the same on a pseudo terminal, whose screens
+a small terminal model reads, for attach; tmux on a scratch socket for
+the mirror; file reads, writes, counts and listings; and the lines of the
+server log. The masks of CP-R-2 and CP-R-13 apply inside printed text too
+(CP-R-29). `#!plugins` puts plugin directories in each side's plugin
+directory. A keys suite sends each key of `harness/coppice/testdata/keys.json`
+through `coppice pane send-keys` to a pane that prints the bytes it reads.
+The leak check also finds any process that names a side's scratch dir: a
+detached server, a policy, the voice server, a tmux server. Slice 5: 916
+of 916 cases, 48 of 48 event views and 17 of 17 tree views agree, none
+refused. The unknown-verb message is now compared whole (CP-R-1 retired).
+
+Slice 6a adds the web floor. A web suite (`--suite web`, the files of
+`harness/coppice-rs/cases/web`) starts each side's `coppice web serve` or
+`coppice web` on two loopback ports of a scratch range, given to cases as
+`{ADDR}` and `{ADDR2}`, and drives it with two more local requests: `http`
+sends one raw HTTP/1.1 request, plain or over TLS checked against the
+side's own CA, and is compared by status, every header but Date, and the
+body (or whether the body equals a file, for the page Go ships and a
+side's own CA); `ws` opens a websocket, sends lines and is compared by
+the handshake, the reply frames and the close. A `cli` run with
+`"peer": true` runs the other side's binary on this side's data dir, so
+one CA directory is read by both ports. The lines of Go's default logger,
+a minted token, the event ring's start time and the lengths that follow a
+masked value are normalized (CP-R-33 to CP-R-35). Slice 6a: 395 of 395
+web cases and 13 of 13 event views agree, and the whole compare, 1311 of
+1311 cases, 61 of 61 event views and 17 of 17 tree views, none refused.
+
+Slice 6b adds the floor on a terminal, compared as a screen. A case file
+in `harness/coppice-rs/cases/tui` starts a second scratch server for each
+side and runs that side's binary as the floor in one of its panes, at a
+fixed size, against the case's own server; keys go in with `pane
+send-keys` and `send-text`. A seventh local request, `screen`, reads the
+floor's pane at a checkpoint through that server's libghostty-vt (a
+view-only attach with no hello, and its first full frame) as plain rows
+and the cursor, once it holds the checkpoint's text and two frames 400 ms
+apart agree. Ages, the padding after them and a row's cut tail are
+masked (CP-R-41). Slice 6b: 230 of 230 floor-screen cases, 3 of 3 event
+views and 2 of 2 tree views agree, and the whole compare, 1541 of 1541
+cases, 64 of 64 event views and 19 of 19 tree views, none refused.
+
+## sprig cases (stage J)
+
+The Rust sprig is checked against the Go sprig, as the Rust coppice is
+against the Go coppice: sprig has no Python side.
+`clients/sprig_compare.py --go DIR --rust DIR` runs each case of
+`clients/sprig_cases.py` on both sides, each in a scratch root with its
+own HOME and TMPDIR, the work dir as the cwd, and `PATH` set to the
+side's fakes and `/usr/bin:/bin`. The fakes are a `claude` that answers
+from the case's script and records argv, cwd and stdin; a gate that rules
+by the case's rules and records each payload; and a local API server that
+records each request's path, body and the four headers sprig sets, over
+http or over https with a scratch CA. A case passes when the exit code,
+stdout, stderr, every recorded call and request, and the files of the
+work dir and the session dir agree after the normalization of SP-R-1:
+paths and ports become placeholders, ids are renamed by first appearance,
+and clock values are masked. A Rust "not ported" counts as refused; a
+Rust side that refuses fewer gate calls than Go, or lets a hook call
+through that Go blocks, is classed fail-open.
+
+The cases cover the command line and its flags, the loop on the claude
+backend (each tool, the fences, the nudge, the turn budget, envelope
+errors, raw bytes), the process gate (allow, deny, its reason, a missing
+or broken gate command, the timeout, the cwd and the session id it is
+sent), the session tree and its resume, the API backend (tool use,
+errors, chunked replies, https, a refused connection), sprig-hook,
+sprig-mcp and weave. With `--daisugi [LABEL=]PATH`, six more run through
+each real daisugi given, after `gate init` in the side's HOME. 185 of 185
+agree, 12 of them through the real Go and Rust daisugi, none refused. CI
+runs it in the `sprig-rs` job with `--max-refused 0`.
+
 ## Gateway cases
 
 A sixth kind checks the token-saving gateway and its router:
@@ -535,7 +791,10 @@ Python CLI. They are synthetic and committed.
   `{GW}`, `{UP}` and `{SY}`, pids and times near the run are hidden, and a
   turn's `elapsed_ms` is `{MS}` (RP-11). The `router status measure` and
   `router status delegate` cases lay out turns, delegation rows and graft
-  records on fixed dates (RP-12).
+  records on fixed dates (RP-12). The `router status trial` cases lay out
+  a trial rule, graft records with arms, labels and transcripts under
+  `{HOME}` (SW-13 to SW-15), and the `router label` cases write and refuse
+  labels (SW-10).
 
 `clients/gateway_compare.py --binary B` compares a binary on all of them;
 it takes the Go client's `clients/go/daisugi` and the Rust client's
@@ -590,6 +849,12 @@ agree, are refused and are not ported in each (C-R).
 OpenCode ask the gate: the oracle and both binaries print it word for
 word.
 
+`verify *` cases run `daisugi verify` on two files (a verify line's
+duration is `{MS}`), and `hook report *` cases send one event on stdin
+with the gate root's parent on a file, so the best-effort session tree
+append writes nothing (PG-6). Of the 609 CLI cases, Go and Rust each
+agree on 591, with the same 9 not ported and 9 refused.
+
 ## Resident gate cases
 
 An eighth kind checks the resident gate, `daisugi gate serve`, the
@@ -632,6 +897,85 @@ every observation. A reply that allows where the oracle's denies is
 fail-open, a blocker; a deny where it allows is stricter. `--oracle`
 runs the Python server again to show a stale fixture, and both report
 the p50 of a gate decision over the socket.
+
+## Voice bridge cases (stage H)
+
+`clients/fixtures/voice/`, written by `clients/voice_cases.py` from the
+oracle, checks the voice bridge. There are three kinds of case:
+
+- A probe case is one query of a pure part: the pins, the prereq check,
+  the whisper-cli, moonshine-cli and parakeet-cli command lines and the
+  output rule, picking an engine (with no voice config too, on the
+  hardware a case names), the hardware rule itself (`choose_engine`), the
+  resident child run through a fake engine (one load and many clips, a
+  crash and the restart, a malformed reply, a slow load, a failed load,
+  clips refused while it loads, a clip timeout), how a child's line is
+  read, the pinned model fetch
+  against a fake host or a closed port, WAV reading as
+  Python's `wave` module reads it, the linear resample, multipart, the arm
+  grant files, deliver's one arm decision, cleanup with a scripted model,
+  the push-to-talk state machine (key events in; stream reads, client
+  calls and printed lines out), and the HTTP client against a canned
+  server. `clients/voice_probe_oracle.py` answers for the oracle; a port
+  answers with its `voice-probe` binary.
+- A cli case runs `daisugi voice arm`, `disarm`, `ptt` (only the paths
+  that open no microphone) and `serve` (only the paths that stop before or
+  at the bind) in a scratch HOME.
+- A server case starts `daisugi voice serve` and sends raw HTTP requests.
+  The engine is a fake `whisper-cli` that logs its argv and the SHA-256
+  of the clip it was given, then prints a fixed transcript, or a fake
+  resident `moonshine-cli` or `parakeet-cli` (`clients/fake_resident.py`)
+  that speaks the daisugi-voice-1 protocol and loads, answers, crashes or
+  stalls as the case says, logging each start, clip and clean end. A step
+  may be sent again while the server answers `engine_loading`; only its
+  last answer is kept, so a restart's timing never reaches a fixture. Each
+  case also counts the fake's runs still alive after the server stopped. The pane
+  backend is a fake coppice socket in the scratch directory, named by
+  `floor.coppice_socket`, that logs every line. The cleanup model is a
+  fake upstream on loopback. PATH holds only the case's fake tools, so
+  ffmpeg, whisper-cli, moonshine-cli, parakeet-cli, tmux and herdr exist
+  exactly when a case says so. `OPENDAISUGI_MOONSHINE_BASE_URL` and
+  `OPENDAISUGI_PARAKEET_BASE_URL` point the model hosts at a closed
+  loopback port unless a case serves a fake one,
+  `OPENDAISUGI_VOICE_HARDWARE` gives every case the same desktop (16 GB,
+  8 cores, no GPU) unless it names other hardware, and the oracle runs
+  with faster_whisper hidden, as the binaries are built.
+
+No case uses a real model, a microphone or a real coppice server. Paths
+are `{W}` and `{HOME}`, the port `{PORT}`, the real-time factor `{RTF}`
+and times `{T}`. `port_expect` holds the fields a ruling changes
+(clients/ADJUDICATIONS.md, VO-n).
+
+`clients/voice_compare.py --binary B --probe P` runs every case on a port.
+A port that answers 2xx where the oracle refuses, or reaches a pane the
+oracle does not, is fail-open, a blocker. The Go and Rust binaries each
+agree on all 555 (371 probe, 134 cli, 50 server); CI runs it with
+`--max-refused 0`.
+
+## ML pack cases
+
+`clients/fixtures/pack/`, written by `clients/pack_cases.py` from the
+oracle, checks `daisugi pack list|install|remove|status|bundle|run` and
+`daisugi lora train` (rulings PK-R-1 to PK-R-11). Each case is a list of
+steps in one scratch directory: commands, and edits of a file between
+them. A fake server on a loopback port serves a fake CPython tarball and
+a PEP 503 index of three tiny wheels (`clients/fixtures/pack/assets`,
+made by `clients/pack_fake.py`); the fake catalog names them through
+`OPENDAISUGI_PACK_CATALOG`. The fake CPython runs the system's
+`/usr/bin/python3`, so `venv` and pip are real. The 24 cases cover the
+install from the index and from a bundle directory or `.tar`, hash
+mismatches of the tarball (served and bundled) and of a wheel, a missing
+wheel or tarball, `--force`, a stale lock, a changed worker file, `bundle`
+to a directory and to a tar (byte for byte the same tar in all three, a
+PAX header for the long wheel name), the worker protocol through its test
+jobs (progress, result, error, a worker that dies), a system pack, and
+`lora train` through the pack. Each step's exit code, stdout and stderr,
+the tree after the last step (a venv's inside left out) and the paths the
+fake server was asked are held byte for byte. The system Python's
+version is `{PYVER}`, the scratch directory `{WORK}`, the port `{PORT}`.
+
+`clients/pack_compare.py --binary B [--oracle]` runs them. Go and Rust
+each agree on all 24.
 
 ## Versioning
 

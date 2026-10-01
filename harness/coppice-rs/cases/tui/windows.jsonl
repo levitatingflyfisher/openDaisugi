@@ -1,0 +1,205 @@
+# The floor on a wide terminal, 200 columns by 50 rows: the rail and two
+# live windows beside it. The floor runs in a pane of the alt server, as in
+# rail.jsonl, and each "screen" is a checkpoint read through that server's
+# libghostty-vt. The windows show the case server's panes through the
+# floor's own attaches. A pane that prints is read only after 6 s of quiet,
+# so its state does not follow the pty's timing. Every harness is a fake.
+# Pane ids on the case's server: w1:p1 ask, w1:p2 cat, w1:p3 idle, w1:p4
+# pi (headless, on the fake pi).
+#!config default = "sh"
+#!config [harness.sh]
+#!config command = "/bin/sleep"
+#!config args = ["600"]
+#!env COPPICE_PI_BIN={FIXTURES}/adapters/fake-pi.sh
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sleep", "600"], "label": "e2e ask"}
+{"id": "$id", "ok": true, "result": {"pane": "$ask"}}
+{"id": "p2", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/cat"], "label": "e2e cat"}
+{"id": "$id", "ok": true, "result": {"pane": "$cat"}}
+{"id": "p3", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sleep", "600"], "label": "e2e idle"}
+{"id": "$id", "ok": true, "result": {"pane": "$idle"}}
+{"id": "p4", "cmd": "pane.create", "kind": "headless", "harness": "pi", "cwd": "{START}", "label": "e2e pi"}
+{"id": "$id", "ok": true, "result": {"pane": "$pi"}}
+{"id": "r1", "cmd": "pane.report_state", "pane": "$ask", "event": {"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": "$ask", "state": "blocked", "source": "gate", "ask": {"id": "toolu_02", "tool": "Write", "summary": "src/main.py", "deadline": 4102444800, "tier": "undoable"}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": {"pane": "$ask", "state": "blocked", "source": "gate"}}
+{"id": "a1", "cli": ["server", "start"], "alt": true, "autostart": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "a2", "cli": ["pane", "create", "--json", "--label", "floor", "--kind", "pty", "--cols", "200", "--rows", "50", "--cwd", "{START}", "--", "/usr/bin/env", "-u", "COPPICE_PANE", "{BIN}", "--socket", "{SOCK}", "--data-dir", "{DATA}"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# The floor opens with the agent that needs you in a window, typing there.
+{"id": "open", "screen": "w1:p1", "alt": true, "until": "typing here"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# The leave key gives the keys back to the rail.
+{"id": "k1", "cli": ["pane", "send-keys", "w1:p1", "ctrl+space"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "rail", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# Enter on the cat row types in its window; what is typed reaches cat.
+{"id": "k2", "cli": ["pane", "send-keys", "w1:p1", "down"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k3", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "typing-cat", "screen": "w1:p1", "alt": true, "until": "typing here \u00b7 ctrl-space leaves"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "k4", "cli": ["pane", "send-text", "w1:p1", "hello", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k5", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "quiet1", "sleep": 6500}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "typed", "screen": "w1:p1", "alt": true, "until": "hello"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "k6", "cli": ["pane", "send-keys", "w1:p1", "ctrl+space"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# A number key puts the row under the cursor in that window.
+{"id": "k7", "cli": ["pane", "send-keys", "w1:p1", "down"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k8", "cli": ["pane", "send-text", "w1:p1", "1", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "window1", "screen": "w1:p1", "alt": true, "until": "1\u203a e2e idle"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# The layout words.
+{"id": "w1t", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w1w", "cli": ["pane", "send-text", "w1:p1", "rotate", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w1e", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "rotated", "screen": "w1:p1", "alt": true, "until": "2\u203a e2e idle"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "w2t", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w2w", "cli": ["pane", "send-text", "w1:p1", "swap 1 2", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w2e", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "swapped", "screen": "w1:p1", "alt": true, "until": "1\u203a e2e idle"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "w3t", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w3w", "cli": ["pane", "send-text", "w1:p1", "layout all", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w3e", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "layout-all", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "w4t", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w4w", "cli": ["pane", "send-text", "w1:p1", "lock", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w4e", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w5t", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w5w", "cli": ["pane", "send-text", "w1:p1", "rotate", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w5e", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "locked", "screen": "w1:p1", "alt": true, "until": "Layout is locked. Type unlock first."}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+#!tree
+{"id": "w6t", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w6w", "cli": ["pane", "send-text", "w1:p1", "unlock", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w6e", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w7t", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w7w", "cli": ["pane", "send-text", "w1:p1", "reset", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w7e", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "reset", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "w8t", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w8w", "cli": ["pane", "send-text", "w1:p1", "layout focus", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w8e", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "focus", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# A headless agent's window edits its own input line, and Enter sends it.
+{"id": "k9", "cli": ["pane", "send-keys", "w1:p1", "down"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k10", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "headless", "screen": "w1:p1", "alt": true, "until": "This agent takes whole messages."}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "k11", "cli": ["pane", "send-text", "w1:p1", "hi", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "headless-typed", "screen": "w1:p1", "alt": true, "until": "> hi"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "k12", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "quiet2", "sleep": 6500}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "headless-answered", "screen": "w1:p1", "alt": true, "until": "you said"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "k13", "cli": ["pane", "send-keys", "w1:p1", "esc"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "headless-left", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# zoom attaches the row under the cursor full screen; the leave key comes back.
+{"id": "k14", "cli": ["pane", "send-keys", "w1:p1", "up"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w9t", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w9w", "cli": ["pane", "send-text", "w1:p1", "zoom", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w9e", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "zoomed", "screen": "w1:p1", "alt": true, "until": "leave"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "k15", "cli": ["pane", "send-keys", "w1:p1", "ctrl+space"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "unzoomed", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# The mouse: the close mark of window 2's header asks to stop its agent.
+{"id": "m1", "cli": ["pane", "send-text", "w1:p1", "\u001b[<0;200;4M", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "click-close", "screen": "w1:p1", "alt": true, "until": "Enter stops it, Esc keeps it."}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "m2", "cli": ["pane", "send-keys", "w1:p1", "esc"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "close-kept", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# The release a terminal sends after that press does not answer the
+# question: it stays open until a key (CP-R-44, retired).
+{"id": "m1b", "cli": ["pane", "send-text", "w1:p1", "\u001b[<0;200;4M", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "m1br", "cli": ["pane", "send-text", "w1:p1", "\u001b[<0;200;4m", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "close-released", "screen": "w1:p1", "alt": true, "until": "Enter stops it, Esc keeps it."}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "m2b", "cli": ["pane", "send-keys", "w1:p1", "esc"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "close-kept-2", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# A press and a release on a rail row puts its agent in a window, typing.
+{"id": "m3", "cli": ["pane", "send-text", "w1:p1", "\u001b[<0;6;7M", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "m3r", "cli": ["pane", "send-text", "w1:p1", "\u001b[<0;6;7m", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "click-row", "screen": "w1:p1", "alt": true, "until": "typing here"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "m4", "cli": ["pane", "send-keys", "w1:p1", "ctrl+space"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "click-left", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# A press on a row and a release over window 2 drags the agent there.
+{"id": "m5", "cli": ["pane", "send-text", "w1:p1", "\u001b[<0;6;5M", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "m5r", "cli": ["pane", "send-text", "w1:p1", "\u001b[<0;150;10m", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "dragged", "screen": "w1:p1", "alt": true, "until": "2\u203a e2e ask"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# The wheel does nothing.
+{"id": "m6", "cli": ["pane", "send-text", "w1:p1", "\u001b[<64;6;6M", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "wheel", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "k16", "cli": ["pane", "send-keys", "w1:p1", "ctrl+c"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "z", "cli": ["server", "stop"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}

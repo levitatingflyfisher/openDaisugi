@@ -32,6 +32,7 @@ from pathlib import Path
 from opendaisugi.claude_code_llm import call_claude_p_sync
 from opendaisugi.executor import ExecutorResult, truncate_output
 from opendaisugi.gate import gate_settings_json, register_envelope
+from opendaisugi.hook import _safe_session_id
 from opendaisugi.models import AgenticStep, Envelope
 from opendaisugi.verify import _AGENTIC_TOOL_CAPABILITIES
 
@@ -76,8 +77,8 @@ class AgenticExecutor:
         self.last = _LastAgentic()
         self.last_gate_root: Path | None = None
 
-    def _derive_allowed_tools(self, step: AgenticStep) -> list[str]:
-        perms = self.envelope.permissions
+    def _derive_allowed_tools(self, step: AgenticStep, envelope: Envelope) -> list[str]:
+        perms = envelope.permissions
         allowed: list[str] = []
         for tool in step.tools:
             cap = _AGENTIC_TOOL_CAPABILITIES.get(tool)
@@ -110,7 +111,17 @@ class AgenticExecutor:
                 f"agentic workspace '{step.workspace}' does not exist or is not a directory"
             )
 
-        allowed = self._derive_allowed_tools(step)
+        # The edge: the sub-agent's envelope must fit inside the caller's,
+        # strict and fail closed, before anything starts. A step with no
+        # child envelope restates the caller's own, which fits.
+        from opendaisugi.tree import edge_ok
+
+        edge = edge_ok(self.envelope, step.child_envelope or self.envelope)
+        if not edge.holds or edge.child is None:
+            return _fail("the child envelope is refused: " + "; ".join(edge.reasons))
+        child = edge.child.model_copy(update={"parent_envelope": self.envelope.id})
+
+        allowed = self._derive_allowed_tools(step, child)
         if not allowed:
             return _fail(
                 f"no requested tool is backed by the envelope "
@@ -122,14 +133,16 @@ class AgenticExecutor:
         # or envelope mid-session.
         gate_root = Path(tempfile.mkdtemp(prefix="daisugi-agentic-gate-"))
         self.last_gate_root = gate_root
-        register_envelope(self.envelope, root=gate_root)
+        # The executor, not the sub-agent, picks the session the envelope
+        # binds to, and pins the gate to it: the sub-agent's payload cannot
+        # name another session, and no call falls back to a default.
+        session = "agentic-" + _safe_session_id(step.id)
+        register_envelope(child, session_id=session, root=gate_root)
         settings = gate_settings_json(
             mode="enforce",
             root=gate_root,
             captures_root=(gate_root / "captures") if self.capture else None,
-            # Pin the envelope: the sub-agent's payload cannot name a
-            # different (more permissive) registered session.
-            session="default",
+            session=session,
         )
 
         extra_args: list[str] = [

@@ -2,9 +2,12 @@ package verify
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+
+	"daisugi-verify/internal/pyjson"
 )
 
 // translatePyRegex bridges the escapes where Python's `re` and Go's RE2
@@ -238,10 +241,56 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 	case LLMCheck:
 		return false, fmt.Errorf("LLMCheck must be evaluated via evaluate_llm_check, not _eval_scalar")
 	case AliasRef:
-		return false, fmt.Errorf("unresolved alias reference %q; resolve aliases before evaluation", e.Name)
+		return false, fmt.Errorf("unresolved alias reference '%s'; resolve aliases before evaluation", e.Name)
 	default:
 		return false, fmt.Errorf("unknown predicate op: %v", expr.Op())
 	}
+}
+
+// LLMVerdict is llm_check.LLMCheckResult, and Unported names a call the
+// binary does not make the oracle's way ("" when it made it).
+type LLMVerdict struct {
+	Satisfied bool
+	Reason    string
+	Errored   bool
+	Unported  string
+}
+
+// LLM is llm_check.run_llm_check(rule, payload), payload being
+// json.dumps(payload, default=str). A command that verifies sets it once,
+// before its first verify, as the oracle's evaluator calls the one module
+// function. Nil leaves every llm_check an evaluation error.
+var LLM func(rule, payload string) LLMVerdict
+
+// WordedEvalError reports an evaluation error the binary words as the
+// oracle does at every caller: an llm_check that failed or was blocked,
+// and an alias left unresolved. A caller that words no other evaluation
+// error refuses the rest.
+func WordedEvalError(err error) bool {
+	m := err.Error()
+	if strings.HasSuffix(m, " is not in this binary yet") {
+		return false
+	}
+	return strings.HasPrefix(m, "error: llm_check call failed: ") ||
+		strings.HasPrefix(m, "llm_check blocked for physical stakes") ||
+		strings.HasPrefix(m, "unresolved alias reference '")
+}
+
+// llmPayload is json.dumps({"task": plan.task, "steps": step_dicts}),
+// each step as it was read. False when a step was not read from JSON.
+func llmPayload(plan ActionPlan) (string, bool) {
+	steps := make([]any, len(plan.Steps))
+	for i, s := range plan.Steps {
+		if len(s.JSON) == 0 {
+			return "", false
+		}
+		v, err := pyjson.LoadsPy(string(s.JSON), 1<<20)
+		if err != nil {
+			return "", false
+		}
+		steps[i] = v
+	}
+	return pyjson.Dumps(pyjson.NewObject().Set("task", plan.Task).Set("steps", steps), true), true
 }
 
 // EvaluatePredicate ports predicate_z3.evaluate_predicate: the plan-level
@@ -422,7 +471,23 @@ func evalPredicateGo(e Expression, plan ActionPlan, env Envelope, stepDicts []ma
 		if env.Stakes == "physical" {
 			return false, fmt.Errorf("llm_check blocked for physical stakes — use sound primitives only")
 		}
-		return false, fmt.Errorf("llm_check is not supported by this client (no corpus case exercises it)")
+		if LLM == nil {
+			return false, fmt.Errorf("llm_check is not supported by this client (no corpus case exercises it)")
+		}
+		payload, ok := llmPayload(plan)
+		if !ok {
+			return false, fmt.Errorf("an llm_check over a step this binary did not read is not in this binary yet")
+		}
+		res := LLM(expr.Rule, payload)
+		if res.Unported != "" {
+			return false, fmt.Errorf("%s is not in this binary yet", res.Unported)
+		}
+		// Fail closed: a failed probabilistic check raises, and the caller
+		// records a violation.
+		if res.Errored {
+			return false, errors.New(res.Reason)
+		}
+		return res.Satisfied, nil
 	case And:
 		for _, c := range expr.Children {
 			ok, err := evalPredicateGo(c, plan, env, stepDicts)

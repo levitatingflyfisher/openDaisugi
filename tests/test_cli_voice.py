@@ -177,25 +177,25 @@ def test_voice_disarm_json_output_reports_whether_a_grant_was_removed(tmp_path):
     assert json.loads(untouched.output) == {"pane": "w1:p2", "removed": False}
 
 
-def test_voice_serve_reaches_pick_engine_for_parakeet_when_faster_whisper_is_missing(
-    monkeypatch, tmp_path
-):
-    # B5: the eager faster-whisper check is gone. A box configured for
-    # Parakeet, with faster-whisper hidden to prove nothing still guards on
-    # it, reaches the real pick_engine and is told about sherpa-onnx, the
-    # package Parakeet actually needs.
+def test_voice_serve_names_the_parakeet_build_when_parakeet_cli_is_missing(monkeypatch, tmp_path):
+    # Parakeet is back on a Parakeet-only native build (VO-16). With no
+    # parakeet-cli on PATH the server exits 3 with one line that names the
+    # build command.
     import sys
 
     from opendaisugi.config import Config, save_config
 
     monkeypatch.setitem(sys.modules, "faster_whisper", None)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
     save_config(
         Config(voice_engine="parakeet", voice_model=str(tmp_path / "model")),
         tmp_path / "config.yaml",
     )
     result = runner.invoke(app, ["voice", "serve", "--data-dir", str(tmp_path)])
     assert result.exit_code == 3, result.output
-    assert "sherpa-onnx" in result.output
+    assert len(result.output.strip().splitlines()) == 1
+    assert "parakeet-cli is not on PATH" in result.output
+    assert "native.sh --parakeet" in result.output
 
 
 def test_voice_serve_exits_3_when_the_engine_is_unavailable(monkeypatch, tmp_path):
@@ -220,12 +220,14 @@ def test_voice_serve_exits_1_when_the_engine_name_is_unknown(monkeypatch, tmp_pa
     monkeypatch.setattr(
         "opendaisugi.voice.server.serve",
         _serve_raises(
-            UnknownEngine("Unknown voice_engine 'espeak'. Valid names: faster-whisper, parakeet.")
+            UnknownEngine(
+                "Unknown voice_engine 'espeak'. Valid names: faster-whisper, moonshine, whisper.cpp."
+            )
         ),
     )
     result = runner.invoke(app, ["voice", "serve", "--data-dir", str(tmp_path)])
     assert result.exit_code == 1
-    assert "Valid names: faster-whisper, parakeet" in result.output
+    assert "Valid names: faster-whisper, moonshine, whisper.cpp" in result.output
 
 
 def test_voice_serve_exits_3_when_no_floor_backend_is_available(monkeypatch, tmp_path):

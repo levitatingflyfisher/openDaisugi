@@ -1,0 +1,7 @@
+# The fake lock of the pack golden cases (clients/pack_fake.py).
+fake_long_nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn==1.0 \
+    --hash=sha256:2cf7d8c6e75b35bf307c3d3cd53b282897cbed1bf96d7890fb52cf89839398a1
+fakedep==2.0 \
+    --hash=sha256:4fbe44727a26033374b87953f25c08f637d44474a9dddc202333087a44c02e08
+fakepkg==1.0 \
+    --hash=sha256:989e4cf52fef79f18bc8ace1078b7d6aaaca7972d9d11dd11028b82fe3f6b8c6

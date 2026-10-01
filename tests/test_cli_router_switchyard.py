@@ -316,6 +316,7 @@ def test_router_status_json_shape(tmp_path, monkeypatch):
         "weeks",
         "escalation_built",
         "delegate",
+        "trial",
     }
     assert payload["children"] == []
 

@@ -177,6 +177,12 @@ pub struct GuardRoots {
     fixed: Option<Vec<String>>,
 }
 
+/// A guard over fixed roots with no name or text rule, as
+/// `floor_config.Guard(lambda: roots)` builds one.
+pub(super) fn fixed_floor_guard(roots: Vec<String>) -> GuardRoots {
+    GuardRoots { kind: Guard::Floor, fixed: Some(roots) }
+}
+
 /// `floor_config._opencode_path`.
 fn opencode_path(p: &str) -> bool {
     let _f = frame();
@@ -673,7 +679,7 @@ impl Runner {
     }
 
     /// `floor_config.path_in_floor`.
-    fn path_in_floor(&self, raw: &str, cwd: &str, g: &GuardRoots) -> R<bool> {
+    pub(super) fn path_in_floor(&self, raw: &str, cwd: &str, g: &GuardRoots) -> R<bool> {
         let _f = frame();
         if raw.is_empty() {
             return Ok(false);
@@ -712,7 +718,7 @@ impl Runner {
     }
 
     /// `floor_config._shell_hit`.
-    fn shell_hit(&self, command: &str, cwd: &str, g: &GuardRoots) -> R<(bool, Vec<String>)> {
+    pub(super) fn shell_hit(&self, command: &str, cwd: &str, g: &GuardRoots) -> R<(bool, Vec<String>)> {
         let _f = frame();
         let d = match catch(self.decompose(command))? {
             Ok(d) => d,

@@ -1,0 +1,47 @@
+# coppice attach, open and new on a pseudo terminal. The driver reads the
+# screens with a small terminal model.
+#!config default = "sh"
+#!config [harness.sh]
+#!config command = "/bin/sh"
+#!config args = ["-c", "stty -echo; echo ready; exec cat"]
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/adapters/fake-claude.sh
+# attach on a terminal: the pane, the status line, typed text, the leave key.
+{"id": "p", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "stty -echo; echo ready; exec cat"], "label": "cat"}
+{"id": "$id", "ok": true, "result": {"pane": "$p"}}
+{"id": "pw", "cmd": "pane.wait_output", "pane": "$p", "contains": "ready"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "a1", "pty": ["attach", "$p"], "cols": 80, "rows": 24, "steps": [{"until": "ctrl-space leave", "ms": 5000}, {"send": "h\u00e9llo there\r"}, {"until": "h\u00e9llo there", "ms": 5000}, {"until": "idle via process", "ms": 8000}, {"sleep": 300}, {"send": "\u0000"}], "end_ms": 4000}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "r1", "cmd": "pane.read", "pane": "$p"}
+{"id": "$id", "ok": true, "result": "*"}
+# No pane id: the first open pane. A second leave press within the hold sends one leave byte.
+{"id": "a2", "pty": ["attach"], "cols": 80, "rows": 24, "steps": [{"until": "ctrl-space leave", "ms": 5000}, {"send": "\u0000\u0000"}, {"send": "two\r"}, {"until": "two", "ms": 5000}, {"until": "idle via process", "ms": 8000}, {"sleep": 300}, {"send": "\u0000"}], "end_ms": 4000}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "r2", "cmd": "pane.read", "pane": "$p"}
+{"id": "$id", "ok": true, "result": "*"}
+# A leave key from the config file, and one it refuses.
+{"id": "k1", "write": "{WORK}/key/coppice/coppice.toml", "text": "[keys]\nleave = \"ctrl-]\"\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "a3", "pty": ["attach", "$p"], "cols": 80, "rows": 24, "steps": [{"until": "ctrl-] leave", "ms": 5000}, {"sleep": 500}, {"send": "\u001d"}], "end_ms": 4000, "env": {"XDG_CONFIG_HOME": "{WORK}/key"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k2", "write": "{WORK}/badkey/coppice/coppice.toml", "text": "[keys]\nleave = \"ctrl-m\"\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "a4", "pty": ["attach", "$p"], "cols": 80, "rows": 24, "steps": [], "end_ms": 4000, "env": {"XDG_CONFIG_HOME": "{WORK}/badkey"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# Refusals on a terminal: no such pane, a headless pane.
+{"id": "a5", "pty": ["attach", "w9:p9"], "cols": 80, "rows": 24, "steps": [], "end_ms": 4000}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "h", "cmd": "pane.create", "kind": "headless", "harness": "claude", "cwd": "{WORK}", "label": "talker", "env": {"COPPICE_CLAUDE_FIXTURE": "{FIXTURES}/adapters/claude-stream.jsonl"}}
+{"id": "$id", "ok": true, "result": {"pane": "$h"}}
+{"id": "a6", "pty": ["attach", "$h"], "cols": 80, "rows": 24, "steps": [], "end_ms": 4000}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "hc", "cmd": "pane.close", "pane": "$h"}
+{"id": "$id", "ok": true, "result": "*"}
+# open and new attach on a terminal.
+{"id": "a7", "pty": ["open", "sh"], "cols": 80, "rows": 24, "steps": [{"until": "ctrl-space leave", "ms": 5000}, {"until": "idle via process", "ms": 8000}, {"sleep": 300}, {"send": "\u0000"}], "end_ms": 4000}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "a8", "pty": ["new"], "cols": 80, "rows": 24, "steps": [{"until": "ctrl-space leave", "ms": 5000}, {"until": "idle via process", "ms": 8000}, {"sleep": 300}, {"send": "\u0000"}], "end_ms": 4000}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "l", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": "*"}
+# The floor on a terminal belongs to slice 6; on a pipe it prints the usage.

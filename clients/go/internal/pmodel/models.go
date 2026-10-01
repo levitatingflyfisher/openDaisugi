@@ -96,6 +96,7 @@ var Envelope = &Model{Name: "Envelope", Finite: true, Fields: []Field{
 	{Name: "cache_key", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "stakes", Schema: Literal{[]string{"low", "medium", "high", "physical"}}, Default: constant("low")},
 	{Name: "shell_interpreter_policy", Schema: Literal{[]string{"surface", "strict", "allow"}}, Default: constant("surface")},
+	{Name: "deadline", Schema: Nullable{Float{}}, Default: constant(nil), OmitNone: true},
 }}
 
 // Tagged is a discriminated union of models on one key.

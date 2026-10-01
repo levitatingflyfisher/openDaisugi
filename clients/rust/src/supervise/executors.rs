@@ -604,25 +604,40 @@ impl Executor for Shell {
         // The parent's copies of the write end close with cmd.
         drop(cmd);
         let pgid = child.id() as i32;
-        let (tx, rx) = std::sync::mpsc::channel::<(Vec<u8>, bool)>();
+        // The reader appends to the buffer as it reads, so the output read
+        // so far is there even when a writer outlives the step and the
+        // reader is left.
+        let shared = std::sync::Arc::new(std::sync::Mutex::new((Vec::<u8>::new(), false)));
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
         let mut reader = reader;
+        let sink = shared.clone();
         std::thread::spawn(move || {
-            let mut buf = Vec::new();
             let mut chunk = vec![0u8; 64 * 1024];
-            while buf.len() < max_out {
-                let want = (64 * 1024).min(max_out - buf.len());
+            loop {
+                let room = max_out.saturating_sub(sink.lock().map(|g| g.0.len()).unwrap_or(max_out));
+                if room == 0 {
+                    break;
+                }
+                let want = (64 * 1024).min(room);
                 match reader.read(&mut chunk[..want]) {
                     Ok(0) | Err(_) => {
-                        let _ = tx.send((buf, false));
+                        let _ = tx.send(());
                         return;
                     }
-                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    Ok(n) => {
+                        if let Ok(mut g) = sink.lock() {
+                            g.0.extend_from_slice(&chunk[..n]);
+                        }
+                    }
                 }
             }
             unsafe {
                 libc::kill(-pgid, libc::SIGKILL);
             }
-            let _ = tx.send((buf, true));
+            if let Ok(mut g) = sink.lock() {
+                g.1 = true;
+            }
+            let _ = tx.send(());
         });
         let limit = Duration::from_secs(timeout_s);
         let mut timed_out = false;
@@ -637,7 +652,17 @@ impl Executor for Shell {
                 Err(_) => break None,
             }
         };
-        let (buf, truncated) = rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
+        // Read to EOF. A background child the shell left can hold the pipe
+        // open after the shell exits, so the wait is bounded by the step's
+        // own time; past it the group is killed and the output read so far
+        // is kept.
+        if rx.recv_timeout(limit.saturating_sub(start.elapsed())).is_err() {
+            unsafe {
+                libc::kill(-pgid, libc::SIGKILL);
+            }
+            let _ = rx.recv_timeout(Duration::from_secs(2));
+        }
+        let (buf, truncated) = shared.lock().map(|g| (g.0.clone(), g.1)).unwrap_or_default();
         use std::os::unix::process::ExitStatusExt;
         let rc = match status {
             Some(s) => match (s.code(), s.signal()) {

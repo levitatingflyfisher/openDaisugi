@@ -337,6 +337,13 @@ rank_record_app = typer.Typer(
 )
 rank_app.add_typer(rank_record_app, name="record")
 
+tree_app = typer.Typer(
+    name="tree",
+    help="The delegation tree: prove each edge, keep the budgets, ask the operator.",
+    no_args_is_help=True,
+)
+app.add_typer(tree_app, name="tree", hidden=True)
+
 registry_app = typer.Typer(
     name="registry",
     help="Git-backed shared pathway registry (v0.25+).",
@@ -1028,6 +1035,12 @@ def gate_register_cmd(
         "call is checked against.",
     ),
     root: Path = _GATE_ROOT_OPT,
+    parent: str | None = typer.Option(
+        None,
+        "--parent",
+        help="Register a child of this session: the edge to it is proved first, "
+        "and a refused edge registers nothing.",
+    ),
 ) -> None:
     """Register the envelope the gate checks this session's calls against."""
     import yaml
@@ -1047,8 +1060,38 @@ def gate_register_cmd(
         )
         typer.echo(f"not registered: {envelope_path} is not a valid envelope: {why}", err=True)
         raise typer.Exit(code=1) from exc
+    if parent is not None:
+        envelope = _proved_child(envelope, session=session, parent=parent, root=root)
     path = register_envelope(envelope, session_id=session, root=root)
     typer.echo(f"registered {'session ' + session if session else 'default'} envelope → {path}")
+
+
+def _proved_child(envelope: Any, *, session: str | None, parent: str, root: Path) -> Any:
+    """``gate register --parent``: the child as it registers once the edge
+    from ``parent`` is proved, or a one-line refusal and exit 1."""
+    from opendaisugi import tree
+    from opendaisugi.gate import _envelopes_dir
+    from opendaisugi.hook import _safe_session_id
+
+    def refuse(why: str) -> None:
+        typer.echo(f"not registered: {why}", err=True)
+        raise typer.Exit(code=1)
+
+    if not parent:
+        refuse("--parent needs a session id")
+    if not session:
+        refuse("--parent needs --session; the starter names the child's session")
+    assert session is not None
+    if not tree.valid_session(session):
+        refuse(f"the child's session id {json.dumps(session)} is not one the tree takes")
+    if (_envelopes_dir(root) / f"{_safe_session_id(session)}.json").exists():
+        refuse(f"session {session} is registered already")
+    penv = tree.load_registered(parent, root)
+    res = tree.edge_ok(penv, envelope)
+    if not res.holds:
+        refuse(f"the edge from {parent} to {session} is refused: {'; '.join(res.reasons)}")
+    assert penv is not None and res.child is not None
+    return res.child.model_copy(update={"parent_envelope": penv.id})
 
 
 @gate_app.command("disarm")
@@ -1418,6 +1461,43 @@ def mcp_serve_cmd(
     from opendaisugi import Daisugi
 
     serve(Daisugi(model=model, data_dir=data_dir))
+
+
+_PASS_THROUGH = {"allow_extra_args": True, "ignore_unknown_options": True}
+
+
+@lora_app.command(
+    "train",
+    context_settings={**_PASS_THROUGH, "allow_interspersed_args": False, "help_option_names": []},
+)
+def lora_train_cmd(ctx: typer.Context) -> None:
+    """Train a LoRA adapter (python -m opendaisugi.lora.train's arguments).
+
+    The base model is --base-model, else the choice `daisugi models use`
+    recorded in --data-dir, else the default for this hardware (MC-R-6).
+    It runs here when torch, transformers, peft, trl and datasets import,
+    else in the train pack (`daisugi pack install train`).
+    OPENDAISUGI_LORA_TRAIN=pack always uses the pack."""
+    import importlib.util
+
+    from opendaisugi.lora import train as trainer
+    from opendaisugi.pack.worker import flag_value
+
+    args = list(ctx.args)
+    if "--help" in args or "-h" in args:
+        trainer._build_parser().print_help()
+        raise typer.Exit(code=0)
+    data_dir = Path(flag_value(args, "--data-dir") or DEFAULT_DATA_DIR)
+    if flag_value(args, "--base-model") is None:
+        from opendaisugi.hardware import detect_voice_hardware
+        from opendaisugi.model_catalog import base_model
+
+        args = ["--base-model", base_model(data_dir, detect_voice_hardware()), *args]
+    mods = ("torch", "transformers", "peft", "trl", "datasets")
+    here = all(importlib.util.find_spec(m) is not None for m in mods)
+    if here and os.environ.get("OPENDAISUGI_LORA_TRAIN") != "pack":
+        raise typer.Exit(code=trainer.main(args))
+    raise typer.Exit(code=_pm().lora_train(_pack_ctx(data_dir), args))
 
 
 @lora_app.command("export")
@@ -3473,6 +3553,7 @@ def router_status_cmd(
     share = build_target_share_table(records)
     weeks = router_report.weekly(data_dir)
     delegate_state = router_report.delegate_state(data_dir)
+    trial = router_report.trial_state(data_dir)
 
     if json_output:
         typer.echo(
@@ -3492,6 +3573,7 @@ def router_status_cmd(
                     "weeks": weeks,
                     "escalation_built": False,
                     "delegate": delegate_state,
+                    "trial": trial,
                 }
             )
         )
@@ -3547,6 +3629,52 @@ def router_status_cmd(
         typer.echo(f"  {router_report.week_line(w)}")
     for line in router_report.delegate_lines(delegate_state):
         typer.echo(line)
+    if trial is not None:
+        for line in router_report.trial_lines(trial):
+            typer.echo(line)
+
+
+@router_app.command("label")
+def router_label_cmd(
+    session: str = typer.Argument(..., help="The gate's session id."),
+    outcome: str = typer.Argument(..., help="pass or fail."),
+    note: str | None = typer.Option(None, "--note", help="Why, in a few words."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Print the row as JSON."),
+) -> None:
+    """Record whether a session's task succeeded: the outcome a graft trial
+    counts. The last label of a session wins. The operator's command: the
+    gate denies an agent that runs it.
+    """
+    from opendaisugi import router_report
+
+    if outcome not in router_report.OUTCOMES:
+        typer.echo("Error: OUTCOME must be pass or fail.", err=True)
+        raise typer.Exit(code=2)
+    if not router_report.session_ok(session):
+        typer.echo(
+            "Error: SESSION must be a session id as the gate names it: 1 to 128 of "
+            "A-Z a-z 0-9 . _ -, with no dot at either end.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if note is not None and len(note) > router_report.MAX_NOTE_CHARS:
+        typer.echo(
+            f"Error: --note must be at most {router_report.MAX_NOTE_CHARS} characters.", err=True
+        )
+        raise typer.Exit(code=2)
+    try:
+        row = router_report.write_label(data_dir, session, outcome, note)
+    except OSError:
+        typer.echo(
+            f"Error: the label could not be written to {router_report.labels_path(data_dir)}.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from None
+    if json_output:
+        typer.echo(json.dumps(row))
+        return
+    typer.echo(f"labeled {session}: {outcome}")
 
 
 @router_app.command("stop")
@@ -3581,10 +3709,17 @@ def _graft_id_ok(rule_id: str) -> None:
 def graft_install_cmd(
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
     rule_id: str = typer.Option("big-read", "--id", help="The rule's id and file name."),
-    state: str = typer.Option("audit", "--state", help="audit (only records) or active."),
+    state: str = typer.Option(
+        "audit",
+        "--state",
+        help="audit (only records), trial (acts in the seeded graft arm of sessions) or active.",
+    ),
     lines: int = typer.Option(350, "--file-lines-over", help="Redirect reads of more lines."),
     allow_remote: bool = typer.Option(
         False, "--allow-remote", help="Let the router pick a remote worker the envelope grants."
+    ),
+    seed: int | None = typer.Option(
+        None, "--seed", help="With --state trial: the seed that splits sessions (default 0)."
     ),
 ) -> None:
     """Write the large-read graft rule into <data-dir>/gate/grafts.
@@ -3594,10 +3729,17 @@ def graft_install_cmd(
     rewrite a tool's input after the gate saw it. The gate is not changed.
     """
     from opendaisugi import graft_install
+    from opendaisugi.delegate import MAX_SEED
 
     _graft_id_ok(rule_id)
     if state not in graft_install.STATES:
-        typer.echo("Error: --state must be audit or active.", err=True)
+        typer.echo("Error: --state must be audit, trial or active.", err=True)
+        raise typer.Exit(code=2)
+    if seed is not None and state != "trial":
+        typer.echo("Error: --seed needs --state trial.", err=True)
+        raise typer.Exit(code=2)
+    if seed is not None and not 0 <= seed <= MAX_SEED:
+        typer.echo("Error: --seed must be from 0 to 2**53.", err=True)
         raise typer.Exit(code=2)
     if lines < 1:
         typer.echo("Error: --file-lines-over must be 1 or more.", err=True)
@@ -3610,12 +3752,14 @@ def graft_install_cmd(
         state=state,
         lines=lines,
         allow_remote=allow_remote,
+        seed=seed,
     )
     if isinstance(got, graft_install.Refused):
         typer.echo(got.line, err=True)
         raise typer.Exit(code=1)
+    shown = got.state if got.seed is None else f"{got.state}, seed {got.seed}"
     typer.echo(
-        f"Installed graft rule {got.rule_id} (version {got.version}, state {got.state}, "
+        f"Installed graft rule {got.rule_id} (version {got.version}, state {shown}, "
         f"reads over {got.lines} lines): {got.path}"
     )
 
@@ -3869,6 +4013,225 @@ def rank_drop_cmd(
     _rank_answer(data_dir, choice, None, json_output)
 
 
+# ---------------------------------------------------------------------------
+# daisugi tree: the delegation tree
+# ---------------------------------------------------------------------------
+
+
+def _envelope_why(exc: Any) -> str:
+    """A pydantic ValidationError as one line: each error's place and message."""
+    return "; ".join(
+        ".".join(str(p) for p in e["loc"]) + ": " + e["msg"] if e["loc"] else e["msg"]
+        for e in exc.errors()
+    )
+
+
+def _tree_envelope(path: Path) -> Any:
+    """An envelope file (JSON) for the tree commands; a bad one exits 2."""
+    from pydantic import ValidationError
+
+    from opendaisugi.models import Envelope
+
+    what = f"Tried to read the envelope in {path}."
+    fix = "Fix the file and run again."
+    if not path.is_file():
+        _fail(what, "There is no such file.", "Fix the path and run again.", code=2)
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        _fail(what, "It could not be read as UTF-8 text.", fix, code=2)
+    try:
+        doc = json.loads(text)
+    except (ValueError, RecursionError) as e:
+        _fail(what, f"It did not parse: {str(e).splitlines()[0]}", fix, code=2)
+    if not isinstance(doc, dict):
+        _fail(what, "It is not a JSON object.", fix, code=2)
+    try:
+        return Envelope.model_validate(doc)
+    except ValidationError as exc:
+        _fail(what, f"It is not a valid envelope: {_envelope_why(exc)}", fix, code=2)
+
+
+def _tree_run(fn: Any) -> Any:
+    from opendaisugi.tree import TreeError
+
+    try:
+        return fn()
+    except TreeError as e:
+        _fail(e.what, e.why, e.fix, code=e.code)
+
+
+_TREE_ROOT_OPT = typer.Option(
+    None, "--root", help="Gate state directory (default: the data directory's gate)."
+)
+_Z3_EDGE_OPT = typer.Option(2000, "--z3-timeout-ms", help="Z3 budget for each proof, in ms.")
+
+
+def _gate_root_of(root: Path | None, data_dir: Path) -> Path:
+    return root if root is not None else data_dir / "gate"
+
+
+@tree_app.command("check")
+def tree_check_cmd(
+    parent: Path = typer.Argument(..., help="The parent's envelope (JSON)."),
+    child: Path = typer.Argument(..., help="The child's envelope (JSON)."),
+    timeout_ms: int = _Z3_EDGE_OPT,
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Prove that the child's envelope fits inside the parent's.
+
+    Writes nothing. Exit codes: 0 the edge holds, 1 refused, 2 bad input.
+    """
+    from opendaisugi import tree
+
+    res = tree.edge_ok(_tree_envelope(parent), _tree_envelope(child), timeout_ms=timeout_ms)
+    if json_output:
+        typer.echo(json.dumps(res.doc(), indent=2))
+    else:
+        typer.echo(tree.edge_text(res), nl=False)
+    raise typer.Exit(code=0 if res.holds else 1)
+
+
+@tree_app.command("root")
+def tree_root_cmd(
+    envelope: Path = typer.Argument(..., help="The root's envelope (JSON)."),
+    session: str = typer.Option(..., "--session", help="The root's session id."),
+    tokens: int | None = typer.Option(None, "--tokens", help="The root's token budget."),
+    turns: int | None = typer.Option(None, "--turns", help="The root's turn budget."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    root: Path | None = _TREE_ROOT_OPT,
+) -> None:
+    """Make a root of the tree: the operator's envelope and budget. Only the operator runs this."""
+    from opendaisugi import tree
+
+    env = _tree_envelope(envelope)
+    path = _tree_run(
+        lambda: tree.make_root(
+            data_dir, _gate_root_of(root, data_dir), env, session, tokens=tokens, turns=turns
+        )
+    )
+    typer.echo(f"root {session} registered → {path}")
+
+
+@tree_app.command("spawn")
+def tree_spawn_cmd(
+    envelope: Path = typer.Argument(..., help="The child's proposed envelope (JSON)."),
+    parent: str = typer.Option(..., "--parent", help="The parent's session id."),
+    session: str = typer.Option(..., "--session", help="The child's session id."),
+    tokens: int | None = typer.Option(None, "--tokens", help="Tokens to reserve for the child."),
+    turns: int | None = typer.Option(None, "--turns", help="Turns to reserve for the child."),
+    timeout_ms: int = _Z3_EDGE_OPT,
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    root: Path | None = _TREE_ROOT_OPT,
+) -> None:
+    """Prove the edge, reserve the child's budget and register its envelope.
+
+    The starter runs this and picks the child's session. Exit codes: 0
+    started, 1 refused, 3 refused and sent to the operator as an ask, 2
+    bad input.
+    """
+    from opendaisugi import tree
+
+    env = _tree_envelope(envelope)
+    res = _tree_run(
+        lambda: tree.spawn(
+            data_dir,
+            _gate_root_of(root, data_dir),
+            env,
+            parent=parent,
+            session=session,
+            tokens=tokens,
+            turns=turns,
+            timeout_ms=timeout_ms,
+        )
+    )
+    if res.status == "started":
+        typer.echo(f"started {session} under {parent} → {res.path}")
+        if res.inherited is not None:
+            typer.echo(f"{session} takes the deadline of {parent}: {json.dumps(res.inherited)}.")
+        return
+    typer.echo(
+        f"not started: the edge from {parent} to {session} is refused: {'; '.join(res.reasons)}",
+        err=True,
+    )
+    if res.status == "asked":
+        typer.echo(
+            f"{parent} has had {tree.ASK_AFTER} proposals refused, so this one goes to the "
+            f"operator as ask {res.ask_id}.",
+            err=True,
+        )
+        typer.echo(
+            f"The operator answers it with: daisugi tree answer {res.ask_id} allow|deny", err=True
+        )
+        raise typer.Exit(code=3)
+    raise typer.Exit(code=1)
+
+
+@tree_app.command("end")
+def tree_end_cmd(
+    session: str = typer.Argument(..., help="The session that ended."),
+    tokens_used: int | None = typer.Option(None, "--tokens-used", help="Tokens it used."),
+    turns_used: int | None = typer.Option(None, "--turns-used", help="Turns it used."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    root: Path | None = _TREE_ROOT_OPT,
+) -> None:
+    """Record that a node ended; its parent gets the unspent budget back and its envelope is unregistered."""
+    from opendaisugi import tree
+
+    node, t = _tree_run(
+        lambda: tree.end(
+            data_dir,
+            _gate_root_of(root, data_dir),
+            session,
+            tokens_used=tokens_used,
+            turns_used=turns_used,
+        )
+    )
+    typer.echo(f"ended {session}; its envelope is unregistered.")
+    if node.parent is not None:
+        for axis in ("tokens", "turns"):
+            reserved, used = getattr(node, axis), getattr(node, axis + "_used")
+            if reserved is not None and used is not None:
+                back = max(0, reserved - used)
+                typer.echo(f"{axis}: used {used} of {reserved}; {back} go back to {node.parent}.")
+
+
+@tree_app.command("answer")
+def tree_answer_cmd(
+    ask_id: str = typer.Argument(..., help="The ask's id."),
+    verdict: str = typer.Argument(..., help="allow or deny."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    root: Path | None = _TREE_ROOT_OPT,
+) -> None:
+    """Answer an ask: allow starts the child as proposed, marked not proved. Only the operator runs this."""
+    from opendaisugi import tree
+
+    ask, path = _tree_run(
+        lambda: tree.answer(data_dir, _gate_root_of(root, data_dir), ask_id, verdict)
+    )
+    if path is None:
+        typer.echo(f"denied {ask_id}; {ask['parent']} may propose again.")
+    else:
+        typer.echo(
+            f"allowed {ask_id}: started {ask['session']} under {ask['parent']}, not proved → {path}"
+        )
+
+
+@tree_app.command("status")
+def tree_status_cmd(
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Show the tree: each node's state, budgets and deadline, and the open asks. Reads only."""
+    from opendaisugi import tree
+
+    doc = tree.status_doc(data_dir)
+    if json_output:
+        typer.echo(json.dumps(doc, indent=2))
+    else:
+        typer.echo(tree.status_text(doc), nl=False)
+
+
 @app.command("viz", hidden=True)
 def viz_cmd(
     pathway_id: str = typer.Argument(
@@ -4120,42 +4483,256 @@ def orchestrate_cmd(
         raise typer.Exit(code=1)
 
 
-@app.command("models", hidden=True)
-def models_cmd(
-    repo: str = typer.Argument(
+models_app = typer.Typer(
+    name="models",
+    help="The models the garden can use: a curated list, a search, and your choice.",
+    no_args_is_help=True,
+)
+app.add_typer(models_app, name="models", hidden=True, rich_help_panel="Garden")
+
+
+pack_app = typer.Typer(
+    name="pack",
+    help="The ML packs: a pinned Python with locked packages, for the jobs that stay in Python.",
+    no_args_is_help=True,
+)
+app.add_typer(pack_app, name="pack", hidden=True)
+
+
+def _pm():
+    """opendaisugi.pack.manage, imported when a pack command runs."""
+    from opendaisugi.pack import manage
+
+    return manage
+
+
+def _pack_ctx(data_dir: Path):
+    """The pack context: the catalog OPENDAISUGI_PACK_CATALOG names (read
+    here, at the edge, only), else the built-in one; the system packs in
+    OPENDAISUGI_SYSTEM_PACKS, else /usr/lib/opendaisugi/packs."""
+    from opendaisugi.pack import catalog, manage
+
+    where = os.environ.get(catalog.CATALOG_ENV)
+    return manage.Ctx(
+        data_dir=Path(data_dir),
+        cat=catalog.load(Path(where) if where else None),
+        out=typer.echo,
+        err=lambda line: typer.echo(line, err=True),
+        env=None,
+        system_dir=Path(os.environ.get(manage.SYSTEM_ENV) or manage.SYSTEM_PACKS),
+    )
+
+
+@pack_app.command("list")
+def pack_list_cmd(
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+) -> None:
+    """List the packs and which are installed."""
+    raise typer.Exit(code=_pm().list_packs(_pack_ctx(data_dir)))
+
+
+@pack_app.command("status")
+def pack_status_cmd(
+    name: str | None = typer.Argument(None, metavar="[NAME]", help="One pack; default all."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+) -> None:
+    """Check the installed packs against their pins."""
+    raise typer.Exit(code=_pm().status(_pack_ctx(data_dir), name))
+
+
+@pack_app.command("install")
+def pack_install_cmd(
+    name: str = typer.Argument(..., metavar="NAME", help="The pack, such as train."),
+    offline: str | None = typer.Option(
+        None, "--offline", metavar="DIR", help="Install from a bundle (a directory or a .tar)."
+    ),
+    force: bool = typer.Option(False, "--force", help="Install again over an installed pack."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+) -> None:
+    """Install a pack: the pinned Python, a virtual environment, the locked wheels."""
+    raise typer.Exit(code=_pm().install(_pack_ctx(data_dir), name, offline, force))
+
+
+@pack_app.command("remove")
+def pack_remove_cmd(
+    name: str = typer.Argument(..., metavar="NAME"),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+) -> None:
+    """Delete a pack's directory, and nothing else."""
+    raise typer.Exit(code=_pm().remove(_pack_ctx(data_dir), name))
+
+
+@pack_app.command("bundle")
+def pack_bundle_cmd(
+    name: str = typer.Argument(..., metavar="NAME"),
+    out: str = typer.Argument(..., metavar="OUT", help="A new directory, or a file ending .tar."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+) -> None:
+    """Fetch a pack's Python and wheels into OUT, for pack install --offline."""
+    raise typer.Exit(code=_pm().bundle(_pack_ctx(data_dir), name, out))
+
+
+@pack_app.command("run", context_settings={**_PASS_THROUGH, "allow_interspersed_args": False})
+def pack_run_cmd(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., metavar="NAME"),
+    job: str = typer.Argument(..., metavar="JOB", help="selftest, train or vla-chunk."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+) -> None:
+    """Run one job in a pack's worker. Options go before NAME; every word
+    after JOB goes to the job."""
+    raise typer.Exit(code=_pm().run(_pack_ctx(data_dir), name, job, list(ctx.args)))
+
+
+@models_app.command("list")
+def models_list_cmd(
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """List the curated models, the default for this box, and the one in use."""
+    from opendaisugi import model_catalog as mc
+    from opendaisugi.hardware import detect_voice_hardware
+
+    cat = mc.load()
+    hw = detect_voice_hardware()
+    default = mc.default_model(hw, cat)
+    chosen = mc.in_use(data_dir)
+    if json_output:
+        payload = {
+            "hardware": {
+                "ram_gb": hw.ram_gb,
+                "vram_gb": hw.vram_gb,
+                "class": mc.hardware_class(hw, cat),
+            },
+            "default": default,
+            "in_use": chosen,
+            "models": cat["models"],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    typer.echo(mc.hardware_line(hw, cat))
+    if chosen:
+        typer.echo(f"In use: {chosen} (recorded by daisugi models use).")
+    else:
+        typer.echo("In use: the default.")
+    typer.echo("")
+    for line in mc.table_lines(cat["models"]):
+        typer.echo(line)
+    typer.echo("")
+    typer.echo(
+        "Any other model works too: daisugi models search QUERY, then daisugi models use ID."
+    )
+
+
+@models_app.command("search")
+def models_search_cmd(
+    query: str = typer.Argument(..., metavar="QUERY", help="Text to search model ids for."),
+    max_params: float = typer.Option(
         None,
-        help="Trusted HF repo to resolve+pin (e.g. mozilla-ai/Qwen2.5-0.5B-Instruct-llamafile). Omit to discover.",
+        "--max-params",
+        help="Largest size to show, in billions of parameters; 0 shows any size. "
+        "Default: 8 on a capable box, 2 on a small one.",
+    ),
+    licenses: list[str] = typer.Option(
+        None, "--license", help="Show only this license (repeatable), such as apache-2.0."
+    ),
+    limit: int = typer.Option(20, "--limit", min=1, max=100, help="Most results to show."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Search the Hugging Face API for models, filtered by size and license."""
+    from opendaisugi import model_catalog as mc
+    from opendaisugi.hardware import detect_voice_hardware
+
+    cat = mc.load()
+    if max_params is None:
+        max_params = float(
+            cat["search_max_params_b"][mc.hardware_class(detect_voice_hardware(), cat)]
+        )
+    lics = list(licenses or [])
+    where = mc.endpoint(os.environ)
+    try:
+        rows = mc.search(query)
+    except mc.Offline:
+        if mc.offline_env(os.environ):
+            typer.echo(
+                "Offline: HF_HUB_OFFLINE is set, so the Hugging Face API was not asked.", err=True
+            )
+        else:
+            typer.echo(f"Offline: the Hugging Face API at {where} could not be reached.", err=True)
+        raise typer.Exit(code=1)
+    except mc.HTTPStatus as exc:
+        typer.echo(f"The Hugging Face API at {where} answered HTTP {exc.code}.", err=True)
+        raise typer.Exit(code=1)
+    except mc.BadAnswer:
+        typer.echo(f"The Hugging Face API at {where} did not answer with a model list.", err=True)
+        raise typer.Exit(code=1)
+    shown = mc.filter_rows(rows, max_params, lics, limit)
+    if json_output:
+        payload = {
+            "query": query,
+            "endpoint": where,
+            "max_params_b": max_params,
+            "licenses": lics,
+            "results": shown,
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    size = "any size" if max_params <= 0 else f"up to {max_params:g}B parameters"
+    lic = "any license" if not lics else "license " + " or ".join(lics)
+    typer.echo(f'Search: "{query}" on {where}, {size}, {lic}.')
+    typer.echo("")
+    if not shown:
+        typer.echo("No model matches.")
+        return
+    for line in mc.table_lines(shown):
+        typer.echo(line)
+    typer.echo("")
+    typer.echo("Record one for the garden: daisugi models use ID")
+
+
+@models_app.command("use")
+def models_use_cmd(
+    model_id: str = typer.Argument(
+        ..., metavar="ID", help="A Hugging Face id, a local path or a GGUF file."
+    ),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+) -> None:
+    """Record the model the garden uses. Any id, path or GGUF file is accepted."""
+    from opendaisugi import model_catalog as mc
+
+    if not model_id.strip():
+        _fail(
+            "A model id cannot be blank.",
+            "models use records the id it is given, as given.",
+            "run: daisugi models list",
+            code=2,
+        )
+    path = mc.record_choice(data_dir, model_id)
+    typer.echo(f"The garden now uses {model_id} (recorded in {path}).")
+
+
+@models_app.command("pin")
+def models_pin_cmd(
+    repo: str = typer.Argument(
+        ..., help="A Hugging Face repo id, such as ibm-granite/granite-4.1-3b-GGUF."
     ),
     suffix: str = typer.Option(
-        ".llamafile", "--suffix", help="File suffix to resolve (.llamafile or .gguf)."
+        ".gguf", "--suffix", help="File suffix to resolve (.gguf or .llamafile)."
     ),
     pull: bool = typer.Option(
         False, "--pull", help="Download the resolved file (pinned to its commit)."
     ),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
 ) -> None:
-    """Discover or resolve a trustworthy, commit-pinned local model from the Hub.
+    """Resolve a repo to a file pinned to its commit; --pull downloads it.
 
-    No repo → list trusted llamafile repos. With a repo → resolve it to a pinned
-    reference (trusted-org allowlist + list-first, never a guessed filename);
-    --pull downloads it at the pinned commit.
+    The file name comes from the repo's own listing, never a guess.
     """
     from opendaisugi import model_registry as mr
 
-    if repo is None:
-        repos = mr.discover_llamafiles()
-        if json_output:
-            typer.echo(json.dumps({"trusted_repos": repos}, indent=2))
-            return
-        typer.echo(f"Trusted llamafile repos on the Hub ({len(repos)}):")
-        for r in repos:
-            typer.echo(f"  {r}")
-        typer.echo("\nResolve one to a pinned ref:  daisugi models <repo-id>")
-        return
-
     try:
         ref = mr.resolve_pinned(repo, suffix=suffix)
-    except (mr.UntrustedSource, mr.NoMatchingFile) as exc:
+    except mr.NoMatchingFile as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2)
 
@@ -4182,7 +4759,7 @@ def models_cmd(
     if path:
         typer.echo(f"pulled:   {path}")
     else:
-        typer.echo("\nDownload it (pinned):  daisugi models {} --pull".format(repo))
+        typer.echo(f"\nDownload it (pinned):  daisugi models pin {repo} --suffix {suffix} --pull")
 
 
 @app.command("start", rich_help_panel="Start here")
@@ -4426,12 +5003,13 @@ def setup_cmd(
     typer.echo(f"  {rec.rationale}")
     typer.echo("")
     if qual is None:
-        typer.echo("Get a local server running (one file, no install), then qualify + wire it:")
-        typer.echo("  1. Find a trusted, commit-pinned model llamafile:  daisugi models")
+        typer.echo("Get a local server running, then qualify + wire it:")
         typer.echo(
-            "     (canonical engine repo: github.com/mozilla-ai/llamafile; model org: huggingface.co/mozilla-ai)"
+            "  1. Pick a model:  daisugi models list   (or any: daisugi models search QUERY)"
         )
-        typer.echo("  2. Serve it:  ./<model>.llamafile --server --port 8080 --nobrowser")
+        typer.echo("     Fetch its GGUF pinned to a commit:  daisugi models pin <gguf-repo> --pull")
+        typer.echo("  2. Serve it with llamafile (github.com/mozilla-ai/llamafile):")
+        typer.echo("     llamafile --server -m <model>.gguf --port 8080 --nobrowser")
         typer.echo(
             "  3. Qualify:   daisugi tiers setup --endpoint http://localhost:8080/v1 --model <name> --wire"
         )

@@ -495,8 +495,40 @@ impl Env {
                 "recorded. Export the env lines from `tiers setup --remote` to use it",
             ));
         }
+        // The engine the config means (engines.resolve_engine): with the
+        // voice settings at their defaults, the engine the hardware picks
+        // among those installed (VO-17); faster-whisper never imports here.
+        use crate::voice::engine::{DEFAULT_ENGINE, DEFAULT_MODEL};
+        let (whisper_cli, moon_cli, para_cli) = (which("whisper-cli"), which("moonshine-cli"), which("parakeet-cli"));
+        let (voice_sel, voice_model) = if cfg.voice_engine == DEFAULT_ENGINE && cfg.voice_model == DEFAULT_MODEL {
+            let hw = crate::voice::hardware::parse_hardware_env(
+                self.env.get(crate::voice::hardware::HARDWARE_ENV).map(|s| s.as_str()).unwrap_or(""),
+            )
+            .unwrap_or_else(|| self.voice_hardware());
+            let mut installed = vec![];
+            if moon_cli {
+                installed.push("moonshine");
+            }
+            if para_cli {
+                installed.push("parakeet");
+            }
+            let (e, m, _) = crate::voice::hardware::choose_engine(&hw, &installed, false);
+            (e.to_string(), m.to_string())
+        } else {
+            (cfg.voice_engine.clone(), cfg.voice_model.clone())
+        };
+        let moon_model =
+            if voice_sel == "moonshine" && voice_model != DEFAULT_MODEL { voice_model.clone() } else { "small".to_string() };
+        let para_note = "model NVIDIA Parakeet-TDT-0.6B v2, CC-BY-4.0";
+        let moon_note = if !moon_cli {
+            "needs moonshine-cli on PATH (scripts/install.sh)".to_string()
+        } else if ["tiny", "small", "medium"].contains(&moon_model.as_str()) {
+            format!("moonshine-cli on PATH; {moon_model}, fetched on first use")
+        } else {
+            "moonshine-cli on PATH".to_string()
+        };
         let voice_state = |key: &str, installed: bool| {
-            if cfg.voice_engine == key && installed {
+            if voice_sel == key && installed {
                 ACTIVE
             } else if installed {
                 AVAILABLE
@@ -782,7 +814,21 @@ impl Env {
                         voice_state("faster-whisper", false),
                         "needs opendaisugi[voice]",
                     ),
-                    m("parakeet", POSSIBLE, "needs opendaisugi[voice-parakeet]"),
+                    m("moonshine", voice_state("moonshine", moon_cli), moon_note),
+                    m(
+                        "parakeet",
+                        voice_state("parakeet", para_cli),
+                        if para_cli {
+                            format!("parakeet-cli on PATH; {para_note}")
+                        } else {
+                            format!("needs parakeet-cli on PATH (scripts/install.sh); {para_note}")
+                        },
+                    ),
+                    m(
+                        "whisper.cpp",
+                        voice_state("whisper.cpp", whisper_cli),
+                        cond(whisper_cli, "whisper-cli on PATH", "needs whisper-cli on PATH"),
+                    ),
                 ],
             ),
         ])

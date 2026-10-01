@@ -1,0 +1,17 @@
+#!/bin/sh
+# A fake tailscale for the web cases: `tailscale cert --cert-file C
+# --key-file K NAME` writes two small files and says so. A name that
+# starts with "fail" exits 1, as tailscale does when HTTPS is off.
+for a in "$@"; do
+  case "$a" in
+    --cert-file=*) cert="${a#--cert-file=}" ;;
+    --key-file=*) key="${a#--key-file=}" ;;
+    -*|cert) ;;
+    *) name="$a" ;;
+  esac
+done
+case "$name" in fail*) echo "fake tailscale: HTTPS is off" >&2; exit 1 ;; esac
+printf 'fake cert for %s\n' "$name" > "$cert"
+printf 'fake key for %s\n' "$name" > "$key"
+echo "Wrote public cert to $cert"
+echo "Wrote private key to $key"

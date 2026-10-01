@@ -110,6 +110,16 @@ pub struct Config {
     /// `llm_context_window`, None when unset or null.
     pub llm_context_window: Option<num_bigint::BigInt>,
     pub voice_engine: String,
+    /// The voice bridge's other fields; an optional one is None when unset
+    /// or null.
+    pub voice_model: String,
+    pub voice_cleanup: bool,
+    pub voice_cleanup_model: Option<String>,
+    pub voice_cleanup_base_url: Option<String>,
+    pub voice_server_url: String,
+    /// `floor.backend` and `floor.coppice_socket`.
+    pub floor_backend: String,
+    pub coppice_socket: Option<String>,
     /// `dialect_enforce`, None when unset or null.
     pub dialect_enforce: Option<String>,
 }
@@ -134,6 +144,13 @@ impl Default for Config {
             llm_host_model: None,
             llm_context_window: None,
             voice_engine: "faster-whisper".into(),
+            voice_model: "tiny.en".into(),
+            voice_cleanup: false,
+            voice_cleanup_model: None,
+            voice_cleanup_base_url: None,
+            voice_server_url: "http://127.0.0.1:7477".into(),
+            floor_backend: "auto".into(),
+            coppice_socket: None,
             dialect_enforce: None,
         }
     }
@@ -347,6 +364,37 @@ fn from_map(m: &Node) -> Result<Config, ConfigErr> {
     }
     if let Some(v) = m.map.get("voice_engine") {
         cfg.voice_engine = v.text.clone();
+    }
+    if let Some(v) = m.map.get("voice_model") {
+        cfg.voice_model = v.text.clone();
+    }
+    if let Some(v) = m.map.get("voice_server_url") {
+        cfg.voice_server_url = v.text.clone();
+    }
+    if let Some(v) = m.map.get("voice_cleanup") {
+        cfg.voice_cleanup = bool_of(v);
+    }
+    for (name, dst) in [
+        ("voice_cleanup_model", &mut cfg.voice_cleanup_model),
+        ("voice_cleanup_base_url", &mut cfg.voice_cleanup_base_url),
+    ] {
+        if let Some(v) = m.map.get(name) {
+            if v.kind == Kind::Str {
+                *dst = Some(v.text.clone());
+            }
+        }
+    }
+    if let Some(f) = m.map.get("floor") {
+        if f.kind == Kind::Map {
+            if let Some(b) = f.map.get("backend") {
+                cfg.floor_backend = b.text.clone();
+            }
+            if let Some(c) = f.map.get("coppice_socket") {
+                if c.kind == Kind::Str {
+                    cfg.coppice_socket = Some(c.text.clone());
+                }
+            }
+        }
     }
     if let Some(v) = m.map.get("llm_context_window") {
         if v.kind != Kind::Null {

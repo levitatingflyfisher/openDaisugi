@@ -66,6 +66,9 @@ type Client struct {
 	neutralCwd string
 	// ClaudeTimeout is ClaudeCodeInstructorClient's timeout_s.
 	ClaudeTimeout time.Duration
+	// TempDir is where the neutral working directory is made; "" is
+	// $TMPDIR, as mkdtemp reads it. A test sets its own.
+	TempDir string
 }
 
 // New is a client over env.
@@ -225,7 +228,11 @@ func (c *Client) claudeArgs() []string {
 
 func (c *Client) cwd() (string, error) {
 	if c.neutralCwd == "" {
-		d, err := os.MkdirTemp(os.Getenv("TMPDIR"), "opendaisugi-claude-")
+		base := c.TempDir
+		if base == "" {
+			base = os.Getenv("TMPDIR")
+		}
+		d, err := os.MkdirTemp(base, "opendaisugi-claude-")
 		if err != nil {
 			return "", err
 		}
@@ -394,34 +401,42 @@ func (c *Client) claude(call Call) (*pyjson.Object, error) {
 	return nil, errors.New("unreachable")
 }
 
-// Metered is call_claude_p_metered: `claude -p --model=MODEL
-// --output-format json` with the prompt on stdin, run as subprocess.run
-// runs it, and the reply's text with Claude Code's own token count and
-// cost (nil when the reply does not say). A stdout that is not JSON is
-// the text itself, with no meter.
-func (c *Client) Metered(prompt, model string, timeoutS float64) (text string, tokens *int64, cost *float64, err error) {
+// Sync is call_claude_p_sync: `claude -p --model=MODEL`, then
+// DAISUGI_CLAUDE_ARGS, then extra, with the prompt on stdin, run as
+// subprocess.run runs it in the neutral working directory, and stdout
+// decoded and stripped. A failed run is the oracle's
+// EnvelopeGenerationError text.
+func (c *Client) Sync(prompt, model string, timeoutS float64, extra ...string) (string, error) {
+	return c.SyncIn("", prompt, model, timeoutS, extra...)
+}
+
+// SyncIn is Sync run in dir, or in the neutral working directory when
+// dir is "".
+func (c *Client) SyncIn(dir, prompt, model string, timeoutS float64, extra ...string) (string, error) {
 	bin, lerr := c.env.LookPath("claude")
 	if lerr != nil {
-		return "", nil, nil, &Error{"claude binary not found: 'claude'"}
+		return "", &Error{"claude binary not found: 'claude'"}
 	}
-	dir, err := c.cwd()
-	if err != nil {
-		return "", nil, nil, err
+	if dir == "" {
+		var err error
+		if dir, err = c.cwd(); err != nil {
+			return "", err
+		}
 	}
 	args := []string{"-p", "--model=" + model}
 	if raw := strings.TrimSpace(c.getenv("DAISUGI_CLAUDE_ARGS")); raw != "" {
-		if extra, err := verify.ShlexSplit(raw); err == nil {
-			args = append(args, extra...)
+		if more, err := verify.ShlexSplit(raw); err == nil {
+			args = append(args, more...)
 		}
 	}
-	args = append(args, "--output-format", "json")
+	args = append(args, extra...)
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(prompt)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Start(); err != nil {
-		return "", nil, nil, &Error{"claude binary not found: 'claude'"}
+		return "", &Error{"claude binary not found: 'claude'"}
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -430,17 +445,56 @@ func (c *Client) Metered(prompt, model string, timeoutS float64) (text string, t
 	case <-time.After(time.Duration(timeoutS * float64(time.Second))):
 		_ = cmd.Process.Kill()
 		<-done
-		return "", nil, nil, &Error{"claude -p timed out after " + pyjson.FloatRepr(timeoutS) + "s"}
+		return "", &Error{"claude -p timed out after " + pyjson.FloatRepr(timeoutS) + "s"}
 	}
 	code := cmd.ProcessState.ExitCode()
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 		code = -int(ws.Signal())
 	}
 	if code != 0 {
-		return "", nil, nil, &Error{fmt.Sprintf("claude -p exited %d: %s", code,
+		return "", &Error{fmt.Sprintf("claude -p exited %d: %s", code,
 			pystr.Repr(pystr.Slice(pystr.DecodeReplace(errb.Bytes()), 0, 500)))}
 	}
-	raw := pystr.Strip(pystr.DecodeReplace(out.Bytes()))
+	return pystr.Strip(pystr.DecodeReplace(out.Bytes())), nil
+}
+
+// FirstJSONObject is claude_code_llm._extract_first_json_object: the
+// first "{" to the last "}" of text, read as JSON or as a Python dict
+// literal.
+func FirstJSONObject(text string) (*pyjson.Object, error) {
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start == -1 || end <= start {
+		return nil, &Error{"no JSON object in claude -p stdout: " + pystr.Repr(pystr.Slice(text, 0, 200))}
+	}
+	body := text[start : end+1]
+	v, derr := pyjson.LoadsPy(body, 900)
+	if derr != nil {
+		if derr.TooDeep {
+			return nil, fmt.Errorf("%w: a reply nested past what json.loads reads", ErrUnsupported)
+		}
+		if d, ok := pmodel.DecodeDictText(body); ok {
+			return d, nil
+		}
+		return nil, &Error{"claude -p stdout was not valid JSON: " + derr.Error()}
+	}
+	o, ok := v.(*pyjson.Object)
+	if !ok {
+		return nil, fmt.Errorf("%w: a reply json.loads reads as no dict", ErrUnsupported)
+	}
+	return o, nil
+}
+
+// Metered is call_claude_p_metered: `claude -p --model=MODEL
+// --output-format json` with the prompt on stdin, run as subprocess.run
+// runs it, and the reply's text with Claude Code's own token count and
+// cost (nil when the reply does not say). A stdout that is not JSON is
+// the text itself, with no meter.
+func (c *Client) Metered(prompt, model string, timeoutS float64) (text string, tokens *int64, cost *float64, err error) {
+	raw, err := c.Sync(prompt, model, timeoutS, "--output-format", "json")
+	if err != nil {
+		return "", nil, nil, err
+	}
 	v, derr := pyjson.LoadsPy(raw, 900)
 	if derr != nil {
 		return raw, nil, nil, nil

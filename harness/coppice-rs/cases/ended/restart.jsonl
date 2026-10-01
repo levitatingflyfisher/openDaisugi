@@ -1,0 +1,64 @@
+# A restart brings back the layout, the labels, the working directories,
+# the tasks and the id counters, and no process. A pane that was live comes
+# back closed and done, with a note in server.status. A pane that ended
+# before the restart is counted apart and keeps its exit code. The data dir
+# is compared as a file tree before and after.
+#!config projects = ["{FIXTURES}"]
+{"id":"1","cmd":"workspace.create","label":"main","cwd":"{FIXTURES}"}
+{"id":"$id","ok":true,"result":{"workspace":"$ws","tab":"$tab"}}
+{"id":"2","cmd":"tab.create","workspace":"$ws","label":"side"}
+{"id":"$id","ok":true,"result":{"tab":"$side"}}
+{"id":"3","cmd":"task.create","label":"build","cwd":"{FIXTURES}","model":"m1"}
+{"id":"$id","ok":true,"result":{"task":"$build"}}
+{"id":"4","cmd":"task.create","label":"part","parent":"$build"}
+{"id":"$id","ok":true,"result":{"task":"$part"}}
+{"id":"5","cmd":"pane.create","workspace":"$ws","tab":"$tab","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"],"label":"long","env":{"A":"1"}}
+{"id":"$id","ok":true,"result":{"pane":"$long"}}
+{"id":"6","cmd":"pane.create","workspace":"$ws","tab":"$side","task":"$part","cwd":"{FIXTURES}","cmd_argv":["/bin/sh","-c","exit 7"],"label":"quick"}
+{"id":"$id","ok":true,"result":{"pane":"$quick"}}
+{"id":"7","cmd":"pane.create","cwd":"{START}","cmd_argv":["/bin/sleep","600"],"label":"other"}
+{"id":"$id","ok":true,"result":{"pane":"$other"}}
+#!retry 5000
+{"id":"8","cmd":"pane.list","ended":true}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$quick","exit_code":7}],"path":"*"}}
+# A second passes, so the records the restart closes end later than this
+# one did, and pane.list ended: true has one order on both sides.
+{"id":"9w","cmd":"pane.wait_output","pane":"$long","contains":"never","timeout_ms":1100}
+{"id":"$id","ok":false,"error":{"code":"timeout"}}
+{"id":"9","cmd":"server.status"}
+{"id":"$id","ok":true,"result":{"panes":3,"panes_live":2,"restore":{"panes":0,"already_closed":0,"resumed":0,"marked_done":0,"marked_unknown":0,"notes":[]}}}
+#!tree
+#!restart
+{"id":"10","cmd":"server.status"}
+{"id":"$id","ok":true,"result":{"panes":3,"panes_live":0,"resumable":0,"restore":{"panes":3,"already_closed":1,"resumed":0,"marked_done":2,"marked_unknown":0,"notes":["*","*"]}}}
+{"id":"11","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[],"path":"*"}}
+{"id":"12","cmd":"pane.list","ended":true}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$other","state":"done"},{"id":"$long","state":"done"},{"id":"$quick","state":"done","detail":"exit=7"}],"path":"*"}}
+{"id":"13","cmd":"agent.list","ended":true}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"14","cmd":"agent.get","pane":"$long"}
+{"id":"$id","ok":true,"result":{"pane":"$long","state":"done","source":"process","detail":"the process did not survive the restart"}}
+{"id":"15","cmd":"agent.get","pane":"$quick"}
+{"id":"$id","ok":true,"result":{"pane":"$quick","state":"done","source":"process","detail":"exit=7"}}
+{"id":"16","cmd":"task.list"}
+{"id":"$id","ok":true,"result":{"tasks":[{"id":"$build","label":"build","model":"m1","panes":[]},{"id":"$part","parent":"$build","panes":["$quick"]}],"path":["floor"]}}
+{"id":"17","cmd":"workspace.list"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"18","cmd":"tab.list","workspace":"$ws"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"19","cmd":"pane.create","workspace":"$ws","tab":"$tab","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":true,"result":{"pane":"$fresh"}}
+{"id":"20","cmd":"task.create","label":"next"}
+{"id":"$id","ok":true,"result":{"task":"$next"}}
+{"id":"21","cmd":"pane.resume","pane":"$long"}
+{"id":"$id","ok":true,"result":{"pane":"$long2","resumed":false}}
+{"id":"22","cmd":"project.list"}
+{"id":"$id","ok":true,"result":"*"}
+#!tree
+#!restart
+{"id":"23","cmd":"server.status"}
+{"id":"$id","ok":true,"result":{"panes":4,"panes_live":0,"restore":{"panes":4,"already_closed":2,"marked_done":2}}}
+{"id":"24","cmd":"pane.forget","ended":true}
+{"id":"$id","ok":true,"result":{"forgot":4}}
+#!tree

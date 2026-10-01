@@ -24,3 +24,20 @@ go test -p 1 ./...
 ```
 
 The designs are in `docs/harness/harness-designs.md`.
+
+## The Rust sprig
+
+`harness/sprig-rs` is a second sprig, written in Rust: the same four binaries, the same command
+line, prompt, request bodies, session tree, hook and MCP wire, and Go's own error words.
+`clients/sprig_compare.py` runs each case on the Go and the Rust binaries side by side, with a fake
+`claude`, a fake gate and a fake API, and some cases through the real Go and Rust daisugi
+(`clients/ADJUDICATIONS.md`, SP-R-1 to SP-R-6). Go stays the default. To build and install the
+Rust one in its place (you need cargo as well):
+
+```sh
+SPRIG_PORT=rust ../../scripts/install.sh
+```
+
+`SPRIG_PORT=rust scripts/release.sh VERSION` puts it in the release tarball in place of the Go one,
+with its own `NOTICE`. It links `libgcc_s` as well as libc. `harness/sprig-rs/PINS.md` lists its
+crates and why each is there.

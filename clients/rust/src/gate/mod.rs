@@ -17,6 +17,7 @@ pub mod dispatch;
 pub mod effects;
 pub mod envelope;
 pub mod frames;
+pub mod gatestate;
 pub mod globs;
 pub mod graft;
 pub mod hook;
@@ -557,7 +558,7 @@ impl Runner {
         // gate._maybe_graft, on the evaluate_call branch only.
         if !d.ask && !too_big {
             if let (Some(env), Some(_), Some(p)) = (&env, &payload, obj) {
-                d = self.maybe_graft(p, d, env)?;
+                d = self.maybe_graft(p, d, env, &session_id)?;
             }
         }
         d.elapsed_ms = d.elapsed_ms.max(0.0);

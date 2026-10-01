@@ -343,7 +343,7 @@ pub fn loads_bytes(b: &[u8]) -> PyR<Value> {
 
 /// The text `json.loads` reads from bytes, with a lone surrogate as the
 /// character that stands for it; None when the bytes do not decode.
-fn decode_json_bytes(b: &[u8]) -> Option<String> {
+pub fn decode_json_bytes(b: &[u8]) -> Option<String> {
     let has = |p: &[u8]| b.starts_with(p);
     if has(&[0, 0, 0xFE, 0xFF]) || has(&[0xFF, 0xFE, 0, 0]) {
         return decode_utf32(&b[4..], has(&[0xFF, 0xFE, 0, 0]));

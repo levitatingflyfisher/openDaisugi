@@ -93,7 +93,8 @@ fn budget_and_stakes_violation(outer: &Envelope, inner: &Envelope) -> bool {
     i.max_execution_time_s > o.max_execution_time_s || i.max_output_size_mb > o.max_output_size_mb
 }
 
-fn glob_unsupported(glob: &str) -> bool {
+/// `subsumption._glob_unsupported`: a glob shape the proof cannot read.
+pub fn glob_unsupported(glob: &str) -> bool {
     if glob == "**" || glob.ends_with("/**") || !glob.contains('*') {
         return false;
     }
@@ -169,6 +170,36 @@ fn patterns_subsume_violates(inner_patterns: &[String], outer_patterns: &[String
     script.push_str(&format!("(assert {inner_ok})\n(assert (not {outer_ok}))\n(check-sat)\n"));
     let result = z3_bridge::check_sat(&script)?;
     Ok(result != "unsat") // sat = witness found; unknown also denies (fail-closed)
+}
+
+/// The answer of `pattern_fits`.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Fit {
+    /// Every value the pattern admits, the outer patterns admit too.
+    Fits,
+    /// Z3 found a value they do not admit.
+    DoesNotFit,
+    /// The proof did not finish, or Z3 failed.
+    Unfinished,
+}
+
+/// `tree._pattern_fits`: a verdict, never a solver model, so every client
+/// prints the same reason.
+pub fn pattern_fits(pattern: &str, outer: &[String], timeout_ms: u32) -> Fit {
+    if outer.is_empty() {
+        return Fit::DoesNotFit;
+    }
+    let mut script = String::new();
+    script.push_str("(set-logic ALL)\n");
+    script.push_str(&time_limit(Some(timeout_ms)));
+    script.push_str("(declare-const v String)\n");
+    let outer_ok = format!("(or {})", outer.iter().map(|g| glob_to_z3(g)).collect::<Vec<_>>().join(" "));
+    script.push_str(&format!("(assert {})\n(assert (not {outer_ok}))\n(check-sat)\n", glob_to_z3(pattern)));
+    match z3_bridge::check_sat(&script).as_deref() {
+        Ok("unsat") => Fit::Fits,
+        Ok("sat") => Fit::DoesNotFit,
+        _ => Fit::Unfinished,
+    }
 }
 
 /// The SMT-LIB line that gives each check of a script a time limit, as

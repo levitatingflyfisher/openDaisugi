@@ -377,11 +377,22 @@ pub fn eval_scalar(expr: &Expr, scope: &Py) -> Result<bool, String> {
 /// physical stakes, matching the oracle — LLMCheck is otherwise not
 /// reproducible offline and does not appear in the corpus).
 pub fn evaluate_predicate(expr: &Expr, steps: &[Value], stakes: &str) -> Result<bool, String> {
-    let dumped: Vec<Py> = steps.iter().map(dumped_step).collect();
-    go(expr, steps, &dumped, stakes)
+    evaluate_predicate_with(expr, steps, stakes, None)
 }
 
-fn go(e: &Expr, steps: &[Value], dumped: &[Py], stakes: &str) -> Result<bool, String> {
+/// An llm_check's verdict for a rule: `run_llm_check(rule, payload)` with
+/// the payload the caller holds. An Err is the error the evaluator
+/// raises.
+pub type LlmVerdict<'a> = &'a dyn Fn(&str) -> Result<bool, String>;
+
+/// `evaluate_predicate` with a model to ask: an llm_check is answered by
+/// `llm`, and with none it is not reproducible offline.
+pub fn evaluate_predicate_with(expr: &Expr, steps: &[Value], stakes: &str, llm: Option<LlmVerdict>) -> Result<bool, String> {
+    let dumped: Vec<Py> = steps.iter().map(dumped_step).collect();
+    go(expr, steps, &dumped, stakes, llm)
+}
+
+fn go(e: &Expr, steps: &[Value], dumped: &[Py], stakes: &str, llm: Option<LlmVerdict>) -> Result<bool, String> {
     {
         match e {
             Expr::ForallSteps { pred } => {
@@ -436,15 +447,18 @@ fn go(e: &Expr, steps: &[Value], dumped: &[Py], stakes: &str) -> Result<bool, St
                     _ => Ok(false),
                 }
             }
-            Expr::LLMCheck { .. } => {
+            Expr::LLMCheck { rule } => {
                 if stakes == "physical" {
                     return Err("llm_check blocked for physical stakes — use sound primitives only".into());
                 }
-                Err("llm_check is not reproducible offline (network/model call)".into())
+                match llm {
+                    Some(ask) => ask(rule),
+                    None => Err("llm_check is not reproducible offline (network/model call)".into()),
+                }
             }
             Expr::And { children } => {
                 for c in children {
-                    if !go(c, steps, dumped, stakes)? {
+                    if !go(c, steps, dumped, stakes, llm)? {
                         return Ok(false);
                     }
                 }
@@ -452,14 +466,14 @@ fn go(e: &Expr, steps: &[Value], dumped: &[Py], stakes: &str) -> Result<bool, St
             }
             Expr::Or { children } => {
                 for c in children {
-                    if go(c, steps, dumped, stakes)? {
+                    if go(c, steps, dumped, stakes, llm)? {
                         return Ok(true);
                     }
                 }
                 Ok(false)
             }
-            Expr::Not { child } => Ok(!go(child, steps, dumped, stakes)?),
-            Expr::Implies { a, b } => Ok(!go(a, steps, dumped, stakes)? || go(b, steps, dumped, stakes)?),
+            Expr::Not { child } => Ok(!go(child, steps, dumped, stakes, llm)?),
+            Expr::Implies { a, b } => Ok(!go(a, steps, dumped, stakes, llm)? || go(b, steps, dumped, stakes, llm)?),
             other => {
                 // Scalar at plan root: evaluate against a synthetic {"steps": [...]} scope.
                 let scope = Py::Obj(vec![("steps".to_string(), Py::List(dumped.to_vec()))]);

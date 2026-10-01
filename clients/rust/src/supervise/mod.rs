@@ -9,6 +9,7 @@
 //! oracle's pydantic models dump, so the journal holds what the oracle
 //! writes. The Go client's `internal/supervise` is the reference.
 
+pub mod agentic;
 pub mod approval;
 pub mod executors;
 pub mod fallback;

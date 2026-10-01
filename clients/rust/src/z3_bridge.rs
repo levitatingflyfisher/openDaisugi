@@ -50,10 +50,12 @@ impl Scope {
         format!("{}__{}", self.prefix, path.replace('.', "__"))
     }
 
+    /// The SMT identifier of a string path: the one a caller seeded for it
+    /// (subsumption seeds `ctx__command` as `ctx_command`, the variable the
+    /// shell admission uses), else the path's own name.
     pub fn resolve_string(&mut self, path: &str) -> String {
         let smt_name = self.var_name(path);
-        self.vars.entry(smt_name.clone()).or_insert_with(|| (smt_name.clone(), Sort::Str));
-        smt_name
+        self.vars.entry(smt_name.clone()).or_insert_with(|| (smt_name.clone(), Sort::Str)).0.clone()
     }
 
     pub fn resolve_numeric(&mut self, path: &str) -> String {

@@ -66,10 +66,11 @@ trajectory steps (§5.3).
 
 ### 2.2 Envelope
 
-An `Envelope` `E = ⟨P, I, Q, stakes, parent⟩` where `P` is a Permission, `I` a set of
+An `Envelope` `E = ⟨P, I, Q, stakes, parent, deadline⟩` where `P` is a Permission, `I` a set of
 *invariants* (predicates that must hold over all steps), `Q` a set of
 *postconditions* (predicates over completed-step evidence), `stakes ∈
-{low, medium, high, physical}`, and `parent` an optional parent envelope. `strict`
+{low, medium, high, physical}`, `parent` an optional parent envelope, and `deadline` an optional
+time (seconds since the epoch) after which it starts no new work (§5.5). `strict`
 is a derived mode, on by default for `stakes ∈ {high, physical}` (§6).
 
 An envelope's admitted set is the permission's set *intersected* with the invariants:
@@ -198,7 +199,11 @@ warning (`dialect audit: …`); the verdict is the one the opaque invariant gets
 pin equal to the dialect hash (`config.yaml` `dialect_enforce`) enforces the word: the
 word decides the invariant. A pin that names another hash makes every word use `⊥`.
 The pin lives in the operator's config, not in the envelope (DL-4), and a hard-deny
-rule stops an agent's tool call from writing or naming that config (DL-15).
+rule stops an agent's tool call from writing or naming that config (DL-15). A second
+hard-deny rule stops every agent write the gate can place under the gate's own state:
+the gate root (the disarm marker, envelopes, graft rules, asks, audit logs) and each
+data dir's `router`, `journal`, `tree`, `gateway`, `weave` and `envelope_cache.db`
+(SW-17). Reads stay allowed.
 
 **Kernel.** Let `K` be the kernel: the `Permission` record (§2.1), the predicate
 algebra without definition references, and the envelope and plan objects of §2.2 and §2.3.
@@ -388,7 +393,7 @@ unverifiable outer constraint the inner doesn't share ⟹ `⊑` fails (fail-clos
 > `verify(π, E_in) = ok`, then `verify(π, E_out)` would also hold — running `π` under
 > a delegation bounded by `E_in` cannot exceed `E_out`.
 
-### 5.5 Delegation edges (partly built, partly Proposed)
+### 5.5 Delegation edges (Built for daisugi; coppice and sprig Proposed)
 
 A parent that starts a child agent delegates authority to a second model. The edge
 rule ([design-delegation-tree.md](../plans/2026-09-24-omarchy/design-delegation-tree.md)) is:
@@ -415,23 +420,44 @@ budget, or N children spend N times the parent's budget.
 
 | Field that grants authority | Required relation | State |
 |---|---|---|
-| file globs, hosts, shell heads, MCP tools, compiled invariants, robot bounds | §5.1 to §5.4 | Built (Python; Go and Rust) |
-| `stakes` | `stakes_child ≥ stakes_parent` in `low < medium < high < physical` (a lower stakes turns strict mode off) | Built in Python (`subsumption._budget_and_stakes_violation`); Go and Rust in progress |
-| `custom_step_allowlist` | child ⊆ parent (strict runs a custom step only if listed) | Built in Python; Go and Rust in progress |
-| per-step caps `max_execution_time_s`, `max_output_size_mb` | child ≤ parent | Built in Python; Go and Rust in progress |
-| aggregate tokens, turns, deadline | child's reservation ≤ parent's remaining budget; child deadline ≤ parent's | Open. Provisional ruling: tokens and turns in a tree ledger outside the envelope, the deadline as an envelope field |
-| Z3 `unknown` or timeout in the final query | `⊥` in every mode | Built in Python (`timed_out`); Go and Rust in progress |
-| invariants and postconditions, by value | parent's ⊆ child's | Proposed at any depth; today only `verify_inheritance`, depth 1 |
-| `shell_interpreter_policy` | child not looser than parent | Proposed; today read from the outer only |
-| an opaque skill (no envelope) | `⊥` at every stakes level | Proposed for edges; `check_skill_delegations` still allows it with a warning in lenient mode |
+| file globs, hosts, shell heads, MCP tools, compiled invariants, robot bounds | §5.1 to §5.4 | Built, all three clients |
+| `stakes` | `stakes_child ≥ stakes_parent` in `low < medium < high < physical` (a lower stakes turns strict mode off) | Built, all three |
+| `custom_step_allowlist` | child ⊆ parent (strict runs a custom step only if listed) | Built, all three |
+| per-step caps `max_execution_time_s`, `max_output_size_mb` | child ≤ parent | Built, all three |
+| deadline (an envelope field, seconds since the epoch) | `deadline_child ≤ deadline_parent`; a child with none takes the parent's | Built: proved per edge (TR-R-1). Not enforced at call time |
+| aggregate tokens, turns | child's reservation ≤ parent's remaining budget, kept in the tree ledger outside the envelope | Built (TR-R-5). Not proved: the counts are the starter's estimates and reports |
+| Z3 `unknown` or timeout in the final query | `⊥` in every mode | Built, all three |
+| invariants and postconditions, by value | parent's enforced ⊆ child's, at any depth | Built (TR-R-2) |
+| `shell_interpreter_policy` | child not looser than parent | Built (TR-R-2) |
+| an opaque skill or a child with no envelope | `⊥` at every stakes level | Built for edges (TR-R-2); `check_skill_delegations` still allows an opaque skill with a warning in lenient mode, and an edge never calls it |
 | sequence invariants (`forall_steps`, `exists_step` over a plan) | not compared | Open; subsumption reasons over one symbolic step |
 
-**Induction.** If every edge satisfies `edge_ok`, then by transitivity of `⊑` (§5)
-every node satisfies `E_node ⊑ E_root`. There is no depth limit, and strict mode is
-on at every edge whatever the stakes.
+**What the edge proves, exactly** (`tree.edge_ok`, rulings TR-R-2 and TR-R-3). Every step a
+child's envelope admits, as one symbolic step, its parent's admits: the scope axes by Z3 one
+child pattern at a time, the shell heads by the head rule (a child head is a parent head, or a
+parent head and a space), and, when either side has an enforced invariant with an expression,
+the whole step by `envelope_subsumes(strict = ⊤)`. With no such invariant the Z3 query over one
+step reduces to the head rule, which decides it exactly, so Z3 does not run there. The reasons
+name the part that fails, never a solver model.
 
-**Registration** (Proposed). Only the operator registers an envelope with no parent (a
-root). Any other registration names its parent and runs `edge_ok`. The starter, not the
+**What it does not prove.** That the child stays inside its envelope at run time (the gate checks
+that, call by call); that a plan's order or count properties hold (sequence invariants are not
+compared); that the budgets the starter reports are true (tokens and turns are estimates in a
+ledger, not a proof); that the deadline is kept after it passes (the gate does not read it yet);
+that a child the operator allowed after a refusal fits inside its parent (it is marked not
+proved; it is proved inside the root of its branch, so the induction below still holds, TR-R-7).
+
+**Induction.** If every edge satisfies `edge_ok`, then by transitivity of `⊑` (§5)
+every node satisfies `E_node ⊑ E_root`. A node the operator allowed after a refusal is
+proved against its branch's root instead of its parent (TR-R-7), so the induction holds
+through it. There is no depth limit, and strict mode is on at every edge whatever the stakes.
+
+**Registration** (Built for daisugi, TR-R-8 and TR-R-9). Only the operator registers an envelope
+with no parent (a root): the gate denies an agent's shell line that runs `gate register`,
+`gate init`, `start` or a tree verb that writes. `gate disarm` and the other verbs that
+change enforcement are denied too (SW-1), and so is a write to the disarm marker or an
+envelope file (SW-17). Any other registration names its parent and runs `edge_ok`
+(`gate register --parent`, `tree spawn`). The starter, not the
 child, binds the child's session. A child session with no exact registered envelope is
 `⊥`, never the `default` envelope. What is built today: a hook payload's session id
 never selects an envelope; an unpinned gate checks every call against `default`, and a

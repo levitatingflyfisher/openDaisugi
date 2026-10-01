@@ -22,6 +22,8 @@ import (
 
 	"daisugi-verify/internal/gate"
 	"daisugi-verify/internal/gateroot"
+	"daisugi-verify/internal/llm"
+	"daisugi-verify/internal/verify"
 )
 
 // Version is the build's version, set at link time:
@@ -91,6 +93,8 @@ type Env struct {
 	quiet bool
 	// plain is the root --plain: no box drawing.
 	plain bool
+	// checkClient is the model client llm_check calls go through.
+	checkClient *llm.Client
 }
 
 func (e *Env) out(format string, a ...any)  { fmt.Fprintf(e.Stdout, format, a...) }
@@ -147,8 +151,8 @@ More
 var notInBinary = []string{
 	"help",
 	"bench", "conformance", "coppice",
-	"lora", "models",
-	"verify", "viz", "voice",
+	"lora export", "models pin",
+	"viz",
 	"gate replay", "gate audit",
 }
 
@@ -218,10 +222,18 @@ Envelopes:
 Run:
   orchestrate      Run a prompt end to end: decompose, size, supervised execute, synthesize.
   run              Execute a plan against an envelope under runtime supervision.
+  verify           Verify an action plan against a safety envelope.
 
 Setup:
   onboard          Turn existing agent transcripts into verified traces and pathways.
   tiers setup      Detect hardware, recommend a local model, and optionally qualify and wire it.
+  models list      List the curated models, the default for this box, and the one in use.
+  models search    Search the Hugging Face API for models, filtered by size and license.
+  models use       Record the model the garden uses. Any id, path or GGUF file is accepted.
+  pack list        List the ML packs and which are installed.
+  pack install     Install a pack: a pinned Python, a venv, the locked wheels.
+  pack run         Run one job (selftest, train, vla-chunk) in a pack's worker.
+  lora train       Train a LoRA adapter in the train pack.
   mcp serve        Serve the openDaisugi tools over MCP stdio.
 
 Registry and release:
@@ -328,6 +340,7 @@ func (e *Env) run(args []string) error {
 		return e.refuse(args[0], err)
 	}
 	e.home = home
+	verify.LLM = e.llmCheck
 	switch args[0] {
 	case "gate":
 		return e.gate(args[1:])
@@ -353,6 +366,8 @@ func (e *Env) run(args []string) error {
 		return e.graft(args[1:])
 	case "rank":
 		return e.rankCmd(args[1:])
+	case "tree":
+		return e.treeCmd(args[1:])
 	case "route":
 		return e.route(args[1:])
 	case "config":
@@ -377,6 +392,12 @@ func (e *Env) run(args []string) error {
 		return e.onboard(args[1:])
 	case "tiers":
 		return e.tiers(args[1:])
+	case "models":
+		return e.modelsCmd(args[1:])
+	case "pack":
+		return e.packCmd(args[1:])
+	case "lora":
+		return e.loraCmd(args[1:])
 	case "setup":
 		return e.setupMoved(args[1:])
 	case "modules":
@@ -391,6 +412,10 @@ func (e *Env) run(args []string) error {
 		return e.batchCmd(args[1:])
 	case "release":
 		return e.release(args[1:])
+	case "voice":
+		return e.voiceCmd(args[1:])
+	case "verify":
+		return e.verifyCmd(args[1:])
 	}
 	for _, name := range notInBinary {
 		if name == args[0] {

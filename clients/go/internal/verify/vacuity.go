@@ -260,9 +260,10 @@ func (c *smtCompiler) compileScalar(expr Expression) (string, error) {
 		}
 		return fmt.Sprintf("(=> %s %s)", nonempty, inner), nil
 	case AliasRef:
-		return "", fmt.Errorf("unresolved alias reference %q; resolve aliases before compilation", e.Name)
+		return "", fmt.Errorf("unresolved alias reference '%s'; resolve aliases before compilation", e.Name)
 	default:
-		return "", fmt.Errorf("unknown scalar predicate op: %v", expr.Op())
+		// The oracle names the expression's class.
+		return "", fmt.Errorf("unknown scalar predicate op: %s", strings.TrimPrefix(fmt.Sprintf("%T", expr), "verify."))
 	}
 }
 

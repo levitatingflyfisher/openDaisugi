@@ -267,6 +267,7 @@ Python CLI (`opendaisugi.cli`):
 | `install --gate --uninstall` | the gate hook and the floor-report hooks removed |
 | `install --harness pi\|opencode [--uninstall] [--dry-run]` | the pi extension and the OpenCode plugin, byte for byte Python's |
 | `mcp serve`, `onboard`, `tiers setup`, `setup` | stage K3: the MCP server, the day-one onboard and the local-model setup (see below) |
+| `models list`, `models search`, `models use` | the model catalog for the garden: the curated list with the default for this box, the Hugging Face search filtered by size and license, and the recorded choice (`internal/catalog`, MC-R-1 to MC-R-7); `models pin` is not in this binary |
 | `modules`, `dashboard`, `metrics` | stage K4: the module map, the live floor and the Prometheus exporter (see below) |
 | `hook record [--format F] [--event E] [--captures-root R]` | the capture and floor-report hooks `install` writes (see below) |
 | `registry init\|pull\|publish\|status\|pull-and-tend`, `batch prove`, `release keygen\|sign\|verify` | stage L: the git pathway registry, batch proofs and release signing (see below) |

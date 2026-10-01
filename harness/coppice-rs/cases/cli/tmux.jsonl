@@ -1,0 +1,74 @@
+# coppice tmux-mirror against a tmux server on a scratch socket. Every tmux
+# request runs tmux -S {WORK}/tmux.sock.
+# A scratch tmux server with one session, its own status-right and two panes.
+{"id": "t0", "tmux": ["new-session", "-d", "-s", "m", "-n", "main", "-x", "120", "-y", "30", "sleep 600"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "t1", "tmux": ["set-option", "-t", "m", "status-right", "own #S"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "pa", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sleep", "600"], "label": "alpha"}
+{"id": "$id", "ok": true, "result": {"pane": "$a"}}
+{"id": "pb", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sleep", "600"], "label": "b'x;y#z \u00e9 and a label well past thirty runes"}
+{"id": "$id", "ok": true, "result": {"pane": "$b"}}
+# The mirror opens one window per pane, each running attach on it.
+{"id": "m", "cli": ["tmux-mirror", "--session", "m", "--tmux-socket", "{WORK}/tmux.sock"], "bg": "mir"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+#!retry 8000
+{"id": "w1", "tmux": ["list-windows", "-t", "m", "-F", "#{window_name}|#{@coppice_pane}"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "main|\nalpha|w1:p1\nb'x;y#z \u00e9 and a label well pa\u2026|w1:p2\n"}}
+{"id": "w1c", "tmux": ["list-windows", "-t", "m", "-F", "#{window_name}|#{@coppice_pane}|#{pane_start_command}"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+#!retry 3000
+{"id": "s1", "tmux": ["show-options", "-v", "-t", "m", "status-right"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "quiet\n"}}
+{"id": "s2", "tmux": ["show-options", "-v", "-t", "m", "@coppice_saved_status"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "=own #S\n"}}
+# A close kills the pane's window, a rename renames it.
+{"id": "ca", "cmd": "pane.close", "pane": "$a"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "rb", "cmd": "pane.rename", "pane": "$b", "label": "beta"}
+{"id": "$id", "ok": true, "result": "*"}
+#!retry 8000
+{"id": "w2", "tmux": ["list-windows", "-t", "m", "-F", "#{window_name}|#{@coppice_pane}"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "main|\nbeta|w1:p2\n"}}
+# A window the user kills stays closed while this mirror runs.
+{"id": "k", "tmux": ["kill-window", "-t", "m:beta"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "pc", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sleep", "600"], "label": "gamma"}
+{"id": "$id", "ok": true, "result": {"pane": "$g"}}
+#!retry 8000
+{"id": "w3", "tmux": ["list-windows", "-t", "m", "-F", "#{window_name}|#{@coppice_pane}"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "main|\ngamma|w1:p3\n"}}
+{"id": "sl", "sleep": 1500}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "w4", "tmux": ["list-windows", "-t", "m", "-F", "#{window_name}|#{@coppice_pane}"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "main|\ngamma|w1:p3\n"}}
+# A second mirror on the same session keeps the first one's saved line.
+{"id": "m2", "cli": ["tmux-mirror", "--session", "m", "--tmux-socket", "{WORK}/tmux.sock"], "bg": "mir2"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "sl2", "sleep": 1500}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "x2", "stop": "mir2"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "s3", "tmux": ["show-options", "-v", "-t", "m", "status-right"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "own #S\n"}}
+# Stop puts the session's own status line back.
+{"id": "x", "stop": "mir"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "s4", "tmux": ["show-options", "-v", "-t", "m", "status-right"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "own #S\n"}}
+{"id": "s5", "tmux": ["show-options", "-v", "-t", "m", "@coppice_saved_status"]}
+{"id": "$id", "ok": true, "result": "*"}
+# A session with no status-right of its own, and a mirror tmux ends.
+{"id": "u0", "tmux": ["new-session", "-d", "-s", "n", "-n", "main", "sleep 600"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "u1", "tmux": ["set-option", "-u", "-t", "n", "status-right"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "m3", "cli": ["tmux-mirror", "--session", "n", "--tmux-socket", "{WORK}/tmux.sock"], "bg": "mir3"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+#!retry 5000
+{"id": "u2", "tmux": ["show-options", "-v", "-t", "n", "@coppice_saved_status"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "-\n"}}
+{"id": "u3", "tmux": ["kill-session", "-t", "n"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "x3", "stop": "mir3", "signal": "none", "wait_ms": 5000}
+{"id": "$id", "ok": true, "result": {"code": 0}}

@@ -73,9 +73,9 @@ yet").
 
 **The problem.** The owner ruled on 2026-09-26 that openDaisugi ships competing binaries,
 Python, Go and Rust, that check each other for mistakes, correctness and speed. Anything a
-Go or Rust user would need Python for must be in both ports. Today a Go or Rust user still
-needs Python for model-written envelopes, the orchestrator, the MCP server, the dashboard
-and voice.
+Go or Rust user would need Python for must be in both ports. Every port stage is built.
+What a Go or Rust user still needs Python for is the inventory in
+[plan-part2-ports.md](plans/2026-09-24-omarchy/plan-part2-ports.md) ("Full parity").
 
 **Solved when:** every part a Go or Rust user needs runs in both binaries with no Python;
 each part agrees with the oracle on its golden cases and its seeded fuzz with 0
@@ -92,22 +92,21 @@ under 20 ms, a gateway turn under 5 ms added).
 | D | pathways, matchers (lexical, potion), the garden | Done | Done |
 | E | the gateway and the router client | Done | Done |
 | G (rest) | `status`, `config`, `start`, `journal` | Done | Done (3c7592f2) |
-| F | ingest and transcript parsers | Part: `journal parse` and `journal ingest` for Claude Code and Codex | Open |
-| K | envelope generation, Tier-0, bind and compose, orchestrator, supervisor, decomposer, MCP server, onboarding, modules, dashboard, exporter | Open | Open |
-| H | voice client and server | Open | Open |
-| I | coppice in Rust | n/a | Open |
-| J | sprig in Rust | n/a | Open (sprig on hold) |
+| F | ingest and transcript parsers | Done | Done |
+| K | envelope generation, Tier-0, bind and compose, orchestrator, supervisor, decomposer, MCP server, onboarding, modules, dashboard, exporter | Done | Done |
+| G2 | the resident gate server (`gate serve`) | Done | Done |
+| L | deeds, batch compilation, strata, pathway signing, the git pathway registry | Done | Done |
+| H | voice client and server | Done (2026-10-01) | Done (2026-10-01) |
+| I | coppice in Rust | n/a | Done (2026-10-02, `harness/coppice-rs`) |
+| J | sprig in Rust | n/a | Done (2026-10-02, `harness/sprig-rs`; 185 compare cases agree with Go) |
 
-The committed golden cases at HEAD: 1,310 gate, 472 CLI, 158 pathway CLI plus 24 find and
-577 verify-message, 215 garden and 223 gateway. Go agrees on all of them (the CLI with 12
-cases not ported and 9 refused, as ruled). Rust agrees on every case of the parts it
-carries; its CLI compare stops at the 306 cases from before G-rest. These counts come from compares run before the Python security fixes of 2026-09-26 (f9e202e7, 92f87edf, 31871c4d, 6a0ad499, 1fad0036). Until the Go and Rust mirrors land, a live `--oracle` compare will show the ports behind on those rules. Speed at p50, cold process: the Go gate 8.8 ms, the
-Rust gate 6.1 ms, the Python gate about 430 ms. The Go `start` refuses to open a view,
-because the dashboard is in K; so the owner's `~/.local/bin/daisugi` swap waits on K.
+The committed golden cases, and how many each port agrees on, are in
+[feature-status.md](feature-status.md) and [conformance.md](spec/conformance.md). Speed at
+p50, cold process (measured before stage K): the Go gate 8.8 ms, the Rust gate 6.1 ms, the
+Python gate about 430 ms.
 
-**Next, in the ledger's order:** K in four parts (K1 envelope generation, Tier-0, bind and compose; K2 orchestrator,
-supervisor, decomposer; K3 MCP and onboarding; K4 modules, dashboard, exporter), then F,
-H, I and J. One heavy job at a time on the box.
+**Next:** the inventory's rows marked "port", then its rows marked "open". One heavy job
+at a time on the box.
 
 **Design:** [plan-part2-ports.md](plans/2026-09-24-omarchy/plan-part2-ports.md),
 [conformance.md](spec/conformance.md), [`clients/ADJUDICATIONS.md`](../clients/ADJUDICATIONS.md).
@@ -248,10 +247,13 @@ is proved to fit inside its parent. Permissions must only shrink down the tree.
 subsumption check; a failed proof, a timeout or no proof means the child does not start;
 and coppice shows the tree and the asks that need a person.
 
-**Where it stands.** **Proposed.** The sprig part waits on the owner. Ruling AT-1 lets the
-daisugi and coppice parts go ahead: an `edge_ok` check, a proof at registration, and a fix
-to the one-level child paths that exist today. Two prerequisites landed in Python: the
-subsumption fields (f9e202e7) and the session binding (31871c4d).
+**Where it stands.** **Built in part** (2026-09-30). The daisugi part is built in Python, Go
+and Rust: `edge_ok` proves each edge, strict and fail closed; the deadline is an envelope field
+proved per edge; `gate register --parent` and `daisugi tree spawn` prove before they register;
+the tree ledger splits tokens and turns down the tree; the fourth refused proposal from a parent
+goes to the operator; an agentic step's child envelope is proved (rulings TR-R-1 to TR-R-12).
+Not built: coppice's part, which starts with an adversarial test of its session binding, and
+sprig's spawn tool, which waits for sprig.
 
 **Design:** [design-delegation-tree.md](plans/2026-09-24-omarchy/design-delegation-tree.md),
 [ADR-0022](adr/0022-weave-runner-for-verified-plan-trees.md) (Proposed).

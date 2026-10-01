@@ -1,0 +1,55 @@
+# task.create with worktree: true adds a git worktree on a new branch named
+# after the task, beside the repo that holds cwd. A pane in the task runs
+# in the worktree. task.list counts the commits the branch is ahead of its
+# upstream. task.close refuses while the worktree has uncommitted changes,
+# and removes it once it is clean. keep_worktree: true leaves it. Each side
+# has its own scratch repo at {WORK}/repo.
+#!repo
+{"id":"1","cmd":"task.create","label":"feat","cwd":"{WORK}/repo","worktree":true}
+{"id":"$id","ok":true,"result":{"task":"$feat","worktree":"{WORK}/repo-worktrees/feat"}}
+{"id":"2","cmd":"task.create","label":"feat","cwd":"{WORK}/repo","worktree":true}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"3","cmd":"task.create","label":"Big Name","cwd":"{WORK}/repo","worktree":true}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"task names use lowercase letters, digits, and dashes"}}
+{"id":"4","cmd":"task.create","label":"loose","cwd":"{START}","worktree":true}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"worktree needs a git repo. {START} is not inside one."}}
+{"id":"5","cmd":"task.create","label":"gone","cwd":"{WORK}/nowhere","worktree":true}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"6","cmd":"task.create","label":"side","cwd":"{WORK}/repo","worktree":true,"parent":"$feat"}
+{"id":"$id","ok":true,"result":{"task":"$side","worktree":"{WORK}/repo-worktrees/side"}}
+{"id":"7","cmd":"task.list"}
+{"id":"$id","ok":true,"result":{"tasks":[{"id":"$feat","worktree":"{WORK}/repo-worktrees/feat","ahead":0},{"id":"$side","ahead":0}],"path":["floor"]}}
+{"id":"8","cmd":"pane.create","task":"$feat","cwd":"{WORK}/repo","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"a pane in task t1 runs in its worktree {WORK}/repo-worktrees/feat. Drop cwd."}}
+{"id":"9","cmd":"pane.create","task":"$feat","cmd_argv":["/bin/sh","-c","echo x > notes.txt && echo written; exec sleep 600"],"label":"writer"}
+{"id":"$id","ok":true,"result":{"pane":"$writer"}}
+{"id":"10","cmd":"pane.wait_output","pane":"$writer","contains":"written","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"11","cmd":"task.close","task":"$feat"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"task t1 has uncommitted changes in {WORK}/repo-worktrees/feat. Commit them, or pass keep_worktree: true."}}
+{"id":"12","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$writer","cwd":"{WORK}/repo-worktrees/feat"}],"path":"*"}}
+{"id":"13","cmd":"pane.create","task":"$side","cmd_argv":["/bin/sh","-c","git -c user.name=c -c user.email=c@example.invalid commit -q --allow-empty -m step && echo committed; exec sleep 600"],"label":"committer"}
+{"id":"$id","ok":true,"result":{"pane":"$committer"}}
+{"id":"14","cmd":"pane.wait_output","pane":"$committer","contains":"committed","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"15","cmd":"task.list","scope":"$side"}
+{"id":"$id","ok":true,"result":{"tasks":[{"id":"$side","ahead":1,"panes":["$committer"]}],"path":["floor","feat","side"]}}
+{"id":"16","cmd":"pane.create","task":"$feat","cmd_argv":["/bin/sh","-c","rm notes.txt && echo cleaned; exec sleep 600"],"label":"cleaner"}
+{"id":"$id","ok":true,"result":{"pane":"$cleaner"}}
+{"id":"17","cmd":"pane.wait_output","pane":"$cleaner","contains":"cleaned","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+#!tree
+{"id":"18","cmd":"task.close","task":"$side","keep_worktree":true}
+{"id":"$id","ok":true,"result":{"task":"$side","closed":true,"panes":["$committer"]}}
+{"id":"19","cmd":"task.create","label":"again","cwd":"{WORK}/repo-worktrees/feat","worktree":true}
+{"id":"$id","ok":true,"result":{"task":"$again","worktree":"{WORK}/repo-worktrees/feat-worktrees/again"}}
+{"id":"20","cmd":"task.close","task":"$feat"}
+{"id":"$id","ok":true,"result":{"task":"$feat","closed":true,"panes":["$writer","$cleaner"]}}
+{"id":"21","cmd":"task.list"}
+{"id":"$id","ok":true,"result":{"tasks":[{"id":"$again"}],"path":["floor"]}}
+{"id":"22","cmd":"task.close","task":"$again"}
+{"id":"$id","ok":true,"result":{"task":"$again","closed":true,"panes":[]}}
+{"id":"23","cmd":"task.list"}
+{"id":"$id","ok":true,"result":{"tasks":[],"path":["floor"]}}
+#!tree

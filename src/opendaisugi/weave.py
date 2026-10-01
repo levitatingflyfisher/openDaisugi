@@ -370,6 +370,9 @@ class WeaveHook:
         self.run_id: str | None = None
         # The choice each step with attempts made in this run.
         self.choices: dict[str, dict[str, Any]] = {}
+        # Open cards this run picked up on resume, whose ``resumed`` row is
+        # written once the run has an id.
+        self.resumed_cards: list[tuple[str, str]] = []
 
     def _resume_verdict(self, step: Any) -> str:
         """run, skip, or ask, for a step on resume."""
@@ -477,6 +480,19 @@ class WeaveHook:
     def started(self, step: Any, run_id: str) -> str | None:
         """Mark the step started, synced; why not, when the mark failed."""
         self.run_id = run_id
+        if self.resumed_cards and self.data_dir is not None:
+            from opendaisugi import rank
+
+            t = rank.now()
+            rows = [
+                {"choice_id": cid, "ranking_id": rid, "event": "resumed", "run_id": run_id, "ts": t}
+                for cid, rid in self.resumed_cards
+            ]
+            try:
+                rank.append_rows(self.data_dir, rows)
+            except OSError as exc:
+                return f"the resume of the open choice was not recorded: {exc}"
+            self.resumed_cards = []
         line = json.dumps({"run": run_id, "step": step.id}) + "\n"
         try:
             self.state.parent.mkdir(parents=True, exist_ok=True)
@@ -639,6 +655,7 @@ class WeaveHook:
                     "recorded": False,
                     "ranking": None,
                 }
+                self.resumed_cards.append((card.id, rid))
             return
 
     def open_choice_above(self, step: Any) -> str | None:

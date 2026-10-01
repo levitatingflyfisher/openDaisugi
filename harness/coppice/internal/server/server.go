@@ -388,6 +388,14 @@ type Server struct {
 	liveMu sync.RWMutex
 	live   map[string]*LivePane
 
+	// dataMu and dataShut make sure a server that has closed writes
+	// nothing more into its data dir. Every write into it runs through
+	// writeData, which holds dataMu for reading and checks dataShut. Close
+	// takes dataMu for writing to set dataShut, so it waits for each write
+	// already in flight, and no write starts after it.
+	dataMu   sync.RWMutex
+	dataShut bool
+
 	// resumeMu guards resuming: the set of pane ids a pane.resume call
 	// currently has claimed. handlePaneResume claims an id before it
 	// reads the tree, and holds the claim for the whole call, so two
@@ -495,6 +503,12 @@ type Server struct {
 	// the Close that will read it, never after, and never from a second
 	// goroutine while a Close is already in flight.
 	afterTeardownSnapshot func()
+
+	// beforeDataWrite, when set, is called by every write into the data
+	// dir just before the write. It is nil in every real server. A test
+	// sets it before it starts any pane, so no goroutine reads it while it
+	// changes, and uses it to hold a write in flight while Close runs.
+	beforeDataWrite func()
 
 	// afterApplyState, when set, is called synchronously by ApplyState, on
 	// the same goroutine and before it returns, with the pane id and the
@@ -1130,9 +1144,38 @@ func (s *Server) Close() error {
 	// after this one never finds the old voice server still running.
 	s.voice.stop()
 
+	// No write into the data dir may outlive the server: this waits for
+	// any write still in flight (a pump's terminal save, a sweep, a talk
+	// turn), and refuses every later one, before the lock is released.
+	s.shutData()
+
 	s.releaseStartLock()
 	close(s.closeDone)
 	return err
+}
+
+// writeData runs one write into the data dir, unless Close has shut the
+// data dir. It reports whether the write ran. A write must not call
+// writeData again: a second read lock behind a waiting Close deadlocks.
+func (s *Server) writeData(write func()) bool {
+	s.dataMu.RLock()
+	defer s.dataMu.RUnlock()
+	if s.dataShut {
+		return false
+	}
+	if h := s.beforeDataWrite; h != nil {
+		h()
+	}
+	write()
+	return true
+}
+
+// shutData waits for every write into the data dir in flight and refuses
+// every later one.
+func (s *Server) shutData() {
+	s.dataMu.Lock()
+	s.dataShut = true
+	s.dataMu.Unlock()
 }
 
 // waitForHandlers waits, up to handlerTeardownWait, for every in-flight

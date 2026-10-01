@@ -44,6 +44,23 @@ can already write.
 
 Pins and their reasons, including the unix-only build, are in `PINS.md`.
 
+### The Rust coppice
+
+`harness/coppice-rs` is a second coppice, written in Rust: the same command line, the same wire,
+the same floor on a terminal and in the browser, and the same pinned `libghostty-vt`, linked
+through its C API. Its binary is also named `coppice`. `clients/coppice_compare.py` replays every
+case against a Go and a Rust server side by side and counts each difference, and the floor on a
+terminal is compared as a screen (`clients/ADJUDICATIONS.md`, CP-R-1 to CP-R-45). Go stays the
+default. To build and install the Rust one in its place (you need cargo as well):
+
+```
+COPPICE_PORT=rust ../../scripts/install.sh
+```
+
+`COPPICE_PORT=rust scripts/release.sh VERSION` puts it in the release tarball in place of the Go
+one, with its own `NOTICE`. It links `libgcc_s` as well as libc. `harness/coppice-rs/PINS.md`
+lists its crates and why each is there.
+
 ## First run
 
 Run `coppice` with no arguments. The first time, it looks for `claude`, `codex`, `pi`, `sprig`,

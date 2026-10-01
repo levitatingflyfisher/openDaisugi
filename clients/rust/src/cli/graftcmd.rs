@@ -152,19 +152,34 @@ impl Env {
         let opts = [
             Opt::val(&["--data-dir"], "PATH", "Daisugi data directory."),
             Opt::val(&["--id"], "TEXT", "The rule's id and file name."),
-            Opt::val(&["--state"], "TEXT", "audit (only records) or active."),
+            Opt::val(
+                &["--state"],
+                "TEXT",
+                "audit (only records), trial (acts in the seeded graft arm of sessions) or active.",
+            ),
             Opt::val(&["--file-lines-over"], "INTEGER", "Redirect reads of more lines."),
             Opt::flag(&["--allow-remote"], "Let the router pick a remote worker the envelope grants."),
+            Opt::val(&["--seed"], "INTEGER", "With --state trial: the seed that splits sessions (default 0)."),
         ];
         let p = parse_args(args, &opts, 0).map_err(|m| self.usage_stop(CMD, m))?;
         if p.help {
             return self.cmd_help(CMD, "", "Write the large-read graft rule into <data-dir>/gate/grafts.", &opts);
         }
         let lines = self.click_int(CMD, &p, "--file-lines-over", 350)?;
+        let seed = self.click_int(CMD, &p, "--seed", 0)?;
+        let has_seed = p.has("--seed");
         let id = self.graft_id(&p)?;
         let state = p.str("--state", "audit");
-        if state != "audit" && state != "active" {
-            self.echo_err("Error: --state must be audit or active.\n");
+        if state != "audit" && state != "trial" && state != "active" {
+            self.echo_err("Error: --state must be audit, trial or active.\n");
+            return exit(2);
+        }
+        if has_seed && state != "trial" {
+            self.echo_err("Error: --seed needs --state trial.\n");
+            return exit(2);
+        }
+        if has_seed && !(0..=(1i128 << 53)).contains(&seed) {
+            self.echo_err("Error: --seed must be from 0 to 2**53.\n");
             return exit(2);
         }
         if lines < 1 {
@@ -208,6 +223,13 @@ impl Env {
         rule.set("match", Value::Obj(matched));
         rule.set("redirect", Value::Obj(redirect));
         rule.set("worker", Value::Obj(worker));
+        let mut shown = state.clone();
+        if state == "trial" {
+            let mut trial = Object::new();
+            trial.set("seed", Value::Int(seed.to_string()));
+            rule.set("trial", Value::Obj(trial));
+            shown = format!("trial, seed {seed}");
+        }
         if let Err(e) = std::fs::create_dir_all(&dir) {
             return self.fail(CMD, &e.to_string());
         }
@@ -220,7 +242,7 @@ impl Env {
             return self.fail(CMD, &e.to_string());
         }
         self.echo(&format!(
-            "Installed graft rule {id} (version {version}, state {state}, reads over {lines} lines): {path}\n"
+            "Installed graft rule {id} (version {version}, state {shown}, reads over {lines} lines): {path}\n"
         ));
         Ok(())
     }
@@ -266,6 +288,10 @@ impl Env {
                 o.set("state", r.state.as_str());
                 o.set("file_lines_over", Value::Int(r.min_lines.clone()));
                 o.set("allow_remote", r.allow_remote);
+                o.set(
+                    "trial_seed",
+                    if r.state == "trial" { Value::Int(r.seed.to_string()) } else { Value::Null },
+                );
                 o.set("in_force", acting == Some(i));
                 o.set("why", why_of(i, r).map(Value::Str).unwrap_or(Value::Null));
                 out_rules.push(Value::Obj(o));
@@ -308,9 +334,11 @@ impl Env {
                 None => "in force".to_string(),
                 Some(w) => format!("not in force: {w}"),
             };
+            let state =
+                if r.state == "trial" { format!("trial (seed {})", r.seed) } else { r.state.clone() };
             text += &format!(
                 "  {}: {} v{}, state {}, reads over {} lines, {tail}\n",
-                r.file, r.id, r.version, r.state, r.min_lines
+                r.file, r.id, r.version, state, r.min_lines
             );
         }
         for (f, w) in &bad {

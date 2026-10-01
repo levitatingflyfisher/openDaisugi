@@ -1,0 +1,11 @@
+# A [voice] table and no daisugi on PATH.
+#!config [voice]
+#!config args = ["--model", "x"]
+#!retry 5000
+{"id": "s", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down", "command": "pip install 'opendaisugi[voice]'"}}
+{"id": "v", "cmd": "voice.start"}
+{"id": "$id", "ok": true, "result": "*"}
+#!retry 5000
+{"id": "s2", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down"}}

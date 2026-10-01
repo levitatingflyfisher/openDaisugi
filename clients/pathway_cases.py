@@ -882,6 +882,27 @@ def build_cli_cases() -> list[dict[str, Any]]:
         ["pathways", "import", "d.json"],
         before={"d.json": {"text": export(deny, "json")}},
     )
+    # An llm_check asks a model at import. No key and no `claude` on PATH:
+    # the HTTP backend fails closed with no request; the old backend name
+    # fails before any call.
+    judged = pathway(8, "judged", [1.0])
+    judged.envelope.invariants = [
+        Invariant(type="judge", description="d", expr={"op": "llm_check", "rule": "kind"})
+    ]
+    judged_b = {"j.json": {"text": export(judged, "json")}}
+    add("import llm_check no key", ["pathways", "import", "j.json"], before=judged_b)
+    add(
+        "import llm_check renamed backend",
+        ["pathways", "import", "j.json"],
+        before=judged_b,
+        env={"OPENDAISUGI_LLM_BACKEND": "litellm", "ANTHROPIC_API_KEY": "sk-test"},
+    )
+    add(
+        "import llm_check refused",
+        ["pathways", "import", "j.json"],
+        before=judged_b,
+        env={"ANTHROPIC_API_KEY": "sk-test", "ANTHROPIC_API_BASE": "http://127.0.0.1:1"},
+    )
     add(
         "import newer schema",
         ["pathways", "import", "n.json"],

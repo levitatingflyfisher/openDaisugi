@@ -915,6 +915,9 @@ class Card:
     opened: dict[str, Any]
     close: dict[str, Any] | None = None
     answer: dict[str, Any] | None = None
+    # The runs that resumed the plan while this choice was open, each once,
+    # in file order. Their later steps count toward the switch cost.
+    resumed: list[str] = field(default_factory=list)
 
     @property
     def id(self) -> str:
@@ -969,7 +972,14 @@ def read_cards(data_dir: Path) -> list[Card]:
                 cards[cid] = Card(opened=row)
             continue
         card = cards.get(cid)
-        if card is None or ev not in CLOSES:
+        if card is None:
+            continue
+        if ev == "resumed":
+            run = row.get("run_id")
+            if isinstance(run, str) and run not in card.resumed:
+                card.resumed.append(run)
+            continue
+        if ev not in CLOSES:
             continue
         if ev in ("confirmed", "overridden"):
             if row.get("how") not in OWNER_HOWS:
@@ -1065,7 +1075,10 @@ def switch_cost(card: Card, data_dir: Path, to: str | None = None) -> dict[str, 
     later: list[tuple[str, str, float]] = []
     if run and isinstance(run.get("run_id"), str) and isinstance(run.get("downstream"), list):
         down = {d for d in run["downstream"] if isinstance(d, str)}
-        later = [r for r in _receipts(data_dir, run["run_id"]) if r[0] in down]
+        runs = [run["run_id"], *(r for r in card.resumed if r != run["run_id"])]
+        for rid in runs:
+            later += [r for r in _receipts(data_dir, rid) if r[0] in down]
+        later.sort(key=lambda r: (r[2], r[0]))
     hard = [r for r in later if r[1] not in ("none", "reversible")]
     undo = [r for r in later if r[1] == "reversible"]
     if hard:

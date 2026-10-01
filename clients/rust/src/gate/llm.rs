@@ -1,16 +1,17 @@
-//! `llm_check.run_llm_check` on the HTTP backend: the model call an
-//! llm_check predicate makes, one plain call through the model client
-//! (`crate::llm::wire`, the oracle's `llm_client.py`), the verdict read from
-//! the reply, and every failure worded as the oracle words it, since the
-//! failure text becomes the deny reason (LLM-12). The Go gate's `llm.go` is
-//! the reference.
+//! `llm_check.run_llm_check`: the model call an llm_check predicate makes,
+//! on the claude-code backend (`claude -p --model=haiku`, through
+//! `crate::llm::Client`) or the HTTP backend (one plain call through the
+//! model client's wire, `crate::llm::wire`, the oracle's `llm_client.py`),
+//! the verdict read from the reply, and every failure worded as the oracle
+//! words it, since the failure text becomes the deny reason (LLM-12). The
+//! Go `internal/llmcheck` is the reference. The gate and the commands'
+//! verify both call it.
 //!
 //! An https URL goes over rustls (the ring provider) and trusts the
 //! system's own root store, as the Go gate trusts Go's.
 //!
-//! Not decided here: a call through the claude-code backend (`claude -p`),
-//! settings that change how httpx calls the model, and a reply read in a
-//! way the port does not model.
+//! Not decided here: settings that change how httpx calls the model, and
+//! a reply read in a way the port does not model.
 
 use super::config::load_field;
 use super::dispatch::py_which;
@@ -19,7 +20,8 @@ use super::pyjson::{dumps, loads, py_decode_error, py_str, py_type_name, Object,
 use super::{catch, undecided, Runner, R};
 use crate::llm::wire;
 use std::io::{Read, Write};
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 /// As the Go gate's llmJSONDepth.
@@ -52,10 +54,8 @@ macro_rules! tryo {
 impl Runner {
     /// `llm_check.run_llm_check(rule, payload)`.
     pub fn run_llm_check(&self, rule: &str, payload: &Object) -> R<LlmResult> {
-        Ok(match self.invoke_model(rule, payload)? {
-            Out::Ok((satisfied, reason)) => LlmResult { satisfied, reason, errored: false },
-            Out::Fail(m) => LlmResult { satisfied: false, reason: format!("error: llm_check call failed: {m}"), errored: true },
-        })
+        let backend = self.llm_backend()?;
+        run_llm_check_with(&self.env, &self.home, &backend, rule, payload)
     }
 
     /// `llm.resolve_backend()`.
@@ -79,64 +79,129 @@ impl Runner {
         }
         Ok("api".into())
     }
+}
 
-    /// A setting that makes httpx behave in a way the port does not model.
-    fn llm_unported_env(&self) -> Option<String> {
-        ["SSL_CERT_FILE", "SSL_CERT_DIR"].iter().find(|k| self.env.get(**k).is_some_and(|v| !v.is_empty())).map(|k| k.to_string())
-    }
+/// The world a command's llm_check runs in. The command line sets it once,
+/// before its first verify, as the oracle's evaluator calls the one module
+/// function.
+pub struct CommandCheck {
+    pub env: HashMap<String, String>,
+    pub home: String,
+}
 
-    /// `llm_check._invoke_model` on the HTTP backend.
-    fn invoke_model(&self, rule: &str, payload: &Object) -> R<Out<(bool, String)>> {
-        let model = self.env.get("OPENDAISUGI_LLM_CHECK_MODEL").cloned().unwrap_or_else(|| DEFAULT_MODEL.into());
-        let backend = self.llm_backend()?;
-        if crate::llm::renamed(&backend) {
-            // resolve_backend raises on the old name: the check fails closed.
-            return Ok(Out::Fail(crate::llm::RENAMED_TEXT.into()));
-        }
-        if backend == "claude-code" {
-            return undecided("an llm_check through the claude-code backend, which runs claude -p");
-        }
-        if let Some(k) = self.llm_unported_env() {
-            return undecided(format!("an llm_check under {k}, which changes how httpx calls the model"));
-        }
-        let pj: String = dumps(&Value::Obj(payload.clone()), true).chars().take(4000).collect();
-        let user = format!("Rule:\n{rule}\n\nPlan payload (JSON):\n{pj}\n\nDoes the plan payload satisfy the rule?");
-        let get = |k: &str| self.env.get(k).cloned();
-        let w = match wire::resolve(&model, "", "", &get) {
-            Ok(w) => w,
-            Err(m) => return Ok(Out::Fail(m)),
-        };
-        let msgs = vec![("system".to_string(), SYSTEM.to_string()), ("user".to_string(), user)];
-        let body = wire::body(&w, &msgs, &wire::Opts { max_tokens: Some(200), temperature: Some(0), json_object: false, ..Default::default() });
-        let headers: Vec<(String, String)> = w.headers.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
-        let proxies = crate::netproxy::Httpx::from_vars(&crate::netproxy::map_vars(&self.env), false);
-        let (status, text) = tryo!(post(&w.url, &headers, body.as_bytes(), wire::timeout(&get), &proxies, None)?);
-        let content = match wire::read_reply(&w, status, &text) {
-            Ok(r) => r.text,
-            Err(m) => return Ok(Out::Fail(m)),
-        };
-        // Nesting past 900 is left undecided: in the verifier's thread,
-        // json.loads might raise RecursionError before that depth.
-        match py_decode_error(&content, LLM_JSON_DEPTH) {
-            None => {}
-            Some(PyDecodeFail::TooDeep) => return undecided("an llm_check reply nested past what json.loads reads"),
-            Some(PyDecodeFail::Raised(m)) => return Ok(Out::Fail(m)),
-        }
-        let parsed = match loads(&content) {
-            Ok(v) => v,
-            Err(_) => return undecided("an llm_check reply that json.loads refuses"),
-        };
-        let o = match parsed {
-            Value::Obj(o) => o,
-            other => return Ok(Out::Fail(format!("'{}' object has no attribute 'get'", py_type_name(&other)))),
-        };
-        let sat = o.get("satisfied").map(|v| v.truthy()).unwrap_or(false);
-        let why = match o.get("rationale") {
-            None => String::new(),
-            Some(v) => py_str(v)?,
-        };
-        Ok(Out::Ok((sat, why)))
+static COMMAND: OnceLock<CommandCheck> = OnceLock::new();
+
+/// Sets the world every verify of this process asks a model in.
+pub fn set_command_check(c: CommandCheck) {
+    let _ = COMMAND.set(c);
+}
+
+/// `run_llm_check(rule, payload)` for a command's verify: None when no
+/// command set the world (the check is then undecided).
+pub fn command_llm_check(rule: &str, payload: &Object) -> Option<R<LlmResult>> {
+    let c = COMMAND.get()?;
+    let backend = crate::llm::Client::new(c.env.clone(), &c.home).backend();
+    Some(run_llm_check_with(&c.env, &c.home, &backend, rule, payload))
+}
+
+/// `llm_check.run_llm_check(rule, payload)` with resolve_backend()'s
+/// answer given.
+pub fn run_llm_check_with(env: &HashMap<String, String>, home: &str, backend: &str, rule: &str, payload: &Object) -> R<LlmResult> {
+    Ok(match invoke_model(env, home, backend, rule, payload)? {
+        Out::Ok((satisfied, reason)) => LlmResult { satisfied, reason, errored: false },
+        Out::Fail(m) => LlmResult { satisfied: false, reason: format!("error: llm_check call failed: {m}"), errored: true },
+    })
+}
+
+/// A setting that makes httpx behave in a way the port does not model.
+fn llm_unported_env(env: &HashMap<String, String>) -> Option<String> {
+    ["SSL_CERT_FILE", "SSL_CERT_DIR"].iter().find(|k| env.get(**k).is_some_and(|v| !v.is_empty())).map(|k| k.to_string())
+}
+
+/// The user prompt: the rule and the payload, cut to 4000 code points.
+fn user_prompt(rule: &str, payload: &Object) -> String {
+    let pj: String = dumps(&Value::Obj(payload.clone()), true).chars().take(4000).collect();
+    format!("Rule:\n{rule}\n\nPlan payload (JSON):\n{pj}\n\nDoes the plan payload satisfy the rule?")
+}
+
+/// `(bool(parsed.get("satisfied", False)), str(parsed.get("rationale", "")))`.
+fn verdict(o: &Object) -> R<(bool, String)> {
+    let sat = o.get("satisfied").map(|v| v.truthy()).unwrap_or(false);
+    let why = match o.get("rationale") {
+        None => String::new(),
+        Some(v) => py_str(v)?,
+    };
+    Ok((sat, why))
+}
+
+/// The claude -p runner and the world it was made for, made once per
+/// process so the neutral working directory is made once, as the oracle
+/// makes it.
+static CLAUDE: Mutex<Option<(HashMap<String, String>, String, crate::llm::Client)>> = Mutex::new(None);
+
+/// `_invoke_model`'s claude-code branch:
+/// `call_claude_p_json_sync(prompt, timeout_s=60.0, model="haiku")`, where
+/// an EnvelopeGenerationError is a verdict of not satisfied.
+fn claude_code(env: &HashMap<String, String>, home: &str, user: &str) -> R<Out<(bool, String)>> {
+    let prompt = format!("[system]\n{SYSTEM}\n\n[user]\n{user}");
+    let mut guard = CLAUDE.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.as_ref().is_none_or(|(e, h, _)| e != env || h != home) {
+        *guard = Some((env.clone(), home.to_string(), crate::llm::Client::new(env.clone(), home)));
     }
+    let client = &mut guard.as_mut().expect("set above").2;
+    let got = client.sync_text(&prompt, "haiku", 60.0, &[]).and_then(|out| crate::llm::first_json_object(&out));
+    match got {
+        Ok(o) => Ok(Out::Ok(verdict(&o)?)),
+        Err(crate::llm::CallError::Model(m)) => Ok(Out::Ok((false, format!("llm-check failed: {m}")))),
+        Err(crate::llm::CallError::Unported(w)) => undecided(format!("an llm_check {w}")),
+        Err(crate::llm::CallError::Os(e)) => Ok(Out::Fail(e.to_string())),
+    }
+}
+
+/// `llm_check._invoke_model`.
+fn invoke_model(env: &HashMap<String, String>, home: &str, backend: &str, rule: &str, payload: &Object) -> R<Out<(bool, String)>> {
+    if crate::llm::renamed(backend) {
+        // resolve_backend raises on the old name: the check fails closed.
+        return Ok(Out::Fail(crate::llm::RENAMED_TEXT.into()));
+    }
+    let user = user_prompt(rule, payload);
+    if backend == "claude-code" {
+        return claude_code(env, home, &user);
+    }
+    let model = env.get("OPENDAISUGI_LLM_CHECK_MODEL").cloned().unwrap_or_else(|| DEFAULT_MODEL.into());
+    if let Some(k) = llm_unported_env(env) {
+        return undecided(format!("an llm_check under {k}, which changes how httpx calls the model"));
+    }
+    let get = |k: &str| env.get(k).cloned();
+    let w = match wire::resolve(&model, "", "", &get) {
+        Ok(w) => w,
+        Err(m) => return Ok(Out::Fail(m)),
+    };
+    let msgs = vec![("system".to_string(), SYSTEM.to_string()), ("user".to_string(), user)];
+    let body = wire::body(&w, &msgs, &wire::Opts { max_tokens: Some(200), temperature: Some(0), json_object: false, ..Default::default() });
+    let headers: Vec<(String, String)> = w.headers.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+    let proxies = crate::netproxy::Httpx::from_vars(&crate::netproxy::map_vars(env), false);
+    let (status, text) = tryo!(post(&w.url, &headers, body.as_bytes(), wire::timeout(&get), &proxies, None)?);
+    let content = match wire::read_reply(&w, status, &text) {
+        Ok(r) => r.text,
+        Err(m) => return Ok(Out::Fail(m)),
+    };
+    // Nesting past 900 is left undecided: in the verifier's thread,
+    // json.loads might raise RecursionError before that depth.
+    match py_decode_error(&content, LLM_JSON_DEPTH) {
+        None => {}
+        Some(PyDecodeFail::TooDeep) => return undecided("an llm_check reply nested past what json.loads reads"),
+        Some(PyDecodeFail::Raised(m)) => return Ok(Out::Fail(m)),
+    }
+    let parsed = match loads(&content) {
+        Ok(v) => v,
+        Err(_) => return undecided("an llm_check reply that json.loads refuses"),
+    };
+    let o = match parsed {
+        Value::Obj(o) => o,
+        other => return Ok(Out::Fail(format!("'{}' object has no attribute 'get'", py_type_name(&other)))),
+    };
+    Ok(Out::Ok(verdict(&o)?))
 }
 
 /// The URL split as the port sends it: TLS or not, host, port, path.
@@ -552,5 +617,83 @@ mod tests {
         let (tls, host, port, path) = target("https://api.anthropic.com/v1/messages").unwrap_or_else(|_| panic!());
         assert!(tls);
         assert_eq!((host.as_str(), port, path.as_str()), ("api.anthropic.com", 443, "/v1/messages"));
+    }
+
+    /// A `claude` in a fresh directory that keeps its stdin in `seen`,
+    /// prints `out` and exits with `code`. Returns the environment that
+    /// finds it, and the path of `seen`.
+    fn fake_claude(out: &str, code: i32) -> (HashMap<String, String>, String) {
+        let dir = std::env::temp_dir().join(format!("llmcheck-{}-{}", std::process::id(), rand_suffix()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let seen = dir.join("seen").to_string_lossy().to_string();
+        let bin = dir.join("claude");
+        std::fs::write(&bin, format!("#!/bin/sh\ncat > {seen}\nprintf '%s' '{out}'\necho boom >&2\nexit {code}\n")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut env = HashMap::new();
+        env.insert("PATH".to_string(), format!("{}:/usr/bin:/bin", dir.display()));
+        env.insert("TMPDIR".to_string(), dir.to_string_lossy().to_string());
+        (env, seen)
+    }
+
+    /// Removes its directory when dropped, so a test leaves no files.
+    struct Gone(String);
+
+    impl Drop for Gone {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn rand_suffix() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        N.fetch_add(1, Ordering::SeqCst)
+    }
+
+    #[test]
+    fn claude_code_asks_with_the_oracles_prompt() {
+        let (env, seen) = fake_claude(r#"{"satisfied": true, "rationale": "kind"}"#, 0);
+        let _gone = Gone(env["TMPDIR"].clone());
+        let payload = Object::new().with("task", "t");
+        let r = run_llm_check_with(&env, "/nonexistent", "claude-code", "is it kind", &payload).ok().unwrap();
+        assert!(r.satisfied && !r.errored && r.reason == "kind");
+        let got = std::fs::read_to_string(seen).unwrap();
+        let want = format!(
+            "[system]\n{SYSTEM}\n\n[user]\nRule:\nis it kind\n\nPlan payload (JSON):\n{{\"task\": \"t\"}}\n\nDoes the plan payload satisfy the rule?"
+        );
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn claude_code_failure_is_not_satisfied() {
+        // The oracle catches EnvelopeGenerationError in _invoke_model: a
+        // plain verdict of not satisfied, not an errored check.
+        let (env, _) = fake_claude("", 3);
+        let _gone = Gone(env["TMPDIR"].clone());
+        let r = run_llm_check_with(&env, "/nonexistent", "claude-code", "r", &Object::new()).ok().unwrap();
+        assert!(!r.satisfied && !r.errored);
+        assert_eq!(r.reason, "llm-check failed: claude -p exited 3: 'boom\\n'");
+        let (env, _) = fake_claude(r#"{"satisfied": True, "rationale": None}"#, 0);
+        let _gone2 = Gone(env["TMPDIR"].clone());
+        let r = run_llm_check_with(&env, "/nonexistent", "claude-code", "r", &Object::new()).ok().unwrap();
+        assert!(r.satisfied && r.reason == "None");
+    }
+
+    #[test]
+    fn renamed_backend_fails_closed() {
+        let r = run_llm_check_with(&HashMap::new(), "/nonexistent", " litellm ", "r", &Object::new()).ok().unwrap();
+        assert!(r.errored && r.reason == format!("error: llm_check call failed: {}", crate::llm::RENAMED_TEXT));
+    }
+
+    #[test]
+    fn an_unported_setting_is_undecided() {
+        let mut env = HashMap::new();
+        env.insert("ANTHROPIC_API_KEY".to_string(), "sk-test".to_string());
+        env.insert("SSL_CERT_FILE".to_string(), "/x".to_string());
+        match run_llm_check_with(&env, "/nonexistent", "api", "r", &Object::new()) {
+            Err(Fault::Undecided(w)) => assert!(w.contains("SSL_CERT_FILE")),
+            _ => panic!("not undecided"),
+        }
     }
 }

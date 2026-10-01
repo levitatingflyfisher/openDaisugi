@@ -266,7 +266,7 @@ func (s *Server) handleTaskClose(_ *Client, r *proto.Request) proto.Response {
 			}
 			repo, err := worktree.Repo(tk.Worktree)
 			if err == nil {
-				err = worktree.Remove(repo, tk.Label, false)
+				err = worktree.RemoveAt(repo, tk.Worktree)
 			}
 			if err != nil {
 				s.saveLayout()

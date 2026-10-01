@@ -393,6 +393,8 @@ def prepare(case: dict[str, Any], work: Path) -> tuple[Path, list[str], dict[str
         "LANG": "C.UTF-8",
         "NO_COLOR": "1",
         "COLUMNS": "100",
+        # The voice engine choice reads this, never the real box (VO-17).
+        "OPENDAISUGI_VOICE_HARDWARE": "16,8,0",
     }
     env.update({k: _sub(v, h) for k, v in (case.get("env") or {}).items()})
     cwd = home / case.get("cwd", "")
@@ -2603,6 +2605,17 @@ def graft_cases(add: Any) -> None:
         ["install"],
         before={CLAUDE: f(hook_settings("eval python -m opendaisugi.gate"))},
     )
+    g("install trial", ["install", "--state", "trial"])
+    g("install trial seed", ["install", "--state", "trial", "--seed", "42"])
+    g("install trial seed max", ["install", "--state", "trial", "--seed", "9007199254740992"])
+    g("install trial seed over", ["install", "--state", "trial", "--seed", "9007199254740993"])
+    g(
+        "install trial seed huge",
+        ["install", "--state", "trial", "--seed", "99999999999999999999999"],
+    )
+    g("install trial seed negative", ["install", "--state", "trial", "--seed", "-1"])
+    g("install trial seed not int", ["install", "--state", "trial", "--seed", "x"])
+    g("install seed without trial", ["install", "--seed", "3"])
     g("status none", ["status"])
     g("status none json", ["status", "--json"])
     for label, fmt in (("text", []), ("json", ["--json"])):
@@ -2615,6 +2628,16 @@ def graft_cases(add: Any) -> None:
                 f"{grafts}/c.json": f(json.dumps({**rule, "id": "c", "state": "audit"})),
                 f"{grafts}/d.json": f("[]"),
                 CLAUDE: f(hook_settings("rtk rewrite")),
+            },
+        )
+        g(
+            f"status trial {label}",
+            ["status", *fmt],
+            before={
+                f"{grafts}/t.json": f(
+                    json.dumps({**rule, "id": "t", "state": "trial", "trial": {"seed": 5}})
+                ),
+                f"{grafts}/u.json": f(json.dumps({**rule, "id": "u", "state": "trial"})),
             },
         )
     g("remove", ["remove"], before={f"{grafts}/big-read.json": f(json.dumps(rule))})
@@ -2646,6 +2669,8 @@ def graft_cases(add: Any) -> None:
 RICH_CONFIG = ".opendaisugi/config.yaml"
 _WARN_LINE = re.compile(r"^.*?:\d+: \w*Warning: (.*)$")
 _MS_JSON = re.compile(r'("duration_ms": )-?[0-9][0-9.e+-]*')
+# `daisugi verify` prints how long the check took.
+_MS_LINE = re.compile(r"(?m)^(  duration: )[0-9.]+ms$")
 
 
 def _cwd8(home: Path, cwd: str) -> str:
@@ -2678,6 +2703,7 @@ def rich_normalize(res: dict[str, Any], work: Path, case: dict[str, Any]) -> dic
     res["stderr"] = out
     if isinstance(res["stdout"], str):
         res["stdout"] = _MS_JSON.sub(r"\1{MS}", res["stdout"])
+        res["stdout"] = _MS_LINE.sub(r"\1{MS}ms", res["stdout"])
     tree = {}
     for rel, entry in res["tree"].items():
         rel = _BAK.sub(".bak", rel)
@@ -4168,6 +4194,107 @@ def build_rich_cases() -> list[dict[str, Any]]:
         )
     )
     add(rich("journal ingest missing file", ["journal", "ingest", "nope.yaml"]))
+
+    # `daisugi verify PLAN --envelope ENV`: the verifier on two files.
+    def vdoc(name: str, obj: dict[str, Any]) -> dict[str, Any]:
+        return {name: {"text": _yaml.safe_dump(obj, sort_keys=False)}}
+
+    v_plan = {
+        "id": "plan_00000001",
+        "source": "script",
+        "task": "list the files",
+        "steps": [
+            {"id": "s1", "type": "shell", "command": "ls -la", "depends_on": []},
+            {"id": "s2", "type": "file_read", "path": "/work/a.txt", "depends_on": ["s1"]},
+        ],
+    }
+    v_perm = {
+        "file_read": ["/work/**"],
+        "file_write": [],
+        "network": False,
+        "shell": True,
+        "shell_allowlist": ["ls"],
+    }
+    v_env = {"id": "env_00000001", "generated_by": "test", "task": "t", "permissions": v_perm}
+    v_tight = {**v_env, "permissions": {**v_perm, "shell_allowlist": ["cat"], "file_read": []}}
+    exists = {"op": "exists", "path": "a"}
+    v_taut = {
+        **v_env,
+        "invariants": [
+            {
+                "type": "always",
+                "description": "d",
+                "expr": {"op": "or", "children": [exists, {"op": "not", "child": exists}]},
+            }
+        ],
+    }
+    v_alias = {
+        **v_env,
+        "invariants": [
+            {"type": "named", "description": "d", "expr": {"op": "alias", "name": "no_secrets"}}
+        ],
+    }
+    both = {**vdoc("p.yaml", v_plan), **vdoc("e.yaml", v_env)}
+    for name, before, extra in [
+        ("ok", both, []),
+        ("ok json", both, ["--json"]),
+        ("violations", {**both, **vdoc("e.yaml", v_tight)}, []),
+        ("violations json", {**both, **vdoc("e.yaml", v_tight)}, ["--json"]),
+        ("tautology warning", {**both, **vdoc("e.yaml", v_taut)}, []),
+        ("alias", {**both, **vdoc("e.yaml", v_alias)}, []),
+        ("plan does not parse", {**both, "p.yaml": {"text": "id: x\nsteps: 3\n"}}, []),
+        ("envelope does not parse", {**both, "e.yaml": {"text": "id: x\n"}}, []),
+        ("plan missing", vdoc("e.yaml", v_env), []),
+        ("plan is a directory", {**vdoc("e.yaml", v_env), "p.yaml": {"dir": True}}, []),
+        ("envelope missing", vdoc("p.yaml", v_plan), []),
+    ]:
+        add(
+            rich(
+                f"verify {name}",
+                ["verify", "p.yaml", "--envelope", "e.yaml", *extra],
+                before=before,
+            )
+        )
+    add(rich("verify no envelope option", ["verify", "p.yaml"], before=both))
+
+    # `daisugi hook report`: one pane state event on stdin. The gate root's
+    # parent is a file here, so the session tree is not written (it is
+    # best effort); the gate_server suite cases the tree through gate.sock.
+    blocked = {"blocked": {"text": "not a directory\n"}}
+    root = ["--root", "{HOME}/blocked/gate"]
+    ev = {
+        "session_id": "s1",
+        "harness": "claude",
+        "state": "working",
+        "source": "headless",
+        "ts": 1.5,
+    }
+    for name, stdin, extra in [
+        ("event", json.dumps(ev), []),
+        ("event with pane", json.dumps(ev), ["--pane", "w1:p2"]),
+        ("gate source", json.dumps({**ev, "source": "gate"}), []),
+        ("done from operator", json.dumps({**ev, "state": "done", "source": "operator"}), []),
+        ("done from manifest", json.dumps({**ev, "state": "done", "source": "manifest"}), []),
+        ("missing field", json.dumps({k: v for k, v in ev.items() if k != "ts"}), []),
+        ("ts a string", json.dumps({**ev, "ts": "1"}), []),
+        ("ts a bool", json.dumps({**ev, "ts": True}), []),
+        ("unknown state", json.dumps({**ev, "state": "napping"}), []),
+        ("detail too long", json.dumps({**ev, "detail": "x" * 201}), []),
+        ("pane not a string", json.dumps({**ev, "pane": 3}), []),
+        ("not json", "{nope", []),
+        ("not an object", "[1, 2]", []),
+        ("empty", "", []),
+    ]:
+        add(
+            rich(
+                f"hook report {name}",
+                ["hook", "report", *root, *extra],
+                before=blocked,
+                stdin=stdin,
+            )
+        )
+    add(rich("hook report bad option", ["hook", "report", "--nope"], before=blocked, stdin="{}"))
+    add(rich("verify no arguments", ["verify"], before=both))
     add(
         rich(
             "journal ingest conformance record",

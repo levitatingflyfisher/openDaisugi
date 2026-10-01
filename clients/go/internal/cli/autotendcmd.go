@@ -22,8 +22,9 @@ import (
 
 func (e *Env) hook(args []string) error {
 	if len(args) == 0 || args[0] == "--help" {
-		e.out("Usage: daisugi hook [OPTIONS] COMMAND [ARGS]...\n\n  Capture hooks. This binary carries record, list, to-trace and auto-tend.\n\n" +
+		e.out("Usage: daisugi hook [OPTIONS] COMMAND [ARGS]...\n\n  Capture hooks. This binary carries record, report, list, to-trace and auto-tend.\n\n" +
 			"Commands:\n  record     Read a hook payload from stdin, record it, return the host's continue contract.\n" +
+			"  report     Read one PaneStateEvent JSON line from stdin and deliver it.\n" +
 			"  list       List captured sessions with call counts.\n" +
 			"  to-trace   Convert a captured session into a journal trace.\n" +
 			"  auto-tend  Close the captures to traces to distillation loop in one call.\n")
@@ -38,6 +39,8 @@ func (e *Env) hook(args []string) error {
 		return e.hookList(args[1:])
 	case "to-trace":
 		return e.hookToTrace(args[1:])
+	case "report":
+		return e.hookReport(args[1:])
 	}
 	return e.notYet("daisugi hook " + args[0])
 }

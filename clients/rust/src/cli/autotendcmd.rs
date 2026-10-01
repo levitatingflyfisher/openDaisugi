@@ -77,9 +77,10 @@ impl Env {
     pub(super) fn hook(&mut self, args: &[String]) -> Res {
         if args.is_empty() || args[0] == "--help" {
             self.out(
-                "Usage: daisugi hook [OPTIONS] COMMAND [ARGS]...\n\n  Capture hooks. This binary carries record, list, \
-                 to-trace and auto-tend.\n\nCommands:\n  record     Read a hook payload from stdin, record it, return \
-                 the host's continue contract.\n  list       List captured sessions with call counts.\n  to-trace   \
+                "Usage: daisugi hook [OPTIONS] COMMAND [ARGS]...\n\n  Capture hooks. This binary carries record, report, \
+                 list, to-trace and auto-tend.\n\nCommands:\n  record     Read a hook payload from stdin, record it, return \
+                 the host's continue contract.\n  report     Read one PaneStateEvent JSON line from stdin and deliver \
+                 it.\n  list       List captured sessions with call counts.\n  to-trace   \
                  Convert a captured session into a journal trace.\n  auto-tend  Close the captures to traces to \
                  distillation loop in one call.\n",
             );
@@ -90,6 +91,7 @@ impl Env {
             "record" => return self.hook_record(&args[1..]),
             "list" => return self.hook_list(&args[1..]),
             "to-trace" => return self.hook_to_trace(&args[1..]),
+            "report" => return self.hook_report(&args[1..]),
             _ => {}
         }
         let what = format!("daisugi hook {}", args[0]);

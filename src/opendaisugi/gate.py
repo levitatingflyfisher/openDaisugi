@@ -27,6 +27,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 import threading
 import time
 import warnings
@@ -59,6 +60,8 @@ from opendaisugi.floor_config import (
     opencode_plugin_hit,
 )
 from opendaisugi.floor_config import REFUSAL as FLOOR_REFUSAL
+from opendaisugi.gate_state_rule import gate_state_hit
+from opendaisugi.gate_state_rule import refusal as gate_state_refusal
 from opendaisugi.hook import (
     APPLY_PATCH_TOOL,
     EXIT_CODE_FORMATS,
@@ -71,11 +74,15 @@ from opendaisugi.hook import (
     stdout_for_format,
 )
 from opendaisugi.models import ActionPlan, Envelope, Permission
+from opendaisugi.owner_rule import LABEL_REFUSAL, gate_change_hit, label_hit
+from opendaisugi.owner_rule import REFUSAL as GATE_CHANGE_REFUSAL
 from opendaisugi.pane_rule import REFUSAL as PANE_REFUSAL
 from opendaisugi.pane_rule import pane_rule_hit
 from opendaisugi.rank_rule import REFUSAL as RANK_REFUSAL
 from opendaisugi.rank_rule import rank_record_hit
 from opendaisugi.search_rule import SEARCH_REFUSAL, search_above_secret_hit
+from opendaisugi.tree_rule import REFUSAL as TREE_REFUSAL
+from opendaisugi.tree_rule import tree_write_hit
 from opendaisugi.verify import is_z3_timeout_warning, verify
 
 DEFAULT_GATE_ROOT = Path.home() / ".opendaisugi" / "gate"
@@ -1055,6 +1062,34 @@ def evaluate_call(
 _TIER_RANK = {SILENT: 0, UNDOABLE: 1, PERMANENT: 2}
 
 
+# DAISUGI_GATE_NOW pins the clock the deadline check reads, for tests. It
+# is read as plain decimal Unix seconds, and only a later time than the real
+# one counts: a pin can add denies, never extend a deadline.
+_NOW_ENV = "DAISUGI_GATE_NOW"
+_NOW_PIN = re.compile(r"[0-9]{1,12}(\.[0-9]{1,6})?")
+
+
+def gate_now() -> float:
+    """The time the deadline check reads: the real time, or a later pin."""
+    now = time.time()
+    pin = os.environ.get(_NOW_ENV)
+    if pin is not None and _NOW_PIN.fullmatch(pin):
+        now = max(now, float(pin))
+    return now
+
+
+def past_deadline(envelope: Envelope) -> bool:
+    """True when the envelope has a deadline and the time is after it."""
+    return envelope.deadline is not None and gate_now() > envelope.deadline
+
+
+def deadline_reason(deadline: float | None) -> str:
+    return (
+        f"the envelope's deadline {json.dumps(deadline)} (Unix seconds) has passed; "
+        "it starts no new work"
+    )
+
+
 def _decide(
     payload: dict[str, Any],
     record: dict[str, Any] | None,
@@ -1065,7 +1100,7 @@ def _decide(
     root: Path | None,
     t0: float,
 ) -> GateDecision:
-    """Decide one normalized record of a call: the pane rule and the two
+    """Decide one normalized record of a call: the pane rule and the
     hard-deny rules first, then the envelope."""
     command = record.get("command") if record else None
     if record and record.get("step_type") == "shell" and isinstance(command, str):
@@ -1096,6 +1131,9 @@ def _decide(
         (opencode_plugin_hit, OPENCODE_PLUGIN_REFUSAL),
         (search_above_secret_hit, SEARCH_REFUSAL),
         (rank_record_hit, RANK_REFUSAL),
+        (tree_write_hit, TREE_REFUSAL),
+        (gate_change_hit, GATE_CHANGE_REFUSAL),
+        (label_hit, LABEL_REFUSAL),
     ):
         if hit(payload, record):
             return GateDecision(
@@ -1109,6 +1147,28 @@ def _decide(
                 elapsed_ms=(time.monotonic() - t0) * 1000,
                 pane_rule=True,
             )
+    state_dir = gate_state_hit(payload, record, root)
+    if state_dir is not None:
+        return GateDecision(
+            allow=False,
+            would_deny=True,
+            reason=gate_state_refusal(state_dir),
+            mode=mode,
+            tool_name=tool_name,
+            step_type=record.get("step_type") if record else None,
+            detail=str((record or {}).get("command") or (record or {}).get("path") or ""),
+            elapsed_ms=(time.monotonic() - t0) * 1000,
+            pane_rule=True,
+        )
+    if past_deadline(envelope):
+        return _deny(
+            mode,
+            deadline_reason(envelope.deadline),
+            tool_name=tool_name,
+            step_type=record.get("step_type") if record else None,
+            detail=str((record or {}).get("command") or (record or {}).get("path") or ""),
+            t0=t0,
+        )
     if record is None:
         return _deny(
             mode,
@@ -1181,6 +1241,13 @@ def _decide_delegate_call(
             t0=t0,
         )
     norm = os.path.normpath(path)
+    # A code write reads its target only when the target exists; a new
+    # file is drafted from the request alone. lexists, as the tool reads it.
+    writes_new = args.get("mode") == "code_write" and not os.path.lexists(norm)
+    if writes_new:
+        return _delegate_send(
+            payload, decision, envelope, mode, verify_timeout_s, root, cwd, call_cwd, norm
+        )
     read = {
         "captured_at": time.time(),
         "session_id": _safe_session_id(payload.get("session_id")),
@@ -1200,6 +1267,27 @@ def _decide_delegate_call(
     )
     if got.would_deny:
         return replace(got, tool_name=tool_name, reason=f"delegate reads {norm}: {got.reason}")
+    return _delegate_send(
+        payload, decision, envelope, mode, verify_timeout_s, root, cwd, call_cwd, norm
+    )
+
+
+def _delegate_send(
+    payload: dict[str, Any],
+    decision: GateDecision,
+    envelope: Envelope,
+    mode: str,
+    verify_timeout_s: float,
+    root: Path | None,
+    cwd: Any,
+    call_cwd: str | None,
+    norm: str,
+) -> GateDecision:
+    """The network send of a delegate call to a remote worker: the
+    envelope must allow it."""
+    from dataclasses import replace
+
+    tool_name = decision.tool_name
     if root is None:
         return decision
     rule = delegate.acting_rule(root)
@@ -1251,6 +1339,7 @@ def _maybe_graft(
     envelope: Envelope,
     fmt: str,
     verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+    session_id: str | None = None,
 ) -> GateDecision:
     """Apply a deny_redirect graft to an allowed whole read of a large file.
 
@@ -1264,6 +1353,10 @@ def _maybe_graft(
     does any rule under an audit-mode gate: a cost deny never surprises an
     audit-mode user. The redirect is never a would-deny: it is a cost rule,
     not a safety one.
+
+    A rule in audit or trial records the session's arm (``delegate.arm_of``
+    of the safe session id) on every graft record. A trial rule redirects
+    only in the graft arm.
     """
     from dataclasses import replace
 
@@ -1287,6 +1380,10 @@ def _maybe_graft(
     if isinstance(m, str) or m.lines <= rule.min_lines:
         return decision
     graft: dict[str, Any] = {**rule.as_dict(), "lines": m.lines, "file_lines_over": rule.min_lines}
+    arm = None
+    if rule.state in ("audit", "trial"):
+        arm = delegate.arm_of(rule, _safe_session_id(session_id))
+        graft["arm"] = arm
     route = delegate.route_delegate(root.parent, envelope, allow_remote=rule.allow_remote)
     if not route.ok:
         graft.update(applied=False, why=route.reason)
@@ -1316,8 +1413,13 @@ def _maybe_graft(
             why=f"the envelope would not allow the delegate tool: {got.reason}",
         )
         return replace(decision, graft=graft)
-    if rule.state != "active":
+    if rule.state == "audit":
         graft.update(applied=False, why="the rule is in audit: the read is not denied")
+        return replace(decision, graft=graft)
+    if rule.state == "trial" and arm == "control":
+        graft.update(
+            applied=False, why="the session is in the trial's control arm: the read is not denied"
+        )
         return replace(decision, graft=graft)
     if decision.mode == "audit":
         graft.update(applied=False, why="the gate is in audit mode: the read is not denied")
@@ -1989,7 +2091,13 @@ def gate_and_contract(
                     )
             if isinstance(payload, dict) and not decision.ask:
                 decision = _maybe_graft(
-                    root, payload, decision, envelope, fmt, verify_timeout_s=verify_timeout_s
+                    root,
+                    payload,
+                    decision,
+                    envelope,
+                    fmt,
+                    verify_timeout_s=verify_timeout_s,
+                    session_id=session_id,
                 )
         join = join_keys(payload) if isinstance(payload, dict) else {}
         _log_audit(root, session_id, decision, payload_session_id=payload_session, join=join)

@@ -92,3 +92,59 @@ def test_cli_install_status_remove(tmp_path, monkeypatch):
     )
     out = runner.invoke(app, ["graft", "install", "--data-dir", dd, "--state", "on"])
     assert out.exit_code == 2
+
+
+def test_install_a_trial_rule_with_its_seed(tmp_path):
+    root = tmp_path / "gate"
+    got = graft_install.install(root, home=tmp_path, cwd=tmp_path, state="trial", seed=42)
+    assert got.state == "trial" and got.seed == 42
+    obj = json.loads(got.path.read_text())
+    assert obj["state"] == "trial" and obj["trial"] == {"seed": 42}
+    r = delegate.acting_rule(root)
+    assert (r.state, r.seed) == ("trial", 42)
+
+
+def test_a_trial_rule_without_a_seed_has_seed_zero(tmp_path):
+    root = tmp_path / "gate"
+    got = graft_install.install(root, home=tmp_path, cwd=tmp_path, state="trial")
+    assert json.loads(got.path.read_text())["trial"] == {"seed": 0}
+
+
+def test_an_audit_rule_has_no_trial_object(tmp_path):
+    got = graft_install.install(tmp_path / "gate", home=tmp_path, cwd=tmp_path)
+    assert "trial" not in json.loads(got.path.read_text())
+
+
+def test_status_shows_the_trial_and_its_seed(tmp_path):
+    root = tmp_path / "gate"
+    graft_install.install(root, home=tmp_path, cwd=tmp_path, state="trial", seed=7)
+    doc = graft_install.status(root, home=tmp_path, cwd=tmp_path)
+    assert doc["rules"][0]["state"] == "trial" and doc["rules"][0]["trial_seed"] == 7
+    assert "state trial (seed 7)" in graft_install.status_text(doc)
+
+
+def test_status_has_no_seed_for_other_states(tmp_path):
+    root = tmp_path / "gate"
+    graft_install.install(root, home=tmp_path, cwd=tmp_path)
+    doc = graft_install.status(root, home=tmp_path, cwd=tmp_path)
+    assert doc["rules"][0]["trial_seed"] is None
+
+
+def test_cli_install_trial(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "h"))
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    dd = str(tmp_path / "d")
+    out = runner.invoke(
+        app, ["graft", "install", "--data-dir", dd, "--state", "trial", "--seed", "9"]
+    )
+    assert out.exit_code == 0, out.output
+    assert "state trial, seed 9," in out.output
+    out = runner.invoke(app, ["graft", "status", "--data-dir", dd])
+    assert "state trial (seed 9)" in out.output
+    out = runner.invoke(app, ["graft", "install", "--data-dir", dd, "--seed", "9"])
+    assert out.exit_code == 2 and "--seed needs --state trial" in out.output
+    out = runner.invoke(
+        app, ["graft", "install", "--data-dir", dd, "--state", "trial", "--seed", "-1"]
+    )
+    assert out.exit_code == 2 and "--seed must be from 0 to 2**53" in out.output

@@ -136,11 +136,13 @@ func (s *Server) setForeman(id string) {
 	b, _ := json.Marshal(map[string]string{"pane": id})
 	path := filepath.Join(s.cfg.DataDir, foremanFile)
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err == nil {
-		err = os.Rename(tmp, path)
-		if err == nil {
-			return
+	var err error
+	if !s.writeData(func() {
+		if err = os.WriteFile(tmp, b, 0o600); err == nil {
+			err = os.Rename(tmp, path)
 		}
+	}) || err == nil {
+		return
 	}
 	s.Note("cannot write "+path+". The foreman is known until the server stops.", id)
 }
@@ -300,7 +302,12 @@ func (s *Server) startForeman(reqID, harness string) (string, *proto.Response) {
 		harness = name
 	}
 	dir := s.foremanDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	var err error
+	if !s.writeData(func() { err = os.MkdirAll(dir, 0o700) }) {
+		resp := proto.ErrResp(reqID, proto.ErrServerClosed, "this server has closed. It cannot start a foreman.")
+		return "", &resp
+	}
+	if err != nil {
 		resp := proto.ErrResp(reqID, proto.ErrInternal, "cannot make the foreman's directory "+dir+": "+err.Error())
 		return "", &resp
 	}

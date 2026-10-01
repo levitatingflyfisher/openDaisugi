@@ -231,6 +231,9 @@ type Step struct {
 	Raw       map[string]interface{}
 	// JointOrder is joint_targets' keys in their JSON order.
 	JointOrder []string
+	// JSON is the step as it was read, keys in their order: the
+	// model_dump an llm_check payload holds.
+	JSON json.RawMessage
 }
 
 func (s *Step) UnmarshalJSON(data []byte) error {
@@ -242,6 +245,7 @@ func (s *Step) UnmarshalJSON(data []byte) error {
 	}
 	floatNumbers(raw)
 	s.Raw = raw
+	s.JSON = append(json.RawMessage(nil), data...)
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err == nil {
 		s.JointOrder = objectKeys(fields["joint_targets"])

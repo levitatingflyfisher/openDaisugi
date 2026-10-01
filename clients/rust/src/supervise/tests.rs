@@ -204,3 +204,27 @@ fn the_default_approval() {
     d.env.insert("DAISUGI_APPROVE".into(), "maybe".into());
     assert!(d.decide(&step, &s.env).unwrap_err().starts_with("ValueError: DAISUGI_APPROVE='maybe'"));
 }
+
+fn path_env() -> HashMap<String, String> {
+    HashMap::from([("PATH".to_string(), "/usr/bin:/bin".to_string())])
+}
+
+/// The shell exits at once; a background child writes three seconds later.
+/// The reader keeps reading to EOF within the step's time.
+#[test]
+fn the_shell_reads_a_late_background_writer_to_eof() {
+    let mut sh = super::executors::Shell { env: path_env() };
+    let step = shell_step(r#"{"id": "s1", "type": "shell", "command": "(sleep 3; echo late) & echo early"}"#);
+    let res = sh.run(&step, 10, 1024).unwrap();
+    assert_eq!((res.rc, res.stdout.as_str(), res.timed_out), (0, "early\nlate\n", false));
+}
+
+#[test]
+fn the_shell_keeps_the_output_read_so_far_past_the_step_time() {
+    let mut sh = super::executors::Shell { env: path_env() };
+    let step = shell_step(r#"{"id": "s1", "type": "shell", "command": "sleep 30 & echo early"}"#);
+    let t = std::time::Instant::now();
+    let res = sh.run(&step, 3, 1024).unwrap();
+    assert_eq!((res.rc, res.stdout.as_str()), (0, "early\n"));
+    assert!(t.elapsed() < std::time::Duration::from_secs(8));
+}

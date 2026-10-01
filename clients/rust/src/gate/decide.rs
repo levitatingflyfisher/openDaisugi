@@ -176,30 +176,40 @@ impl Runner {
         let owned_rec = rec.cloned();
         let owned_cwd = cwd.clone();
         let owned_p = p.clone();
+        let owned_env = env.clone();
         let base = depth();
         // The rules run with no deadline of their own, as in the oracle;
         // the worker's deadline bounds them.
-        let refusal = self.run_unbounded(base, move |r| -> R<Option<&'static str>> {
+        let refusal = self.run_unbounded(base, move |r| -> R<Option<String>> {
             let rec = owned_rec.as_ref();
             if hit(r.pane_rule_hit(&owned_p, &owned_cwd, rec))? {
-                return Ok(Some(PANE_REFUSAL));
+                return Ok(Some(PANE_REFUSAL.to_string()));
             }
             if hit(r.floor_hit(&owned_cwd, rec, Guard::Floor))? {
-                return Ok(Some(FLOOR_REFUSAL));
+                return Ok(Some(FLOOR_REFUSAL.to_string()));
             }
             if hit(r.floor_hit(&owned_cwd, rec, Guard::Daisugi))? {
-                return Ok(Some(DAISUGI_REFUSAL));
+                return Ok(Some(DAISUGI_REFUSAL.to_string()));
             }
             if hit(r.floor_hit(&owned_cwd, rec, Guard::Opencode))? {
-                return Ok(Some(OPENCODE_REFUSAL));
+                return Ok(Some(OPENCODE_REFUSAL.to_string()));
             }
             if hit(r.search_above_secret_hit(&owned_p, &owned_cwd, rec))? {
-                return Ok(Some(SEARCH_REFUSAL));
+                return Ok(Some(SEARCH_REFUSAL.to_string()));
             }
-            if super::rank::rank_record_hit(rec) {
-                return Ok(Some(super::rank::RANK_REFUSAL));
+            if hit(r.rank_record_hit(rec))? {
+                return Ok(Some(super::rank::RANK_REFUSAL.to_string()));
             }
-            Ok(None)
+            if hit(r.tree_write_hit(rec))? {
+                return Ok(Some(super::rank::TREE_REFUSAL.to_string()));
+            }
+            if hit(r.gate_change_hit(rec))? {
+                return Ok(Some(super::rank::GATE_CHANGE_REFUSAL.to_string()));
+            }
+            if hit(r.label_hit(rec))? {
+                return Ok(Some(super::rank::LABEL_REFUSAL.to_string()));
+            }
+            Ok(r.gate_state_hit(&owned_cwd, rec, &owned_env)?.map(|d| super::gatestate::gate_state_refusal(&d)))
         })?;
         if let Some(reason) = refusal {
             let mut d = Decision {
@@ -217,6 +227,17 @@ impl Runner {
                 d.detail = rec.rule_detail();
             }
             return Ok(d);
+        }
+        if let Some(dl) = env.deadline() {
+            if self.gate_now() > dl {
+                let mut d = self.deny(&deadline_reason(dl));
+                d.tool_name = Some(tool_name.to_string());
+                if let Some(rec) = rec {
+                    d.step_type = Some(rec.step_type.clone());
+                    d.detail = rec.rule_detail();
+                }
+                return Ok(d);
+            }
         }
         let rec = match rec {
             None => {
@@ -469,4 +490,54 @@ pub const VERIFY_THREAD_FRAMES: i64 = 4;
 fn verify_late_message(timeout_s: f64) -> String {
     let full = verify_late_reason(timeout_s);
     full.trim_start_matches("gate internal error (denied fail-closed): ").trim_end_matches('.').to_string()
+}
+
+/// `gate._NOW_ENV`: it pins the clock the deadline check reads.
+pub const NOW_ENV: &str = "DAISUGI_GATE_NOW";
+
+/// `gate._NOW_PIN`, in full: 1 to 12 ASCII digits, then at most a point
+/// and 1 to 6 digits.
+fn now_pin(s: &str) -> Option<f64> {
+    let (whole, frac) = match s.split_once('.') {
+        Some((w, f)) => (w, Some(f)),
+        None => (s, None),
+    };
+    let digits = |t: &str, max: usize| !t.is_empty() && t.len() <= max && t.bytes().all(|b| b.is_ascii_digit());
+    if !digits(whole, 12) || frac.is_some_and(|f| !digits(f, 6)) {
+        return None;
+    }
+    s.parse().ok()
+}
+
+/// `gate.deadline_reason`.
+pub fn deadline_reason(deadline: f64) -> String {
+    format!(
+        "the envelope's deadline {} (Unix seconds) has passed; it starts no new work",
+        super::pyjson::float_repr(deadline)
+    )
+}
+
+impl Runner {
+    /// `gate.gate_now`: the real time, or a later pin.
+    pub fn gate_now(&self) -> f64 {
+        let now = super::now_float();
+        match self.env.get(NOW_ENV).and_then(|p| now_pin(p)) {
+            Some(pin) if pin > now => pin,
+            _ => now,
+        }
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::now_pin;
+
+    #[test]
+    fn a_pin_is_plain_decimal_seconds() {
+        assert_eq!(now_pin("4000000001"), Some(4000000001.0));
+        assert_eq!(now_pin("4000000000.5"), Some(4000000000.5));
+        for bad in ["", "4e9", "+4", " 4", "4.", ".5", "1234567890123", "1.1234567", "nan", "inf"] {
+            assert_eq!(now_pin(bad), None, "{bad}");
+        }
+    }
 }

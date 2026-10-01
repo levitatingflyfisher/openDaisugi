@@ -143,6 +143,11 @@ pub fn validate(input: &Object) -> R<Object> {
     out.set("cache_key", opt_str(input, "cache_key", true)?);
     out.set("stakes", literal(input, "stakes", "low", &["low", "medium", "high", "physical"])?);
     out.set("shell_interpreter_policy", literal(input, "shell_interpreter_policy", "surface", &["surface", "strict", "allow"])?);
+    // The deadline is left out when absent or null, as the oracle dumps it.
+    let deadline = opt_float(input, "deadline")?;
+    if !matches!(deadline, Value::Null) {
+        out.set("deadline", deadline);
+    }
     Ok(out)
 }
 

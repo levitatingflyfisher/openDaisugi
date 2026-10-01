@@ -494,6 +494,194 @@ def build_run_cases() -> list[dict[str, Any]]:
                     }
                 ],
             },
+        )
+    )
+    # An llm_check asks the model once per verify: through `claude -p` (no
+    # key, the fake claude on PATH), or through the HTTP backend.
+    judge = {"type": "judge", "description": "d", "expr": {"op": "llm_check", "rule": "is it kind"}}
+    yes = json.dumps({"satisfied": True, "rationale": "it is kind"})
+    no = json.dumps({"satisfied": False, "rationale": "it is not"})
+    for name, reply, extra in [
+        ("holds", {"claude_raw": yes}, {}),
+        ("not satisfied", {"claude_raw": no}, {}),
+        ("dict literal", {"claude_raw": "{'satisfied': True, 'rationale': None}"}, {}),
+        ("prose reply", {"claude_raw": "I think it is kind."}, {}),
+        ("satisfied not bool", {"claude_raw": '{"satisfied": "no", "rationale": 3}'}, {}),
+        ("claude fails", {"claude_raw": "", "stderr": "boom", "exit": 3}, {}),
+        ("claude args", {"claude_raw": yes}, {"env": {"DAISUGI_CLAUDE_ARGS": "--verbose"}}),
+    ]:
+        add(
+            run_case_spec(
+                f"run llm_check invariant {name}",
+                [sh("s1", "echo hi")],
+                {**echo, "invariants": [judge]},
+                replies=[reply],
+                **extra,
+            )
+        )
+    for name, reply, extra in [
+        ("holds", {"http": yes}, {}),
+        ("not satisfied", {"http": no}, {}),
+        ("not json", {"http": "maybe"}, {}),
+        ("list reply", {"http": "[1, 2]"}, {}),
+        ("server error", {"http_status": 500, "body": '{"error": "x"}'}, {}),
+        (
+            "check model",
+            {"http": yes},
+            {"env": {**API, "OPENDAISUGI_LLM_CHECK_MODEL": "anthropic/claude-sonnet-4-5"}},
+        ),
+    ]:
+        add(
+            run_case_spec(
+                f"run llm_check invariant api {name}",
+                [sh("s1", "echo hi")],
+                {**echo, "invariants": [judge]},
+                replies=[reply],
+                env=extra.get("env", API),
+            )
+        )
+    add(
+        run_case_spec(
+            "run llm_check invariant api no key",
+            [sh("s1", "echo hi")],
+            {**echo, "invariants": [judge]},
+            env={"OPENDAISUGI_LLM_BACKEND": "api"},
+        )
+    )
+    add(
+        run_case_spec(
+            "run llm_check invariant nested",
+            [sh("s1", "echo hi")],
+            {
+                **echo,
+                "invariants": [
+                    {
+                        "type": "judge",
+                        "description": "d",
+                        "expr": {
+                            "op": "and",
+                            "children": [
+                                {"op": "not", "child": {"op": "llm_check", "rule": "is it rude"}},
+                                {
+                                    "op": "forall_steps",
+                                    "pred": {"op": "equals", "path": "type", "value": "shell"},
+                                },
+                            ],
+                        },
+                    }
+                ],
+            },
+            replies=[{"claude_raw": no}],
+        )
+    )
+    add(
+        run_case_spec(
+            "run llm_check invariant physical",
+            [sh("s1", "echo hi")],
+            {**echo, "stakes": "physical", "invariants": [judge]},
+        )
+    )
+    add(
+        run_case_spec(
+            "run llm_check invariant not enforced",
+            [sh("s1", "echo hi")],
+            {**echo, "invariants": [{**judge, "enforce": False}]},
+        )
+    )
+    # A postcondition that asks a model: once over the plan before the run,
+    # once over each completed step (stage 2).
+    post_judge = [{"type": "judge", "expr": {"op": "llm_check", "rule": "is the output kind"}}]
+    for name, replies in [
+        ("holds", [{"http": yes}, {"http": yes}]),
+        ("stage2 not satisfied", [{"http": yes}, {"http": no}]),
+        ("stage2 not json", [{"http": yes}, {"http": "maybe"}]),
+        ("stage1 not satisfied", [{"http": no}]),
+    ]:
+        add(
+            run_case_spec(
+                f"run llm_check postcondition {name}",
+                [sh("s1", "echo hi")],
+                env_doc(shell=True, shell_allowlist=["echo"], post=post_judge),
+                replies=replies,
+                env=API,
+            )
+        )
+    add(
+        run_case_spec(
+            "run llm_check postcondition two steps",
+            [sh("s1", "echo one"), sh("s2", "echo two", ["s1"])],
+            env_doc(shell=True, shell_allowlist=["echo"], post=post_judge),
+            replies=[{"claude_raw": yes}, {"claude_raw": yes}, {"claude_raw": no}],
+            flags=("--yes", "--json"),
+        )
+    )
+    # Named definitions: no command builds an alias registry, so every
+    # alias is unresolved, in the oracle's words.
+    alias = {"op": "alias", "name": "no_secrets", "args": {}}
+    add(
+        run_case_spec(
+            "run alias invariant",
+            [sh("s1", "echo hi")],
+            {**echo, "invariants": [{"type": "named", "description": "d", "expr": alias}]},
+        )
+    )
+    add(
+        run_case_spec(
+            "run alias invariant nested",
+            [sh("s1", "echo hi")],
+            {
+                **echo,
+                "invariants": [
+                    {"type": "named", "description": "d", "expr": {"op": "not", "child": alias}},
+                ],
+            },
+        )
+    )
+    add(
+        run_case_spec(
+            "run alias postcondition",
+            [sh("s1", "echo hi")],
+            env_doc(shell=True, shell_allowlist=["echo"], post=[{"type": "named", "expr": alias}]),
+        )
+    )
+    add(
+        run_case_spec(
+            "run alias postcondition nested",
+            [sh("s1", "echo hi")],
+            env_doc(
+                shell=True,
+                shell_allowlist=["echo"],
+                post=[{"type": "named", "expr": {"op": "or", "children": [alias]}}],
+            ),
+        )
+    )
+    add(
+        run_case_spec(
+            "run alias postcondition not enforced",
+            [sh("s1", "echo hi")],
+            env_doc(
+                shell=True,
+                shell_allowlist=["echo"],
+                post=[{"type": "named", "expr": alias, "enforce": False}],
+            ),
+        )
+    )
+    # Postcondition exprs stage 2 cannot read.
+    add(
+        run_case_spec(
+            "run postcondition expr not a dict",
+            [sh("s1", "echo hi")],
+            env_doc(shell=True, shell_allowlist=["echo"], post=[{"type": "t", "expr": "x"}]),
+        )
+    )
+    add(
+        run_case_spec(
+            "run postcondition expr does not parse",
+            [sh("s1", "echo hi")],
+            env_doc(
+                shell=True, shell_allowlist=["echo"], post=[{"type": "t", "expr": {"op": "zz"}}]
+            ),
+            # The oracle raises a ValidationError out of verify (K2-8).
             go_refuses=True,
         )
     )
@@ -1257,7 +1445,60 @@ def build_orchestrate_cases() -> list[dict[str, Any]]:
                 {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
                 {"http": "r"},
             ],
-            go_refuses=True,
+        )
+    )
+    yes = json.dumps({"satisfied": True, "rationale": "kind"})
+    add(
+        orch(
+            "orch llm_check postcondition holds",
+            P,
+            envelope=env_doc(
+                post=[{"type": "judge", "expr": {"op": "llm_check", "rule": "is it kind"}}]
+            ),
+            flags=("--deterministic-synthesis",),
+            replies=[
+                {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
+                {"http": yes},
+                {"http": yes},
+                {"http": "r"},
+                {"http": yes},
+            ],
+        )
+    )
+    add(
+        orch(
+            "orch llm_check invariant holds",
+            P,
+            envelope={
+                **env_doc(),
+                "invariants": [
+                    {
+                        "type": "judge",
+                        "description": "d",
+                        "expr": {"op": "llm_check", "rule": "is it kind"},
+                    }
+                ],
+            },
+            flags=("--deterministic-synthesis",),
+            replies=[
+                {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
+                {"http": yes},
+                {"http": yes},
+                {"http": "r"},
+            ],
+        )
+    )
+    add(
+        orch(
+            "orch alias postcondition",
+            P,
+            envelope=env_doc(
+                post=[{"type": "named", "expr": {"op": "alias", "name": "no_secrets", "args": {}}}]
+            ),
+            flags=("--deterministic-synthesis",),
+            replies=[
+                {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
+            ],
         )
     )
     # Refusals and options.

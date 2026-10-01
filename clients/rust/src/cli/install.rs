@@ -181,6 +181,9 @@ pub struct HookOptions {
     pub mode: String,
     pub root: String,
     pub format: String,
+    /// `captures_root`: where the gate mirrors each call as a passive
+    /// capture, or None.
+    pub captures_root: Option<String>,
     pub session: Option<String>,
     pub ask: bool,
 }
@@ -200,6 +203,9 @@ pub fn hook_entry(self_path: &str, o: &HookOptions) -> Object {
         q(&o.format),
         float_repr(inner)
     );
+    if let Some(c) = &o.captures_root {
+        cmd.push_str(&format!(" --captures-root {}", q(c)));
+    }
     if let Some(s) = &o.session {
         cmd.push_str(&format!(" --session {}", q(s)));
     }
@@ -611,7 +617,7 @@ pub(super) fn is_dir(p: &str) -> bool {
 pub fn plan_apply(rt: &Runtime, home: &str, self_path: &str, root: &str, enforce: bool, ask: bool) -> R<Change> {
     let mut ch = Change::new(rt);
     let mode = if enforce { "enforce" } else { "audit" };
-    let opts = |ask: bool| HookOptions { mode: mode.into(), root: root.into(), format: "claude".into(), session: None, ask };
+    let opts = |ask: bool| HookOptions { mode: mode.into(), root: root.into(), format: "claude".into(), captures_root: None, session: None, ask };
     let res = match rt.key {
         "claude" => plan_claude_gate(&join(home, ".claude/settings.json"), &hook_entry(self_path, &opts(ask))),
         "codex" => {

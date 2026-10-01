@@ -18,12 +18,14 @@ import (
 	"daisugi-verify/internal/distill"
 	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/gateway"
+	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/orchestrate"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/rank"
 	"daisugi-verify/internal/supervise"
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/verify"
@@ -419,6 +421,9 @@ type weaveHook struct {
 	dataDir, digest, project, runID string
 	choices                         *pyjson.Object
 	answered                        map[string]bool
+	// resumedCards are the open cards this run picked up on resume, as
+	// {choice id, ranking id}; their resumed rows wait for the run id.
+	resumedCards [][2]string
 }
 
 // Checked is WeaveHook.checked: a filled step that passed its per-step
@@ -561,6 +566,18 @@ func (h *weaveHook) Prepare(step *pyjson.Object) (*pyjson.Object, *supervise.Out
 // not, when the mark failed.
 func (h *weaveHook) Started(step *pyjson.Object, runID string) string {
 	h.runID = runID
+	if len(h.resumedCards) > 0 && h.dataDir != "" {
+		t := rankNow()
+		var rows []*pyjson.Object
+		for _, c := range h.resumedCards {
+			rows = append(rows, pyjson.NewObject().Set("choice_id", c[0]).Set("ranking_id", c[1]).
+				Set("event", "resumed").Set("run_id", runID).Set("ts", t))
+		}
+		if err := rank.AppendRows(h.dataDir, rows); err != nil {
+			return "the resume of the open choice was not recorded: " + err.Error()
+		}
+		h.resumedCards = nil
+	}
 	fail := func(err error) string { return "the start mark was not written: " + err.Error() }
 	if err := os.MkdirAll(filepath.Dir(h.state), 0o777); err != nil {
 		return fail(err)
@@ -727,11 +744,6 @@ func (e *Env) weaveCmd(args []string) error {
 	if maxPar > 1 {
 		return e.refuse(cmd, errors.New("--max-parallel above 1 is not in this binary yet (K2-4)"))
 	}
-	for _, s := range steps {
-		if str(s, "type") == "agentic" {
-			return e.refuse(cmd, errors.New("an agentic step: this binary does not run one (K2-7)"))
-		}
-	}
 	models := pyjson.NewObject()
 	for _, s := range steps {
 		if str(s, "type") != "task" {
@@ -789,6 +801,12 @@ func (e *Env) weaveCmd(args []string) error {
 	executors := supervise.DefaultExecutors()
 	executors["shell"] = supervise.Shell{Environ: e.Environ}
 	executors["task"] = weaveTask{llm: e.llmClient(), spec: spec, hook: hook}
+	self, err := install.Self()
+	if err != nil {
+		return e.fail(cmd, err)
+	}
+	executors["agentic"] = &supervise.Agentic{Envelope: pre.env, Model: "haiku", Claude: e.llmClient(), Self: self,
+		TempDir: e.gettempdir()}
 	approval := supervise.Default{Getenv: e.lookup, Stdin: e.Stdin, Stdout: e.Stdout, Terminal: e.terminal}
 	sup := &supervise.Supervisor{Executors: executors, Journal: j, Z3TimeoutMs: 500, StepTimeoutS: 30,
 		MaxOutputBytes: 10 * 1024 * 1024, Fallback: fallback, Hook: hook,

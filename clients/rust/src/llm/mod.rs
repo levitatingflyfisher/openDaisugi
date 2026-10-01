@@ -305,26 +305,40 @@ impl Client {
         wire::read_reply(&w, status, &text).map_err(CallError::Model)
     }
 
-    /// `call_claude_p_metered`: `claude -p --model=MODEL
-    /// [DAISUGI_CLAUDE_ARGS] --output-format json` with the prompt on stdin,
-    /// run as subprocess.run runs it (killed at the timeout), and the
-    /// reply's text with Claude Code's own token count and cost (None when
-    /// the reply does not say). A stdout that is not JSON is the text
-    /// itself, with no meter.
-    pub fn metered(&mut self, prompt: &str, model: &str, timeout_s: f64) -> Result<Metered, CallError> {
+    /// `call_claude_p_sync`: `claude -p --model=MODEL`, then
+    /// DAISUGI_CLAUDE_ARGS, then `extra`, with the prompt on stdin, run as
+    /// subprocess.run runs it (killed at the timeout) in the neutral
+    /// working directory, and stdout decoded and stripped. A failed run is
+    /// the oracle's EnvelopeGenerationError text.
+    pub fn sync_text(&mut self, prompt: &str, model: &str, timeout_s: f64, extra: &[&str]) -> Result<String, CallError> {
+        self.sync_text_in(None, prompt, model, timeout_s, extra)
+    }
+
+    /// `sync_text` run in `dir`, or in the neutral working directory when
+    /// `dir` is None.
+    pub fn sync_text_in(
+        &mut self,
+        dir: Option<&str>,
+        prompt: &str,
+        model: &str,
+        timeout_s: f64,
+        extra: &[&str],
+    ) -> Result<String, CallError> {
         let Some(bin) = self.which_claude() else {
             return Err(model_err("claude binary not found: 'claude'"));
         };
-        let dir = self.cwd()?;
+        let dir = match dir {
+            Some(d) => d.to_string(),
+            None => self.cwd()?,
+        };
         let mut args = vec!["-p".to_string(), format!("--model={model}")];
         let raw = self.getenv("DAISUGI_CLAUDE_ARGS").trim();
         if !raw.is_empty() {
-            if let Ok(extra) = crate::interpreter_parse::shlex_split(raw) {
-                args.extend(extra);
+            if let Ok(more) = crate::interpreter_parse::shlex_split(raw) {
+                args.extend(more);
             }
         }
-        args.push("--output-format".into());
-        args.push("json".into());
+        args.extend(extra.iter().map(|a| a.to_string()));
         let limit = Duration::from_secs_f64(timeout_s.clamp(0.0, 1e9));
         let (code, out, err) = match self.spawn(&bin, &args, &dir, prompt, limit, false)? {
             Some(r) => r,
@@ -339,7 +353,17 @@ impl Client {
             let e = &err[..err.len().min(500)];
             return Err(model_err(format!("claude -p exited {code}: {}", repr(&decode_utf8_replace(e)))));
         }
-        let raw = strip(&decode_utf8_replace(&out)).to_string();
+        Ok(strip(&decode_utf8_replace(&out)).to_string())
+    }
+
+    /// `call_claude_p_metered`: `claude -p --model=MODEL
+    /// [DAISUGI_CLAUDE_ARGS] --output-format json` with the prompt on stdin,
+    /// run as subprocess.run runs it (killed at the timeout), and the
+    /// reply's text with Claude Code's own token count and cost (None when
+    /// the reply does not say). A stdout that is not JSON is the text
+    /// itself, with no meter.
+    pub fn metered(&mut self, prompt: &str, model: &str, timeout_s: f64) -> Result<Metered, CallError> {
+        let raw = self.sync_text(prompt, model, timeout_s, &["--output-format", "json"])?;
         let v = match loads_py(&raw, 900) {
             Ok(v) => v,
             Err(_) => return Ok(Metered { text: raw, tokens: None, cost: None }),
@@ -712,6 +736,31 @@ impl Client {
             msgs.push(("user".into(), format!("{}{shown}", wire::REASK_TEXT)));
         }
         Err(model_err("unreachable"))
+    }
+}
+
+/// `claude_code_llm._extract_first_json_object`: the first "{" to the
+/// last "}" of `text`, read as JSON or as a Python dict literal.
+pub fn first_json_object(text: &str) -> Result<Object, CallError> {
+    let (Some(start), Some(end)) = (text.find('{'), text.rfind('}')) else {
+        return Err(model_err(format!("no JSON object in claude -p stdout: {}", repr(head(text, 200)))));
+    };
+    if end <= start {
+        return Err(model_err(format!("no JSON object in claude -p stdout: {}", repr(head(text, 200)))));
+    }
+    let body = &text[start..=end];
+    match loads_py(body, 900) {
+        Ok(Value::Obj(o)) => Ok(o),
+        Ok(_) => Err(CallError::Unported("a reply json.loads reads as no dict".into())),
+        Err(e) => {
+            if crate::gate::pyjson::py_decode_error(body, 900).is_some_and(|f| matches!(f, crate::gate::pyjson::PyDecodeFail::TooDeep)) {
+                return Err(CallError::Unported("a reply nested past what json.loads reads".into()));
+            }
+            if let Some(d) = pmodel::decode_dict_text(body) {
+                return Ok(d);
+            }
+            Err(model_err(format!("claude -p stdout was not valid JSON: {e}")))
+        }
     }
 }
 

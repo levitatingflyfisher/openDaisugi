@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 
 def compute_evidence_hash(evidence: dict[str, Any]) -> str:
@@ -228,6 +229,13 @@ class Envelope(BaseModel):
             "and accepts the residual risk."
         ),
     )
+    # The time, in seconds since the Unix epoch, after which this envelope
+    # starts no new work. A child's deadline is at or before its parent's
+    # (tree.edge_ok). It is set by the starter, not by a model, so it is left
+    # out of the JSON schema a model sees, and out of every dump when absent:
+    # an envelope without one dumps the same bytes as before the field was
+    # added.
+    deadline: SkipJsonSchema[float | None] = Field(default=None, exclude_if=lambda v: v is None)
 
     @model_validator(mode="after")
     def _numbers_are_finite(self) -> "Envelope":
@@ -544,6 +552,14 @@ class AgenticStep(StepBase):
     workspace: str
     tools: list[str] = Field(default_factory=list)
     max_turns: int | None = None
+    # The sub-agent's own envelope, narrower than the caller's. The executor
+    # proves it fits (tree.edge_ok) before the sub-agent starts; absent, the
+    # sub-agent restates the caller's envelope. The planner sets it, not a
+    # model, so the JSON schema a model sees leaves it out, and a step
+    # without one dumps the same bytes as before the field was added.
+    child_envelope: SkipJsonSchema[Envelope | None] = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
 
 
 @step_type
