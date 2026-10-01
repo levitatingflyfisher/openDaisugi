@@ -164,6 +164,7 @@ pub struct Week {
     tokens_saved: i64,
     dollars_saved: f64,
     estimated: bool,
+    delegate_estimated: i64,
 }
 
 impl Week {
@@ -192,6 +193,7 @@ impl Week {
             .with("task_pass", self.pass)
             .with("task_fail", self.fail)
             .with("task_unknown", self.unknown)
+            .with("delegate_estimated", self.delegate_estimated)
             .with("tokens_saved", self.tokens_saved)
             .with("dollars_saved", Value::Float(self.dollars_saved))
             .with("estimated", self.estimated)
@@ -317,6 +319,9 @@ pub fn weekly(data_dir: &str) -> Vec<Week> {
         let r = row(&mut weeks, name);
         r.delegations += 1;
         let ok = d.value("ok") == &Value::Bool(true);
+        if ok && d.value("estimated") == &Value::Bool(true) {
+            r.delegate_estimated += 1;
+        }
         if ok {
             r.ok += 1;
             r.delegate_ms += m_float(d.value("elapsed_ms"));
@@ -347,7 +352,7 @@ pub fn weekly(data_dir: &str) -> Vec<Week> {
             let mut r = weeks.remove(&n).expect("week");
             r.tokens_saved = r.turn_saved + r.kept;
             r.dollars_saved = r.turn_dollars + r.kept_dollars - r.worker_dollars;
-            r.estimated = r.turns_est > 0 || r.ok > 0;
+            r.estimated = r.turns_est > 0 || r.delegate_estimated > 0;
             r
         })
         .collect()
@@ -391,7 +396,11 @@ pub fn delegate_state(data_dir: &str, env: &HashMap<String, String>) -> Result<(
                         .with("allow_remote", r.allow_remote),
                 ),
             );
-            let verb = if r.state == "active" { "go to" } else { "would go to (audit: not denied)" };
+            let verb = match r.state.as_str() {
+                "active" => "go to",
+                "trial" => "go to, in the trial's graft arm only,",
+                _ => "would go to (audit: not denied)",
+            };
             lines.push(format!(
                 "  rule: {} v{} ({}), {}: reads over {} lines {verb} the delegate tool",
                 r.id, r.version, r.file, r.state, r.min_lines
@@ -454,4 +463,383 @@ mod tests {
         assert_eq!(group(12), "12");
         assert_eq!(fixed(0.00006, 4), "0.0001");
     }
+}
+
+// ---------------------------------------------------------------------------
+// The promotion meter (router_report.trial_state, SW-13 to SW-15)
+// ---------------------------------------------------------------------------
+
+const MIN_LABELED: i64 = 3;
+const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_NOTE_CHARS: usize = 500;
+const SUM_LIMIT: i64 = 1 << 53;
+
+pub fn labels_path(data_dir: &str) -> String {
+    format!("{data_dir}/router/labels.jsonl")
+}
+
+/// `router_report.session_ok`.
+pub fn session_ok(s: &str) -> bool {
+    crate::gate::pystr::safe_session_id(s) == s
+}
+
+/// `router_report.read_labels`: the last good row wins.
+fn read_labels(data_dir: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for row in read_jsonl(&labels_path(data_dir)) {
+        if let (Value::Str(s), Value::Str(o)) = (row.value("session"), row.value("outcome")) {
+            if session_ok(s) && (o == "pass" || o == "fail") {
+                out.insert(s.clone(), o.clone());
+            }
+        }
+    }
+    out
+}
+
+/// `router_report._count`: an integer from 0 to 2**53, else 0.
+fn count_of(v: &Value) -> i64 {
+    m_int(v).max(0)
+}
+
+/// `router_report._read_capped`.
+fn read_capped(path: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
+    use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
+    let p = os_path(path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(p)
+        .ok()?;
+    let md = f.metadata().ok()?;
+    let ft = md.file_type();
+    if !ft.is_file() || ft.is_fifo() || md.len() > MAX_TRANSCRIPT_BYTES {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                out.extend_from_slice(&buf[..n]);
+                if out.len() as u64 > MAX_TRANSCRIPT_BYTES {
+                    return None;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return None,
+        }
+    }
+    Some(out)
+}
+
+/// A session's billed cost.
+struct Cost {
+    dollars: f64,
+    quota: i64,
+    estimated: bool,
+}
+
+/// One message's price: `router_report.session_cost`'s sum term.
+fn price_message(model: &str, i: i64, o: i64, cr: i64, cw: i64) -> (f64, bool) {
+    let prices = crate::gateway::meter::default_prices();
+    let (pr, known) = match prices.get(model) {
+        Some(p) => (*p, true),
+        None => (crate::gateway::meter::Price { input: 3.0, output: 15.0 }, false),
+    };
+    let a = i as f64 * pr.input;
+    let b = (cr as f64 * pr.input) * 0.1;
+    let c = (cw as f64 * pr.input) * 1.25;
+    let d = o as f64 * pr.output;
+    ((((a + b) + c) + d) / 1_000_000.0, known)
+}
+
+/// `router_report.session_cost`: None when the transcript cannot be read;
+/// Err for one this binary does not read the way Python does.
+fn session_cost(path: &str) -> Result<Option<Cost>, String> {
+    if !path.starts_with('/') {
+        return Ok(None);
+    }
+    let Some(data) = read_capped(path) else { return Ok(None) };
+    let text = String::from_utf8_lossy(&data).into_owned();
+    let mut order: Vec<String> = Vec::new();
+    let mut msgs: HashMap<String, (String, Object)> = HashMap::new();
+    for (n, line) in text.split('\n').enumerate() {
+        if strip(line).is_empty() {
+            continue;
+        }
+        let row = match crate::gate::pyjson::loads_py(line, 900) {
+            Ok(Value::Obj(o)) => o,
+            Ok(_) => continue,
+            Err(e) if e.starts_with("maximum recursion depth") || e == "unsupported" => {
+                return Err("a transcript line this binary does not read".into())
+            }
+            Err(_) => continue,
+        };
+        if row.value("type") != &Value::Str("assistant".into()) {
+            continue;
+        }
+        let Value::Obj(msg) = row.value("message") else { continue };
+        let Value::Obj(usage) = msg.value("usage") else { continue };
+        let key = match msg.value("id") {
+            Value::Str(id) => format!("id:{id}"),
+            _ => format!("line:{n}"),
+        };
+        let model = match msg.value("model") {
+            Value::Str(m) => m.clone(),
+            _ => String::new(),
+        };
+        if !msgs.contains_key(&key) {
+            order.push(key.clone());
+        }
+        msgs.insert(key, (model, usage.clone()));
+    }
+    let mut c = Cost { dollars: 0.0, quota: 0, estimated: false };
+    for k in &order {
+        let (model, u) = &msgs[k];
+        let i = count_of(u.value("input_tokens"));
+        let cr = count_of(u.value("cache_read_input_tokens"));
+        let cw = count_of(u.value("cache_creation_input_tokens"));
+        let o = count_of(u.value("output_tokens"));
+        let (d, known) = price_message(model, i, o, cr, cw);
+        if !known {
+            c.estimated = true;
+        }
+        c.dollars += d;
+        c.quota += i + cr + cw + o;
+        if c.quota > SUM_LIMIT {
+            return Err("a token count past 2**53 in sum, which this binary does not add".into());
+        }
+    }
+    Ok(Some(c))
+}
+
+/// `router_report._read_audit`: every audit record, by file name then line.
+fn read_audit(data_dir: &str) -> Vec<Object> {
+    let dir = format!("{data_dir}/gate/audit");
+    let Some(p) = os_path(&dir) else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(p) else { return Vec::new() };
+    let mut names: Vec<String> = Vec::new();
+    for ent in rd.flatten() {
+        use std::os::unix::ffi::OsStrExt;
+        let n = fsdecode(ent.file_name().as_bytes());
+        if n.ends_with(".jsonl") {
+            names.push(n);
+        }
+    }
+    names.sort();
+    let mut out = Vec::new();
+    for n in names {
+        out.extend(read_jsonl(&format!("{dir}/{n}")));
+    }
+    out
+}
+
+#[derive(Default)]
+struct Arm {
+    sessions: i64,
+    labeled: i64,
+    passed: i64,
+    failed: i64,
+    unlabeled: i64,
+    cost_unknown: i64,
+    dollars: f64,
+    quota: i64,
+    estimated: bool,
+    rate: Option<f64>,
+    per_success: Option<f64>,
+    quota_per_success: Option<f64>,
+}
+
+fn opt_float(v: Option<f64>) -> Value {
+    v.map(Value::Float).unwrap_or(Value::Null)
+}
+
+impl Arm {
+    fn object(&self) -> Object {
+        Object::new()
+            .with("sessions", self.sessions)
+            .with("labeled", self.labeled)
+            .with("passed", self.passed)
+            .with("failed", self.failed)
+            .with("unlabeled", self.unlabeled)
+            .with("cost_unknown", self.cost_unknown)
+            .with("billed_dollars", Value::Float(self.dollars))
+            .with("quota_tokens", self.quota)
+            .with("estimated", self.estimated)
+            .with("success_rate", opt_float(self.rate))
+            .with("dollars_per_success", opt_float(self.per_success))
+            .with("quota_per_success", opt_float(self.quota_per_success))
+    }
+
+    fn line(&self, name: &str) -> String {
+        let est = if self.estimated { " (estimated)" } else { "" };
+        let per = match (self.per_success, self.quota_per_success) {
+            (Some(d), Some(q)) => format!("per success ${}{est}, {} quota tokens", fixed(d, 4), fixed(q, 0)),
+            _ => "per success: unknown".to_string(),
+        };
+        let unknown = if self.cost_unknown != 0 { format!(", {} with no cost", self.cost_unknown) } else { String::new() };
+        format!(
+            "  {name} arm: {} sessions, {} labeled ({} passed, {} failed), {} unlabeled{unknown}; billed ${}{est}, {} quota tokens; {per}",
+            self.sessions,
+            self.labeled,
+            self.passed,
+            self.failed,
+            self.unlabeled,
+            fixed(self.dollars, 4),
+            group(self.quota)
+        )
+    }
+}
+
+/// `router_report.trial_state`: None when no rule in audit or trial is in
+/// force; Err for input this binary does not read the way Python does.
+pub fn trial_state(data_dir: &str) -> Result<Option<(Object, Vec<String>)>, String> {
+    let (rules, _) = delegate::load_rules(&format!("{data_dir}/gate"));
+    let Some(rule) = rules.into_iter().find(|r| r.acting()) else { return Ok(None) };
+    if rule.state != "audit" && rule.state != "trial" {
+        return Ok(None);
+    }
+    let mut arms: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
+    let mut transcripts: HashMap<String, String> = HashMap::new();
+    for rec in read_audit(data_dir) {
+        let Value::Str(session) = rec.value("session_id") else { continue };
+        if let Value::Str(tp) = rec.value("transcript_path") {
+            if tp.starts_with('/') {
+                transcripts.insert(session.clone(), tp.clone());
+            }
+        }
+        let Value::Obj(g) = rec.value("graft") else { continue };
+        let id_ok = matches!(g.value("rule_id"), Value::Str(s) if *s == rule.id);
+        let arm = match g.value("arm") {
+            Value::Str(a) if a == "graft" || a == "control" => a.clone(),
+            _ => continue,
+        };
+        let ver_ok = matches!(g.value("version"), Value::Int(_)) && count_of(g.value("version")).to_string() == rule.version;
+        if !id_ok || !ver_ok {
+            continue;
+        }
+        arms.entry(session.clone()).or_default().insert(arm);
+    }
+    let labels = read_labels(data_dir);
+    let (mut g, mut c) = (Arm::default(), Arm::default());
+    let mut conflicting = 0i64;
+    let mut sessions: Vec<&String> = arms.keys().collect();
+    sessions.sort();
+    for s in sessions {
+        let set = &arms[s];
+        if set.len() > 1 {
+            conflicting += 1;
+            continue;
+        }
+        let r = if set.contains("graft") { &mut g } else { &mut c };
+        r.sessions += 1;
+        let Some(outcome) = labels.get(s) else {
+            r.unlabeled += 1;
+            continue;
+        };
+        r.labeled += 1;
+        if outcome == "pass" {
+            r.passed += 1;
+        } else {
+            r.failed += 1;
+        }
+        let cost = match transcripts.get(s) {
+            Some(tp) => session_cost(tp)?,
+            None => None,
+        };
+        let Some(cost) = cost else {
+            r.cost_unknown += 1;
+            continue;
+        };
+        r.dollars += cost.dollars;
+        r.quota += cost.quota;
+        if r.quota > SUM_LIMIT {
+            return Err("a token count past 2**53 in sum, which this binary does not add".into());
+        }
+        if cost.estimated {
+            r.estimated = true;
+        }
+    }
+    if rule.allow_remote {
+        g.estimated = true;
+    }
+    for r in [&mut g, &mut c] {
+        if r.labeled > 0 {
+            r.rate = Some(r.passed as f64 / r.labeled as f64);
+        }
+        if r.passed > 0 && r.cost_unknown == 0 {
+            r.per_success = Some(r.dollars / r.passed as f64);
+            r.quota_per_success = Some(r.quota as f64 / r.passed as f64);
+        }
+    }
+    let (verdict, text) = verdict_of(&rule, &g, &c);
+    let o = Object::new()
+        .with("rule", rule.id.as_str())
+        .with("version", Value::Int(rule.version.clone()))
+        .with("state", rule.state.as_str())
+        .with("seed", Value::Int(rule.seed.to_string()))
+        .with("min_labeled", MIN_LABELED)
+        .with("arms", Object::new().with("graft", Value::Obj(g.object())).with("control", Value::Obj(c.object())))
+        .with("conflicting", conflicting)
+        .with("verdict", verdict)
+        .with("verdict_text", text.as_str());
+    let mut lines = vec![format!(
+        "trial (rule {} v{}, {}, seed {}): promotion is the operator's; nothing is changed here.",
+        rule.id, rule.version, rule.state, rule.seed
+    )];
+    lines.push(g.line("graft"));
+    lines.push(c.line("control"));
+    if conflicting != 0 {
+        lines.push(format!("  {conflicting} sessions with both arms recorded are left out."));
+    }
+    lines.push(format!("  promotion would: {text}"));
+    Ok(Some((o, lines)))
+}
+
+/// `router_report._verdict`.
+fn verdict_of(rule: &delegate::Rule, g: &Arm, c: &Arm) -> (&'static str, String) {
+    if rule.state == "audit" {
+        return (
+            "none",
+            "nothing: the rule is in audit, so both arms only record. Set its state to trial to compare them.".into(),
+        );
+    }
+    if g.labeled < MIN_LABELED || c.labeled < MIN_LABELED {
+        return (
+            "wait",
+            format!(
+                "wait: each arm needs {MIN_LABELED} labeled sessions (graft {}, control {}).",
+                g.labeled, c.labeled
+            ),
+        );
+    }
+    let (gr, cr) = (g.rate.unwrap_or(0.0), c.rate.unwrap_or(0.0));
+    if gr < cr {
+        return (
+            "retire",
+            format!(
+                "retire rule {}: the graft arm's success rate {} is below the control arm's {}.",
+                rule.id,
+                fixed(gr, 2),
+                fixed(cr, 2)
+            ),
+        );
+    }
+    let (Some(gd), Some(cd)) = (g.per_success, c.per_success) else {
+        return ("wait", "wait: a labeled session's billed cost is unknown, or an arm has no success.".into());
+    };
+    if gd < cd {
+        return (
+            "promote",
+            format!(
+                "promote: set rule {} to active (billed cost per success ${} against ${}).",
+                rule.id,
+                fixed(gd, 4),
+                fixed(cd, 4)
+            ),
+        );
+    }
+    ("keep", format!("keep the trial: billed cost per success ${} is not below ${}.", fixed(gd, 4), fixed(cd, 4)))
 }

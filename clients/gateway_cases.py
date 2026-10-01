@@ -475,6 +475,31 @@ def base_env(home: Path, work: Path) -> dict[str, str]:
     }
 
 
+def lay_out_routing(path: Path, spec: dict[str, Any], now: float) -> None:
+    """A knn outcome table: one row per spec row, the task embedded with the lexical
+    matcher the case's config selects. A row holds `task`, `model`, `outcome` and,
+    optionally, `age` (seconds before now; a day by default) and `conversation`."""
+    sys.path.insert(0, str(REPO / "src"))
+    from opendaisugi import route_knn as rk
+    from opendaisugi._search import _LEXICAL_IDENTITY, _LexicalEmbedder
+
+    emb = _LexicalEmbedder()
+    store = rk.OutcomeStore(path)
+    for r in spec["rows"]:
+        vec = rk.f32_vec(emb.encode([r["task"]])[0])
+        store.add(
+            conversation=r.get("conversation", "old"),
+            ts=now - r.get("age", 60),
+            task_sha=rk.task_sha256(r["task"]),
+            embedder=_LEXICAL_IDENTITY,
+            vec=vec,
+            model=r["model"],
+            cost=r.get("cost", 0.0),
+            latency_ms=None,
+            outcome=r.get("outcome", rk.UNKNOWN),
+        )
+
+
 def lay_out(tree: dict[str, Any], home: Path, subst) -> None:
     home.mkdir(parents=True, exist_ok=True)
     os.chmod(home, 0o755)
@@ -486,6 +511,8 @@ def lay_out(tree: dict[str, Any], home: Path, subst) -> None:
             from garden_cases import lay_out_pathways
 
             lay_out_pathways(p, spec["db"], str(home), time.time())
+        elif "routing" in spec:
+            lay_out_routing(p, spec["routing"], time.time())
         else:
             p.parent.mkdir(parents=True, exist_ok=True)
             if "hex" in spec:
@@ -558,6 +585,8 @@ def run_proxy(case: dict[str, Any], cmd: list[str], work: Path) -> dict[str, Any
         ports = {"{GW}": str(gw), "{UP}": str(up.port), "{SY}": str(sy)}
         if case.get("fake_proxy") is not None:
             ports["{PX}"] = str(px.port)
+            # The proxy's port in fullwidth digits, which int() reads.
+            ports["{PXFW}"] = "".join(chr(0xFF10 + int(d)) for d in str(px.port))
             ports["{DEAD}"] = str(pool.take())
 
         def subst(s: str) -> str:
@@ -683,9 +712,34 @@ _PID = re.compile(r'(\\?"pid\\?": |\bpid )([0-9]+)')
 _ELAPSED = re.compile(r'((?<![a-z_])elapsed_ms(?:\\)*":\s?)-?[0-9][0-9.eE+-]*')
 
 
+_WARN = re.compile(r"^.*?:\d+: (\w*Warning): (.*)$")
+
+
+def _warnings(stderr: list[str]) -> list[str]:
+    """Python prints a warning as `file:line: UserWarning: text` and the
+    source line; keep `UserWarning: text` (the file is the oracle's), as
+    k2_cases does."""
+    out: list[str] = []
+    skip = False
+    for line in stderr:
+        if skip:
+            skip = False
+            if line.startswith("  "):
+                continue
+        m = _WARN.match(line)
+        if m:
+            out.append(f"{m.group(1)}: {m.group(2)}")
+            skip = True
+            continue
+        out.append(line)
+    return out
+
+
 def normalize(
     result: dict[str, Any], home: str, t0: float, ports: dict[str, str]
 ) -> dict[str, Any]:
+    if isinstance(result.get("stderr"), list):
+        result = {**result, "stderr": _warnings(result["stderr"])}
     text = json.dumps(result, ensure_ascii=True)
     text = text.replace(json.dumps(home)[1:-1], "{HOME}")
     text = text.replace(json.dumps(str(Path(home).parent))[1:-1], "{WORK}")
@@ -714,6 +768,7 @@ def normalize(
     text = _FLOATTIME.sub(float_sub, text)
     text = _PID.sub(lambda m: m.group(1) + "{PID}", text)
     text = _ELAPSED.sub(r"\1{MS}", text)
+    text = re.sub(r'("latency_ms": \{"float": ")[^"]*(")', r"\1{MS}\2", text)
     return json.loads(text)
 
 
@@ -1671,6 +1726,21 @@ def build_proxy_cases() -> list[dict[str, Any]]:
         ],
         [["/_reload/", "", json_answer("{}")]],
     )
+    # coppice asks GET /_caps before it stamps a pane prefix on a base URL.
+    # The answer is local, like /_reload: loopback only, GET only, and never
+    # sent upstream (only the trailing-slash path, which is not the route,
+    # goes on).
+    add(
+        "caps endpoint",
+        [
+            {"req": {"method": "GET", "path": "/_caps", "body": ""}},
+            {"req": {"method": "GET", "path": "/_caps", "body": "", "source": "127.0.0.2"}},
+            {"req": {"method": "POST", "path": "/_caps", "body": ""}},
+            {"req": {"method": "GET", "path": "/pane/0123456789abcdef/w1:p2/_caps", "body": ""}},
+            {"req": {"method": "GET", "path": "/_caps/", "body": ""}},
+        ],
+        [["/_caps/", "", json_answer("{}")]],
+    )
     add(
         "non loopback client is served",
         [req(hard, source="127.0.0.2")],
@@ -1956,6 +2026,43 @@ def build_proxy_cases() -> list[dict[str, Any]]:
         [req(oa, path="/v1/chat/completions")],
         [["/v1/chat/completions", swapped(oa, "gpt-5-mini"), json_answer(oa_reply)]],
     )
+    # --- a coppice pane's base URL: <gateway>/pane/<floor>/<pane> ---
+    # The gateway takes the prefix off before it routes and stamps the
+    # journal line with the pane and the floor. A prefix that is not well
+    # formed is routed as it is, and the line has no pane.
+    pane_key = "0123456789abcdef"
+    add(
+        "pane stamp buffered",
+        [req(easy, path=f"/pane/{pane_key}/w1:p2/v1/messages")],
+        [["/v1/messages", swapped(easy, "claude-haiku-4-5"), json_answer(anthropic_reply())]],
+    )
+    add(
+        "pane stamp with query",
+        [req(easy, path=f"/pane/{pane_key}/w12:p345/v1/messages?beta=true")],
+        [
+            [
+                "/v1/messages?beta=true",
+                swapped(easy, "claude-haiku-4-5"),
+                json_answer(anthropic_reply()),
+            ]
+        ],
+    )
+    add(
+        "pane stamp openai wire",
+        [req(oa, path=f"/pane/{pane_key}/w1:p3/v1/chat/completions")],
+        [["/v1/chat/completions", swapped(oa, "gpt-5-mini"), json_answer(oa_reply)]],
+    )
+    for label, bad in (
+        ("upper-case floor", "/pane/0123456789ABCDEF/w1:p2/v1/messages"),
+        ("short floor", "/pane/0123456789abcde/w1:p2/v1/messages"),
+        ("bad pane", f"/pane/{pane_key}/w1:p2x/v1/messages"),
+        ("prefix not first", f"/x/pane/{pane_key}/w1:p2/v1/messages"),
+    ):
+        add(
+            f"pane stamp {label} goes upstream as it is",
+            [req(easy, path=bad)],
+            [[bad, swapped(easy, "claude-haiku-4-5"), json_answer(anthropic_reply())]],
+        )
     oa_s = json.dumps(
         {
             "model": "gpt-5",
@@ -2330,7 +2437,58 @@ def build_switchyard_cases() -> list[dict[str, Any]]:
             "mine.toml": {"text": "[routes\nid = 1\n"},
         },
         argv=["--switchyard-config", "{HOME}/mine.toml"],
-        go_refuses=True,
+    )
+    # GW-9: every TOML 1.0 file tomllib reads (multi-line and literal
+    # strings, dates and times, arrays of tables, multi-line arrays, CRLF).
+    extras = (
+        '\n[[extras]]\nnote = """\nmulti\nline \\\n  joined"""\n'
+        "when = 1979-05-27T07:32:00-07:00\nday = 1979-05-27\nat = 07:32:00.5\n"
+        "raw = 'C:\\x'\n[[extras]]\nlist = [\n  1,\n  2, # two\n]\n"
+        "[targets.s.meta]\ntags.a = { x = 1 }\n"
+    )
+    full = (own.replace('id = "claude-sonnet-5"', "id = '''claude-sonnet-5'''") + extras).replace(
+        "\n", "\r\n"
+    )
+    for name, text, runs in [
+        ("full toml", full, True),
+        (
+            "key env a date",
+            own.replace("forward_auth = true", "api_key_env = 1979-05-27 07:32:00Z"),
+            True,
+        ),
+        (
+            "big int",
+            own.replace('id = "daisugi"', 'id = "daisugi"\nn = 99999999999999999999'),
+            True,
+        ),
+        (
+            "target named by a date",
+            own.replace("strong_target = 's'", "strong_target = 1979-05-27"),
+            False,
+        ),
+        # S6: int() past Python's 4300-digit limit raises a ValueError that
+        # tomllib does not wrap and the gateway does not catch.
+        (
+            "int too long",
+            own.replace('id = "daisugi"', 'id = "daisugi"\nn = ' + "1" * 4301),
+            False,
+        ),
+    ]:
+        add(
+            f"switchyard own config {name}",
+            [req(easy)] if runs else [],
+            [["/v1/messages", via, routed("qwen3", "qwen3")]] if runs else [],
+            before={CONFIG: {"text": "gateway_router: switchyard\n"}, "mine.toml": {"text": text}},
+            argv=["--switchyard-config", "{HOME}/mine.toml"],
+        )
+    add(
+        "switchyard own config not utf-8",
+        [],
+        before={
+            CONFIG: {"text": "gateway_router: switchyard\n"},
+            "mine.toml": {"hex": b"x = '\xff'\n".hex()},
+        },
+        argv=["--switchyard-config", "{HOME}/mine.toml"],
     )
     add(
         "switchyard own config key auth",
@@ -2586,6 +2744,228 @@ def router_measure_cases(add: Any, turns: str) -> None:
         add(f"router status delegate {label} json", ["router", "status", "--json"], extra)
 
 
+def router_trial_cases(add: Any) -> None:
+    """The promotion meter in `router status`: the arms a graft trial
+    recorded in the gate's audit logs, the operator's labels, and each
+    session's billed cost from its transcript (SW-13 to SW-15)."""
+    grafts = ".opendaisugi/gate/grafts"
+    audit = ".opendaisugi/gate/audit"
+    labels = ".opendaisugi/router/labels.jsonl"
+    rule = {
+        "id": "big-read",
+        "version": 1,
+        "shape": "deny_redirect",
+        "state": "trial",
+        "match": {"tool": "Read", "file_lines_over": 400},
+        "trial": {"seed": 3},
+    }
+
+    def assistant(mid: Any, model: str, i: Any = 0, o: Any = 0, cr: Any = 0, cw: Any = 0) -> str:
+        msg: dict[str, Any] = {
+            "model": model,
+            "usage": {
+                "input_tokens": i,
+                "output_tokens": o,
+                "cache_read_input_tokens": cr,
+                "cache_creation_input_tokens": cw,
+            },
+        }
+        if mid is not None:
+            msg["id"] = mid
+        return json.dumps({"type": "assistant", "message": msg})
+
+    def rec(session: str, arm: str, tp: str | None = "same", version: Any = 1) -> str:
+        r: dict[str, Any] = {
+            "at": 1700000000.0,
+            "session_id": session,
+            "tool_name": "Read",
+            "graft": {
+                "rule_id": "big-read",
+                "version": version,
+                "shape": "deny_redirect",
+                "state": "trial",
+                "arm": arm,
+                "applied": arm == "graft",
+            },
+        }
+        if tp == "same":
+            r["transcript_path"] = "{HOME}/tx/" + session + ".jsonl"
+        elif tp is not None:
+            r["transcript_path"] = tp
+        return json.dumps(r)
+
+    def session(name: str, arm: str, model: str = "claude-sonnet-5", i: int = 1000, **kw: Any):
+        return {
+            f"{audit}/{name}.jsonl": {"text": rec(name, arm, **kw) + "\n"},
+            f"tx/{name}.jsonl": {"text": assistant("m1", model, i=i, o=10) + "\n"},
+        }
+
+    def label_rows(*rows: tuple[str, str]) -> dict[str, Any]:
+        text = "".join(json.dumps({"session": s, "outcome": o}) + "\n" for s, o in rows)
+        return {labels: {"text": text}}
+
+    trial_rule = {f"{grafts}/big-read.json": {"text": json.dumps(rule)}}
+    six: dict[str, Any] = {**trial_rule}
+    for k in range(3):
+        six.update(session(f"g{k}", "graft", i=1000))
+        six.update(session(f"c{k}", "control", i=3000))
+    all_pass = label_rows(
+        *((f"g{k}", "pass") for k in range(3)), *((f"c{k}", "pass") for k in range(3))
+    )
+    cases: dict[str, dict[str, Any]] = {
+        "empty": trial_rule,
+        "audit rule": {f"{grafts}/big-read.json": {"text": json.dumps({**rule, "state": "audit"})}},
+        "active rule": {
+            f"{grafts}/big-read.json": {"text": json.dumps({**rule, "state": "active"})}
+        },
+        "no seed": {
+            f"{grafts}/big-read.json": {
+                "text": json.dumps({k: v for k, v in rule.items() if k != "trial"})
+            }
+        },
+        "bad seed": {
+            f"{grafts}/big-read.json": {"text": json.dumps({**rule, "trial": {"seed": -1}})}
+        },
+        "unlabeled": six,
+        "promote": {**six, **all_pass},
+        "keep": {
+            **six,
+            **session("g0", "graft", i=9000),
+            **all_pass,
+        },
+        "retire": {
+            **six,
+            **label_rows(
+                ("g0", "pass"),
+                ("g1", "fail"),
+                ("g2", "fail"),
+                ("c0", "pass"),
+                ("c1", "pass"),
+                ("c2", "pass"),
+            ),
+        },
+        "relabeled": {
+            **six,
+            **label_rows(
+                ("g0", "fail"),
+                ("g1", "fail"),
+                ("g2", "fail"),
+                ("c0", "pass"),
+                ("c1", "pass"),
+                ("c2", "pass"),
+                ("g0", "pass"),
+                ("g1", "pass"),
+                ("g2", "pass"),
+            ),
+        },
+        "no success": {
+            **six,
+            **label_rows(
+                *((f"g{k}", "fail") for k in range(3)), *((f"c{k}", "fail") for k in range(3))
+            ),
+        },
+        "cost unknown": {
+            **six,
+            **all_pass,
+            f"{audit}/g3.jsonl": {"text": rec("g3", "graft", tp=None) + "\n"},
+            **label_rows(
+                *((f"g{k}", "pass") for k in range(4)), *((f"c{k}", "pass") for k in range(3))
+            ),
+        },
+        "both arms": {
+            **trial_rule,
+            f"{audit}/x.jsonl": {"text": rec("x", "graft") + "\n" + rec("x", "control") + "\n"},
+        },
+        "fallback price": {
+            **six,
+            **session("g1", "graft", model="claude-new-9"),
+            **all_pass,
+        },
+        "remote worker": {
+            **six,
+            f"{grafts}/big-read.json": {
+                "text": json.dumps({**rule, "worker": {"allow_remote": True}})
+            },
+            **all_pass,
+        },
+        "other version": {
+            **trial_rule,
+            f"{audit}/v.jsonl": {"text": rec("v", "graft", version=2) + "\n"},
+        },
+        "bad labels": {
+            **six,
+            labels: {
+                "text": "not json\n"
+                + json.dumps({"session": "g0/x", "outcome": "pass"})
+                + "\n"
+                + json.dumps({"session": "g1", "outcome": "maybe"})
+                + "\n"
+                + json.dumps(["g2"])
+                + "\n"
+                + json.dumps({"session": "c0", "outcome": "pass"})
+                + "\n"
+            },
+        },
+        "relative transcript": {
+            **six,
+            f"{audit}/g0.jsonl": {"text": rec("g0", "graft", tp="tx/g0.jsonl") + "\n"},
+            **all_pass,
+        },
+        "transcript a dir": {
+            **six,
+            f"{audit}/g0.jsonl": {"text": rec("g0", "graft", tp="{HOME}/tx") + "\n"},
+            **all_pass,
+        },
+        "transcript rows": {
+            **six,
+            "tx/g0.jsonl": {
+                "text": "\n".join(
+                    [
+                        json.dumps({"type": "user", "message": {"content": "hi"}}),
+                        assistant("m1", "claude-sonnet-5", i=10, o=1),
+                        assistant("m1", "claude-sonnet-5", i=10, o=50, cr=1000, cw=100),
+                        assistant(None, "claude-haiku-4-5", i=20, o=20),
+                        assistant(None, "claude-haiku-4-5", i=20, o=20),
+                        "not json",
+                        "[1, 2]",
+                        assistant("m2", "claude-opus-4-8", i=True, o=2.5, cr=-3, cw=2**60),
+                        json.dumps({"type": "assistant", "message": {"id": "m3"}}),
+                        json.dumps({"type": "assistant", "message": "x"}),
+                        "\u00e9 bad \ufffd",
+                    ]
+                )
+                + "\n"
+            },
+            **all_pass,
+        },
+        "transcript latin": {
+            **six,
+            "tx/g0.jsonl": {
+                "hex": (assistant("m1", "claude-sonnet-5", i=7) + "\n").encode().hex() + "e90a"
+            },
+            **all_pass,
+        },
+    }
+    for label, before in cases.items():
+        add(f"router status trial {label}", ["router", "status"], before)
+        add(f"router status trial {label} json", ["router", "status", "--json"], before)
+    # The operator's label (SW-10).
+    lab = ["router", "label"]
+    add("router label pass", [*lab, "s1", "pass"])
+    add("router label fail note", [*lab, "s1", "fail", "--note", "the tests failed \u00e9"])
+    add("router label json", [*lab, "s1", "pass", "--json"])
+    add("router label json note", [*lab, "s1", "pass", "--note", "ok", "--json"])
+    add("router label appends", [*lab, "g0", "fail"], {**six, **all_pass})
+    add("router label bad outcome", [*lab, "s1", "maybe"])
+    add("router label bad session", [*lab, "a/b", "pass"])
+    add("router label dot session", [*lab, ".s", "pass"])
+    add("router label long session", [*lab, "s" * 129, "pass"])
+    add("router label long note", [*lab, "s1", "pass", "--note", "x" * 501])
+    add("router label note at limit", [*lab, "s1", "pass", "--note", "x" * 500])
+    add("router label no outcome", [*lab, "s1"])
+    add("router label cannot write", [*lab, "s1", "pass"], {".opendaisugi/router": {"text": "x"}})
+
+
 def build_cli_cases() -> list[dict[str, Any]]:
     C: list[dict[str, Any]] = []
     turns = ".opendaisugi/gateway/turns.jsonl"
@@ -2745,6 +3125,23 @@ def build_cli_cases() -> list[dict[str, Any]]:
         ["route", "run unit tests now", "--threshold", "0.99"],
         {**lex, **store},
     )
+    # S9: a row embedded under another version makes find warn, once.
+    stale = {
+        ".opendaisugi/pathways.db": {
+            "db": {
+                "rows": [
+                    row_spec(
+                        put_row(pathway(1, "run the unit tests", lexical("run the unit tests")))
+                    ),
+                    row_spec(
+                        put_row(pathway(2, "deploy docs", lexical("deploy docs"), emb_version="2"))
+                    ),
+                ]
+            }
+        }
+    }
+    add("route stale store", ["route", "run the unit tests"], {**lex, **stale})
+    add("route stale store json", ["route", "deploy docs", "--json"], {**lex, **stale})
     add("route unicode", ["route", "ΣΑΣ résumé İstanbul " * 30, "--json"])
     # --- router status / stop ---
     add("router status nothing", ["router", "status"])
@@ -2855,6 +3252,7 @@ def build_cli_cases() -> list[dict[str, Any]]:
         {"dd/config.yaml": {"text": "gateway_router: 'off'\n"}, "dd/gateway/turns.jsonl": text(sy)},
     )
     router_measure_cases(add, turns)
+    router_trial_cases(add)
     add("router stop nothing", ["router", "stop"])
     add(
         "router stop live child",
@@ -2878,6 +3276,519 @@ def build_cli_cases() -> list[dict[str, Any]]:
         children=[{"port": "4000", "other_program": True}],
     )
     add("router bad command", ["router", "go"])
+    return C
+
+
+KNN_CFG = "matcher_model: lexical\ngateway_router: knn\n"
+T_PARSER = "rename the helper function in the parser module"
+T_LEXER = "rename the helper function in the lexer module"
+T_RAIN = "write a haiku about rain"
+HAIKU, OPUS = "claude-haiku-4-5", "claude-opus-4-8"
+
+
+def routing_rows(*rows: tuple[str, str, str]) -> dict[str, Any]:
+    """A knn outcome table, one (task, model, outcome) row each, as `routing` specs."""
+    return {
+        ".opendaisugi/gateway/routing.db": {
+            "routing": {"rows": [{"task": t, "model": m, "outcome": o} for t, m, o in rows]}
+        }
+    }
+
+
+KNN_LEARNED = routing_rows(
+    (T_PARSER, HAIKU, "good"),
+    (T_PARSER, HAIKU, "good"),
+    (T_LEXER, HAIKU, "good"),
+    (T_LEXER, HAIKU, "good"),
+    (T_LEXER, OPUS, "good"),
+)
+KNN_BAD_CHEAP = routing_rows(
+    (T_PARSER, HAIKU, "bad"),
+    (T_PARSER, HAIKU, "bad"),
+    (T_LEXER, HAIKU, "bad"),
+    (T_LEXER, OPUS, "good"),
+    (T_PARSER, OPUS, "good"),
+)
+KNN_UNKNOWN = routing_rows(
+    (T_PARSER, HAIKU, "unknown"),
+    (T_PARSER, HAIKU, "unknown"),
+    (T_LEXER, HAIKU, "good"),
+    (T_LEXER, OPUS, "bad"),
+)
+
+
+def refused_events() -> list[dict[str, Any]]:
+    evs = anthropic_events()
+    for e in evs:
+        if e["type"] == "message_delta":
+            e["delta"]["stop_reason"] = "refusal"
+    return evs
+
+
+def build_knn_cases() -> list[dict[str, Any]]:
+    """The knn router: the CLI views and feedback, and the proxy that books turns."""
+    C: list[dict[str, Any]] = []
+    cfg = {CONFIG: {"text": KNN_CFG}}
+    lex = {CONFIG: {"text": "matcher_model: lexical\n"}}
+
+    def add(name: str, argv: list[str], before: dict | None = None, **kw) -> None:
+        c = {"kind": "cli", "name": name, "argv": argv, "before": before or {}}
+        c.update(kw)
+        C.append(c)
+
+    # --- route --knn ---
+    add("route knn cold", ["route", T_PARSER, "--knn"], lex)
+    add("route knn cold json", ["route", T_PARSER, "--knn", "--json"], lex)
+    add("route knn learned", ["route", T_PARSER, "--knn"], {**lex, **KNN_LEARNED})
+    add("route knn learned json", ["route", T_PARSER, "--knn", "--json"], {**lex, **KNN_LEARNED})
+    add("route knn bad cheap", ["route", T_PARSER, "--knn"], {**lex, **KNN_BAD_CHEAP})
+    add(
+        "route knn bad cheap json", ["route", T_PARSER, "--knn", "--json"], {**lex, **KNN_BAD_CHEAP}
+    )
+    add("route knn unknown outcomes", ["route", T_PARSER, "--knn"], {**lex, **KNN_UNKNOWN})
+    add("route knn far task", ["route", T_RAIN, "--knn"], {**lex, **KNN_LEARNED})
+    add(
+        "route knn custom models",
+        [
+            "route",
+            T_PARSER,
+            "--knn",
+            "--cheap-model",
+            "mystery",
+            "--frontier-model",
+            "claude-sonnet-5",
+        ],
+        {**lex, **KNN_LEARNED},
+    )
+    add(
+        "route knn sonnet frontier json",
+        ["route", T_PARSER, "--knn", "--json", "--frontier-model", "claude-sonnet-5"],
+        {**lex, **KNN_LEARNED},
+    )
+    add(
+        "route knn data dir",
+        ["route", T_PARSER, "--knn", "--data-dir", "{HOME}/dd"],
+        {**lex, "dd/gateway/routing.db": KNN_LEARNED[".opendaisugi/gateway/routing.db"]},
+    )
+    # --- route feedback ---
+    fb = ["route", "feedback"]
+    add("route feedback bad", [*fb, "t2", "bad"], {**lex, **KNN_LEARNED})
+    add("route feedback good json", [*fb, "t5", "good", "--json"], {**lex, **KNN_BAD_CHEAP})
+    add("route feedback unknown turn", [*fb, "t99", "good"], {**lex, **KNN_LEARNED})
+    add("route feedback no table", [*fb, "t1", "good"], lex)
+    add("route feedback bad outcome", [*fb, "t1", "maybe"], {**lex, **KNN_LEARNED})
+    add("route feedback missing outcome", [*fb, "t1"], {**lex, **KNN_LEARNED})
+    add("route feedback nothing", fb, lex)
+    add("route feedback extra", [*fb, "t1", "good", "now"], {**lex, **KNN_LEARNED})
+    add("route extra words", ["route", "fix the typo", "quickly"], lex)
+    # --- router status ---
+    add("router status knn", ["router", "status"], {**cfg, **KNN_LEARNED})
+    add("router status knn json", ["router", "status", "--json"], {**cfg, **KNN_BAD_CHEAP})
+    add(
+        "router status model",
+        ["router", "status"],
+        {CONFIG: {"text": "matcher_model: lexical\ngateway_router: model\n"}, **KNN_LEARNED},
+    )
+    add("router status knn empty", ["router", "status"], cfg)
+    add("router status knn empty json", ["router", "status", "--json"], cfg)
+    add("router status knn mixed", ["router", "status"], {**cfg, **KNN_UNKNOWN})
+    add(
+        "router status knn data dir",
+        ["router", "status", "--data-dir", "{HOME}/dd"],
+        {
+            "dd/config.yaml": {"text": KNN_CFG},
+            "dd/gateway/routing.db": KNN_LEARNED[".opendaisugi/gateway/routing.db"],
+        },
+    )
+    # --- gateway --router knn: the argument checks ---
+    add("unknown router four choosers", ["gateway", "--router", "magic"])
+
+    # --- the proxy: knn routes, then books the turn ---
+    def pcase(name: str, steps: list[dict[str, Any]], table: list, before: dict, **kw) -> None:
+        c = {"kind": "proxy", "name": name, "steps": steps, "table": table, "before": before}
+        c.update(kw)
+        C.append(c)
+
+    def req(body: str, **kw) -> dict[str, Any]:
+        return {"req": {"body": body, "headers": kw.pop("headers", AUTH), **kw}}
+
+    ask = msg_body(T_PARSER)
+    kw = {"argv": ["--router", "knn"]}
+    ok = json_answer(anthropic_reply())
+    pcase(
+        "knn learned downgrades",
+        [req(ask)],
+        [["/v1/messages", swapped(ask, HAIKU), ok]],
+        {**cfg, **KNN_LEARNED},
+        **kw,
+    )
+    pcase(
+        "knn bad cheap keeps requested",
+        [req(ask)],
+        [["/v1/messages", reserialized(ask), json_answer(anthropic_reply(model=OPUS))]],
+        {**cfg, **KNN_BAD_CHEAP},
+        **kw,
+    )
+    pcase(
+        "knn cold easy uses rules",
+        [req(ask)],
+        [["/v1/messages", swapped(ask, HAIKU), ok]],
+        cfg,
+        **kw,
+    )
+    hard = msg_body("design a distributed consensus algorithm and prove its security")
+    pcase(
+        "knn cold hard keeps requested",
+        [req(hard)],
+        [["/v1/messages", reserialized(hard), json_answer(anthropic_reply(model=OPUS))]],
+        cfg,
+        **kw,
+    )
+    pcase(
+        "knn unknown outcomes use rules",
+        [req(ask)],
+        [["/v1/messages", swapped(ask, HAIKU), ok]],
+        {**cfg, **KNN_UNKNOWN},
+        **kw,
+    )
+    pcase(
+        "knn upstream error books bad",
+        [req(hard)],
+        [["/v1/messages", reserialized(hard), json_answer('{"type":"error"}', status=529)]],
+        cfg,
+        **kw,
+    )
+    pcase(
+        "knn refusal books bad",
+        [req(ask)],
+        [
+            [
+                "/v1/messages",
+                swapped(ask, HAIKU),
+                json_answer(anthropic_reply(stop_reason="refusal")),
+            ]
+        ],
+        {**cfg, **KNN_LEARNED},
+        **kw,
+    )
+    stream_ask = msg_body(T_PARSER, stream=True)
+    pcase(
+        "knn streamed refusal books bad",
+        [req(stream_ask)],
+        [
+            [
+                "/v1/messages",
+                swapped(stream_ask, HAIKU),
+                sse_answer(refused_events()),
+            ]
+        ],
+        {**cfg, **KNN_LEARNED},
+        **kw,
+    )
+    pcase(
+        "knn streamed answer books unknown",
+        [req(stream_ask)],
+        [["/v1/messages", swapped(stream_ask, HAIKU), sse_answer(anthropic_events())]],
+        {**cfg, **KNN_LEARNED},
+        **kw,
+    )
+    reply = {"role": "assistant", "content": "done"}
+    again = msg_body(
+        T_PARSER,
+        messages=[
+            {"role": "user", "content": T_PARSER},
+            reply,
+            {"role": "user", "content": T_PARSER + " again"},
+        ],
+    )
+    moved = msg_body(
+        T_PARSER,
+        messages=[
+            {"role": "user", "content": T_PARSER},
+            reply,
+            {"role": "user", "content": T_PARSER + " again"},
+            reply,
+            {"role": "user", "content": T_RAIN},
+        ],
+    )
+    pcase(
+        "knn retry marks the first bad and moving on marks the second good",
+        [req(ask), req(again), req(moved)],
+        [
+            ["/v1/messages", swapped(ask, HAIKU), ok],
+            ["/v1/messages", swapped(again, HAIKU), ok],
+            ["/v1/messages", swapped(moved, HAIKU), ok],
+        ],
+        {**cfg, **KNN_LEARNED},
+        **kw,
+    )
+    cont = msg_body(
+        T_PARSER,
+        messages=[
+            {"role": "user", "content": T_PARSER},
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "x", "name": "r", "input": {}}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}],
+            },
+        ],
+    )
+    pcase(
+        "knn continuation is not booked",
+        [req(cont)],
+        [["/v1/messages", swapped(cont, HAIKU), ok]],
+        {**cfg, **KNN_LEARNED},
+        **kw,
+    )
+    big = msg_body(
+        T_PARSER,
+        messages=[
+            {"role": "user", "content": T_PARSER},
+            {"role": "assistant", "content": "x" * 40000},
+            {"role": "user", "content": T_PARSER},
+        ],
+    )
+    pcase(
+        "knn stickiness keeps a big conversation on the requested model",
+        [req(big)],
+        [["/v1/messages", reserialized(big), json_answer(anthropic_reply(model=OPUS))]],
+        {**cfg, **KNN_LEARNED},
+        **kw,
+    )
+    pcase(
+        "knn local rung",
+        [req(ask)],
+        [["/v1/messages", swapped(ask, "qwen"), ok]],
+        {
+            CONFIG: {"text": KNN_CFG + "gateway_local_model: qwen\n"},
+            **routing_rows(*[(T_PARSER, "qwen", "good")] * 4, (T_LEXER, OPUS, "good")),
+        },
+        **kw,
+    )
+    pcase(
+        "knn cheap request is not upgraded",
+        [req(msg_body(T_PARSER, model=HAIKU))],
+        [["/v1/messages", reserialized(msg_body(T_PARSER, model=HAIKU)), ok]],
+        {**cfg, **routing_rows(*[(T_PARSER, OPUS, "good")] * 5)},
+        **kw,
+    )
+    # --- the smart end: a model that picks, and a model that grades ---
+    sys.path.insert(0, str(REPO / "src"))
+    from opendaisugi.route_model import grader_body, picker_body
+
+    mcfg = {
+        CONFIG: {
+            "text": "matcher_model: lexical\ngateway_router: model\ngateway_router_model: router-m\n"
+        }
+    }
+    cands = [OPUS, HAIKU]
+
+    def pick_entry(answer: dict[str, Any]) -> list:
+        return ["/v1/messages", picker_body("router-m", T_PARSER, cands).decode(), answer]
+
+    named = lambda name: json_answer(anthropic_reply(text=name, model="router-m"))  # noqa: E731
+    mkw = {"argv": ["--router", "model"]}
+    pcase(
+        "model router picks the cheap model",
+        [req(ask)],
+        [pick_entry(named(HAIKU)), ["/v1/messages", swapped(ask, HAIKU), ok]],
+        mcfg,
+        **mkw,
+    )
+    pcase(
+        "model router picks the requested model",
+        [req(ask)],
+        [
+            pick_entry(named(OPUS)),
+            ["/v1/messages", reserialized(ask), json_answer(anthropic_reply(model=OPUS))],
+        ],
+        mcfg,
+        **mkw,
+    )
+    pcase(
+        "model router names a model that is not allowed",
+        [req(ask)],
+        [pick_entry(named("gpt-9")), ["/v1/messages", swapped(ask, HAIKU), ok]],
+        mcfg,
+        **mkw,
+    )
+    pcase(
+        "model router call fails",
+        [req(ask)],
+        [
+            pick_entry(json_answer('{"type":"error"}', status=500)),
+            ["/v1/messages", swapped(ask, HAIKU), ok],
+        ],
+        mcfg,
+        **mkw,
+    )
+    pcase(
+        "model router pick on a hard turn",
+        [req(hard)],
+        [
+            [
+                "/v1/messages",
+                picker_body(
+                    "router-m",
+                    "design a distributed consensus algorithm and prove its security",
+                    cands,
+                ).decode(),
+                named(OPUS),
+            ],
+            ["/v1/messages", reserialized(hard), json_answer(anthropic_reply(model=OPUS))],
+        ],
+        mcfg,
+        **mkw,
+    )
+    gcfg = {CONFIG: {"text": KNN_CFG + "gateway_grader: grader-m\n"}}
+    grade = lambda word: [
+        "/v1/messages",
+        grader_body("grader-m", T_PARSER, "hi").decode(),
+        json_answer(anthropic_reply(text=word, model="grader-m")),
+    ]  # noqa: E731
+    pcase(
+        "grader marks a turn bad",
+        [req(ask)],
+        [["/v1/messages", swapped(ask, HAIKU), ok], grade("bad")],
+        {**gcfg, **KNN_LEARNED},
+        settle=1.0,
+        **kw,
+    )
+    pcase(
+        "grader marks a turn good",
+        [req(ask)],
+        [["/v1/messages", swapped(ask, HAIKU), ok], grade("Good.")],
+        {**gcfg, **KNN_LEARNED},
+        settle=1.0,
+        **kw,
+    )
+    pcase(
+        "grader gives an odd answer",
+        [req(ask)],
+        [["/v1/messages", swapped(ask, HAIKU), ok], grade("maybe")],
+        {**gcfg, **KNN_LEARNED},
+        settle=1.0,
+        **kw,
+    )
+    pcase(
+        "grader call fails",
+        [req(ask)],
+        [
+            ["/v1/messages", swapped(ask, HAIKU), ok],
+            [
+                "/v1/messages",
+                grader_body("grader-m", T_PARSER, "hi").decode(),
+                json_answer("{}", status=500),
+            ],
+        ],
+        {**gcfg, **KNN_LEARNED},
+        settle=1.0,
+        **kw,
+    )
+    pcase(
+        "grader is off",
+        [req(ask)],
+        [["/v1/messages", swapped(ask, HAIKU), ok]],
+        {CONFIG: {"text": KNN_CFG + "gateway_grader: 'off'\n"}, **KNN_LEARNED},
+        **kw,
+    )
+    pcase(
+        "grader skips a tool call step",
+        [req(ask)],
+        [
+            [
+                "/v1/messages",
+                swapped(ask, HAIKU),
+                json_answer(anthropic_reply(stop_reason="tool_use")),
+            ]
+        ],
+        {**gcfg, **KNN_LEARNED},
+        settle=1.0,
+        **kw,
+    )
+    loop = msg_body(
+        T_PARSER,
+        messages=[
+            {"role": "user", "content": T_PARSER},
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "x", "name": "t", "input": {}}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}],
+            },
+        ],
+    )
+    pcase(
+        "grader grades the last step of a tool loop against the governing ask",
+        [req(ask), req(loop)],
+        [
+            [
+                "/v1/messages",
+                swapped(ask, HAIKU),
+                json_answer(anthropic_reply(stop_reason="tool_use")),
+            ],
+            ["/v1/messages", swapped(loop, HAIKU), ok],
+            grade("bad"),
+        ],
+        {**gcfg, **KNN_LEARNED},
+        settle=1.0,
+        **kw,
+    )
+    pcase(
+        "grader skips a tool loop step with no booked row",
+        [req(loop)],
+        [["/v1/messages", swapped(loop, HAIKU), ok]],
+        {**gcfg, **KNN_LEARNED},
+        settle=1.0,
+        **kw,
+    )
+    pcase(
+        "model router is not asked on a tool loop step",
+        [req(loop)],
+        [["/v1/messages", swapped(loop, HAIKU), ok]],
+        mcfg,
+        **mkw,
+    )
+    reminded = msg_body(
+        T_PARSER,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "<system-reminder>\ntoday is monday\n</system-reminder>",
+                    },
+                    {"type": "text", "text": T_PARSER},
+                ],
+            }
+        ],
+    )
+    pcase(
+        "knn reads the user's words, not the harness reminders",
+        [req(reminded)],
+        [["/v1/messages", swapped(reminded, HAIKU), ok]],
+        {**cfg, **KNN_LEARNED},
+        **kw,
+    )
+    pcase(
+        "knn tool loop request without a model",
+        [req(json.dumps({"max_tokens": 64, "messages": [{"role": "user", "content": T_PARSER}]}))],
+        [
+            [
+                "/v1/messages",
+                json.dumps({"max_tokens": 64, "messages": [{"role": "user", "content": T_PARSER}]}),
+                ok,
+            ]
+        ],
+        {**cfg, **KNN_LEARNED},
+        **kw,
+    )
     return C
 
 
@@ -3181,6 +4092,19 @@ def build_env_proxy_cases() -> list[dict[str, Any]]:
         ok,
     )
     add("unknown scheme", {"HTTP_PROXY": "ftp://127.0.0.1:{PX}"}, turn, ok)
+    # Proxy URLs and NO_PROXY entries as httpx's URL parser reads them
+    # (PX-9): a port int() reads, and the InvalidURL that stops the client.
+    add("port with a plus", {"HTTP_PROXY": "http://127.0.0.1:+{PX}"}, turn, ok)
+    add("port after a space", {"HTTP_PROXY": "http://127.0.0.1: {PX}"}, turn, ok)
+    add("port in fullwidth digits", {"HTTP_PROXY": "http://127.0.0.1:{PXFW}"}, turn, ok)
+    add("port not a number", {"HTTP_PROXY": "http://127.0.0.1:x"}, turn, ok)
+    add("ipv4 with a leading zero", {"HTTP_PROXY": "http://127.0.0.01:{PX}"}, turn, ok)
+    add("ipv6 not closed", {"HTTP_PROXY": "http://[::1:{PX}"}, turn, ok)
+    add("idna host not valid", {"HTTP_PROXY": "http://b\u00fc_cher:{PX}"}, turn, ok)
+    add("no_proxy percent", {"HTTP_PROXY": px, "NO_PROXY": "x%y"}, turn, ok)
+    add("no_proxy bad port", {"HTTP_PROXY": px, "NO_PROXY": "a:b"}, turn, ok)
+    add("no_proxy non-ascii", {"HTTP_PROXY": px, "NO_PROXY": "b\u00fccher.example"}, turn, ok)
+    add("no_proxy with a path", {"HTTP_PROXY": px, "NO_PROXY": "http://127.0.0.1/x"}, turn, ok)
     add("https scheme proxy", {"HTTP_PROXY": "https://127.0.0.1:{PX}"}, turn, ok)
     # The Switchyard child is reached through the proxy too: the health
     # probe (urllib) and each turn (httpx).
@@ -3217,6 +4141,7 @@ def build_all() -> list[dict[str, Any]]:
         + build_switchyard_cases()
         + build_env_proxy_cases()
         + build_cli_cases()
+        + build_knn_cases()
         + build_recall_cases()
     )
     names = [c["name"] for c in cases]

@@ -1,0 +1,67 @@
+# The chat window on the desk, 120 columns by 36 rows. The foreman's window
+# draws floor.chat with an input line of its own, and fills first because it
+# holds a reply no window showed. Enter sends floor.talk, not keys (the Screen
+# word and Tab are checked by the Go tests and e2e/tui.sh). The foreman runs
+# report.py as claude, as in cases/chat/chat.jsonl: it copies an invented
+# transcript to its own file, names it from inside the pane once the case
+# writes its go file, then echoes. The floor runs in a pane of the alt
+# server, and each "screen" is a checkpoint read through that server's
+# libghostty-vt, taken while the foreman reads idle (it flaps to working after
+# a typed line, so later checks read floor.chat). Every harness is a fake.
+# Pane ids on the case's server: w1:p1 the foreman.
+#!config default = "claude"
+#!config [harness.claude]
+#!config command = "/usr/bin/python3"
+#!config args = ["{FIXTURES}/transcripts/report.py", "{WORK}/claude/projects/chat/{pane}.jsonl", "--copy", "{FIXTURES}/transcripts/claude-chat.jsonl", "--when", "{WORK}/go-{pane}", "--cat"]
+#!env CLAUDE_CONFIG_DIR={WORK}/claude
+{"id": "t1", "cmd": "floor.talk", "text": "hello foreman"}
+{"id": "$id", "ok": true, "result": {"pane": "$f", "started": true, "queued": 1}}
+{"id": "g1", "write": "{WORK}/go-w1-p1", "text": "go\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "w1", "cmd": "pane.wait_output", "pane": "$f", "contains": "REPORT ok", "timeout_ms": 10000}
+{"id": "$id", "ok": true, "result": {"matched": "text"}}
+# The server types its page into the foreman once it is idle, and cat
+# echoes it. The report comes after that, so nothing types after it.
+{"id": "w2", "cmd": "pane.wait_output", "pane": "$f", "contains": "say ready", "timeout_ms": 30000}
+{"id": "$id", "ok": true, "result": {"matched": "text"}}
+# The foreman's state follows its pty timing, so a gate report holds it
+# idle, as the gate's hook does for a real claude.
+{"id": "r1", "cmd": "pane.report_state", "pane": "$f", "event": {"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": "$f", "state": "idle", "source": "gate", "detail": "Stop"}}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "a1", "cli": ["server", "start"], "alt": true, "autostart": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "a2", "cli": ["pane", "create", "--json", "--label", "floor", "--kind", "pty", "--cols", "120", "--rows", "36", "--cwd", "{START}", "--", "/usr/bin/env", "-u", "COPPICE_PANE", "{BIN}", "--socket", "{SOCK}", "--data-dir", "{DATA}"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# The floor resizes the foreman to its window, which redraws it and moves its
+# state for a moment. The screen is read after that.
+{"id": "q0", "sleep": 5000}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+# The chat window fills first and shows the foreman's reply, with its own
+# line and the Screen word in its header.
+{"id": "open", "screen": "w1:p1", "alt": true, "until": "foreman A fake reply with no time."}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# A typed line goes to the chat, not to the foreman's terminal.
+{"id": "k1", "cli": ["pane", "send-text", "w1:p1", "hi from the desk", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k2", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "q1", "sleep": 2000}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+# The owner's line is in the chat file, so it went through floor.talk and
+# not as keys to the foreman's terminal.
+{"id": "c1", "cmd": "floor.chat"}
+{"id": "$id", "ok": true, "result": {"more": false, "messages": [{"role": "agent", "text": "A fake reply with no time."}, {"role": "owner", "text": "hello foreman"}, {"role": "owner", "text": "hi from the desk"}, {"tool": "Read"}, {"tool": "Glob"}, {"role": "agent"}, {"role": "agent"}, {"tool": "Bash"}]}}
+# A Tab with bytes behind it is a paste: a space in the line, not the
+# Screen switch.
+{"id": "k3", "cli": ["pane", "send-text", "w1:p1", "p\tq", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k4", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "q2", "sleep": 2000}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "c2", "cmd": "floor.chat"}
+{"id": "$id", "ok": true, "result": {"more": false, "messages": [{"role": "agent", "text": "A fake reply with no time."}, {"role": "owner", "text": "hello foreman"}, {"role": "owner", "text": "hi from the desk"}, {"role": "owner", "text": "p q"}, {"tool": "Read"}, {"tool": "Glob"}, {"role": "agent"}, {"role": "agent"}, {"tool": "Bash"}]}}
+# The alt server goes with the file, as in rail.jsonl; one left running is
+# a leak the driver reports.
+{"id": "z", "cli": ["server", "stop"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}

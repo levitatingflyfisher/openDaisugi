@@ -66,6 +66,22 @@ func viewIDs(ps []plugins.Plugin) []string {
 // voiceConfig is what coppice.toml's [voice] table asks of the server. A
 // file that does not read might have said enabled = false, so voice stays
 // off, and voice.status says why.
+// foremanConfig is what coppice.toml's [foreman] table asks of the server.
+// A file that does not read, or a value that is not allowed, leaves the
+// foreman in pane mode and says why in a note: the floor always starts.
+func foremanConfig() server.ForemanConfig {
+	cfg, _, err := config.Load()
+	if err != nil {
+		return server.ForemanConfig{Problem: fmt.Sprintf(
+			"The foreman stays in pane mode: %s does not read (%v). Fix the file, then start the coppice server again.", config.Path(), err)}
+	}
+	s, err := cfg.ForemanSettings()
+	if err != nil {
+		return server.ForemanConfig{Problem: fmt.Sprintf("The foreman stays in pane mode: %v.", err)}
+	}
+	return server.ForemanConfigOf(s)
+}
+
 func voiceConfig() server.VoiceConfig {
 	cfg, _, err := config.Load()
 	if err != nil {
@@ -75,6 +91,8 @@ func voiceConfig() server.VoiceConfig {
 	}
 	return server.VoiceConfig{
 		Off: !cfg.VoiceOn(), URL: cfg.Voice.URL, TokenFile: cfg.Voice.TokenFile,
-		Args: append([]string{}, cfg.Voice.Args...),
+		Args:     append([]string{}, cfg.Voice.Args...),
+		SpeakURL: cfg.Voice.SpeakURL, SpeakModel: cfg.Voice.SpeakModel,
+		SpeakVoice: cfg.Voice.SpeakVoice, SpeakProfile: cfg.Voice.SpeakProfile,
 	}
 }

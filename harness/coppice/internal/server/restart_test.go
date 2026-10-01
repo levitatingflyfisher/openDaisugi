@@ -69,7 +69,7 @@ func TestRestoreBringsBackTheLayoutAndMarksPanesHonestly(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s1.saveLayout()
+	s1.saveLayoutNow()
 	_ = s1.Close()
 
 	// Second server on the same data dir.
@@ -185,7 +185,7 @@ func TestRestoreReportsWhatItCouldAndCouldNotDo(t *testing.T) {
 		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 5"],"kind":"pty"}`,
 		`{"id":"2","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exit 0"],"kind":"pty"}`,
 		`{"id":"3","cmd":"pane.wait_output","pane":"w1:p2","state":"done","timeout_ms":5000}`)
-	s1.saveLayout()
+	s1.saveLayoutNow()
 	_ = s1.Close()
 
 	s2, _ := New(Config{SocketPath: filepath.Join(dir, "b.sock"), DataDir: dir})

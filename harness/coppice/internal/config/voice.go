@@ -14,11 +14,22 @@ import (
 // web token file is sent, since that is what daisugi voice serve reads by
 // default. args are added after the flags the coppice server passes to
 // daisugi voice serve, for example ["--data-dir", "/some/dir"].
+//
+// speak_url is the other direction: a speech server with an OpenAI-style
+// POST /v1/audio/speech that reads the foreman's replies aloud. With none,
+// the page speaks with the browser's own voice. speak_model and speak_voice
+// are sent to that server and are optional. speak_profile names an operator
+// agent profile whose key goes to that server as a bearer token. The key
+// is never in this file.
 type Voice struct {
-	Enabled   *bool    `toml:"enabled,omitempty"`
-	URL       string   `toml:"url,omitempty"`
-	TokenFile string   `toml:"token_file,omitempty"`
-	Args      []string `toml:"args,omitempty"`
+	Enabled      *bool    `toml:"enabled,omitempty"`
+	URL          string   `toml:"url,omitempty"`
+	TokenFile    string   `toml:"token_file,omitempty"`
+	Args         []string `toml:"args,omitempty"`
+	SpeakURL     string   `toml:"speak_url,omitempty"`
+	SpeakModel   string   `toml:"speak_model,omitempty"`
+	SpeakVoice   string   `toml:"speak_voice,omitempty"`
+	SpeakProfile string   `toml:"speak_profile,omitempty"`
 }
 
 // VoiceOn is false only when the file says [voice] enabled = false.

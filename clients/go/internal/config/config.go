@@ -23,6 +23,8 @@ const (
 	tOptBool
 	tPath
 	tFloor
+	// tAny is typing.Any: any YAML value, never invalid.
+	tAny
 )
 
 // Fields is opendaisugi.config.Config.model_fields, in order, with each
@@ -40,6 +42,8 @@ var Fields = []struct {
 	{"auto_tend", tOptBool},
 	{"gateway_local_model", tOptStr},
 	{"gateway_router", tStr},
+	{"gateway_router_model", tOptStr},
+	{"gateway_grader", tOptStr},
 	{"switchyard_route_id", tStr},
 	{"switchyard_capable_model", tStr},
 	{"switchyard_efficient_model", tOptStr},
@@ -67,6 +71,7 @@ var Fields = []struct {
 	{"voice_cleanup_model", tOptStr},
 	{"voice_cleanup_base_url", tOptStr},
 	{"voice_server_url", tStr},
+	{"agent_profiles", tAny},
 }
 
 // FloorFields is FloorConfig.model_fields.
@@ -93,6 +98,8 @@ type Config struct {
 	// The gateway's fields; an optional one is nil when unset or null.
 	GatewayLocalModel        *string
 	GatewayRouter            string
+	GatewayRouterModel       *string
+	GatewayGrader            *string
 	SwitchyardRouteID        string
 	SwitchyardCapableModel   string
 	SwitchyardEfficientModel *string
@@ -103,6 +110,17 @@ type Config struct {
 	// LLMContextWindow is llm_context_window, nil when unset or null.
 	LLMContextWindow *big.Int
 	VoiceEngine      string
+	// The voice bridge's other fields; an optional one is nil when unset
+	// or null.
+	VoiceModel          string
+	VoiceCleanup        bool
+	VoiceCleanupModel   *string
+	VoiceCleanupBaseURL *string
+	VoiceServerURL      string
+	// FloorBackend and CoppiceSocket are floor.backend and
+	// floor.coppice_socket.
+	FloorBackend  string
+	CoppiceSocket *string
 	// DialectEnforce is dialect_enforce, nil when unset or null.
 	DialectEnforce *string
 }
@@ -111,7 +129,8 @@ type Config struct {
 func Default() Config {
 	return Config{GateMode: "audit", VerifierClient: "python", MatcherModel: "lexical",
 		GatewayRouter: "rules", SwitchyardRouteID: "daisugi", SwitchyardCapableModel: "claude-sonnet-5",
-		VoiceEngine: "faster-whisper"}
+		VoiceEngine: "faster-whisper", VoiceModel: "tiny.en", VoiceServerURL: "http://127.0.0.1:7477",
+		FloorBackend: "auto"}
 }
 
 // verdict of one value against one field type.
@@ -187,6 +206,9 @@ func intOf(v Value) *big.Int {
 // check is pydantic's lax validation of one value for one field type,
 // with the rules measured against pydantic in clients/cli_cases.py.
 func check(v Value, t fieldType) verdict {
+	if t == tAny {
+		return ok
+	}
 	optional := t == tOptStr || t == tOptInt || t == tOptBool
 	if v.Kind == Null {
 		if optional {
@@ -306,6 +328,7 @@ func FromDoc(doc *Doc) (Config, error) {
 		}
 	}
 	for name, dst := range map[string]**string{"gateway_local_model": &cfg.GatewayLocalModel,
+		"gateway_router_model": &cfg.GatewayRouterModel, "gateway_grader": &cfg.GatewayGrader,
 		"switchyard_efficient_model": &cfg.SwitchyardEfficientModel, "switchyard_api_key_env": &cfg.SwitchyardAPIKeyEnv,
 		"llm_base_url": &cfg.LLMBaseURL, "llm_host_kind": &cfg.LLMHostKind, "llm_host_model": &cfg.LLMHostModel,
 		"dialect_enforce": &cfg.DialectEnforce} {
@@ -316,6 +339,31 @@ func FromDoc(doc *Doc) (Config, error) {
 	}
 	if v, present := doc.Vals["voice_engine"]; present {
 		cfg.VoiceEngine = v.Text
+	}
+	if v, present := doc.Vals["voice_model"]; present {
+		cfg.VoiceModel = v.Text
+	}
+	if v, present := doc.Vals["voice_server_url"]; present {
+		cfg.VoiceServerURL = v.Text
+	}
+	if v, present := doc.Vals["voice_cleanup"]; present {
+		cfg.VoiceCleanup = boolOf(v)
+	}
+	for name, dst := range map[string]**string{"voice_cleanup_model": &cfg.VoiceCleanupModel,
+		"voice_cleanup_base_url": &cfg.VoiceCleanupBaseURL} {
+		if v, present := doc.Vals[name]; present && v.Kind == Str {
+			s := v.Text
+			*dst = &s
+		}
+	}
+	if v, present := doc.Vals["floor"]; present && v.Kind == Map {
+		if b, has := v.Map["backend"]; has {
+			cfg.FloorBackend = b.Text
+		}
+		if c, has := v.Map["coppice_socket"]; has && c.Kind == Str {
+			s := c.Text
+			cfg.CoppiceSocket = &s
+		}
 	}
 	if v, present := doc.Vals["llm_context_window"]; present && v.Kind != Null {
 		cfg.LLMContextWindow = intOf(v)

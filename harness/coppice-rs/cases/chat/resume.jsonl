@@ -1,0 +1,28 @@
+# A pane.resume runs the same session on as a new pane, so the old pane's
+# transcript claims move to it: the resumed pane's own process names the
+# same file, and its report is taken, though the file began before the new
+# pane started. report.py ends just after its report, so the pane ends and
+# can be resumed; claude's resume_args put --resume first, and report.py
+# skips them.
+#!config [harness.claude]
+#!config command = "/usr/bin/python3"
+#!config args = ["{FIXTURES}/transcripts/report.py"]
+#!config resume_args = ["--resume", "{session}"]
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"alpha","args":["{WORK}/claude/projects/chat/a.jsonl","--copy","{FIXTURES}/transcripts/claude-chat.jsonl","--when","{WORK}/go-{pane}","--exit"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$a"}}
+{"id":"2","write":"{WORK}/go-w1-p1","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"3","cmd":"pane.wait_output","pane":"$a","contains":"REPORT ok","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"4","cmd":"pane.messages","pane":"$a","limit":1}
+{"id":"$id","ok":true,"result":{"more":true,"messages":[{"id":"2792"}]}}
+{"id":"5","sleep":2500}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"6","cmd":"pane.resume","pane":"$a"}
+{"id":"$id","ok":true,"result":{"pane":"$b","resumed":true}}
+{"id":"7","write":"{WORK}/go-w1-p2","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"8","cmd":"pane.wait_output","pane":"$b","contains":"REPORT ok","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"9","cmd":"pane.messages","pane":"$b","limit":1}
+{"id":"$id","ok":true,"result":{"more":true,"messages":[{"id":"2792"}]}}

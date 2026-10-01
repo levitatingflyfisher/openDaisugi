@@ -1,0 +1,45 @@
+# A headless pi pane on a fake `pi --mode rpc`. The adapter asks for the
+# state at start, so the pane names the session file. A prompt streams its
+# text deltas as one row, then a tool call. A confirm dialog blocks the
+# pane with an ask (its deadline is a clock value, CP-R-25), and the next
+# prompt answers it. A line that is not JSON is an error row. pi exiting
+# on its own ends the pane with its exit code, and pane.resume switches the
+# new pi to the recorded session file.
+#!env COPPICE_PI_BIN={FIXTURES}/adapters/fake-pi.sh
+#!mask deadline
+#!watch state,note
+#!settle 300
+{"id":"1","cmd":"pane.create","kind":"headless","harness":"pi","cwd":"{WORK}","label":"pi","env":{"COPPICE_PI_ECHO_STDIN":"{WORK}/pi-stdin.txt"}}
+{"id":"$id","ok":true,"result":{"pane":"$pi"}}
+{"id":"2","cmd":"agent.prompt","pane":"$pi","text":"hello","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$pi","state":"idle","source":"headless"}}
+{"id":"3","cmd":"pane.read","pane":"$pi"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"4","cmd":"agent.get","pane":"$pi"}
+{"id":"$id","ok":true,"result":{"pane":"$pi","harness_session_id":"/sessions/pi-1.jsonl"}}
+{"id":"5","cmd":"agent.prompt","pane":"$pi","text":"ask me","wait":true,"until":"blocked","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$pi","state":"blocked","source":"headless","ask":{"id":"ui-1","tool":"confirm","summary":"Run the tests?"}}}
+{"id":"6","cmd":"agent.get","pane":"$pi"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"7","cmd":"agent.prompt","pane":"$pi","text":"yes","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$pi","state":"idle","source":"headless"}}
+{"id":"8","cmd":"agent.prompt","pane":"$pi","text":"garbage"}
+{"id":"$id","ok":true,"result":{"pane":"$pi","sent":7}}
+#!retry 10000
+{"id":"9","cmd":"pane.read","pane":"$pi"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"10","cmd":"pane.send_text","pane":"$pi","text":"{\"type\":\"get_state\"}\n"}
+{"id":"$id","ok":true,"result":{"sent":22}}
+{"id":"11","cmd":"agent.prompt","pane":"$pi","text":"bye","wait":true,"until":"done","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$pi","state":"done","source":"headless"}}
+{"id":"12","cmd":"agent.get","pane":"$pi"}
+{"id":"$id","ok":true,"result":{"pane":"$pi","closed":true,"detail":"pi exited: exit=4"}}
+{"id":"13","cmd":"pane.resume","pane":"$pi"}
+{"id":"$id","ok":true,"result":{"pane":"$again","resumed":true}}
+{"id":"14","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sh","-c","until grep -q switch_session pi-stdin.txt 2>/dev/null; do sleep 0.1; done; sleep 0.3; cat pi-stdin.txt; echo shown; exec sleep 600"],"label":"show","cols":200,"rows":30}
+{"id":"$id","ok":true,"result":{"pane":"$show"}}
+{"id":"15","cmd":"pane.wait_output","pane":"$show","contains":"shown","timeout_ms":10000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"16","cmd":"pane.read","pane":"$show"}
+{"id":"$id","ok":true,"result":"*"}
+#!tree

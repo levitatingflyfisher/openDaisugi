@@ -36,7 +36,22 @@ func (e *PyError) Error() string { return e.Msg }
 // TopoOrderErr is TopoOrder with the exception topological_order raises:
 // ValueError for a cycle, KeyError for a dependency that is not a step.
 func TopoOrderErr(plan *pyjson.Object) ([]*pyjson.Object, error) {
+	levels, err := Levels(plan)
+	if err != nil {
+		return nil, err
+	}
 	var order []*pyjson.Object
+	for _, l := range levels {
+		order = append(order, l...)
+	}
+	return order, nil
+}
+
+// Levels is dag.dependency_levels: networkx's topological generations of
+// the plan's graph, each a list of steps, with the exceptions
+// topological_order raises.
+func Levels(plan *pyjson.Object) ([][]*pyjson.Object, error) {
+	var levels [][]*pyjson.Object
 	steps := Steps(plan)
 	byID := map[string]*pyjson.Object{}
 	var nodes []string
@@ -80,7 +95,7 @@ func TopoOrderErr(plan *pyjson.Object) ([]*pyjson.Object, error) {
 			remaining[n] = d
 		}
 	}
-	var ids []string
+	var gens [][]string
 	for len(zero) > 0 {
 		gen := zero
 		zero = nil
@@ -93,19 +108,23 @@ func TopoOrderErr(plan *pyjson.Object) ([]*pyjson.Object, error) {
 				}
 			}
 		}
-		ids = append(ids, gen...)
+		gens = append(gens, gen)
 	}
 	if len(remaining) > 0 {
 		return nil, &PyError{"ValueError", "Plan has a cycle; run verify(plan, envelope) before supervising"}
 	}
-	for _, id := range ids {
-		s, isStep := byID[id]
-		if !isStep {
-			return nil, &PyError{"KeyError", pystr.Repr(id)}
+	for _, gen := range gens {
+		var level []*pyjson.Object
+		for _, id := range gen {
+			s, isStep := byID[id]
+			if !isStep {
+				return nil, &PyError{"KeyError", pystr.Repr(id)}
+			}
+			level = append(level, s)
 		}
-		order = append(order, s)
+		levels = append(levels, level)
 	}
-	return order, nil
+	return levels, nil
 }
 
 // StructureSignature is distiller.plan_structure_signature: the step

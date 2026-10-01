@@ -658,7 +658,9 @@ impl Runner {
     fn reach_targets(&self) -> R<Vec<String>> {
         let _f = frame();
         let mut out = vec!["/".to_string()];
-        for f in self.secret_files()? {
+        let mut files = self.secret_files()?;
+        files.extend(self.foreman_dirs()?);
+        for f in files {
             let ps = parts(&f);
             for i in 1..=ps.len() {
                 let p = format!("/{}", ps[..i].join("/"));
@@ -678,7 +680,8 @@ impl Runner {
         }
         let p = self.place(raw, cwd)?;
         let cands = [normpath(&p), self.resolve(&p)?];
-        let data = self.data_dirs()?;
+        let mut data = self.data_dirs()?;
+        data.extend(self.foreman_dirs()?);
         Ok(data
             .iter()
             .any(|d| cands.iter().any(|c| d.starts_with(&format!("{}/", c.trim_end_matches('/'))))))

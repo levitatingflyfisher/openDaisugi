@@ -8,6 +8,10 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+// Test temp dirs go inside a private TMPDIR that is removed at exit.
+#[path = "../src/testtmp.rs"]
+mod testtmp;
+
 fn root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("dg-backstop-{}-{tag}", std::process::id()));
     let root = dir.join("gate");

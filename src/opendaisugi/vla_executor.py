@@ -34,6 +34,13 @@ from opendaisugi.models import StepBase, VLAStep
 
 _log = logging.getLogger("opendaisugi.vla_executor")
 
+# The default model loads at this commit, the one clients/vla_export.py
+# exports the Go and Rust graphs from (checked against the Hugging Face API
+# on 2026-10-08). The model runs remote code, so its bytes must not move
+# under the same name.
+SMOLVLA_MODEL_ID = "lerobot/smolvla_base"
+SMOLVLA_REVISION = "d9f33c94a60fb382c90dea2164c96845bd955e28"
+
 
 class VLAExecutorBase:
     """StepExecutor scaffolding for any VLA. Subclasses implement
@@ -235,13 +242,17 @@ class TransformersVLAExecutor(VLAExecutorBase):
         self,
         *,
         mjcf_path: str,
-        model_id: str = "lerobot/smolvla_base",
+        model_id: str = SMOLVLA_MODEL_ID,
         device: str = "cpu",
         action_horizon: int = 16,
         cache_dir: str | None = None,
+        revision: str | None = None,
     ) -> None:
         super().__init__(mjcf_path=mjcf_path)
         self.model_id = model_id
+        # The default model loads at a pinned commit. A model the user names
+        # stays unpinned unless they pass a revision.
+        self.revision = revision or (SMOLVLA_REVISION if model_id == SMOLVLA_MODEL_ID else None)
         self.device = device
         self.action_horizon = action_horizon
         self.cache_dir = cache_dir
@@ -267,11 +278,13 @@ class TransformersVLAExecutor(VLAExecutorBase):
         )
         self._processor = AutoProcessor.from_pretrained(
             self.model_id,
+            revision=self.revision,
             cache_dir=self.cache_dir,
             trust_remote_code=True,
         )
         self._policy = AutoModel.from_pretrained(
             self.model_id,
+            revision=self.revision,
             cache_dir=self.cache_dir,
             trust_remote_code=True,
         ).to(self.device)

@@ -352,6 +352,13 @@ func endsLine(input string) bool {
 // while the mark stands, so a half-typed line never gets a line stuck to
 // it.
 func (s *Server) markInput(id string, entered bool) {
+	if entered {
+		// A submitted line starts a turn the hooks may not announce, so a
+		// hook idle older than it says nothing (CP-R-57).
+		if lp, ok := s.Live(id); ok {
+			lp.gateIdleSince.Store(0)
+		}
+	}
 	s.holdsMu.Lock()
 	defer s.holdsMu.Unlock()
 	s.typed[id] = true
@@ -440,6 +447,11 @@ func (s *Server) tellOne(foreman string, h *hold) {
 		s.holdsMu.Unlock()
 		if ok {
 			err = s.typeInto(foreman, line)
+			if err == nil {
+				// The hold line submits a turn too (CP-R-57): a hook
+				// idle older than it says nothing.
+				s.markInput(foreman, true)
+			}
 		}
 	}
 	s.holdsMu.Lock()

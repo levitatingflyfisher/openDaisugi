@@ -8,6 +8,8 @@
 
 pub mod answers;
 pub mod http;
+pub mod knn;
+pub mod model;
 pub mod meter;
 pub mod pipeline;
 pub mod pyops;

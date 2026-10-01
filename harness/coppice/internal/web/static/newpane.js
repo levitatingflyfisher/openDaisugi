@@ -1,10 +1,26 @@
 import { mountRecord } from './record.js';
-import { projectMenu } from './rail.js';
+import { projectMenu, projectCounts, cleanPath } from './rail.js';
 import { toMessage, fixButtons } from './messages.js';
+import { actFor, actDone } from './chat.js';
 
 // NO_DEFAULT is what the project menu says when the config names no
 // default harness.
 export const NO_DEFAULT = 'No default harness is set. Use More to pick a command.';
+
+// WHY_WORDS say why New chose a directory the owner did not name. A
+// directory next to the selected agent needs no words: that is what New
+// does.
+const WHY_WORDS = { recent: 'your last project', pinned: 'a pinned project', start: 'the start directory' };
+
+// startedLine is the status line after New: the agent, the directory, and
+// why that directory when it was not the selected agent's. where is the
+// name the owner picked, used when the reply has no directory.
+export function startedLine(result, where) {
+  const r = result || {};
+  const dir = typeof r.cwd === 'string' && r.cwd ? cleanPath(r.cwd) : (where || '');
+  const why = WHY_WORDS[r.why];
+  return 'Started ' + (r.label ? r.label : 'a new agent') + (dir ? ' in ' + dir : '') + (why ? ' (' + why + ')' : '') + '.';
+}
 
 // mountNewButton wires New and its project menu. New starts the default
 // harness near the selected agent in one click. The menu lists the
@@ -21,7 +37,7 @@ export function mountNewButton(opts) {
     busy = true;
     try {
       const result = await opts.rpc('pane.create', { kind: 'pty', ...fields });
-      opts.status('Started ' + (result && result.label ? result.label : 'a new agent') + (where ? ' in ' + where : '') + '.');
+      opts.status(startedLine(result, where));
       if (result && result.pane) opts.made(result.pane);
     } catch (e) {
       opts.status(e.message);
@@ -56,6 +72,34 @@ export function mountNewButton(opts) {
     });
     return b;
   };
+  // missingItem is a project whose directory is gone: dim, marked
+  // (missing), with one action, Remove. A click on the row starts nothing.
+  const missingItem = (p) => {
+    const row = document.createElement('div');
+    row.className = 'menu-item missing';
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = p.name + ' (missing)';
+    const sub = document.createElement('span');
+    sub.className = 'muted sub';
+    sub.textContent = p.path;
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.className = 'ghost remove';
+    rm.textContent = 'Remove';
+    rm.addEventListener('click', async (e) => {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      try {
+        await opts.rpc('project.remove', { path: p.path });
+        opts.status('Removed ' + p.name + ' from the list.');
+      } catch (err) {
+        opts.status(err);
+      }
+      open();
+    });
+    row.append(name, sub, rm);
+    return row;
+  };
   const open = async () => {
     if (!menu) return;
     let list = [];
@@ -68,13 +112,19 @@ export function mountNewButton(opts) {
     } catch (e) {
       failed = toMessage(e);
     }
-    const items = list.map((p) => item(p.name, (p.pinned ? 'pinned · ' : '') + p.path, () => {
-      if (!harness) {
-        opts.status(NO_DEFAULT);
-        return;
-      }
-      start({ cwd: p.path, harness }, p.name);
-    }));
+    const panes = typeof opts.panes === 'function' ? opts.panes()
+      : (typeof window !== 'undefined' && window.coppice && window.coppice.state ? window.coppice.state.panes : []);
+    const items = list.map((p) => {
+      if (p.missing) return missingItem(p);
+      const sub = [projectCounts(panes, p.path), p.pinned ? 'pinned' : '', p.path].filter(Boolean).join(' · ');
+      return item(p.name, sub, () => {
+        if (!harness) {
+          opts.status(NO_DEFAULT);
+          return;
+        }
+        start({ cwd: p.path, harness }, p.name);
+      });
+    });
     if (items.length === 0) {
       const none = document.createElement('p');
       none.className = 'muted menu-note';
@@ -229,16 +279,40 @@ export const HARNESSES = ['claude', 'codex', 'pi', 'sprig', 'opencode'];
 const VERBS = ['list', 'read', 'close', 'open', 'swap', 'rotate', 'reset', 'lock', 'unlock', 'layout', 'tree', 'zoom', 'foreman'];
 const PLUMBING_WORDS = 4;
 
-// classifyTell tells plumbing from talk the way the terminal floor does. A
-// line led by a harness name is plumbing at any length. A line led by a
-// verb is plumbing when it has at most four words. Everything else is
-// talk.
-export function classifyTell(line) {
-  const words = String(line || '').trim().split(/\s+/).filter(Boolean);
+// SLASH_PLUMBING is the one switch for the chat bar's rule. On, a plain
+// sentence is always talk, and plumbing needs a leading slash: /claude,
+// /close docs. In a chat box under a thumb, "claude, can you check
+// trellis" must not start a new claude. Off, the bar reads a line the way
+// the terminal floor's prompt line does, which keeps its words.
+export const SLASH_PLUMBING = true;
+
+// classifyTell tells plumbing from talk. With slash on, a line led by a
+// slash and a harness name or a terminal verb is plumbing, and every other
+// line is talk, a path such as /etc/hosts too. With slash off it reads
+// the terminal floor's way: a line led by a harness name is plumbing at
+// any length, a line led by a verb is plumbing when it has at most four
+// words, and everything else is talk.
+export function classifyTell(line, slash = SLASH_PLUMBING) {
+  const text = String(line || '').trim();
+  if (slash) {
+    if (text === '/') return 'empty';
+    if (!text.startsWith('/')) return text ? 'talk' : 'empty';
+    // Only a slash and a known word is plumbing. A path such as
+    // /etc/hosts, or any other slash line, is a sentence for the foreman.
+    const first = text.slice(1).trim().split(/\s+/)[0] || '';
+    return HARNESSES.includes(first) || VERBS.includes(first) ? 'plumbing' : 'talk';
+  }
+  const words = text.split(/\s+/).filter(Boolean);
   if (words.length === 0) return 'empty';
   if (HARNESSES.includes(words[0])) return 'plumbing';
   if (VERBS.includes(words[0]) && words.length <= PLUMBING_WORDS) return 'plumbing';
   return 'talk';
+}
+
+// slashed is a word as the bar shows it: with its slash while the slash
+// rule is on.
+function slashed(word) {
+  return (SLASH_PLUMBING ? '/' : '') + word;
 }
 
 // createFor is the pane.create request for a harness. With no directory
@@ -269,15 +343,15 @@ function countWord(n) {
 // name, opens that harness in cwd. close closes a pane named by id or
 // label. Every other verb lives on the terminal floor.
 export function plumbingCommand(line, { panes, cwd }) {
-  const words = String(line || '').trim().split(/\s+/).filter(Boolean);
+  const words = String(line || '').trim().replace(/^\/\s*/, '').split(/\s+/).filter(Boolean);
   const [first, ...rest] = words;
   if (HARNESSES.includes(first)) return createFor(first, rest, cwd);
   if (first === 'open') {
-    if (!HARNESSES.includes(rest[0])) return { say: 'open needs a harness name, one of ' + HARNESSES.join(' ') + '.' };
+    if (!HARNESSES.includes(rest[0])) return { say: slashed('open') + ' needs a harness name, one of ' + HARNESSES.join(' ') + '.' };
     return createFor(rest[0], rest.slice(1), cwd);
   }
   if (first === 'close') {
-    if (!rest[0]) return { say: 'close needs a pane name, as in close docs.' };
+    if (!rest[0]) return { say: slashed('close') + ' needs a pane name, as in ' + slashed('close') + ' docs.' };
     const found = findPanes(panes, rest[0]);
     if (found.length === 0) return { say: 'No pane ' + rest[0] + '.' };
     // A label two panes share names neither. Closing the first could stop
@@ -288,6 +362,7 @@ export function plumbingCommand(line, { panes, cwd }) {
     const pane = found[0];
     return { req: { cmd: 'pane.close', pane: pane.id }, say: 'Closing ' + (pane.label || pane.id) + '.' };
   }
+  if (SLASH_PLUMBING) return { say: '/' + first + ' works on the terminal floor. Here, type /claude, /close NAME, or a sentence for the foreman.' };
   return { say: first + ' works on the terminal floor. Here, type a harness name, open, close, or a sentence for the foreman.' };
 }
 
@@ -319,11 +394,15 @@ function tellCwd() {
   return typeof last === 'string' ? last : '';
 }
 
-// mountTell wires the tell bar. Send runs the line: plumbing first, then
-// talk to the foreman through floor.talk. A line that sends nothing stays
-// in the bar with the reason on the status line. A talk that starts the
-// foreman opens its window, since a new harness may ask a question of its
-// own first. The microphone only fills the bar.
+// mountTell wires the chat bar. Send runs the line: plumbing, or talk to
+// the foreman through floor.talk. A line that sends nothing stays in the
+// bar with the reason on the status line. A talk shows in the chat at
+// once (window.coppice.chat), marked sent when floor.talk answers; a
+// refused talk leaves the chat and stays in the bar. A talk that starts
+// the foreman opens its window on a wide page, since a new harness may ask
+// a question of its own first; on a phone the owner stays with the chat,
+// and a question shows as a card that needs you. The microphone only
+// fills the bar.
 export function mountTell() {
   const form = document.getElementById('tell');
   const box = document.getElementById('tell-text');
@@ -334,6 +413,8 @@ export function mountTell() {
     const kind = classifyTell(line);
     if (kind === 'empty' || busy) return;
     busy = true;
+    let shown = null;
+    let token = null;
     try {
       let plan;
       if (kind === 'plumbing') {
@@ -346,17 +427,30 @@ export function mountTell() {
         return;
       }
       const { cmd, ...fields } = plan.req;
+      if (cmd === 'floor.talk') fields.act = actFor(line);
+      const chat = cmd === 'floor.talk' && window.coppice.chat ? window.coppice.chat : null;
+      shown = chat ? chat.sent(line) : null;
+      // The reply is read aloud when the mic filled this line. A read the
+      // mic started may still be out: the send waits for it.
+      if (window.coppice.speech) token = await window.coppice.speech.beforeSend(line);
       const reply = await window.coppice.rpc(cmd, fields);
       box.value = '';
       if (cmd === 'floor.talk') {
+        actDone(line);
+        if (shown) shown.ok();
+        shown = null;
         status(talkSay(reply));
-        if (reply && reply.started && reply.pane) location.hash = '#/pane/' + encodeURIComponent(reply.pane);
+        const phone = typeof window.coppice.phone === 'function' && window.coppice.phone();
+        if (reply && reply.started && reply.pane && !phone) location.hash = '#/pane/' + encodeURIComponent(reply.pane);
         return;
       }
       status(plan.say);
     } catch (e) {
+      if (shown) shown.fail();
+      if (token && window.coppice.speech) window.coppice.speech.undoSend(token);
       status(e);
     } finally {
+      shown = null;
       busy = false;
     }
   };
@@ -364,5 +458,5 @@ export function mountTell() {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
     run();
   });
-  mountRecord('tell-mic', 'tell-text', 'tell bar');
+  mountRecord('tell-mic', 'tell-text', 'tell bar', true);
 }

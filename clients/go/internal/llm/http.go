@@ -34,12 +34,17 @@ const (
 var (
 	keyRE      = regexp.MustCompile(`(sk-[a-zA-Z0-9_-]{4})[a-zA-Z0-9_-]{8,}([a-zA-Z0-9_-]{4})`)
 	userinfoRE = regexp.MustCompile(`://[^/@]*@`)
+	bearerRE   = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}`)
+	queryKeyRE = regexp.MustCompile(`(?i)\b((?:api[_-]?key|access[_-]?token|key|token)=)[^&\s"']+`)
 )
 
 // Clean is llm_client.clean: key-shaped tokens shortened, URL credentials
-// dropped.
+// dropped, Bearer tokens and key=/api_key=/token= values hidden.
 func Clean(s string) string {
-	return keyRE.ReplaceAllString(userinfoRE.ReplaceAllString(s, "://"), "${1}...${2}")
+	s = userinfoRE.ReplaceAllString(s, "://")
+	s = bearerRE.ReplaceAllString(s, "${1}...")
+	s = queryKeyRE.ReplaceAllString(s, "${1}...")
+	return keyRE.ReplaceAllString(s, "${1}...${2}")
 }
 
 func fail(s string) *Error { return &Error{Clean(s)} }
@@ -243,13 +248,13 @@ func usageInt(usage *pyjson.Object, key string) *int64 {
 }
 
 func unreadable(text string) *Error {
-	return fail("the model reply could not be read: " + pystr.Slice(text, 0, 200))
+	return fail("the model reply could not be read: " + pystr.Slice(Clean(text), 0, 200))
 }
 
 // ReadReply is llm_client.read_reply.
 func ReadReply(w *Wire, status int, text string) (*Reply, *Error) {
 	if status < 200 || status > 299 {
-		return nil, fail(fmt.Sprintf("the model server answered HTTP %d: %s", status, pystr.Slice(text, 0, 500)))
+		return nil, fail(fmt.Sprintf("the model server answered HTTP %d: %s", status, pystr.Slice(Clean(text), 0, 500)))
 	}
 	v, derr := pyjson.LoadsPy(text, 900)
 	o, ok := v.(*pyjson.Object)
@@ -337,6 +342,11 @@ func Post(w *Wire, body []byte, timeout float64, proxies *netproxy.Httpx) (int, 
 		case errors.As(err, &refusal):
 			if refusal.Fails != "" {
 				return 0, "", fail("the model call could not start: " + refusal.Fails)
+			}
+			if refusal.Invalid != "" {
+				// httpx.InvalidURL is not an error post() catches: it
+				// reaches the caller as it is.
+				return 0, "", fail(refusal.Invalid)
 			}
 			return 0, "", fmt.Errorf("%w, under a proxy setting it reads as httpx does: %s", ErrUnsupported, refusal.Unported)
 		case errors.As(err, &status):

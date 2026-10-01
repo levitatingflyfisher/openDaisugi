@@ -1,0 +1,19 @@
+# floor.talk and floor.foreman with no default harness: no foreman can
+# start, and each verb says why.
+#!watch state,note
+{"id":"1","cmd":"floor.talk","text":"  \n\t "}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"floor.talk needs text: the words for the foreman."}}
+{"id":"2","cmd":"floor.talk","text":"hello foreman"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"no default harness in {HOME}/.config/coppice/coppice.toml, so no foreman can start. Run coppice open HARNESS once to set one."}}
+{"id":"3","cmd":"floor.foreman"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"no default harness in {HOME}/.config/coppice/coppice.toml, so no foreman can start. Run coppice open HARNESS once to set one."}}
+{"id":"4","cmd":"floor.foreman","harness":"nosuch"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"no harness named \"nosuch\" in {HOME}/.config/coppice/coppice.toml. Run coppice once to write it, or add [harness.nosuch] with command = \"nosuch\"."}}
+{"id":"5","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":{"working":0,"needing_you":0}}
+{"id":"6","cmd":"hello","role":"pane","pane":"w9:p9"}
+{"id":"$id","ok":true,"result":{"role":"pane"}}
+{"id":"7","cmd":"floor.talk","text":"hello"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"*"}}
+{"id":"8","cmd":"floor.foreman"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"*"}}

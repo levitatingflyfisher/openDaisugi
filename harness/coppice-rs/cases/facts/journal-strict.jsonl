@@ -1,0 +1,48 @@
+# A line of the verdict journal file is a verdict by one strict rule, the same
+# in the Go and the Rust server: one JSON object, at a number, pane and
+# decision not-empty strings, tool, clause and mode strings when they are
+# there (null is not there), keys by their exact spelling. A bad line before
+# the last moves the whole file aside (journal-corrupt), so each bad line
+# here, between two good ones, leaves the journal empty.
+#
+# Lines that are verdicts, though odd: an integer at, null fields, an extra key.
+{"id":"1","write":"{DATA}/journal/verdicts.jsonl","text":"{\"at\":1,\"pane\":\"w1:p1\",\"decision\":\"allow\",\"tool\":null,\"clause\":\"nulltool\",\"mode\":null}\n{\"at\":2.5,\"pane\":\"w1:p1\",\"decision\":\"ask\",\"extra\":[1,2]}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"2","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"w1:p1","decision":"ask","tool":"","clause":""},{"at":"*","pane":"w1:p1","decision":"allow","tool":"","clause":"nulltool"}]}}
+# at as text.
+{"id":"3","write":"{DATA}/journal/verdicts.jsonl","text":"{\"at\":1,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n{\"at\":\"2\",\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n{\"at\":3,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"4","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[]}}
+# A key in the wrong case.
+{"id":"5","write":"{DATA}/journal/verdicts.jsonl","text":"{\"at\":1,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n{\"AT\":2,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n{\"at\":3,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"6","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[]}}
+# A pane that is a number.
+{"id":"7","write":"{DATA}/journal/verdicts.jsonl","text":"{\"at\":1,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n{\"at\":2,\"pane\":5,\"decision\":\"allow\"}\n{\"at\":3,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"8","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[]}}
+# A tool that is a number.
+{"id":"9","write":"{DATA}/journal/verdicts.jsonl","text":"{\"at\":1,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n{\"at\":2,\"pane\":\"w1:p1\",\"decision\":\"allow\",\"tool\":7}\n{\"at\":3,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"10","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[]}}
+# A line that is a list, and one with text after the object.
+{"id":"11","write":"{DATA}/journal/verdicts.jsonl","text":"{\"at\":1,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n[1,2]\n{\"at\":3,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"12","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[]}}
+{"id":"13","write":"{DATA}/journal/verdicts.jsonl","text":"{\"at\":1,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n{\"at\":2,\"pane\":\"w1:p1\",\"decision\":\"allow\"} x\n{\"at\":3,\"pane\":\"w1:p1\",\"decision\":\"allow\"}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"14","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[]}}

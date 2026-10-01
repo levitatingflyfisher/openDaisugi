@@ -518,6 +518,11 @@ fn pw_dir_of_name(name: &str) -> Result<Option<String>, PyErr> {
     Ok(pw_lookup(|pw, buf, len, res| unsafe { libc::getpwnam_r(c.as_ptr(), pw, buf, len, res) }))
 }
 
+/// The password entry's home of this process's uid, or None.
+pub fn pw_home() -> Option<String> {
+    pw_dir_of_uid(unsafe { libc::getuid() })
+}
+
 /// `pwd.getpwuid(uid).pw_dir`, or None.
 fn pw_dir_of_uid(uid: libc::uid_t) -> Option<String> {
     pw_lookup(|pw, buf, len, res| unsafe { libc::getpwuid_r(uid, pw, buf, len, res) })

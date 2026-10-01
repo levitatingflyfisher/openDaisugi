@@ -1,0 +1,10 @@
+# A speak_url that is not an http or https address with no user name,
+# password or query is no speech server: status says why, and the browser
+# speaks. The key never rides in an address.
+#!config [voice]
+#!config enabled = false
+#!config speak_url = "ftp://127.0.0.1:9"
+{"id":"s0","cmd":"speech.status"}
+{"id":"$id","ok":true,"result":{"mode":"browser","line":"[voice] speak_url is not an http:// or https:// address with no user name, password or query, so the browser's own voice speaks. Fix speak_url in coppice.toml, then start the coppice server again."}}
+{"id":"a1","cmd":"speech.say","text":"Hello."}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"No speech server is set. Set [voice] speak_url in coppice.toml, then start the coppice server again."}}

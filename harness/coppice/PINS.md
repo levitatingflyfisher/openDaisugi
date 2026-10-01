@@ -40,8 +40,8 @@ passes under `CGO_ENABLED=0 go test ./internal/boundary/...`.
 | Zig sha256 (x86_64-macos) | `0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7` (from ziglang.org's index, not independently re-verified here) |
 | Zig sha256 (aarch64-macos) | `b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489` (from ziglang.org's index, not independently re-verified here) |
 | Zig sha256 source | `https://ziglang.org/download/index.json`, version `0.16.0` |
-| CMake | whatever `uv tool install cmake` resolves |
-| install prefix | `$HOME/.local/ghostty-vt`, override with `COPPICE_GHOSTTY_PREFIX` |
+| CMake | `4.4.3`, the binary in PyPI's `cmake-4.4.3` wheel, sha256 per platform in `scripts/toolchain.sh` (only x86_64-linux downloaded and checked here); used even when another cmake is on PATH |
+| install prefix | `${XDG_DATA_HOME:-$HOME/.local/share}/opendaisugi/ghostty-vt`, or `$HOME/.local/ghostty-vt` when a build is already there; override with `COPPICE_GHOSTTY_PREFIX` |
 
 ## Go toolchain deviation
 
@@ -50,51 +50,28 @@ refuses to build against it from a 1.25 main module. The dev machine ships go1.2
 distributions ship Go with `GOTOOLCHAIN=local` compiled in, so it will not switch on its own.
 
 - `go.mod` declares `go 1.26.0` and `toolchain go1.26.8`.
-- `scripts/toolchain.sh` runs `go env -w GOTOOLCHAIN=auto`, which downloads go1.26.8 into the
-  module cache on first build.
-- Undo both global Go settings with `go env -u GOTOOLCHAIN PKG_CONFIG`.
+- A build runs with `GOTOOLCHAIN=auto` in its environment, which downloads go1.26.8 into the
+  module cache on first build. `scripts/toolchain.sh` prints that line; it sets nothing global.
 - §4 already reads Go 1.26 (amended 2026-09-08); this task edited nothing there.
 
-## Global Go environment
+## Build environment
 
-`scripts/toolchain.sh` wrote two values with `go env -w`, so they persist across shells on this
-machine, not just inside `harness/coppice`:
-
-| key | value |
-|---|---|
-| `GOTOOLCHAIN` | `auto` |
-| `PKG_CONFIG` | `/home/user/.local/bin/coppice-pkg-config` |
-
-Undo both with:
+`scripts/toolchain.sh` changes no global Go setting (an older version ran `go env -w` for
+`GOTOOLCHAIN` and `PKG_CONFIG`; undo those with `go env -u GOTOOLCHAIN PKG_CONFIG`). A build
+needs two lines in its own environment, which the script prints:
 
 ```
-go env -u GOTOOLCHAIN PKG_CONFIG
+export GOTOOLCHAIN=auto
+export PKG_CONFIG_PATH="<prefix>/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 ```
 
-`coppice-pkg-config` is a thin wrapper that **appends** `~/.local/ghostty-vt/share/pkgconfig` to
-`PKG_CONFIG_PATH` and execs the real `pkg-config`; it never replaces `PKG_CONFIG_PATH`. Verified
-transparent for unrelated packages:
-
-```
-$ diff <(pkg-config --cflags --libs zlib) <(coppice-pkg-config --cflags --libs zlib)
-$ echo $?
-0
-```
-
-(no output, exit 0: the wrapper's output for a package outside `~/.local/ghostty-vt` is byte-for-
-byte identical to the system `pkg-config`.)
-
-Task 0's check that `harness/sprig` still builds after the installer runs cannot, by itself,
-catch a `PKG_CONFIG` regression: sprig has no cgo in its dependency graph, so it never invokes
-`pkg-config` at all and would build the same whether the wrapper was broken or absent. The
-`diff` above against a real cgo consumer (`pkg-config`'s own `zlib.pc`) is what actually exercises
-the wrapper.
+The second line appends the prefix to any `PKG_CONFIG_PATH` already set, so every other module
+on the box keeps working.
 
 `COPPICE_GHOSTTY_PREFIX` and `PKG_CONFIG_PATH` name the same install location two different
 ways: `internal/toolchain.SkipReason` and `scripts/toolchain.sh` both read the prefix from
 `COPPICE_GHOSTTY_PREFIX`, but the linker itself resolves `libghostty-vt` through
-`PKG_CONFIG_PATH` (or the `coppice-pkg-config` wrapper above, on a machine that ran the
-installer). Set both or neither. Pointing only one of them somewhere else does not move the
+`PKG_CONFIG_PATH`. Set both or neither. Pointing only one of them somewhere else does not move the
 library; it only moves what one half of the build thinks the library's address is, and every
 cgo test then skips with a reason that no longer matches what actually failed to link.
 
@@ -266,7 +243,8 @@ which `internal/vt` does not currently expose. Covered by
 | websocket library | `github.com/coder/websocket` v1.8.15 | `go list -m -versions github.com/coder/websocket` on this box, latest version listed. Its own `go.mod` declares no dependencies. Licence is ISC, read from the module's `LICENSE.txt`, not MIT. `Accept` refuses a cross-origin request unless the caller sets `OriginPatterns` or `InsecureSkipVerify`, which is the wall a bearer token alone would not give. |
 | terminal QR | `github.com/mdp/qrterminal/v3` v3.2.1 | `go list -m -versions github.com/mdp/qrterminal/v3` on this box, latest version listed. `GenerateWithConfig` with `HalfBlocks: true` is the call this code uses. The file that defines it imports only `golang.org/x/term` and `rsc.io/qr`, both already resolvable in this module, so drawing the code needs no new transitive dependency. The module's `cmd/` demo also imports `github.com/mattn/go-colorable` and `github.com/mattn/go-isatty`, which stay out of `go.sum` because nothing in this module imports that demo. |
 | `tailscale cert` flags | `--cert-file value` and `--key-file value` | `tailscale cert --help` on this box. Verified: yes. `tailscale` is present on PATH. |
-| Let's Encrypt validity | 90 days, renewal is the operator's | https://tailscale.com/kb/1153/enabling-https. Not exercised on this box. Recorded from the source page, unverified locally. |
+| Let's Encrypt validity | 90 days; `coppice web serve --tls tailscale` runs `tailscale cert` again when under 30 days are left, at start and once a day | https://tailscale.com/kb/1153/enabling-https. Not exercised on this box. Recorded from the source page, unverified locally. The 30 days is ours. |
+| `tailscale status --json` fields | `BackendState` (`Running`), `Self.DNSName` (with a trailing dot), `Self.TailscaleIPs`, `CertDomains` (empty when HTTPS is off) | `ipn/ipnstate/ipnstate.go` on tailscale's main branch, read 2026-10-09: these fields carry no json tags, so the JSON keys are the Go names. The box's own tailscale was not run; the fake in `harness/coppice-rs/cases/web/fixtures/bin/tailscale` prints the same shape. |
 | frame cell `attrs` | bold 1, faint 2, italic 4, underline 8, blink 16, inverse 32, strike 64 | Read from `internal/vt/vt.go`: `AttrBold uint16 = 1 << iota` through `AttrStrike`, seven names. `internal/pane/grid.go` copies the value unchanged into `proto.Cell.Attrs`, and `Cell.MarshalJSON` sends it as the fourth element of `[text, fg, bg, attrs]`. |
 | `pane.attach` size | `cols` and `rows` are optional; absent means attach, do not resize | `internal/server/attach.go:37`, `if cols, okc := r.Int("cols")`, resizes only when both are present and positive. Already true in the tree; no edit landed here. |
 | `pane.list` row shape | **flat**: `id, label, cwd, cmd, kind, harness, workspace, tab, closed, cols, rows, state, source, detail`, plus `ts` and `session_id` once a current event exists, plus `exit_code` once the process exited, plus `ask` once the gate holds one | Read from `handlePaneList` in `internal/server/panes.go`. The state is a string on the row, not a nested `PaneStateEvent`. Master 3.2's `state: PaneStateEvent|None` describes the Python `PaneBackend`, a different reader. `ts` and `session_id` were already on the row before this task; `TestPaneListCarriesTsAndSessionIDFromTheStoredEvent` in `internal/server/panes_test.go` already covers both, so no server edit was needed. |

@@ -11,8 +11,10 @@ import (
 
 func newCLI(final string) *CLI {
 	return &CLI{
-		Version:  "9.9.9",
-		NewModel: func() (Model, error) { return &scriptModel{turns: []Message{{Role: "assistant", Text: final}}}, nil },
+		Version: "9.9.9",
+		NewModel: func(ModelOptions) (Model, error) {
+			return &scriptModel{turns: []Message{{Role: "assistant", Text: final}}}, nil
+		},
 	}
 }
 
@@ -127,7 +129,7 @@ func TestCLIResumeContinuesAnExistingSessionAndFeedsItsHistoryToTheModel(t *test
 	var gotHistory []Message
 	cli := &CLI{
 		Version: "9.9.9",
-		NewModel: func() (Model, error) {
+		NewModel: func(ModelOptions) (Model, error) {
 			return &captureHistoryModel{reply: "second answer", captured: &gotHistory}, nil
 		},
 	}

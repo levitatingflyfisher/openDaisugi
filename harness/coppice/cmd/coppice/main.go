@@ -3,9 +3,11 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/opendaisugi/coppice/internal/cli"
+	"github.com/opendaisugi/coppice/internal/datahome"
 	"github.com/opendaisugi/coppice/internal/server"
 
 	// Registering every adapter. Each package's init puts itself in the
@@ -14,6 +16,13 @@ import (
 )
 
 func main() {
+	// F11: an old ~/.opendaisugi/coppice that holds data is kept. Say so
+	// once per floor start, before the screen is taken.
+	if len(os.Args) == 1 {
+		if note := datahome.Legacy(); note != "" {
+			fmt.Fprintln(os.Stderr, note)
+		}
+	}
 	c := &cli.CLI{
 		Version: cli.Version(),
 		Socket:  server.SocketPath(),

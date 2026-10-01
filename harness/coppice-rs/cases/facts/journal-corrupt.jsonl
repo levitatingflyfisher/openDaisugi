@@ -1,0 +1,11 @@
+# The verdict journal file with a bad line before the last. The file is not
+# ours to trust: it moves aside (the new name holds a time, so no case
+# lists it), and the journal starts fresh with no file until the next
+# verdict.
+{"id":"1","write":"{DATA}/journal/verdicts.jsonl","text":"not json\n{\"at\":1.5,\"pane\":\"w1:p1\",\"decision\":\"allow\",\"tool\":\"Read\",\"clause\":\"first\"}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"2","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[]}}
+{"id":"3","file":"{DATA}/journal/verdicts.jsonl","count":"\n"}
+{"id":"$id","ok":true,"result":{"count":0}}

@@ -37,6 +37,8 @@ type Sniffer struct {
 	Text   strings.Builder
 	// Model is message_start's message.model, nil when none was a str.
 	Model *string
+	// StopReason is message_delta's delta.stop_reason, empty when none was a str.
+	StopReason string
 	// Raised is set when json.loads raised something the sniffer does
 	// not catch (a RecursionError, an integer past the digit limit): the
 	// oracle's stream then ends there with an error.
@@ -102,6 +104,11 @@ func (s *Sniffer) anthropicEvent(obj any) {
 		}
 	case eqStr(typ, "message_delta"):
 		u = getOr(obj.(*pyjson.Object), "usage", nil)
+		if d, ok := getOr(obj.(*pyjson.Object), "delta", nil).(*pyjson.Object); ok {
+			if sr, ok := getOr(d, "stop_reason", nil).(string); ok {
+				s.StopReason = sr
+			}
+		}
 	case eqStr(typ, "content_block_delta"):
 		delta, ok := getOr(obj.(*pyjson.Object), "delta", nil).(*pyjson.Object)
 		if ok && eqStr(getOr(delta, "type", nil), "text_delta") {
@@ -128,6 +135,21 @@ func isPyInt(v any) bool {
 	return false
 }
 
+// openAIStop is openai_stop_reason: a chat finish_reason on the Anthropic
+// stop-reason words the grader reads. "" for none.
+func openAIStop(finish any) string {
+	f, ok := finish.(string)
+	switch {
+	case !ok:
+		return ""
+	case f == "stop":
+		return "end_turn"
+	case f == "tool_calls" || f == "function_call":
+		return "tool_use"
+	}
+	return f
+}
+
 func (s *Sniffer) openaiEvent(obj any) {
 	choices, err := get(obj, "choices", nil)
 	if err != nil {
@@ -151,6 +173,9 @@ func (s *Sniffer) openaiEvent(obj any) {
 				// oracle appends as it goes.
 				s.Text.WriteString(t)
 			}
+		}
+		if st := openAIStop(getOr(o, "finish_reason", nil)); st != "" {
+			s.StopReason = st
 		}
 	}
 	n := NormalizeOpenAIUsage(getOr(obj.(*pyjson.Object), "usage", nil))

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   MIN_CELL_W, cellFor, windowCapacity, windowShape, fillOrder, startSelect,
   endedLine, endedSlot, isEndedSlot, paneOfSlot, livePanes, phoneSize, scrollFollow,
+  fitFor, FIT_CELL_W, FIT_MIN_COLS, FIT_MIN_ROWS,
 } from '../windows.js';
 import { routeKey } from '../keys.js';
 
@@ -189,4 +190,21 @@ test('scrollFollow leaves a grid that fits alone', () => {
   const r = scrollFollow(follow({ cols: 40, rows: 10, top: 0, left: 0, cursor: [39, 9] }));
   assert.equal(r.top, 0);
   assert.equal(r.left, 0);
+});
+
+test('fitFor asks for the columns that fit the body at the fit cell, with no sideways scroll', () => {
+  const f = fitFor(350, 600, ADV, 1);
+  assert.equal(f.cols, Math.floor(350 / FIT_CELL_W));
+  const cell = cellFor(350, f.cols, ADV, 1);
+  assert.ok(f.cols * cell.w <= 350 + 1e-6, 'the grid is wider than the body');
+  assert.equal(f.rows, Math.floor(600 / cell.h));
+  assert.ok(cell.w >= MIN_CELL_W);
+});
+
+test('fitFor never asks for less than the least size, and nothing without a body', () => {
+  const tiny = fitFor(60, 30, ADV, 1);
+  assert.equal(tiny.cols, FIT_MIN_COLS);
+  assert.equal(tiny.rows, FIT_MIN_ROWS);
+  assert.equal(fitFor(0, 600, ADV, 1), null);
+  assert.equal(fitFor(350, 0, ADV, 1), null);
 });

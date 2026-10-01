@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""A pane foreman named claude, so the floor mounts the foreman's tools in
+it (--mcp-config). It never calls a model.
+
+It writes its argv to $FAKE_PANE_DIR/argv.json (the binary of coppice as
+BIN). Then, as a process of the pane foreman's own tree, it calls status and
+zoom through the relay the MCP config names and writes the answers to
+$FAKE_PANE_DIR/tools.json; with $FAKE_PANE_SPAWN set it also spawns a
+worker on the project proj with the brief "ran". Then it turns on bracketed paste, says it is
+ready, and echoes what it reads, as the cases' fake foreman does.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+
+d = os.environ["FAKE_PANE_DIR"]
+os.makedirs(d, exist_ok=True)
+args = sys.argv[1:]
+with open(os.path.join(d, "argv.json"), "w", encoding="utf-8") as f:
+    json.dump(args, f, indent=1)
+answers = {}
+# The floor names this pane its foreman once the pane has started.
+time.sleep(1)
+if "--mcp-config" in args:
+    mcp = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]["foreman"]
+    lines = [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "status", "arguments": {}}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "zoom", "arguments": {"id": 0, "n": 1}}},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "date", "arguments": {"id": 0}}},
+    ]
+    if os.environ.get("FAKE_PANE_SPAWN"):
+        lines.append(
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+             "params": {"name": "spawn", "arguments": {"project": "proj", "brief": "ran"}}}
+        )
+    p = subprocess.run(
+        [mcp["command"], *mcp["args"]],
+        input="".join(json.dumps(x) + "\n" for x in lines).encode(),
+        capture_output=True,
+        timeout=60,
+    )
+    for x in p.stdout.decode().splitlines():
+        r = json.loads(x)["result"]
+        answers[str(r["isError"]) + " " + str(len(answers))] = r["content"][0]["text"]
+with open(os.path.join(d, "tools.json"), "w", encoding="utf-8") as f:
+    json.dump(answers, f, indent=1, sort_keys=True)
+sys.stdout.write("\033[?2004hforeman ready\r\n")
+sys.stdout.flush()
+os.execvp("cat", ["cat"])

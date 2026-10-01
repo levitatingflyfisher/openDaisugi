@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/opendaisugi/coppice/internal/adapters"
@@ -35,21 +36,59 @@ type LivePane struct {
 	// quiet_for from here until the grid has seen its first byte.
 	started time.Time
 
+	// ptyStart is the pty child's start time when it spawned, from
+	// /proc/<pid>/stat. A process with the same pid and another start
+	// time is not this pane's.
+	ptyStart uint64
+
+	// fenced is true when the pane's process runs under daisugi fence, and
+	// wsHash the watched workspace files at its start (FN-R-13). Both are
+	// set once before putLive.
+	fenced bool
+	wsHash map[string]string
+	// wsSeen is the watched files as the last hold check saw them: a
+	// change past it is held at once, while the pane still runs (R2-4).
+	// Guarded by the server's holdMu.
+	wsSeen map[string]string
+	// fenceTmp is this run's private temp dir, removed at its end.
+	fenceTmp string
+	// endOnce runs the fenced pane's end once: at its own end, or at an
+	// operator close, whichever comes first.
+	endOnce sync.Once
+
 	// harness is the record's harness at spawn, or "shell" when it had
 	// none. The process tick names it on every event it applies. It is set
 	// once before putLive and never written again, so the tick goroutine
 	// reads it without a lock.
 	harness string
 
+	// gone closes when the goroutine that reports this pane's end (watchExit
+	// for a pty pane, pumpAdapter for a headless one) has returned. Both
+	// write into the data dir, so a teardown waits for it. It is nil for a
+	// LivePane that no startPane built.
+	gone chan struct{}
+
 	// tickStop ends the process tick goroutine of a pty pane. removeLive
 	// closes it through tickOnce, so a second close is a no-op.
 	tickStop chan struct{}
 	tickOnce sync.Once
 
-	// procState is the last state the process tick applied. Only the tick
-	// goroutine, and the one synchronous call startPane makes before that
-	// goroutine exists, ever touch it.
+	// procMu orders the process facts of this pane: the tick goroutine,
+	// the synchronous call startPane makes, and the reads that bring the
+	// fact up to date first (refreshProcess). It guards procState and is
+	// held while the fact is applied, so two facts never apply out of
+	// order.
+	procMu sync.Mutex
+	// procState is the last state the process fact applied.
 	procState string
+	// gateIdleSince is the server clock, in unix nanoseconds, of the first
+	// hook idle (gate or headless source) of a run; zero when none stands.
+	// A non-idle hook fact, or input that submits a line, clears it. The
+	// merged state forgets a hook idle when a process idle replaces it, so
+	// the pane keeps its own stamp (CP-R-56, CP-R-57).
+	gateIdleSince atomic.Int64
+	// stampMu orders the merge and the stamp of one pane's hook events.
+	stampMu sync.Mutex
 }
 
 // stopTick ends this pane's process tick goroutine, if it has one.
@@ -86,6 +125,9 @@ func (s *Server) removeLive(id string) {
 	s.liveMu.Unlock()
 	if ok {
 		lp.stopTick()
+		if lp.fenced {
+			s.fencedPaneEnded(id, lp)
+		}
 	}
 }
 
@@ -162,6 +204,12 @@ func (s *Server) teardownLivePanes() {
 				if lp.Adapter != nil {
 					_ = lp.Adapter.Stop()
 				}
+				// The pane's own end goroutine may be in the middle of a
+				// write into the data dir. The teardown is not done
+				// before it returns.
+				if lp.gone != nil {
+					<-lp.gone
+				}
 			}(lp)
 		}
 		wg.Wait()
@@ -227,11 +275,20 @@ func (s *Server) paneInfo(id string) (layout.Pane, bool) {
 // callers of Tree.UpdatePane/Tree.ClosePane for a pane that has a LivePane -
 // that is what keeps LivePane.Info from ever going stale against the tree.
 func (s *Server) updatePane(id string, f func(*layout.Pane)) error {
+	if err := s.setRecord(id, f); err != nil {
+		return err
+	}
+	s.markLayoutDirty()
+	return nil
+}
+
+// setRecord is updatePane with no save, for a caller that holds a lock a
+// save must not wait under; it saves once it let go (CP-R-53).
+func (s *Server) setRecord(id string, f func(*layout.Pane)) error {
 	if err := s.tree.UpdatePane(id, f); err != nil {
 		return err
 	}
 	s.refreshLiveInfo(id)
-	s.saveLayout()
 	return nil
 }
 
@@ -254,8 +311,13 @@ func (s *Server) closePane(id string, exit *int) error {
 	s.forgetChildren(id)
 	s.forgetAsks(id)
 	s.tree.DropForeman(id)
+	if lp, ok := s.Live(id); ok && lp.fenced {
+		s.fencedPaneEnded(id, lp)
+	}
 	s.refreshLiveInfo(id)
-	s.saveLayout()
+	// An ended agent keeps no watching marker (F11-R-4).
+	_ = s.clearModeMarker(id)
+	s.markLayoutDirty()
 	return nil
 }
 
@@ -283,7 +345,8 @@ func (s *Server) dropRecord(id string) {
 	s.forgetChildren(id)
 	s.forgetAsks(id)
 	s.states.Forget(id)
-	s.saveLayout()
+	_ = s.clearModeMarker(id)
+	s.markLayoutDirty()
 }
 
 // namedKeys is the closed set pane.send_keys accepts. An unknown name is a
@@ -337,6 +400,7 @@ func (s *Server) RegisterPaneCommands() {
 	_ = s.Handle("pane.list", s.handlePaneList)
 	_ = s.Handle("pane.send_text", s.handleSendText)
 	_ = s.Handle("pane.trust", s.handleTrust)
+	_ = s.Handle("pane.ack_changed", s.handleAckChanged)
 	_ = s.Handle("pane.send_keys", s.handleSendKeys)
 	_ = s.Handle("pane.run", s.handleRun)
 	_ = s.Handle("pane.read", s.handleRead)
@@ -359,7 +423,7 @@ func (s *Server) handleWorkspaceCreate(_ *Client, r *proto.Request) proto.Respon
 	if err != nil {
 		return proto.ErrResp(r.ID, proto.ErrInternal, err.Error())
 	}
-	s.saveLayout()
+	s.markLayoutDirty()
 	return proto.OKResp(r.ID, map[string]any{"workspace": ws.ID, "tab": tab.ID})
 }
 
@@ -387,7 +451,7 @@ func (s *Server) handleTabCreate(_ *Client, r *proto.Request) proto.Response {
 	if err != nil {
 		return proto.ErrResp(r.ID, proto.ErrNoSuchWorkspace, err.Error())
 	}
-	s.saveLayout()
+	s.markLayoutDirty()
 	return proto.OKResp(r.ID, map[string]any{"tab": tab.ID, "workspace": wsID})
 }
 
@@ -471,6 +535,21 @@ func (s *Server) handlePaneCreate(c *Client, r *proto.Request) proto.Response {
 		}
 	}
 	argv, _ := r.StrSlice("cmd_argv")
+	fenceWord, _ := r.Str("fence")
+	if fenceWord != "" && fenceWord != "on" && fenceWord != "off" {
+		return proto.ErrResp(r.ID, proto.ErrBadRequest, fmt.Sprintf("fence must be on or off, not %q.", fenceWord))
+	}
+	// A pane, a plugin or an unplaced peer never turns a fence off, and
+	// what a caller that may be fenced starts is fenced: a shell, a custom
+	// argv and an agent alike (FN-R-15).
+	if fro := roleOrOperator(c); fro.noAllow {
+		if fenceWord == "off" {
+			return proto.ErrResp(r.ID, proto.ErrUnauthorized, FenceRefusal)
+		}
+		if s.callerFenced(fro) {
+			fenceWord = "on"
+		}
+	}
 	harness, _ := r.Str("harness")
 	if harness != "" && !validHarness(harness) {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest, fmt.Sprintf(
@@ -497,9 +576,10 @@ func (s *Server) handlePaneCreate(c *Client, r *proto.Request) proto.Response {
 	// of a refusal - a request that gives a cwd, an argv, or a harness of
 	// its own is answered exactly as it asks, unchanged.
 	autoDefault := cwd == "" && len(argv) == 0 && kind == layout.KindPTY
+	why := ""
 	if autoDefault {
-		if resolved := s.defaultCwd(nearCwd); resolved != "" {
-			cwd = resolved
+		if resolved, w := s.defaultCwd(nearCwd); resolved != "" {
+			cwd, why = resolved, w
 		}
 		if harness == "" {
 			if name, ok := defaultHarnessName(); ok {
@@ -597,7 +677,7 @@ func (s *Server) handlePaneCreate(c *Client, r *proto.Request) proto.Response {
 	rec, err := s.tree.CreatePane(wsID, tabID, layout.Pane{
 		Label: label, Cwd: cwd, Argv: argv, Env: env, Kind: kind,
 		Harness: harness, Cols: cols, Rows: rows, TaskID: taskID,
-		ExtraArgs: extraArgs,
+		ExtraArgs: extraArgs, Fence: fenceWord,
 	})
 	if needsLabel {
 		s.labelMu.Unlock()
@@ -623,7 +703,7 @@ func (s *Server) handlePaneCreate(c *Client, r *proto.Request) proto.Response {
 		_ = s.tree.RemovePane(rec.ID)
 		s.removeLive(rec.ID)
 		s.states.Forget(rec.ID)
-		s.saveLayout()
+		s.markLayoutDirty()
 		// An unknown harness, or one registered only as a NotBuilt slot, is a
 		// client mistake naming something that does not exist or does not
 		// work yet - bad_request, not spawn_failed. Every other startPane
@@ -635,11 +715,16 @@ func (s *Server) handlePaneCreate(c *Client, r *proto.Request) proto.Response {
 		}
 		return proto.ErrResp(r.ID, code, err.Error())
 	}
-	s.saveLayout()
+	s.markLayoutDirty()
 	s.recordRecentDir(rec.Cwd)
-	return proto.OKResp(r.ID, map[string]any{
+	res := map[string]any{
 		"pane": rec.ID, "workspace": wsID, "tab": tabID,
-	})
+		"cwd": rec.Cwd, "label": rec.Label,
+	}
+	if why != "" {
+		res["why"] = why
+	}
+	return proto.OKResp(r.ID, res)
 }
 
 // handlePaneFork starts a new headless pane that continues the session of a
@@ -652,7 +737,7 @@ func (s *Server) handlePaneCreate(c *Client, r *proto.Request) proto.Response {
 // saved argv. pumpAdapter clears the flag when the adapter reports a
 // session id that differs from the borrowed one. Until then a restart
 // repeats the fork, and never resumes the parent's session in this pane.
-func (s *Server) handlePaneFork(_ *Client, r *proto.Request) proto.Response {
+func (s *Server) handlePaneFork(c *Client, r *proto.Request) proto.Response {
 	if s.isClosed() {
 		return proto.ErrResp(r.ID, proto.ErrServerClosed,
 			"this server has closed. It cannot start a new pane.")
@@ -703,7 +788,7 @@ func (s *Server) handlePaneFork(_ *Client, r *proto.Request) proto.Response {
 		Label: label, Cwd: info.Cwd, Env: maps.Clone(info.Env),
 		Argv: append([]string(nil), info.Argv...), Kind: info.Kind,
 		Harness: info.Harness, Cols: info.Cols, Rows: info.Rows,
-		HarnessSessionID: sid, ParentPane: id, ForkPending: true,
+		HarnessSessionID: sid, ParentPane: id, ForkPending: true, Fence: s.childFence(c, info.Fence),
 	})
 	if err != nil {
 		code := proto.ErrNoSuchTab
@@ -717,10 +802,10 @@ func (s *Server) handlePaneFork(_ *Client, r *proto.Request) proto.Response {
 		_ = s.tree.RemovePane(rec.ID)
 		s.removeLive(rec.ID)
 		s.states.Forget(rec.ID)
-		s.saveLayout()
+		s.markLayoutDirty()
 		return proto.ErrResp(r.ID, proto.ErrSpawnFailed, err.Error())
 	}
-	s.saveLayout()
+	s.markLayoutDirty()
 	return proto.OKResp(r.ID, map[string]any{
 		"pane": rec.ID, "workspace": rec.Workspace, "tab": rec.Tab, "parent_pane": id,
 	})
@@ -788,6 +873,11 @@ var errUnknownPaneKind = errors.New("no such pane kind")
 // that cannot fork fails the start, so a restore leaves such a pane closed
 // instead of resuming the parent's session in it.
 func (s *Server) startPane(rec layout.Pane) error {
+	if s.startVeto != nil {
+		if err := s.startVeto(rec); err != nil {
+			return err
+		}
+	}
 	// A directory that is gone is named here. exec reports it as a missing
 	// command, which sends the operator looking for a binary that is there.
 	if rec.Cwd != "" {
@@ -799,7 +889,29 @@ func (s *Server) startPane(rec layout.Pane) error {
 	if err != nil {
 		return err
 	}
+	env := s.stampedEnv(rec)
+	// A workspace a fenced run changed waits for the operator's ack
+	// before any new start there (FN-R-24).
+	if err := s.holdError(rec); err != nil {
+		g.Close()
+		return err
+	}
+	tmp := s.fenceTmp(rec.ID)
+	wrap, err := s.fenceWrap(rec, tmp)
+	if err != nil {
+		g.Close()
+		return err
+	}
 	lp := &LivePane{Info: rec, Grid: g, started: time.Now(), harness: rec.Harness}
+	if wrap != nil {
+		lp.fenceTmp = tmp
+		// The fence reads HOME and the data dirs from the env, and the
+		// pane chose its env: the server's own values stand (FN-R-15).
+		env = pinFencedEnv(env)
+		lp.fenced = true
+		lp.wsHash = workspaceWatched(rec.Cwd)
+		lp.wsSeen = lp.wsHash
+	}
 	if lp.harness == "" {
 		lp.harness = "shell"
 	}
@@ -815,17 +927,25 @@ func (s *Server) startPane(rec layout.Pane) error {
 			}
 		}
 		p, err := pane.StartPTY(pane.SpawnOpts{
-			Cwd: rec.Cwd, Argv: rec.Argv, Env: rec.Env,
+			Cwd: rec.Cwd, Argv: s.fencedClaudeArgv(rec, wrap, rec.Argv, true), Env: env,
 			Cols: rec.Cols, Rows: rec.Rows,
 			Sock: s.cfg.SocketPath, PaneID: rec.ID, DataDir: s.cfg.DataDir,
+			Wrap: wrap,
 		}, g)
 		if err != nil {
 			g.Close()
 			return err
 		}
 		lp.PTY = p
+		if st, ok := procStartTime(p.Pid()); ok {
+			lp.ptyStart = st
+		}
 		lp.tickStop = make(chan struct{})
-		go s.watchExit(rec.ID, p)
+		lp.gone = make(chan struct{})
+		go func() {
+			defer close(lp.gone)
+			s.watchExit(rec.ID, p)
+		}()
 	case layout.KindHeadless:
 		a, ok := adapters.Get(rec.Harness)
 		if !ok {
@@ -849,16 +969,25 @@ func (s *Server) startPane(rec layout.Pane) error {
 			argv = append(append([]string(nil), rec.Argv...), extra...)
 		}
 		proc, err := a.Start(context.Background(), pane.StartOpts{
-			Cwd: rec.Cwd, Env: rec.Env, Argv: argv,
+			Cwd: rec.Cwd, Env: env, Argv: s.fencedClaudeArgv(rec, wrap, argv, false),
 			Resume: rec.HarnessSessionID, Sock: s.cfg.SocketPath, PaneID: rec.ID,
-			DataDir: s.cfg.DataDir,
+			DataDir: s.cfg.DataDir, Wrap: wrap,
 		}, g)
 		if err != nil {
 			g.Close()
 			return err
 		}
+		// A model the operator chose for this pane stays with its record, so
+		// a resume or a restart runs the turns on it again.
+		if ms, ok := proc.(pane.ModelSetter); ok && rec.Model != "" {
+			ms.SetModel(rec.Model)
+		}
 		lp.Adapter = proc
-		go s.pumpAdapter(rec.ID, rec.Harness, proc, g)
+		lp.gone = make(chan struct{})
+		go func() {
+			defer close(lp.gone)
+			s.pumpAdapter(rec.ID, rec.Harness, proc, g)
+		}()
 	default:
 		g.Close()
 		return fmt.Errorf("%w %q", errUnknownPaneKind, rec.Kind)
@@ -880,9 +1009,29 @@ func (s *Server) clock() time.Time {
 	return time.Now().Add(time.Duration(s.clockSkew.Load()))
 }
 
+// ptyGone reports whether the pane's process ended: its end watch has
+// returned, or the pty says so.
+func (lp *LivePane) ptyGone() bool {
+	if lp.gone == nil {
+		return false
+	}
+	select {
+	case <-lp.gone:
+		return true
+	default:
+		return false
+	}
+}
+
 // processQuiet is how long a pty pane may go without output and still count
-// as working. Past it the process source reports idle.
-const processQuiet = 5 * time.Second
+// as working. Past it the process source reports idle. It is also the gap
+// that ends a burst in the grid (pane.BurstGap), so the two are one value.
+const processQuiet = pane.BurstGap
+
+// processSustain is how long a burst of output must go on, from its first
+// write (the grid marks it: the first write after a gap of processQuiet),
+// before a process working fact outranks a gate idle that stands (CP-R-56).
+const processSustain = time.Second
 
 // processTickEvery is how often runProcessTicks looks at a pty pane's grid.
 const processTickEvery = time.Second
@@ -895,8 +1044,11 @@ const processTickEvery = time.Second
 // keeps a gate, headless or operator hold on top of this source, so a
 // blocked pane stays blocked, and a done stays done.
 func (s *Server) processTick(paneID string, lp *LivePane) {
+	lp.procMu.Lock()
+	defer lp.procMu.Unlock()
 	st, detail := proto.StateIdle, "no output yet"
-	if last, ok := lp.Grid.LastWrite(); ok {
+	last, wrote := lp.Grid.LastWrite()
+	if wrote {
 		if s.clock().Sub(last) < processQuiet {
 			st, detail = proto.StateWorking, "output in the last 5 s"
 		} else {
@@ -906,12 +1058,67 @@ func (s *Server) processTick(paneID string, lp *LivePane) {
 	if st == lp.procState {
 		return
 	}
+	if st == proto.StateWorking {
+		// A short redraw of a quiet pane is no work while a gate idle
+		// stands (CP-R-56): the gate reports every turn, so output that
+		// no turn announced and that stops soon is a clock or a status
+		// line. The fact waits until the burst has gone on for
+		// processSustain from its first write. The grid marks that
+		// write itself, so the answer does not depend on when the
+		// looks fell.
+		burst, _ := lp.Grid.BurstStart()
+		if lp.gateIdleSince.Load() != 0 && last.Sub(burst) < processSustain {
+			return
+		}
+	}
+	if st == proto.StateIdle && lp.procState == "" && lp.gateIdleSince.Load() != 0 {
+		// The process source has published nothing yet, so this idle
+		// changes nothing anyone saw. A hook idle that stands says more,
+		// so it is not replaced: whether the hook or the first look came
+		// first, or a held draw came between, no longer decides the source
+		// (a loaded box can start the tick late).
+		lp.procState = st
+		return
+	}
 	lp.procState = st
 	id := paneID
 	s.ApplyState(paneID, proto.PaneStateEvent{
 		V: 1, TS: nowSeconds(), SessionID: paneID, Harness: lp.harness, Pane: &id,
 		State: st, Source: proto.SrcProcess, Detail: detail,
 	})
+}
+
+// refreshProcess brings the process fact of each live pty pane named, or of
+// every one when none is named, up to date before a read reports or waits
+// on a state (CP-R-50). The fact is then a function of the last write and
+// the read's own clock: working within 5 s of the last output, else idle.
+// Without it a read saw the fact of the last 1 s tick, so "no output yet"
+// could follow output already on the screen. A read may so send a pane's
+// state event a moment before the tick would have. A pane whose process
+// ended is left to watchExit's done.
+func (s *Server) refreshProcess(ids ...string) {
+	if s.isClosed() {
+		return
+	}
+	if len(ids) == 0 {
+		for _, p := range s.tree.Panes() {
+			if !p.Closed {
+				ids = append(ids, p.ID)
+			}
+		}
+	}
+	for _, id := range ids {
+		lp, ok := s.Live(id)
+		if !ok || lp.PTY == nil {
+			continue
+		}
+		select {
+		case <-lp.PTY.Done():
+			continue
+		default:
+		}
+		s.processTick(id, lp)
+	}
 }
 
 // runProcessTicks calls processTick once per processTickEvery until the
@@ -979,13 +1186,15 @@ const stopDrainWait = time.Second
 // a closed grid is not the same as a dead pane, and state must keep flowing
 // to it either way.
 //
-// This goroutine can still be blocked in Events(), or in the drain
-// step above, well after Server.Close() has already released the start lock
-// - a headless adapter with a long-lived process, or simply one that has not
-// sent anything since shutdown. Once the server has closed, it no longer
-// owns the data directory - a new server may already hold it - so nothing
-// here may write layout.json past that point: neither the in-loop
-// HarnessSessionID record nor the terminal close. Unlike watchExit, the
+// Close's teardown stops the adapter and waits, bounded, for this goroutine
+// to return. An adapter that ignores Stop can still hold it in Events(), or
+// in the drain step above, past that bound. Once the server has closed, it
+// no longer owns the data directory - a new server may already hold it - so
+// nothing here may write layout.json past that point: neither the in-loop
+// HarnessSessionID record nor the terminal close. The isClosed checks skip
+// that work, and saveLayout's writeData refuses any save that starts after
+// Close, so a save that passed a check just before Close still ends before
+// Close returns. Unlike watchExit, the
 // in-loop ApplyState calls stay unguarded even so, on the same reasoning
 // scanOnce's own doc comment gives for finishing a scan already in flight
 // when Close runs: ApplyState touches only this Server's in-memory tree and
@@ -1139,12 +1348,12 @@ const drainWait = 500 * time.Millisecond
 // keeps both, so its final screen stays readable; only an operator
 // pane.close does that.
 //
-// This goroutine can still be waiting on Done()/Drained()
-// well after Server.Close() has already released the start lock (a child
-// that outlives the server, or simply hasn't exited yet at shutdown). Once
+// Close's teardown waits, bounded, for this goroutine to return. A child
+// that ignores the kill can still hold it on Done() past that bound. Once
 // the server has closed, it no longer owns the tree or the data directory -
 // a new server may already hold the lock - so nothing past this point may
-// write to either.
+// write to either. The isClosed check skips the close, and saveLayout's
+// writeData refuses any save that starts after Close.
 func (s *Server) watchExit(paneID string, p *pane.PTY) {
 	<-p.Done()
 	select {
@@ -1199,6 +1408,7 @@ func (s *Server) handlePaneList(_ *Client, r *proto.Request) proto.Response {
 	}
 	wantEnded, _ := r.Bool("ended")
 	s.pruneFacts()
+	s.refreshProcess()
 	matched := make([]layout.Pane, 0)
 	for _, p := range s.tree.Panes() {
 		if keep != nil && !keep[p.TaskID] {
@@ -1231,6 +1441,11 @@ func (s *Server) paneListRow(p layout.Pane) map[string]any {
 		"cols": p.Cols, "rows": p.Rows,
 		"state": proto.StateUnknown, "source": nil, "detail": "",
 	}
+	// A fitted pane runs at the phone's size while its record keeps the
+	// owner's, so a live pane reports the size it has.
+	if lp, ok := s.Live(p.ID); ok && !p.Closed {
+		row["cols"], row["rows"] = lp.Grid.Size()
+	}
 	if p.Closed {
 		row["ended_at"] = p.EndedAt
 		if p.ExitCode != nil {
@@ -1241,6 +1456,12 @@ func (s *Server) paneListRow(p layout.Pane) map[string]any {
 	}
 	if p.ParentPane != "" {
 		row["parent_pane"] = p.ParentPane
+	}
+	if s.paneFenced(p.ID) {
+		row["fenced"] = true
+	}
+	if len(p.WorkspaceChanged) > 0 {
+		row["workspace_changed"] = p.WorkspaceChanged
 	}
 	if p.TaskID != "" {
 		row["task"] = p.TaskID
@@ -1504,19 +1725,44 @@ func (s *Server) handleResize(c *Client, r *proto.Request) proto.Response {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest,
 			"pane.resize needs positive cols and rows.")
 	}
+	// A resize from any client ends a fit: the new size wins and is not
+	// undone when the fitted client leaves.
+	id, _ := r.Str("pane")
+	s.fitMu.Lock()
+	var rerr error
 	if lp.PTY != nil {
-		if err := lp.PTY.Resize(cols, rows); err != nil {
-			return proto.ErrResp(r.ID, proto.ErrInternal, err.Error())
-		}
-	} else if err := lp.Grid.Resize(cols, rows); err != nil {
-		return proto.ErrResp(r.ID, proto.ErrInternal, err.Error())
+		rerr = lp.PTY.Resize(cols, rows)
+	} else {
+		rerr = lp.Grid.Resize(cols, rows)
+	}
+	if rerr != nil {
+		s.fitMu.Unlock()
+		return proto.ErrResp(r.ID, proto.ErrInternal, rerr.Error())
+	}
+	// The fit ends only once the resize worked: a failed resize leaves the
+	// fit, and its restore, as they were.
+	held, ended := s.fits[id]
+	delete(s.fits, id)
+	// The fitted client hears presence and would refit at once, undoing
+	// this resize. Mark it so its attaches do not fit until a fresh one.
+	if ended {
+		held.client.mu.Lock()
+		held.client.fitEnded[id] = true
+		held.client.mu.Unlock()
 	}
 	// paneInfo, not lp.Info directly: refreshLiveInfo (called by updatePane
 	// and closePane) writes lp.Info under liveMu from another goroutine, so
 	// reading it here without that lock is a data race.
-	id, _ := r.Str("pane")
 	if info, ok := s.paneInfo(id); ok {
-		_ = s.updatePane(info.ID, func(x *layout.Pane) { x.Cols, x.Rows = cols, rows })
+		_ = s.setRecord(info.ID, func(x *layout.Pane) { x.Cols, x.Rows = cols, rows })
+	}
+	s.fitMu.Unlock()
+	// The record goes to disk after the fit lock is let go (CP-R-53).
+	s.markLayoutDirty()
+	// A phone that fitted the agent hears that the fit is over: its cached
+	// answer, fitted true, is no longer true.
+	if ended {
+		s.tellPresence(id)
 	}
 	return proto.OKResp(r.ID, map[string]any{"cols": cols, "rows": rows})
 }
@@ -1596,6 +1842,7 @@ func (s *Server) handleWaitOutput(c *Client, r *proto.Request) proto.Response {
 				fmt.Sprintf("pane %s has closed. Create a new one with: coppice pane create", rec.ID))
 		}
 		if wantsState {
+			s.refreshProcess(rec.ID)
 			// EffectiveState is what turns a
 			// long-expired blocked/ask into working for a reader with no
 			// fresh event to merge against - Current alone never expires it.
@@ -1628,12 +1875,6 @@ func (s *Server) handleWaitOutput(c *Client, r *proto.Request) proto.Response {
 	}
 	return proto.ErrResp(r.ID, proto.ErrTimeout,
 		fmt.Sprintf("pane %s did not match within %d ms. Run: coppice pane read %s", rec.ID, ms, rec.ID))
-}
-
-func (s *Server) saveLayout() {
-	// Best effort. A layout write failure must never fail a command that
-	// already succeeded in the world.
-	_ = s.tree.Save(layoutPath(s.cfg.DataDir))
 }
 
 func layoutPath(dataDir string) string { return filepath.Join(dataDir, "layout.json") }

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -48,8 +49,6 @@ type Server struct {
 	UpstreamKind string
 	Client       *http.Client
 	Now          func() time.Time
-
-	mu sync.Mutex // prepare and finish run one at a time, as on the oracle's event loop
 }
 
 // NewClient is the upstream client: no timeout (agent turns run long),
@@ -112,9 +111,29 @@ func (s *Server) now() time.Time {
 	return time.Now()
 }
 
+// panePrefix is the prefix a coppice pane's base URL carries:
+// <gateway>/pane/<floor>/<pane>. The floor is 16 lower-case hex digits and
+// the pane is w<n>:p<n>.
+var panePrefix = regexp.MustCompile(`^/pane/([0-9a-f]{16})/(w[0-9]{1,9}:p[0-9]{1,9})(/|$)`)
+
+// SplitPanePath takes the pane prefix off a path: the floor, the pane and
+// the path without the prefix. A path with no well-formed prefix comes
+// back unchanged with an empty floor and pane.
+func SplitPanePath(path string) (floor, pane, rest string) {
+	m := panePrefix.FindStringSubmatchIndex(path)
+	if m == nil {
+		return "", "", path
+	}
+	rest = path[m[5]:]
+	if rest == "" {
+		rest = "/"
+	}
+	return path[m[2]:m[3]], path[m[4]:m[5]], rest
+}
+
 // ServeHTTP is the ASGI app.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
+	floor, pane, path := SplitPanePath(r.URL.Path)
 	if path == "/_reload" {
 		switch {
 		case s.Reloader == nil:
@@ -125,6 +144,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sendJSON(w, 403, errObj("reload is loopback only"))
 		default:
 			sendJSON(w, 200, pyjson.NewObject().Set("reloaded", s.Reloader.Reload()))
+		}
+		return
+	}
+	if path == "/_caps" {
+		switch {
+		case strings.ToUpper(r.Method) != "GET":
+			sendJSON(w, 405, errObj("caps accepts GET"))
+		case !isLoopback(r.RemoteAddr):
+			sendJSON(w, 403, errObj("caps is loopback only"))
+		default:
+			sendJSON(w, 200, pyjson.NewObject().Set("pane_prefix", true))
 		}
 		return
 	}
@@ -146,20 +176,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.countTokensLocally(w, body)
 		return
 	}
-	outbound, prepared, stream := body, (*Prepared)(nil), false
-	if gw != nil {
-		s.mu.Lock()
-		outbound, prepared, stream = PrepareBytes(gw, body)
-		s.mu.Unlock()
-	} else if v, err := LoadsBytes(body); err == nil {
-		if st, err := get(v, "stream", nil); err == nil {
-			stream = st == true
-		}
-	}
-	record := prepared
-	if gw != nil && gw.RouterMode != ModeRules && countTokens {
-		record = nil
-	}
 	base := s.UpstreamBase
 	if openai {
 		base = s.OpenAIBase
@@ -167,6 +183,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	url := strings.TrimRight(base, "/") + path
 	if r.URL.RawQuery != "" {
 		url += "?" + r.URL.RawQuery
+	}
+	headers := forwardHeaders(r)
+	var choice *Choice
+	if gw != nil && !openai && gw.RouterMode == ModeModel && !countTokens {
+		choice = s.pick(gw, url, headers, body)
+	}
+	outbound, prepared, stream := body, (*Prepared)(nil), false
+	if gw != nil {
+		outbound, prepared, stream = PrepareBytesWith(gw, body, choice)
+	} else if v, err := LoadsBytes(body); err == nil {
+		if st, err := get(v, "stream", nil); err == nil {
+			stream = st == true
+		}
+	}
+	if prepared != nil && pane != "" {
+		prepared.Pane, prepared.Floor = pane, floor
+	}
+	record := prepared
+	if gw != nil && gw.RouterMode != ModeRules && countTokens {
+		record = nil
 	}
 	type attempt struct {
 		body     []byte
@@ -176,7 +212,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if prepared != nil && prepared.Decision.Downgraded {
 		attempts = append(attempts, attempt{body, true})
 	}
-	headers := forwardHeaders(r)
 	for i, a := range attempts {
 		last := i == len(attempts)-1
 		resp, err := s.post(url, headers, a.body)
@@ -189,9 +224,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if stream {
-			s.relayStream(w, resp, gw, record, a.original, openai)
+			s.relayStream(w, resp, gw, record, a.original, openai, url, headers)
 		} else {
-			s.relayBuffered(w, resp, gw, record, a.original, openai)
+			s.relayBuffered(w, resp, gw, record, a.original, openai, url, headers)
 		}
 		return
 	}
@@ -201,11 +236,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // whether the client asked for a stream. Any raise forwards the original
 // bytes untouched.
 func PrepareBytes(gw *Gateway, body []byte) ([]byte, *Prepared, bool) {
+	return PrepareBytesWith(gw, body, nil)
+}
+
+// PrepareBytesWith is _prepare(gateway, body, choice).
+func PrepareBytesWith(gw *Gateway, body []byte, choice *Choice) ([]byte, *Prepared, bool) {
 	v, err := LoadsBytes(body)
 	if err != nil {
 		return body, nil, false
 	}
-	p, err := gw.Prepare(v)
+	p, err := gw.PrepareWith(v, choice)
 	if err != nil {
 		return body, nil, false
 	}
@@ -342,7 +382,7 @@ func (d *lazyDeflate) Read(p []byte) (int, error) {
 	return d.r.Read(p)
 }
 
-func (s *Server) relayBuffered(w http.ResponseWriter, resp *http.Response, gw *Gateway, p *Prepared, original, openai bool) {
+func (s *Server) relayBuffered(w http.ResponseWriter, resp *http.Response, gw *Gateway, p *Prepared, original, openai bool, url string, headers http.Header) {
 	content, err := io.ReadAll(decodedBody(resp))
 	resp.Body.Close()
 	if err != nil {
@@ -358,6 +398,8 @@ func (s *Server) relayBuffered(w http.ResponseWriter, resp *http.Response, gw *G
 	var usage any = pyjson.NewObject()
 	answer := ""
 	var bodyModel *string
+	refused := false
+	stop := ""
 	data, derr := LoadsBytes(content)
 	if derr == errTooDeep {
 		// resp.json() raised RecursionError after the response was sent:
@@ -368,6 +410,11 @@ func (s *Server) relayBuffered(w http.ResponseWriter, resp *http.Response, gw *G
 		if openai {
 			usage = NormalizeOpenAIUsage(getOr(o, "usage", nil))
 			answer = openAIText(o)
+			if cs, ok := getOr(o, "choices", nil).([]any); ok && len(cs) > 0 {
+				if c0, ok := cs[0].(*pyjson.Object); ok {
+					stop = openAIStop(getOr(c0, "finish_reason", nil))
+				}
+			}
 		} else {
 			u := getOr(o, "usage", pyjson.NewObject())
 			if !pyjson.Truthy(u) {
@@ -378,12 +425,18 @@ func (s *Server) relayBuffered(w http.ResponseWriter, resp *http.Response, gw *G
 			if m, ok := getOr(o, "model", nil).(string); ok {
 				bodyModel = &m
 			}
+			stop, _ = getOr(o, "stop_reason", nil).(string)
+			refused = stop == "refusal"
 		}
 	}
-	s.Record(gw, p, usage, original, answer, servedTarget(resp.Header.Values(SelectedModelHeader), bodyModel))
+	rec, booked := s.Record(gw, p, usage, original, answer, servedTarget(resp.Header.Values(SelectedModelHeader), bodyModel),
+		resp.StatusCode >= 400 || refused)
+	if booked {
+		s.grade(gw, rec, p, answer, stop, url, headers)
+	}
 }
 
-func (s *Server) relayStream(w http.ResponseWriter, resp *http.Response, gw *Gateway, p *Prepared, original, openai bool) {
+func (s *Server) relayStream(w http.ResponseWriter, resp *http.Response, gw *Gateway, p *Prepared, original, openai bool, url string, headers http.Header) {
 	defer resp.Body.Close()
 	sn := NewSniffer(openai)
 	responseHeaders(w, resp)
@@ -422,21 +475,23 @@ func (s *Server) relayStream(w http.ResponseWriter, resp *http.Response, gw *Gat
 	if !openai {
 		model = sn.Model
 	}
-	s.Record(gw, p, sn.Usage.Value(), original, sn.Text.String(), servedTarget(resp.Header.Values(SelectedModelHeader), model))
+	rec, booked := s.Record(gw, p, sn.Usage.Value(), original, sn.Text.String(), servedTarget(resp.Header.Values(SelectedModelHeader), model),
+		resp.StatusCode >= 400 || sn.StopReason == "refusal")
+	if booked {
+		s.grade(gw, rec, p, sn.Text.String(), sn.StopReason, url, headers)
+	}
 }
 
 // Record is _record: measure and journal the turn, best effort.
-func (s *Server) Record(gw *Gateway, p *Prepared, usage any, original bool, answer string, served *string) {
+func (s *Server) Record(gw *Gateway, p *Prepared, usage any, original bool, answer string, served *string, failed bool) (Record, bool) {
 	if p == nil || gw == nil {
-		return
+		return Record{}, false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	eff := *p
 	if gw.RouterMode == ModeExternal {
 		d, err := gw.ExternalDecision(p, served)
 		if err != nil {
-			return
+			return Record{}, false
 		}
 		eff.Decision = d
 	} else if original {
@@ -445,7 +500,9 @@ func (s *Server) Record(gw *Gateway, p *Prepared, usage any, original bool, answ
 		eff.Decision.Downgraded = false
 		eff.Decision.Reason = "downgrade rejected by upstream 4xx; served the original model"
 	}
-	gw.Finish(&eff, usage, answer, s.now())
+	eff.Failed = failed
+	rec, err := gw.Finish(&eff, usage, answer, s.now())
+	return rec, err == nil
 }
 
 // servedTarget is _served_target: the header (its values joined) and the

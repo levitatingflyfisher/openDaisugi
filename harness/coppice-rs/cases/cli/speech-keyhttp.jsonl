@@ -1,0 +1,12 @@
+# A key goes only over https, or over http to this box or the tailnet. The
+# profile tts has a key, and speak_url is plain http to a host that is
+# neither: the request is refused before anything leaves, with the fix. The
+# key is in no line.
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/web/bin/fake-daisugi
+#!env FAKE_BUNDLE_FILE={FIXTURES}/web/speech-bundle.json
+#!config [voice]
+#!config enabled = false
+#!config speak_url = "http://speech.example.invalid:9"
+#!config speak_profile = "tts"
+{"id":"a1","cmd":"speech.say","text":"Hello."}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"The speech server at speech.example.invalid:9 is reached over plain http, so the key of the profile \"tts\" is not sent. Use https, or an address on this box or the tailnet (127.0.0.1, 100.64.0.0/10, fd7a:115c:a1e0::/48, *.ts.net), in speak_url in coppice.toml."}}

@@ -264,6 +264,45 @@ cross-project sample; widening it is the natural next step. And Lean's decompose
 rejections still carry no machine-readable reason, so the bucketing above is
 reconstructed from the command text, not read off a label.
 
+## What the Go and Rust ports still refuse
+
+The `daisugi` ports (Go and Rust) read what the oracle reads. Where the
+oracle's answer comes from a part a port does not model, the port exits 2
+with one line and changes nothing, rather than guess. Each refusal is a
+ruling in [clients/ADJUDICATIONS.md](../clients/ADJUDICATIONS.md). What is
+still refused:
+
+- **A plan step given as a string that makes Python warn, or holds a set,
+  bytes or a complex number** (RF-1). Python prints a SyntaxWarning on
+  stderr, or returns a value the ports do not hold.
+- **`tend` re-embedding a stale pathway whose id or task is a BLOB**
+  (RF-3). The oracle hands the bytes to its embedder.
+- **Some PYTHONWARNINGS settings while the pathway store warns** (RF-4,
+  RF-11; `route`, `distill-repeats` and `orchestrate` refuse them):
+  `error`, a module or line filter, or a filter that shows warnings beyond
+  UserWarning. Python's own libraries then warn in ways a port cannot know.
+- **Some proxy settings** (RF-6): a port outside 1 to 65535, a
+  percent-encoded or zoned host, an IDNA host outside the letters the
+  ports encode, and a non-ASCII host sent through a proxy. The C
+  library's resolver or the `idna` package decides these.
+- **A few Hub answers to `models pin`** (RF-7, RF-10): a date `strptime`
+  might read another way, Xet storage, a redirect, a network failure
+  other than a refused connection, and answers huggingface_hub retries or
+  falls back to its cache on. `--pull` works against a Hub or mirror that
+  serves the file at its resolve URL. From huggingface.co it refuses
+  every LFS and Xet file, so every GGUF: the Hub redirects those to its
+  CDN.
+- **A gateway journal whose token counts are not ints** (GW-8). Python
+  adds whatever is there with its mixed-type arithmetic, or raises.
+- **An enforced invariant or postcondition whose expr does not parse**
+  (K2-8). The oracle raises a traceback out of verify.
+- **A config.yaml key that is not text, and YAML values outside the
+  result model** (YM-1): `!!binary`, `!!set` and similar tags.
+
+An agentic step under `run` or `orchestrate` is no longer a gap in any of
+the three: the oracle and both ports run it since 2026-10-09 (K2-7 retired
+by SX-R-1), on `claude -p` or on sprig.
+
 ## Reproducing it
 
 ```bash

@@ -1,18 +1,18 @@
-"""Trustable, configurable resolution of open models from the Hugging Face Hub.
+"""Resolution of open models from the Hugging Face Hub.
 
 The principled alternative to a hardcoded, stale model-id table (per the
 local-model research). A tool resolves a model by:
 
-1. **Trusted-org allowlist** — only repos under a configured set of orgs are
-   accepted (``DEFAULT_TRUSTED_ORGS``, overridable). An untrusted ``org/repo``
-   raises :class:`UntrustedSource` before any fetch.
-2. **List, never guess** — the filename comes from ``list_repo_files`` on the
+1. **Any named repo** - the operator may name any repo; nothing is refused.
+   Discovery (``discover_llamafiles``) lists repos under a configurable set
+   of orgs (``DISCOVERY_ORGS``).
+2. **List, never guess** - the filename comes from ``list_repo_files`` on the
    actual repo, so an automated fetch can't 404 on a hallucinated path (the exact
    bug that bit ``daisugi setup``'s first llamafile attempt).
-3. **Pin to an immutable commit** — the resolved :class:`ModelRef` carries a
+3. **Pin to an immutable commit** - the resolved :class:`ModelRef` carries a
    ``revision`` (the repo's current commit SHA unless one is supplied), so a later
    download is reproducible and can't be swapped under you.
-4. **Opt-in download** — :func:`download_pinned` refuses unless
+4. **Opt-in download** - :func:`download_pinned` refuses unless
    ``allow_download=True``; resolution itself touches no weights.
 
 The Hub client is injectable (``api=`` / ``_downloader=``) so this is fully
@@ -26,25 +26,19 @@ from dataclasses import dataclass
 
 _log = logging.getLogger("opendaisugi.model_registry")
 
-# Configurable allowlist of Hugging Face orgs we'll resolve models from. Kept
-# conservative and overridable per call; the research found llamafiles spread
-# across many orgs, so a tool must allow extension, not assume one canonical org.
-DEFAULT_TRUSTED_ORGS: tuple[str, ...] = (
-    "mozilla-ai",  # official llamafile builds + engine
+# The orgs discovery lists repos from. Configurable per call.
+DISCOVERY_ORGS: tuple[str, ...] = (
+    "mozilla-ai",  # llamafile builds + engine
     "ggml-org",  # llama.cpp / GGUF reference org
-    "Qwen",
-    "google",  # Gemma
+    "ibm-granite",
+    "mistralai",
+    "google",
     "meta-llama",
-    "microsoft",  # Phi
-    "bartowski",  # widely-used community GGUF quantizer
+    "bartowski",  # community GGUF quantizer
     "lmstudio-community",
 )
 
 _LLAMAFILE_SUFFIX = ".llamafile"
-
-
-class UntrustedSource(Exception):
-    """The repo's org is not in the trusted allowlist."""
 
 
 class NoMatchingFile(Exception):
@@ -69,13 +63,6 @@ def _org_of(repo_id: str) -> str:
     return repo_id.split("/", 1)[0]
 
 
-def is_trusted(
-    repo_id: str, trusted_orgs: "tuple[str, ...] | list[str]" = DEFAULT_TRUSTED_ORGS
-) -> bool:
-    """True iff ``repo_id``'s org is in the trusted allowlist."""
-    return _org_of(repo_id) in set(trusted_orgs)
-
-
 def _hub_api(api):
     if api is not None:
         return api
@@ -88,21 +75,15 @@ def resolve_pinned(
     repo_id: str,
     *,
     suffix: str = _LLAMAFILE_SUFFIX,
-    trusted_orgs: "tuple[str, ...] | list[str]" = DEFAULT_TRUSTED_ORGS,
     revision: str | None = None,
     api=None,
 ) -> ModelRef:
-    """Resolve a trusted repo to a concrete, commit-pinned :class:`ModelRef`.
+    """Resolve any named repo to a concrete, commit-pinned :class:`ModelRef`.
 
-    Refuses an untrusted org, picks a real file matching ``suffix`` from
-    ``list_repo_files`` (never a guessed name), and pins ``revision`` to the
-    repo's current commit SHA when one isn't supplied.
+    Picks a real file matching ``suffix`` from ``list_repo_files`` (never a
+    guessed name), and pins ``revision`` to the repo's current commit SHA
+    when one isn't supplied.
     """
-    if not is_trusted(repo_id, trusted_orgs):
-        raise UntrustedSource(
-            f"{repo_id!r} is not under a trusted org {tuple(trusted_orgs)} — "
-            f"add its org to trusted_orgs to allow it"
-        )
     hub = _hub_api(api)
     files = list(hub.list_repo_files(repo_id, revision=revision))
     matches = sorted(f for f in files if f.endswith(suffix))
@@ -133,15 +114,16 @@ def download_pinned(ref: ModelRef, *, allow_download: bool = False, _downloader=
 
 def discover_llamafiles(
     *,
-    trusted_orgs: "tuple[str, ...] | list[str]" = DEFAULT_TRUSTED_ORGS,
+    orgs: "tuple[str, ...] | list[str]" = DISCOVERY_ORGS,
     limit: int = 50,
     api=None,
 ) -> list[str]:
-    """List repo ids tagged ``library=llamafile`` on the Hub, scoped to trusted orgs."""
+    """List repo ids tagged ``library=llamafile`` on the Hub, under ``orgs``."""
     hub = _hub_api(api)
     try:
         models = hub.list_models(filter="llamafile", limit=limit)
     except Exception as exc:  # discovery is best-effort; never crash the caller
         _log.warning("model discovery failed: %s", exc)
         return []
-    return [m.id for m in models if is_trusted(m.id, trusted_orgs)]
+    scope = set(orgs)
+    return [m.id for m in models if _org_of(m.id) in scope]

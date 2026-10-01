@@ -26,9 +26,24 @@ fn userinfo_re() -> &'static regex::Regex {
     R.get_or_init(|| regex::Regex::new(r"://[^/@]*@").expect("userinfo pattern"))
 }
 
-/// `llm_client.clean`: key-shaped tokens shortened, URL credentials dropped.
+fn bearer_re() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| regex::Regex::new(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}").expect("bearer pattern"))
+}
+
+fn query_key_re() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        regex::Regex::new(r#"(?i)\b((?:api[_-]?key|access[_-]?token|key|token)=)[^&\s"']+"#).expect("query key pattern")
+    })
+}
+
+/// `llm_client.clean`: key-shaped tokens shortened, URL credentials dropped,
+/// Bearer tokens and key=/api_key=/token= values hidden.
 pub fn clean(s: &str) -> String {
     let s = userinfo_re().replace_all(s, "://");
+    let s = bearer_re().replace_all(&s, "${1}...");
+    let s = query_key_re().replace_all(&s, "${1}...");
     key_re().replace_all(&s, "${1}...${2}").into_owned()
 }
 
@@ -226,13 +241,13 @@ fn usage_int(usage: &Value, key: &str) -> Option<i64> {
 }
 
 fn unreadable(text: &str) -> String {
-    clean(&format!("the model reply could not be read: {}", head(text, 200)))
+    clean(&format!("the model reply could not be read: {}", head(&clean(text), 200)))
 }
 
 /// `llm_client.read_reply`. The error is the oracle's text.
 pub fn read_reply(w: &Wire, status: u16, text: &str) -> Result<Reply, String> {
     if !(200..=299).contains(&status) {
-        return Err(clean(&format!("the model server answered HTTP {status}: {}", head(text, 500))));
+        return Err(clean(&format!("the model server answered HTTP {status}: {}", head(&clean(text), 500))));
     }
     let o = match loads_py(text, 900) {
         Ok(Value::Obj(o)) => o,
@@ -312,8 +327,13 @@ pub fn post(w: &Wire, body: &[u8], timeout: f64, proxies: &netproxy::Httpx) -> R
         Err(http::Fail::Timeout) => Err(m(format!("the model call to {} timed out", w.url))),
         Err(http::Fail::Proxy(code, reason)) => Err(m(format!("the proxy refused the model call: {code} {reason}"))),
         Err(http::Fail::Fails(t)) => Err(m(format!("the model call could not start: {t}"))),
+        // httpx.InvalidURL is not an error post() catches: it reaches the
+        // caller as it is.
+        Err(http::Fail::Invalid(t)) => Err(m(t)),
         Err(http::Fail::Unported(why)) => Err(PostErr::Unported(why)),
-        Err(http::Fail::Other(_)) => Err(m(format!("could not reach the model server at {}", w.url))),
+        Err(http::Fail::Other(_) | http::Fail::Refused | http::Fail::Write(_)) => {
+            Err(m(format!("could not reach the model server at {}", w.url)))
+        }
     }
 }
 
@@ -373,6 +393,31 @@ mod tests {
         for (v, want) in [(" 1.5 ", 1.5), ("0", 600.0), ("-1", 600.0), ("nan", 600.0), ("inf", 600.0), ("x", 600.0)] {
             assert_eq!(timeout(&env(&[("OPENDAISUGI_LLM_TIMEOUT", v)])), want, "{v}");
         }
+    }
+
+    /// A key that straddles the 500-character cut of a failed reply is
+    /// cleaned before the cut, not after.
+    #[test]
+    fn a_key_across_the_cut_is_not_leaked() {
+        let key = "sk-ABCDMIDDLEPART1234WXYZ";
+        let c = resolve("ollama/m", "", "", &env(&[])).unwrap();
+        let body = format!("{}{key}tail", "x".repeat(492));
+        let e = read_reply(&c, 500, &body).err().unwrap();
+        assert!(!e.contains("sk-ABCDM") && !e.contains("MIDDLE"), "{e}");
+        let e = read_reply(&c, 200, &format!("{}{key}", "y".repeat(192))).err().unwrap();
+        assert!(!e.contains("sk-ABCDM") && !e.contains("MIDDLE"), "{e}");
+    }
+
+    #[test]
+    fn clean_hides_bearer_and_key_parameters() {
+        let got = clean(
+            "Authorization: Bearer abcdef0123456789tokenvalue and http://h/v1/models?api_key=SECRETVALUE123&x=1 \
+             and ?key=OTHERSECRET99 and token=zzzzzzzz",
+        );
+        for leak in ["abcdef0123456789tokenvalue", "SECRETVALUE123", "OTHERSECRET99", "zzzzzzzz"] {
+            assert!(!got.contains(leak), "{leak} leaked in {got}");
+        }
+        assert!(got.contains("Bearer ...") && got.contains("x=1"), "{got}");
     }
 
     #[test]

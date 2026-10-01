@@ -408,7 +408,7 @@ func (e *Env) releaseVerify(args []string) error {
 	if len(p.args) == 0 {
 		return e.usageArgs(cmd, "MANIFEST_PATH", &usageError{"Missing argument 'manifest_path'."})
 	}
-	regPath := gateroot.PathStr(p.str("--registry", gateroot.Join(e.home, ".opendaisugi/trusted_signers.json")))
+	regPath := gateroot.PathStr(p.str("--registry", gateroot.Join(e.dataHome(), "trusted_signers.json")))
 	reg, err := signing.LoadRegistry(regPath)
 	if err != nil {
 		return e.raise(cmd, err)

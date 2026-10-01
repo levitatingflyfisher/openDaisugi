@@ -1,0 +1,45 @@
+pkgbase = opendaisugi
+	pkgdesc = Agent floor (coppice), loop (sprig) and tool-call gate (daisugi) for AI coding agents
+	pkgver = 0.43.0
+	pkgrel = 1
+	url = https://github.com/levitatingflyfisher/openDaisugi
+	arch = x86_64
+	license = MIT
+	makedepends = go
+	makedepends = rust
+	makedepends = git
+	makedepends = cmake
+	makedepends = make
+	makedepends = gcc
+	makedepends = python
+	makedepends = pkgconf
+	makedepends = binutils
+	makedepends = curl
+	depends = glibc
+	depends = libgcc
+	noextract = z3_solver-5.1.0.0.tar.gz
+	noextract = tree_sitter-0.26.0.tar.gz
+	noextract = tree_sitter_bash-0.25.1.tar.gz
+	options = !lto
+	options = !debug
+	source = openDaisugi::git+https://github.com/levitatingflyfisher/openDaisugi.git#commit=
+	source = ghostty::git+https://github.com/ghostty-org/ghostty.git#commit=b0c421fcd2e290629d4285c181b52fe2f2095f06
+	source = https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+	source = https://github.com/Z3Prover/z3/releases/download/z3-5.1.0/z3_solver-5.1.0.0.tar.gz
+	source = https://files.pythonhosted.org/packages/f7/03/5600b84aff2e6c4fe80cfebb4063fe2f50299521befe5f6092ab8c082f4a/tree_sitter-0.26.0.tar.gz
+	source = https://files.pythonhosted.org/packages/8e/0e/f0108be910f1eef6499eabce517e79fe3b12057280ed398da67ce2426cba/tree_sitter_bash-0.25.1.tar.gz
+	sha256sums = SKIP
+	sha256sums = SKIP
+	sha256sums = 70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+	sha256sums = 269a0bf62949d227a16ab42afee6750f18477e173a14de6aeaf8789f33f813b5
+	sha256sums = b40c219edccc4564530c96f8f1556f6202b37cda964d1cbd7bd2b7e68b40a245
+	sha256sums = bfc0bdaa77bc1e86e3c6652e5a6e140c40c0a16b84185c2b63ad7cd809b88f14
+
+pkgname = opendaisugi
+	optdepends = daisugi-py: the Python daisugi, to check the Go and Rust ones against
+	optdepends = daisugi-ml: LoRA training (daisugi lora train) with the system PyTorch
+	optdepends = moonshine-cli: the Moonshine speech engine for daisugi voice
+	optdepends = parakeet-cli: the Parakeet speech engine for daisugi voice
+	provides = coppice
+	provides = sprig
+	conflicts = opendaisugi-bin

@@ -350,14 +350,14 @@ func noRawAttach(t *testing.T, p *recordingProxy) {
 
 // TestEnterOnANarrowFloorRefusesToAttachAHeadlessPaneRaw is Enter on a
 // screen too narrow for any window: typeInTile has nowhere to put the
-// pane, and the old code fell through to attach.Run. 100 columns is
-// under windowCount's own 119-column floor (railCols 38 plus one
+// pane, and the old code fell through to attach.Run. 87 columns is
+// under the slim rail's own 88-column floor (slimCols 6 plus one
 // minWindow 80 plus its divider), so no window ever shows here.
 func TestEnterOnANarrowFloorRefusesToAttachAHeadlessPaneRaw(t *testing.T) {
 	s := newTestServer(t)
 	id := createHeadlessSprigPane(t, s.Socket())
 	p := newRecordingProxy(t, s.Socket())
-	pw, out, done := startFloor(t, p.sock, 100)
+	pw, out, done := startFloor(t, p.sock, 87)
 	_, _ = io.WriteString(pw, "\r")
 	if !waitFor(t, 5*time.Second, func() bool {
 		return strings.Contains(stripSGR(lastFrame(out.String())), "takes whole messages")

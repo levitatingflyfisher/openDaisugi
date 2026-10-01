@@ -1,0 +1,104 @@
+//! The foreman's memory: one chat that never ends. The twin of Go's
+//! internal/foreman.
+//!
+//! Every message is logged word for word, append only, one JSONL file per
+//! day. A summary tree compresses the log: a node at level l holds one line
+//! of at most 512 bytes for the 2^l messages it covers. The view is the
+//! list of tree lines over the whole chat, fine near now and coarse in the
+//! past, kept between 64 and 128 KiB. It is saved to view.json after each
+//! change. A view.json that cannot be used is rebuilt by replay over the tree.
+//!
+//! The shape follows Victor Taelin's UniiChat recipe. The code is our own.
+//! This module is a library: it opens no socket and starts no server.
+
+pub mod calls;
+pub mod chat;
+pub mod cli;
+pub mod compactor;
+pub mod ctx;
+pub mod failover;
+pub mod fsutil;
+pub mod import;
+pub mod order;
+pub mod pool;
+pub mod tools;
+pub mod turns;
+
+#[cfg(test)]
+mod chat_tests;
+#[cfg(test)]
+mod failover_tests;
+#[cfg(test)]
+mod golden_tests;
+#[cfg(test)]
+mod import_tests;
+
+use std::path::{Path, PathBuf};
+
+#[allow(unused_imports)]
+pub use chat::{Chat, Message, Summarizer};
+#[allow(unused_imports)]
+pub use order::NodeId;
+
+/// Where the foreman keeps its chat when no --data-dir is given: the data
+/// home's foreman dir.
+pub fn default_dir() -> PathBuf {
+    crate::datahome::default().join("foreman")
+}
+
+/// The foreman's log dir for a coppice data dir. The default data dir (the
+/// data home's coppice) uses default_dir, the foreman dir beside it; any
+/// other data dir X uses X/foreman. The coppice server writes the log there
+/// and coppice foreman reads it there.
+pub fn log_dir(coppice_data_dir: &Path) -> PathBuf {
+    let clean = crate::sys::clean(&coppice_data_dir.to_string_lossy());
+    let def = crate::datahome::default().join("coppice");
+    if clean == crate::sys::clean(&def.to_string_lossy()) {
+        return default_dir();
+    }
+    coppice_data_dir.join("foreman")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_dir_follows_the_data_home() {
+        let home = Some(PathBuf::from("/h"));
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| std::ffi::OsString::from(v))
+            }
+        };
+        let has = |held: &'static str| move |p: &Path| p == Path::new(held);
+        let cases: [(&[(&str, &str)], &'static str, &str); 5] = [
+            (
+                &[("OPENDAISUGI_HOME", "/o"), ("XDG_DATA_HOME", "/x")],
+                "",
+                "/o/foreman",
+            ),
+            (&[("XDG_DATA_HOME", "/x")], "", "/x/opendaisugi/foreman"),
+            (&[("XDG_DATA_HOME", "/x")], "/h/.opendaisugi/gate", "/x/opendaisugi/foreman"),
+            (&[("XDG_DATA_HOME", "/x")], "/h/.opendaisugi/coppice", "/h/.opendaisugi/foreman"),
+            (&[], "", "/h/.opendaisugi/foreman"),
+        ];
+        for (pairs, held, want) in cases {
+            let got = crate::datahome::dir(env(pairs), home.clone(), has(held)).join("foreman");
+            assert_eq!(got, PathBuf::from(want));
+        }
+    }
+
+    #[test]
+    fn a_data_dir_keeps_its_log_inside_it() {
+        assert_eq!(
+            log_dir(Path::new("/x/data")),
+            PathBuf::from("/x/data/foreman")
+        );
+        let def = crate::datahome::default().join("coppice");
+        assert_eq!(log_dir(&def), default_dir());
+    }
+}

@@ -7,9 +7,29 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// One directory per test process, under target/, removed at exit.
+fn scratch_root() -> &'static PathBuf {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        // Under target/, on disk: /tmp is RAM on some boxes.
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("daisugi-cli-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        extern "C" fn remove() {
+            if let Some(d) = ROOT.get() {
+                let _ = std::fs::remove_dir_all(d);
+            }
+        }
+        // SAFETY: remove is a plain extern "C" fn with no arguments.
+        unsafe {
+            libc::atexit(remove);
+        }
+        dir
+    })
+}
+
 fn scratch(tag: &str) -> PathBuf {
-    // Under target/, on disk: /tmp is RAM on some boxes.
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("daisugi-cli-{}-{tag}", std::process::id()));
+    let dir = scratch_root().join(tag);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -117,8 +137,8 @@ fn the_child_variable_alone_makes_no_child() {
 #[test]
 fn a_command_not_carried_says_so_in_one_line() {
     let home = scratch("notyet");
-    let (code, out, err) = run(daisugi(&home, &["viz"]), "");
-    assert_eq!((code, out.as_str(), err.as_str()), (2, "", "daisugi viz is not in this binary yet.\n"));
+    let (code, out, err) = run(daisugi(&home, &["gate", "audit"]), "");
+    assert_eq!((code, out.as_str(), err.as_str()), (2, "", "daisugi gate audit is not in this binary yet.\n"));
     // The version is the build's: DAISUGI_VERSION, or the checkout's git
     // describe, never a fixed number.
     let (code, out, _) = run(daisugi(&home, &["--version"]), "");
@@ -202,10 +222,13 @@ fn install_writes_a_hook_status_reads_back() {
             daisugi_verify::dialect::DIALECT_HASH
         )
     );
-    // A second install finds the same hook and changes nothing.
+    // A second install finds the same hooks and writes nothing; as the
+    // oracle does, it still lists the skill it links (IN-1).
+    let before = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
     let (code, out, _) = run(daisugi(&home, &["install", "--gate", "--runtime", "claude", "--yes"]), "");
     assert_eq!(code, 0);
-    assert!(out.contains("All runtimes were already configured"), "{out}");
+    assert!(out.contains("Done. Files modified:\n  ") && out.contains("opendaisugi-checklist\n\nRestart"), "{out}");
+    assert_eq!(std::fs::read_to_string(home.join(".claude/settings.json")).unwrap(), before);
     let _ = std::fs::remove_dir_all(&home);
 }
 
@@ -360,4 +383,69 @@ fn the_live_view_on_a_terminal() {
     let frames: Vec<&str> = out.split("\x1b[H\x1b[2J").collect();
     assert!(frames.len() >= 3 && frames[1].find("▼ ●") != frames[2].find("▼ ●"), "the pulse did not move");
     let _ = std::fs::remove_dir_all(&home);
+}
+
+/// DAISUGI_PORT (PK-R-15): `install` run as daisugi-rs hands the whole
+/// command, with its arguments, to the port the variable names, beside it;
+/// with no such sibling it stops with one line and changes nothing.
+#[test]
+fn install_hands_over_to_the_port_daisugi_port_names() {
+    let home = scratch("port");
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    put_exe(&bin.join("daisugi-rs"), Some(std::path::Path::new(env!("CARGO_BIN_EXE_daisugi"))), "");
+    put_exe(&bin.join("daisugi"), None, "#!/bin/sh\necho \"go port: $* hop=$DAISUGI_PORT_HOP\"\n");
+    let mut c = Command::new(bin.join("daisugi-rs"));
+    c.args(["-q", "install", "--gate", "--dry-run"])
+        .env_clear()
+        .env("HOME", &home)
+        .env("PATH", "/usr/bin:/bin")
+        .env("DAISUGI_PORT", "go")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let (code, out, err) = run(c, "");
+    assert_eq!((code, out.as_str()), (0, "go port: -q install --gate --dry-run hop=1\n"), "{err}");
+    let mut c = Command::new(bin.join("daisugi-rs"));
+    c.args(["install", "--dry-run"])
+        .env_clear()
+        .env("HOME", &home)
+        .env("PATH", "/usr/bin:/bin")
+        .env("DAISUGI_PORT", "python")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let (code, _, err) = run(c, "");
+    assert_eq!(code, 2);
+    assert_eq!(
+        err,
+        format!(
+            "daisugi: DAISUGI_PORT is python, but there is no daisugi-py beside {}. Install it, or unset DAISUGI_PORT. Nothing was changed.\n",
+            bin.join("daisugi-rs").display()
+        )
+    );
+}
+
+/// install._absolute_gate_root: `start --data-dir ../dd` is a ValueError in
+/// the oracle (exit 1), raised by the hook step after .claude is made. No
+/// data dir is made and no gate server starts.
+#[test]
+fn start_refuses_a_relative_gate_root() {
+    let home = scratch("start-relative-root");
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    put_exe(&bin.join("claude"), None, "#!/bin/sh\n");
+    let ws = home.join("proj");
+    std::fs::create_dir_all(&ws).unwrap();
+    let mut c = daisugi(&home, &["start", "--no-ui", "--data-dir", "../dd"]);
+    c.current_dir(&ws).env("PATH", format!("{}:/usr/bin:/bin", bin.display()));
+    let (code, out, err) = run(c, "");
+    assert_eq!(code, 1, "{out} {err}");
+    assert_eq!(
+        err,
+        "Traceback (most recent call last): ...\nValueError: the gate root '../dd/gate' is not an absolute path; \
+         set HOME, OPENDAISUGI_HOME or XDG_DATA_HOME to an absolute path\n"
+    );
+    assert!(ws.join(".claude").is_dir());
+    assert!(!home.join("dd").exists());
 }

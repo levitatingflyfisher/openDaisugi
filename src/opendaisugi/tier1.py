@@ -65,6 +65,36 @@ _TIER1_PROMPT = (
 )
 
 
+_MAX_REASON = 200
+_CUT_PREFIX = "The output is incomplete due to a max_tokens"
+
+
+def _clean_reason(text: str) -> str:
+    """One line, at most ``_MAX_REASON`` characters."""
+    line = " ".join(text.split())
+    return line if len(line) <= _MAX_REASON else line[: _MAX_REASON - 3] + "..."
+
+
+def classify_failure(exc: BaseException) -> tuple[str, str]:
+    """Name the outcome of a failed probe and a one-line reason.
+
+    ``declined``: the model answered, but not with a valid envelope.
+    ``error``: the call failed (a server, a key, a wire).
+    ``timeout``: the probe ran past a deadline.
+    """
+    msg = str(exc) or exc.__class__.__name__
+    if msg == "TimeoutError" or "timed out" in msg:
+        return "timeout", _clean_reason(msg)
+    if msg.startswith("ValidationError"):
+        return "declined", _clean_reason(msg)
+    if msg.startswith(_CUT_PREFIX):
+        return "declined", _clean_reason(
+            msg + " A model that thinks first may have spent the token budget on thinking;"
+            " raise max_tokens."
+        )
+    return "error", _clean_reason(msg)
+
+
 class HTTPTier1Provider:
     """Tier-1 adapter over any OpenAI-compatible endpoint or the Anthropic API.
 
@@ -87,7 +117,12 @@ class HTTPTier1Provider:
         api_key: str | None = None,
         timeout_s: float = 30.0,
         name: str | None = None,
+        backend: str | None = None,
     ) -> None:
+        # ``backend`` pins the model client's backend for this provider, as
+        # ``get_model_client(backend=...)`` does; None leaves the choice to the
+        # environment, the config file and auto-detection.
+        self.backend = backend
         # The model client picks its wire by provider prefix. A local
         # OpenAI-compatible endpoint (llamafile/llama.cpp/LM Studio) needs the
         # ``openai/`` prefix: a bare model name has no wire and never reaches
@@ -112,6 +147,22 @@ class HTTPTier1Provider:
         *,
         context: str | None = None,
     ) -> Envelope | None:
+        envelope, _outcome, _reason = await self.probe_envelope(task, context=context)
+        return envelope
+
+    async def probe_envelope(
+        self,
+        task: str,
+        *,
+        context: str | None = None,
+    ) -> tuple[Envelope | None, str, str]:
+        """``generate_envelope`` with the reason: ``(envelope, outcome, reason)``.
+
+        ``outcome`` is ``valid``, ``declined`` (the model answered, but not with
+        a valid envelope), ``error`` (the call failed) or ``timeout``. ``reason``
+        is one short line, empty for ``valid``. The router reads only the
+        envelope; the qualification gate reads the rest.
+        """
         from opendaisugi import llm as _llm  # local import; keeps module import cheap
 
         user_content = f"Task: {task}"
@@ -124,9 +175,12 @@ class HTTPTier1Provider:
         if self.api_key is not None:
             extra["api_key"] = self.api_key
 
-        client = _llm.get_model_client(model=self.model)
         try:
-            return await asyncio.wait_for(
+            if self.backend is None:
+                client = _llm.get_model_client(model=self.model)
+            else:
+                client = _llm.get_model_client(model=self.model, backend=self.backend)
+            envelope = await asyncio.wait_for(
                 client.chat.completions.create(
                     model=self.model,
                     response_model=Envelope,
@@ -139,16 +193,18 @@ class HTTPTier1Provider:
                 ),
                 timeout=self.timeout_s,
             )
+            return envelope, "valid", ""
         except asyncio.TimeoutError:
             _log.info(
                 "HTTPTier1Provider %r timed out after %.1fs — declining",
                 self.name,
                 self.timeout_s,
             )
-            return None
+            return None, "timeout", "the probe ran past its deadline"
         except Exception as exc:  # adapter failure must never block generation
             _log.info("HTTPTier1Provider %r failed: %s — declining", self.name, exc)
-            return None
+            outcome, reason = classify_failure(exc)
+            return None, outcome, reason
 
 
 class OllamaTier1Provider(HTTPTier1Provider):

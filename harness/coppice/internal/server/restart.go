@@ -51,6 +51,8 @@ func (s *Server) Restore() error {
 		return fmt.Errorf(
 			"cannot restore while %d panes are live. Restore must run before any pane starts.", live)
 	}
+	// No agent of an earlier run is live, so each starts enforcing (F11-R-4).
+	s.clearAllModeMarkers()
 	path := layoutPath(s.cfg.DataDir)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil
@@ -130,7 +132,7 @@ func (s *Server) Restore() error {
 	s.mu.Lock()
 	s.restore = rep
 	s.mu.Unlock()
-	s.saveLayout()
+	s.markLayoutDirty()
 	// The at-start half of the seven-day rule: whatever this restart just
 	// marked ended, plus whatever was already ended and old enough, is
 	// swept once here. StartEndedSweep (called by the CLI once Restore
@@ -163,6 +165,12 @@ func (s *Server) markRestored(rec layout.Pane, st, detail string) {
 	_ = s.tree.ClosePane(rec.ID, rec.ExitCode, s.clock().Unix())
 	s.tree.DropForeman(rec.ID)
 	id := rec.ID
+	s.mu.Lock()
+	if s.restored == nil {
+		s.restored = map[string]bool{}
+	}
+	s.restored[id] = true
+	s.mu.Unlock()
 	harness := rec.Harness
 	if harness == "" {
 		harness = "shell"

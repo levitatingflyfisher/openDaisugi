@@ -29,6 +29,14 @@
    "<class 'str'>"
   ],
   [
+   "gateway_router_model",
+   "str | None"
+  ],
+  [
+   "gateway_grader",
+   "str | None"
+  ],
+  [
    "switchyard_route_id",
    "<class 'str'>"
   ],
@@ -135,6 +143,10 @@
   [
    "voice_server_url",
    "<class 'str'>"
+  ],
+  [
+   "agent_profiles",
+   "typing.Any"
   ]
  ],
  "floor": [

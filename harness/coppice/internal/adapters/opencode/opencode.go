@@ -182,7 +182,7 @@ func gatePluginPath(env []string) (string, error) {
 // gatePluginSHA256 is the SHA-256 of the gate plugin the Python package
 // ships, src/opendaisugi/harness_opencode/plugin/daisugi-gate.ts. A test
 // fails when the two differ.
-const gatePluginSHA256 = "769010ed81c8beb23a09d445f0ad3d5a4ce8e754a1fd4937abc791ff9fbf2cc3"
+const gatePluginSHA256 = "68f4bda2dca4ef6443fb51baf5f1ca02cfe14eed5d4df2c1fa9a614cf8217864"
 
 // maxPluginBytes bounds the read of the plugin file.
 const maxPluginBytes = 1 << 20
@@ -234,7 +234,8 @@ func (a adapter) Start(ctx context.Context, o pane.StartOpts, _ *pane.Grid) (pan
 	ctx, cancel := context.WithCancel(ctx)
 
 	bin := a.binary()
-	cmd := exec.CommandContext(ctx, bin, serveArgs(o.Argv)...)
+	name, args := pane.Wrapped(o.Wrap, bin, serveArgs(o.Argv))
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = o.Cwd
 	// Rule 1: the only path by which the gate plugin finds COPPICE_SOCK and
 	// COPPICE_PANE.

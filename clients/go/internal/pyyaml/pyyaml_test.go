@@ -26,12 +26,18 @@ func Dump(v any) any {
 			return map[string]any{"float": "nan"}
 		}
 		return map[string]any{"float": pmodel.FloatRepr(f)}
+	case []any:
+		out := []any{}
+		for _, e := range x {
+			out = append(out, Dump(e))
+		}
+		return map[string]any{"list": out}
 	case *pyjson.Object:
 		pairs := []any{}
 		for _, k := range x.Keys() {
 			var key any = k
 			if strings.HasPrefix(k, "\x00") {
-				key = map[string]any{"key": "?"}
+				key = map[string]any{"key": k[1:]}
 			}
 			pairs = append(pairs, []any{key, Dump(x.Value(k))})
 		}
@@ -84,8 +90,8 @@ func TestResolvesLikePyYAML(t *testing.T) {
 			t.Errorf("%q: got %v %v %v", text, Dump(v), exc, why)
 		}
 	}
-	if _, _, why := Load("a: [1, 2]\n"); why == nil {
-		t.Error("a flow sequence was read")
+	if v, _, why := Load("a: [1, 2]\n"); why != nil || v.(*pyjson.Object).Len() != 1 {
+		t.Error("a flow sequence was not read")
 	}
 	if _, exc, _ := Load("a: \x7f\n"); exc == nil {
 		t.Error("a DEL was accepted")
@@ -128,7 +134,7 @@ func TestAgainstOracle(t *testing.T) {
 		if exc != nil {
 			got = map[string]any{"exc": "?"}
 		} else {
-			got = Dump(v)
+			got = normKeys(Dump(v))
 		}
 		want := normKeys(row.YAML)
 		if m, ok := want.(map[string]any); ok {
@@ -146,4 +152,64 @@ func TestAgainstOracle(t *testing.T) {
 		}
 	}
 	t.Logf("%d texts, %d outside the subset (%v), %d differ", n, skipped, reasons, bad)
+}
+
+// TestFullAgainstPyYAML reads clients/fixtures/yaml (clients/yaml_cases.py):
+// safe_load's value or error for every text. Load must give the same
+// value, or the same error type and words, or refuse; a refusal is counted.
+func TestFullAgainstPyYAML(t *testing.T) {
+	f, err := os.Open("../../../fixtures/yaml/cases.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<24)
+	n, refused, bad := 0, 0, 0
+	reasons := map[string]int{}
+	for sc.Scan() {
+		var row struct {
+			Text   string         `json:"text"`
+			Expect map[string]any `json:"expect"`
+		}
+		var raw struct {
+			Text   string `json:"text"`
+			Expect any    `json:"expect"`
+		}
+		if err := json.Unmarshal(sc.Bytes(), &raw); err != nil {
+			t.Fatal(err)
+		}
+		row.Text = raw.Text
+		row.Expect, _ = raw.Expect.(map[string]any)
+		n++
+		v, exc, why := Load(row.Text)
+		if why != nil {
+			if row.Expect != nil {
+				if _, ok := row.Expect["unmodeled"]; ok {
+					continue
+				}
+			}
+			refused++
+			reasons[why.Why]++
+			continue
+		}
+		var got any
+		if exc != nil {
+			got = map[string]any{"exc": exc.Type, "msg": exc.Msg}
+		} else {
+			got = Dump(v)
+		}
+		gj, _ := json.Marshal(got)
+		wj, _ := json.Marshal(raw.Expect)
+		if string(gj) != string(wj) {
+			bad++
+			if bad <= 25 {
+				t.Errorf("%q:\n got %s\nwant %s", row.Text, gj, wj)
+			}
+		}
+	}
+	t.Logf("%d texts: %d refused (%v), %d differ", n, refused, reasons, bad)
+	if n < 1000 {
+		t.Fatalf("only %d texts", n)
+	}
 }

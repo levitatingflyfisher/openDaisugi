@@ -1,0 +1,25 @@
+# A move to a terminal agent that has a screen ready rule (F12b). codex reads
+# idle when its terminal title is set (the osc_title_idle rule). Here the
+# fake codex shows no title until the case opens a gate file. The move
+# answers at once with when "queued"; the brief stays in the ready queue
+# while the pane shows no title; after the title shows it goes exactly once.
+#!config [harness.claude]
+#!config command = "/usr/bin/python3"
+#!config args = ["{FIXTURES}/transcripts/report.py"]
+#!config [harness.codex]
+#!config command = "/bin/sh"
+#!config args = ['-c', 'stty -echo; echo loading; until [ -e {WORK}/open ]; do sleep 0.1; done; printf "\033]0;codex\007"; cat > {WORK}/qbrief.txt']
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"alpha","args":["{WORK}/claude/projects/chat/{pane}.jsonl","--copy","{FIXTURES}/transcripts/claude-chat.jsonl","--when","{WORK}/go-alpha"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"2","write":"{WORK}/go-alpha","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"3","cmd":"pane.wait_output","pane":"$c","contains":"REPORT ok","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"4","cmd":"agent.move","pane":"$c","harness":"codex"}
+{"id":"$id","ok":true,"result":{"from":"claude","harness":"codex","tokens":"*","messages":5,"trimmed":false,"pane":"$n","workspace":"w1","tab":"w1:t1","queued":1,"note":"*","when":"queued"}}
+{"id":"5","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sh","-c","sleep 2; if grep -q 'now push it' qbrief.txt 2>/dev/null; then echo state=EARLY; else echo state=HELD; fi; touch open; until grep -q 'A fake reply with no time' qbrief.txt 2>/dev/null; do sleep 0.1; done; sleep 2; echo count=$(grep -c 'now push it' qbrief.txt) done; exec sleep 600"],"label":"watch","cols":200}
+{"id":"$id","ok":true,"result":{"pane":"$w"}}
+{"id":"6","cmd":"pane.wait_output","pane":"$w","contains":"state=HELD","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"7","cmd":"pane.wait_output","pane":"$w","contains":"count=1 done","timeout_ms":15000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}

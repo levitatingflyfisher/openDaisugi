@@ -1,0 +1,76 @@
+# pane.explain, the ready-prompt rules and pane.trust: what the floor reads
+# on a harness pane's screen, and what a prompt to it gets. Each claude pane
+# draws one screen fixture from testdata/screens, at the fixture's own size.
+# Pane ids: w1:p1 plain, w1:p2 nomanifest, w1:p3 and w1:p4 the trust screen,
+# w1:p5 idle, w1:p6 working, w1:p7 a question.
+#!config [harness.claude]
+#!config command = "/bin/sh"
+#!config args = ["-c", "cat \"$1\"; exec sleep 600", "screen"]
+#!config [harness.nomanifest]
+#!config command = "/bin/sleep"
+#!config args = ["600"]
+#!watch state,note
+#!settle 600
+{"id":"1","cmd":"pane.explain"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"this command needs pane. Run: coppice pane list"}}
+{"id":"2","cmd":"pane.explain","pane":"w9:p9"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"w9:p9\". Run: coppice pane list"}}
+{"id":"3","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":true,"result":{"pane":"$plain"}}
+{"id":"4","cmd":"pane.explain","pane":"$plain"}
+{"id":"$id","ok":true,"result":{"pane":"$plain","harness":"","tick":"skipped: no harness","note":"this pane has no harness, so no manifest applies. Create it with --harness NAME to enable screen detection."}}
+{"id":"5","cmd":"pane.create","cwd":"{FIXTURES}","harness":"nomanifest"}
+{"id":"$id","ok":true,"result":{"pane":"$nm"}}
+{"id":"6","cmd":"pane.explain","pane":"$nm"}
+{"id":"$id","ok":true,"result":{"pane":"$nm","harness":"nomanifest","note":"no manifest for harness \"nomanifest\". Run: coppice agent list"}}
+{"id":"7","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","args":["{FIXTURES}/screens/claude/blocked-10.raw"],"cols":160,"rows":16}
+{"id":"$id","ok":true,"result":{"pane":"$trust"}}
+#!retry 5000
+{"id":"8","cmd":"pane.explain","pane":"$trust"}
+{"id":"$id","ok":true,"result":{"pane":"$trust","agent":"claude","source_file":"bundled","matched":true,"rule_id":"coppice_first_run_trust","manifest_state":"blocked","skip_state_update":false}}
+{"id":"9","cmd":"pane.read","pane":"$trust","source":"detection"}
+{"id":"$id","ok":true,"result":{"text":"*","source":"detection"}}
+{"id":"10","cmd":"pane.send_text","pane":"$trust","text":"hi"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"claude-fixtures is waiting on a question on its screen. Answer it first: coppice pane trust w1:p3, or open it."}}
+{"id":"11","cmd":"pane.trust","pane":"$plain"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"w1:p1 does not ask to trust a folder now."}}
+{"id":"12","cmd":"pane.trust","pane":"$trust"}
+{"id":"$id","ok":true,"result":{"pane":"$trust","trusted":true}}
+{"id":"13","cmd":"pane.trust","pane":"$trust"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"14","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","args":["{FIXTURES}/screens/claude/blocked-11.raw"],"cols":160,"rows":16}
+{"id":"$id","ok":true,"result":{"pane":"$trust2"}}
+#!retry 5000
+{"id":"15","cmd":"pane.explain","pane":"$trust2"}
+{"id":"$id","ok":true,"result":{"pane":"$trust2","matched":true,"rule_id":"coppice_first_run_trust"}}
+{"id":"16","cmd":"pane.trust","pane":"$trust2","trust":false}
+{"id":"$id","ok":true,"result":{"pane":"$trust2","trusted":false}}
+{"id":"17","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","args":["{FIXTURES}/screens/claude/idle-1.raw"],"cols":160,"rows":6}
+{"id":"$id","ok":true,"result":{"pane":"$idle"}}
+#!retry 5000
+{"id":"18","cmd":"pane.explain","pane":"$idle"}
+{"id":"$id","ok":true,"result":{"pane":"$idle","matched":true,"manifest_state":"idle"}}
+{"id":"19","cmd":"pane.run","pane":"$idle","line":"ls"}
+{"id":"$id","ok":true,"result":{"sent":3}}
+{"id":"20","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","args":["{FIXTURES}/screens/claude/working-1.raw"],"cols":160,"rows":1}
+{"id":"$id","ok":true,"result":{"pane":"$work"}}
+#!retry 5000
+{"id":"21","cmd":"pane.explain","pane":"$work"}
+{"id":"$id","ok":true,"result":{"pane":"$work","matched":true,"manifest_state":"working"}}
+{"id":"22","cmd":"agent.prompt","pane":"$work","text":"go"}
+{"id":"$id","ok":true,"result":{"pane":"$work","sent":0,"queued":1,"note":"queued until claude-fixtures-4 is ready"}}
+{"id":"23","cmd":"agent.prompt","pane":"$work","text":"again","wait":true,"timeout_ms":300}
+{"id":"$id","ok":false,"error":{"code":"timeout","message":"the prompt is still queued until claude-fixtures-4 is ready after 300 ms. It goes when claude-fixtures-4 is ready."}}
+{"id":"24","cmd":"pane.send_text","pane":"$work","text":"x","enter":false}
+{"id":"$id","ok":true,"result":{"sent":1}}
+{"id":"25","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","args":["{FIXTURES}/screens/claude/blocked-1.raw"],"cols":160,"rows":5}
+{"id":"$id","ok":true,"result":{"pane":"$b"}}
+#!retry 5000
+{"id":"26","cmd":"pane.explain","pane":"$b"}
+{"id":"$id","ok":true,"result":{"pane":"$b","matched":true,"manifest_state":"blocked","rule_id":"generic_permission_prompt"}}
+{"id":"27","cmd":"agent.wait","pane":"$b","until":"blocked","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$b","state":"blocked","source":"manifest"}}
+{"id":"28","cmd":"pane.attach","pane":"$b","cols":160,"rows":5}
+{"id":"$id","ok":true,"result":{"pane":"$b","attached":true}}
+{"id":"29","cmd":"pane.close","pane":"$work"}
+{"id":"$id","ok":true,"result":{"pane":"$work","closed":true}}

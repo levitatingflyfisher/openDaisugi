@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING
 from opendaisugi.models import Envelope
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from opendaisugi.tier1 import Tier1Provider
 
 _log = logging.getLogger("opendaisugi.local_setup")
@@ -46,7 +48,26 @@ class QualificationResult:
     pass_rate: float
     passed: bool
     threshold: float
-    outcomes: list[tuple[str, str]] = field(default_factory=list)  # (task, valid|declined|error)
+    # (task, valid|declined|error|timeout), and one short reason per outcome
+    # (empty for valid), in the same order.
+    outcomes: list[tuple[str, str]] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+
+    def first_failure(self) -> "tuple[str, str] | None":
+        """The first outcome that is not valid, as ``(outcome, reason)``."""
+        for (_, kind), why in zip(self.outcomes, self.reasons):
+            if kind != "valid":
+                return kind, why
+        return None
+
+
+# The deadline of one qualification probe, re-ask included. A local model that
+# thinks before it answers took about 20 s per probe on the owner's GPU box
+# (3.7k prompt tokens, 1.3k generated), and a re-ask doubles that. 300 s is 7x
+# the two-call case, so a loaded box or a CPU-only run still fits, and it stays
+# under the 600 s the HTTP client allows one request. The router keeps Tier-1's
+# 30 s: a slow envelope there should fall through to Tier-2.
+QUALIFY_TIMEOUT_S = 300.0
 
 
 async def qualify_local_model(
@@ -55,6 +76,7 @@ async def qualify_local_model(
     probe_tasks: "list[str] | tuple[str, ...] | None" = None,
     threshold: float = 0.8,
     repeats: int = 1,
+    progress: "Callable[[int, int, str, str], None] | None" = None,
 ) -> QualificationResult:
     """Run the probe battery through ``provider`` and decide whether to promote it.
 
@@ -65,20 +87,36 @@ async def qualify_local_model(
     """
     tasks = list(probe_tasks) if probe_tasks is not None else list(DEFAULT_PROBE_TASKS)
     outcomes: list[tuple[str, str]] = []
+    reasons: list[str] = []
     valid = 0
+    detailed = getattr(provider, "probe_envelope", None)
+    total = len(tasks) * max(1, repeats)
     for _ in range(max(1, repeats)):
         for task in tasks:
             try:
-                env = await provider.generate_envelope(task)
+                if detailed is not None:
+                    env, kind, why = await detailed(task)
+                else:
+                    env, kind, why = await provider.generate_envelope(task), "", ""
             except Exception as exc:  # a live endpoint hiccup is a failed attempt, not a crash
                 _log.info("qualify: task %r errored: %s", task, exc)
                 outcomes.append((task, "error"))
+                from opendaisugi.llm_client import clean  # local import; keeps import cheap
+
+                text = clean(str(exc) or exc.__class__.__name__)
+                reasons.append(" ".join(text.split())[:200])
+                if progress is not None:
+                    progress(len(outcomes), total, "error", reasons[-1])
                 continue
             if isinstance(env, Envelope):
                 valid += 1
                 outcomes.append((task, "valid"))
+                reasons.append("")
             else:
-                outcomes.append((task, "declined"))
+                outcomes.append((task, kind if kind not in ("", "valid") else "declined"))
+                reasons.append(why or "the provider returned no envelope")
+            if progress is not None:
+                progress(len(outcomes), total, outcomes[-1][1], reasons[-1])
     attempts = len(tasks) * max(1, repeats)
     rate = round(valid / attempts, 2) if attempts else 0.0
     return QualificationResult(
@@ -88,6 +126,7 @@ async def qualify_local_model(
         passed=attempts > 0 and rate >= threshold,
         threshold=threshold,
         outcomes=outcomes,
+        reasons=reasons,
     )
 
 

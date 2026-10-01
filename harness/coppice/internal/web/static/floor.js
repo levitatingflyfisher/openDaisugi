@@ -1,4 +1,5 @@
 import { LAYOUTS, LOCKED, newTiles, reset, swap, focused, slotOf, shown } from './tiles.js';
+import { mountChat, lastReply, DESK_LINE, actFor, actDone } from './chat.js';
 import { stateOf, askFor, paneName, tierLine, answerBody, denyButton, allowControl, verdictLine, needsYou, heldLine, heldTierLine, heldAnswer, isHeadless, HEADLESS_NOTE, trustFor, trustCommand, trustDone, TRUST_TEXT, TRUST_YES, TRUST_NO } from './pane.js';
 import { stateChip } from './chips.js';
 import { applyFrame, gridToText, drawGrid, measureAdvance } from './grid.js';
@@ -9,7 +10,7 @@ import {
 } from './windows.js';
 import { keyBytes, isPaste, isLeave, routeKey } from './keys.js';
 import { message, fixButtons, toMessage } from './messages.js';
-import { segments, gateMark, light, details, stackBarEl, gateMarkEls, detailsBox } from './stackbar.js';
+import { segments, gateMark, light, details, stackBarEl, gateMarkEls, detailsBox, modeDone, modelDone, routerDone, moveLine, moveDone } from './stackbar.js';
 import { railEntries, railOrder, treeOrder, killKey, dropAction, rowFromEvent, ROW_TYPE } from './rail.js';
 
 export { verdictLine, keyBytes, isPaste, isLeave, rowFromEvent };
@@ -68,24 +69,54 @@ const PAD_PX = 16;
 
 // areaFor is the windows area a page of width by height CSS pixels leaves,
 // by estimate. Under 900 px the rail sits above the windows.
-export function areaFor(width, height) {
+// reserved is height in CSS pixels that something above the windows takes.
+export function areaFor(width, height, reserved) {
   const w = Number(width) || 0;
-  const h = Number(height) || 900;
+  const h = (Number(height) || 900) - (Number(reserved) || 0);
   if (w < 900) return { w: w - PAD_PX, h: h - TOP_PX - PAD_PX };
   return { w: w - RAIL_PX - PAD_PX, h: h - TOP_PX - PAD_PX };
 }
+
+// STRIP_PX is the height the pinned colony strip takes above the windows:
+// its box, its border and its margin.
+export const STRIP_PX = 53;
 
 // tileCount is how many windows a page holds. A phone gets none: the
 // overview is the whole page there, and a row slides its agent in over it.
 // Under 900 px the page holds one. From 900 px it holds as many as fit at
 // a readable size.
-export function tileCount(widthPx, heightPx, advance) {
+// reserved is height that a strip above the windows takes.
+export function tileCount(widthPx, heightPx, advance, reserved) {
   const width = Number(widthPx) || 0;
   if (phoneSize(width, heightPx)) return 0;
   if (width < 900) return 1;
-  const area = areaFor(width, heightPx);
+  const area = areaFor(width, heightPx, reserved);
   const cap = windowCapacity(area.w, area.h, advance);
   return cap.cols * cap.rows;
+}
+
+// stripFits is true when the pinned colony strip can sit above the windows
+// without removing one. When it is false, the strip draws as one line of
+// dots in the bar, which takes no height from the windows.
+export function stripFits(widthPx, heightPx, advance) {
+  return tileCount(widthPx, heightPx, advance, STRIP_PX) === tileCount(widthPx, heightPx, advance);
+}
+
+// stripFitsArea is stripFits for a windows area measured with no strip:
+// true when STRIP_PX less height keeps the same grid of windows.
+export function stripFitsArea(area, advance) {
+  const a = area || { w: 0, h: 0 };
+  const cap = (h) => windowCapacity(a.w, h, advance);
+  const full = cap(a.h);
+  const less = cap(a.h - STRIP_PX);
+  return full.cols * full.rows === less.cols * less.rows;
+}
+
+// stripReserve is the height the pinned colony strip takes above the
+// windows: STRIP_PX when it fits, and 0 when it draws as dots in the bar.
+// With it the page always holds the windows it would hold with no strip.
+export function stripReserve(widthPx, heightPx, advance) {
+  return stripFits(widthPx, heightPx, advance) ? STRIP_PX : 0;
 }
 
 // prefsFrom reads the stored layout and lock. Anything unreadable, or any
@@ -145,6 +176,15 @@ export function titleFor(panes) {
 }
 
 
+// changedLine is the word on a fenced run that changed a watched file in
+// its workspace (git hooks, git config, Claude's project settings), from
+// pane.list's workspace_changed, or '' (FN-R-13).
+export function changedLine(files) {
+  if (!Array.isArray(files)) return '';
+  const names = files.filter((f) => typeof f === 'string' && f !== '');
+  return names.length > 0 ? 'workspace config changed: ' + names.join(', ') : '';
+}
+
 // lookingLine is "· alice looking" for the people who have a pane open,
 // with me, the name of the person reading this page, left out. It is ""
 // when nobody else looks.
@@ -170,6 +210,9 @@ function make(tag, className, text) {
 // once at mount, so the page can swap them after a reconnect.
 export function mountFloor(root, floorState) {
   const rpc = (cmd, fields) => floorState.rpc(cmd, fields);
+  // run puts one agent's attach or detach on that agent's chain, behind the
+  // requests already on their way for it. See attachq.js.
+  const run = (pane, fn) => (typeof floorState.run === 'function' ? floorState.run(pane, fn) : fn());
   const api = (path, init) => floorState.api(path, init);
   const status = (msg) => floorState.status(msg);
   let pageW = Number(floorState.width) || 0;
@@ -203,6 +246,12 @@ export function mountFloor(root, floorState) {
   let endedShown = false;   // the status line holds an ended line
   let advance = 0;          // measured glyph advance, once a canvas exists
   const openSeg = new Map(); // pane id to the stack segment whose details show
+  const screenOf = new Set(); // foreman pane ids whose window shows the terminal, not the chat
+  let chatLast = '';        // id of the foreman's newest reply, from the last floor.chat read
+  let chatSeen = '';        // id of the newest reply a chat window has shown
+  let chatFor = '';         // the foreman the chat was last read for
+  let chatBusy = false;     // a floor.chat read for chatLast is on its way
+  let chatAgain = false;    // a probe asked while one ran; it runs once more after
 
   let n = tileCount(pageW, pageH);
   const tiles = newTiles(prefs.layout, n);
@@ -214,6 +263,18 @@ export function mountFloor(root, floorState) {
     const slot = focused(tiles);
     return slot && !isEndedSlot(slot) ? slot : null;
   };
+
+  // foremanId is the floor's tracked foreman, from the facts, or ''.
+  const foremanId = () => {
+    const f = typeof floorState.facts === 'function' ? floorState.facts() : null;
+    return f && f.foreman && typeof f.foreman.pane === 'string' ? f.foreman.pane : '';
+  };
+  // chatMode is true for the foreman's window while it draws the chat. The
+  // Screen button turns it to the foreman's terminal.
+  const chatMode = (pane) => Boolean(pane) && pane === foremanId() && !screenOf.has(pane) && rows.has(pane);
+  // takesLine is true for a window that takes whole lines in a line of its
+  // own: a headless agent, and the foreman's chat.
+  const takesLine = (pane) => isHeadless(rows.get(pane)) || chatMode(pane);
 
   // The rail is drawn by the roster. The floor asks for a redraw when the
   // selection, a fold, a kill confirm or a rename changes it.
@@ -284,7 +345,19 @@ export function mountFloor(root, floorState) {
   };
   place();
 
-  const visible = () => !root.hidden;
+  // bodyHas is true when the page body carries a class. A pane screen on a
+  // wide page covers the floor (pane-page), and a panel takes the keys
+  // (panel-open).
+  const bodyHas = (c) => typeof document !== 'undefined' && Boolean(document.body && document.body.classList
+    && typeof document.body.classList.contains === 'function' && document.body.classList.contains(c));
+  const visible = () => !root.hidden && !bodyHas('pane-page');
+  // railOnly is true while a panel is open and e is not in the rail: the
+  // floor's keys do nothing then.
+  const railOnly = (e) => {
+    if (!bodyHas('panel-open')) return false;
+    const t = e && e.target;
+    return !(t && typeof t.closest === 'function' && t.closest('#rail'));
+  };
   const viewOf = (pane) => views.find((v) => v.pane === pane) || null;
   const dpr = () => (typeof window !== 'undefined' && Number(window.devicePixelRatio) > 0 ? Number(window.devicePixelRatio) : 1);
 
@@ -390,7 +463,7 @@ export function mountFloor(root, floorState) {
   const attach = (pane) => {
     attached.add(pane);
     const g = bump(pane);
-    rpc('pane.attach', { pane })
+    run(pane, () => rpc('pane.attach', { pane })
       .then(() => { if (gen.get(pane) === g) setNote(pane, ''); })
       .catch((e) => {
         if (gen.get(pane) !== g) return;
@@ -400,7 +473,7 @@ export function mountFloor(root, floorState) {
         if (e && e.code) failed.set(pane, e.message);
         setNote(pane, e.message);
         if (e && (e.code === 'pane_closed' || e.code === 'no_such_pane') && !stopping.has(pane)) agentGone(pane);
-      });
+      }));
   };
 
   // detaching holds each detach still on its way, so a view's watch can
@@ -410,7 +483,7 @@ export function mountFloor(root, floorState) {
     attached.delete(pane);
     grids.delete(pane);
     bump(pane);
-    const p = rpc('pane.detach', { pane }).catch(() => {});
+    const p = run(pane, () => rpc('pane.detach', { pane }).catch(() => {}));
     detaching.add(p);
     p.then(() => detaching.delete(p));
     return p;
@@ -493,7 +566,7 @@ export function mountFloor(root, floorState) {
     redrawRail();
     // A headless agent takes its keys in its message line.
     const view = viewOf(pane);
-    if (view && view.promptInput && isHeadless(rows.get(pane))) focusOn(view.promptInput);
+    if (view && view.promptInput && takesLine(pane)) focusOn(view.promptInput);
   };
 
   // leave gives the keys to the rail, on the selected window's row.
@@ -587,7 +660,10 @@ export function mountFloor(root, floorState) {
     line2.addEventListener('click', () => takeKeys(view.slot));
     const look = lookingLine(row && row.looking, floorState.me || '');
     if (look) head.append(make('span', 'muted looking', look));
+    const changed = changedLine(row && row.workspace_changed);
+    if (changed) head.append(make('span', 'changed', changed));
     if (view.pane === typing()) head.append(make('span', 'typing-words', TYPING_TEXT));
+    if (view.pane === foremanId()) head.append(screenButton(view));
     head.append(killButton(view.pane, labelText, askKill));
     const confirm = killAsk === view.pane ? confirmLine(labelText, () => stopKill(true), () => stopKill(false)) : null;
     const segOpen = openSeg.get(view.pane);
@@ -651,9 +727,10 @@ export function mountFloor(root, floorState) {
     const noteLines = kept.length ? make('div', 'notes') : null;
     for (const text of kept) noteLines.append(make('p', 'note-line muted', text));
     const at = scrollOf(view);
-    const line = isHeadless(row) ? messageLine(view) : null;
+    const line = takesLine(view.pane) ? messageLine(view) : null;
+    const body = chatMode(view.pane) ? chatBody(view) : view.body;
     const had = line && typeof document !== 'undefined' && document.activeElement === view.promptInput;
-    view.section.replaceChildren(...[head, line2, confirm, segPanel, noteLines, askbar, view.body, line, view.note, view.noteFix].filter(Boolean));
+    view.section.replaceChildren(...[head, line2, confirm, segPanel, noteLines, askbar, body, line, view.note, view.noteFix].filter(Boolean));
     if (had) focusOn(view.promptInput);
     scrollTo(view, at);
   };
@@ -661,17 +738,22 @@ export function mountFloor(root, floorState) {
   // focusOn gives an element the focus when it can take it.
   const focusOn = (el) => { if (el && typeof el.focus === 'function') el.focus(); };
 
-  // messageLine is the line under a headless agent's window. The agent has
-  // no terminal to type into, so the window sends it no keys: Enter in this
-  // line sends the whole message, and ctrl-space gives the keys back to
-  // the rail. It is made once per window, so typed text survives a redraw.
+  // messageLine is the line under a headless agent's window, and under the
+  // foreman's chat. A headless agent has no terminal to type into, so the
+  // window sends it no keys: Enter in this line sends the whole message
+  // (agent.prompt), and ctrl-space gives the keys back to the rail. The
+  // chat's line sends the words to the foreman (floor.talk), not to its
+  // terminal. A line is made once per window and kind, so typed text
+  // survives a redraw.
   const messageLine = (view) => {
-    if (view.promptLine) return view.promptLine;
+    const chat = chatMode(view.pane);
+    const kind = chat ? 'chat' : 'agent';
+    if (view.promptLine && view.lineKind === kind) return view.promptLine;
     const line = make('div', 'prompt-line');
     const input = make('input', 'prompt-input');
     input.type = 'text';
-    input.placeholder = 'Message to the agent';
-    input.setAttribute('aria-label', 'Message to the agent');
+    input.placeholder = chat ? DESK_LINE : 'Message to the agent';
+    input.setAttribute('aria-label', chat ? 'Tell the foreman' : 'Message to the agent');
     input.addEventListener('click', (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); });
     input.addEventListener('focus', () => {
       if (typing() === view.pane) return;
@@ -696,6 +778,18 @@ export function mountFloor(root, floorState) {
       const text = String(input.value || '');
       if (!text.trim()) return;
       input.value = '';
+      if (chat) {
+        const mark = view.chat ? view.chat.sent(text) : null;
+        outbox = outbox
+          .then(() => rpc('floor.talk', { text, act: actFor(text) }))
+          .then(() => { actDone(text); if (mark) mark.ok(); })
+          .catch((err) => {
+            if (mark) mark.fail();
+            if (!input.value) input.value = text;
+            status(err);
+          });
+        return;
+      }
       outbox = outbox
         .then(() => rpc('agent.prompt', { pane: view.pane, text }))
         .catch((err) => {
@@ -703,10 +797,105 @@ export function mountFloor(root, floorState) {
           status(err);
         });
     });
-    line.append(make('p', 'muted headless-note', HEADLESS_NOTE), input);
+    if (!chat) line.append(make('p', 'muted headless-note', HEADLESS_NOTE));
+    line.append(input);
     view.promptLine = line;
     view.promptInput = input;
+    view.lineKind = kind;
     return line;
+  };
+
+  // chatBody is the foreman window's chat: the same message list the phone
+  // draws, from floor.chat. It is made once per window.
+  const chatBody = (view) => {
+    if (view.chatBox) return view.chatBox;
+    const box = make('div', 'chat-body');
+    const list = make('ul', 'chat-list');
+    const importBar = make('div', 'import-bar');
+    box.append(importBar, list);
+    view.chatBox = box;
+    view.chat = mountChat({
+      list,
+      importBar,
+      rpc,
+      panes: () => lastList,
+      open: (pane) => fillRow(pane),
+      me: () => floorState.me || '',
+      on: () => visible() && cache.get(view.pane) === view && chatMode(view.pane),
+      scroller: () => box,
+    });
+    box.addEventListener('click', () => takeKeys(view.slot));
+    Promise.resolve().then(() => view.chat.read());
+    return box;
+  };
+
+  // screenButton switches the foreman's window between its chat and its
+  // terminal.
+  const screenButton = (view) => {
+    const b = make('button', 'ghost screen-toggle', screenOf.has(view.pane) ? 'Chat' : 'Screen');
+    b.type = 'button';
+    b.title = screenOf.has(view.pane) ? 'Show the chat with the foreman' : "Show the foreman's terminal";
+    b.addEventListener('click', (e) => {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      if (screenOf.has(view.pane)) screenOf.delete(view.pane);
+      else screenOf.add(view.pane);
+      view.section.className = tileClass(view.slot, view.pane);
+      view.fresh = true;
+      renderHead(view);
+      if (chatMode(view.pane) && view.chat) view.chat.read();
+      else schedule(view);
+      probeChat();
+    });
+    return b;
+  };
+
+  // probeChat reads the newest of the chat to learn the foreman's latest
+  // reply, for the unseen mark. A window that shows the chat has seen it.
+  // A reply no window showed claims a window.
+  const probeChat = () => {
+    const f = foremanId();
+    if (!f) return;
+    if (chatBusy) {
+      chatAgain = true;
+      return;
+    }
+    chatBusy = true;
+    chatAgain = false;
+    chatFor = f;
+    Promise.resolve()
+      .then(() => rpc('floor.chat', { limit: 50 }))
+      .then((r) => { chatLast = lastReply(r && r.messages); })
+      .catch(() => {})
+      .then(() => {
+        chatBusy = false;
+        claimChat();
+        if (chatAgain) probeChat();
+      });
+  };
+
+  // chatShown is true while a visible window draws the foreman's chat.
+  const chatShown = () => {
+    const f = foremanId();
+    return Boolean(f) && visible() && chatMode(f) && windowSlots().includes(f);
+  };
+
+  // replyWaiting is true for the foreman while it holds a reply no window
+  // showed and no window holds it. Its roster row says so.
+  const replyWaiting = (pane) => Boolean(pane) && pane === foremanId() && Boolean(chatLast) && chatLast !== chatSeen
+    && !screenOf.has(pane) && !windowSlots().includes(pane);
+
+  // claimChat gives the chat a window the way an agent gets one: only a
+  // free window, never a filled, locked or focused one. With none free the
+  // foreman's roster row shows the reply as unseen. A window that shows
+  // the chat has seen the reply.
+  const claimChat = () => {
+    const f = foremanId();
+    if (f && replyWaiting(f) && rows.has(f) && !looked.has(f) && n > 0 && visible()) {
+      if (!tiles.locked) fillFree();
+    }
+    if (chatShown()) chatSeen = chatLast;
+    renderAll();
+    redrawRail();
   };
 
   // stackBar is the bar of segments on a window header. A click opens a
@@ -717,13 +906,77 @@ export function mountFloor(root, floorState) {
   // daisugi details, which show the tool and clause too.
   const gateEl = (pane, mark) => gateMarkEls(mark, () => toggleSeg(pane, 'daisugi'));
 
+  // modeAsking holds the agents whose daisugi details ask before Watch
+  // only. setMode sends agent.set_mode and says the new mode.
+  const modeAsking = new Set();
+  const setMode = (pane, mode) => {
+    const r = rows.get(pane);
+    rpc('agent.set_mode', { pane, mode })
+      .then(() => status(modeDone((r && r.label) || pane, mode)))
+      .catch((e) => status(e.message));
+  };
+
+  // swapAsking holds, for an agent whose router details ask, the route
+  // asked about. swap sends agent.set_model or agent.set_router and says
+  // when it lands. A router swap resumes the agent as a new window.
+  const swapAsking = new Map();
+  // swapLines holds, for an agent whose loop details ask, the replay cost
+  // line the server's preview gave.
+  const swapLines = new Map();
+  const swapStack = (pane, kind, value) => {
+    const r = rows.get(pane);
+    const label = (r && r.label) || pane;
+    let call;
+    if (kind === 'model') call = rpc('agent.set_model', { pane, model: value }).then((res) => modelDone(label, value, res && res.when));
+    else if (kind === 'loop') call = rpc('agent.move', { pane, harness: value }).then((res) => moveDone(label, value, res));
+    else call = rpc('agent.set_router', { pane, router: value }).then(() => routerDone(label, value));
+    call.then((words) => status(words)).catch((e) => status(e.message));
+  };
+
+  // previewMove asks what a move to harness carries and, on an answer,
+  // opens the question with that cost. The server starts nothing yet.
+  const previewMove = (pane, to) => {
+    rpc('agent.move', { pane, harness: to, preview: true })
+      .then((res) => {
+        swapAsking.set(pane, to);
+        swapLines.set(pane, moveLine(res, to));
+        const view = viewOf(pane);
+        if (view) renderHead(view);
+      })
+      .catch((e) => status(e.message));
+  };
+
   // detailsEl is an open segment's details, drawn below the header.
   const detailsEl = (pane, d) => detailsBox(d, {
+    onSwap: (kind, value) => swapStack(pane, kind, value),
+    swapAsking: swapAsking.get(pane) || '',
+    swapLine: swapLines.get(pane) || '',
+    onMovePreview: (to) => previewMove(pane, to),
+    onSwapAsk: (v) => {
+      if (v) swapAsking.set(pane, v);
+      else {
+        swapAsking.delete(pane);
+        swapLines.delete(pane);
+      }
+      const view = viewOf(pane);
+      if (view) renderHead(view);
+    },
     onJournal: typeof floorState.journal === 'function' ? () => floorState.journal(pane) : null,
     onClose: () => toggleSeg(pane, openSeg.get(pane)),
+    onMode: (mode) => setMode(pane, mode),
+    asking: modeAsking.has(pane),
+    onAsk: (on) => {
+      if (on) modeAsking.add(pane);
+      else modeAsking.delete(pane);
+      const view = viewOf(pane);
+      if (view) renderHead(view);
+    },
   });
 
   const toggleSeg = (pane, key) => {
+    modeAsking.delete(pane);
+    swapAsking.delete(pane);
+    swapLines.delete(pane);
     if (!key || openSeg.get(pane) === key) openSeg.delete(pane);
     else openSeg.set(pane, key);
     const view = viewOf(pane);
@@ -761,7 +1014,8 @@ export function mountFloor(root, floorState) {
 
   const tileClass = (i, pane) => 'tile'
     + (i === tiles.focus ? ' focused' : '')
-    + (pane && pane === typing() ? ' typing' : '');
+    + (pane && pane === typing() ? ' typing' : '')
+    + (chatMode(pane) ? ' chat-window' : '');
 
   // endedTile is the window an ended agent left: its one line, amber for
   // a non-zero exit. A click clears it. Until the ended list answers, the
@@ -874,6 +1128,7 @@ export function mountFloor(root, floorState) {
     for (const [v, at] of scrolls) scrollTo(v, at);
     for (const v of views) schedule(v);
     syncAttach();
+    if (chatShown() && chatLast) chatSeen = chatLast;
     if (typeof floorState.changed === 'function') floorState.changed();
   };
 
@@ -942,7 +1197,16 @@ export function mountFloor(root, floorState) {
     const rowsNow = paneRows(lastList, Date.now() / 1000);
     const byId = new Map(rowsNow.map((r) => [r.id, r]));
     const rail = treeOrder(rowsNow, tasks).map((id) => byId.get(id));
-    for (const id of fillOrder(rail)) {
+    const first = foremanId();
+    let ids = fillOrder(rail);
+    // The foreman fills right after the agents that need you while it
+    // holds a reply no window showed. An agent only takes a free window.
+    if (first && chatLast && chatLast !== chatSeen && ids.includes(first) && !screenOf.has(first)) {
+      const needs = ids.filter((x) => x !== first && byId.get(x) && byId.get(x).state === 'blocked');
+      const rest = ids.filter((x) => x !== first && !needs.includes(x));
+      ids = [...needs, first, ...rest];
+    }
+    for (const id of ids) {
       if (slotOf(tiles, id) >= 0 || looked.has(id)) continue;
       if (tiles.layout === 'all') { tiles.slots.push(id); continue; }
       const free = tiles.slots.indexOf('');
@@ -983,6 +1247,7 @@ export function mountFloor(root, floorState) {
       if (stopping.has(slot)) tiles.slots[tiles.slots.indexOf(slot)] = '';
       else agentGone(slot, before.get(slot) && before.get(slot).label);
     }
+    if (foremanId() && foremanId() !== chatFor) probeChat();
     fillFree();
     closeUp();
     if (!started && visible() && list.length > 0 && n > 0) {
@@ -1040,6 +1305,14 @@ export function mountFloor(root, floorState) {
   const seedNotes = (list) => {
     for (const msg of Array.isArray(list) ? list : []) addNote(msg);
     for (const view of views) if (view.pane) renderHead(view);
+  };
+
+  // chatEvent takes a messages event for the chat: the chat windows read
+  // again, and the unseen mark is worked out again.
+  const chatEvent = (msg) => {
+    if (!msg || msg.event !== 'messages' || msg.chat !== true) return;
+    for (const v of views) if (v.chat) v.chat.onEvent(msg);
+    probeChat();
   };
 
   const onEvent = (msg) => {
@@ -1404,7 +1677,11 @@ export function mountFloor(root, floorState) {
   };
 
   document.addEventListener('keydown', (e) => {
-    if (!visible() || !canShow()) return;
+    if (!visible()) {
+      if (typing()) keysIn = 'rail';
+      return;
+    }
+    if (!canShow() || railOnly(e)) return;
     // A kill that waits for its confirm takes Enter and Esc first, so
     // neither reaches an agent. Any other key keeps the agent.
     if (killAsk) {
@@ -1434,7 +1711,7 @@ export function mountFloor(root, floorState) {
     if (!act) return;
     // A headless agent takes no raw keys. The key goes to its message
     // line, which takes the focus before the browser types the key.
-    if (act.kind === 'send' && isHeadless(rows.get(pane))) {
+    if (act.kind === 'send' && takesLine(pane)) {
       const view = viewOf(pane);
       if (view) focusOn(view.promptInput);
       return;
@@ -1461,7 +1738,7 @@ export function mountFloor(root, floorState) {
     if (FIELD_TAGS.includes(tag)) return;
     const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
     if (typeof e.preventDefault === 'function') e.preventDefault();
-    if (isHeadless(rows.get(pane))) {
+    if (takesLine(pane)) {
       const view = viewOf(pane);
       if (view && view.promptInput) {
         view.promptInput.value = String(view.promptInput.value || '') + text;
@@ -1473,7 +1750,7 @@ export function mountFloor(root, floorState) {
   });
 
   const floor = {
-    paint, onEvent, seedNotes, tiles, detachAll, dropped, release, adopt, fillRow, openRow, putRow, canShow, setSize, hold,
+    paint, onEvent, chatEvent, replyWaiting, seedNotes, tiles, detachAll, dropped, release, adopt, fillRow, openRow, putRow, canShow, setSize, hold,
     setWidth: (w) => setSize(w),
     gridOf: (pane) => grids.get(pane) || null,
     setTasks: takeTasks,
@@ -1501,6 +1778,19 @@ export function mountFloor(root, floorState) {
     },
     seenRecent,
     typing,
+    // stripFits is true when the strip fits above the windows without
+    // removing one. shownPx is the height the strip takes now, 0 if it is
+    // not drawn, so the measure is of the area with no strip. It uses the
+    // measured area when the page has one, and the page-size estimate
+    // before the first measure.
+    stripFits: (shownPx) => {
+      if (pageW < 900) return stripFits(pageW, pageH, advance);
+      const area = measured();
+      if (!area) return stripFits(pageW, pageH, advance);
+      return stripFitsArea({ w: area.w, h: area.h + (Number(shownPx) || 0) }, advance);
+    },
+    // leave gives the keys to the rail.
+    leave,
     // keys is 'window' or 'rail': who has the keys now.
     keys: () => (typing() ? 'window' : 'rail'),
     // railSelected is the pane id of the selected row while the rail has

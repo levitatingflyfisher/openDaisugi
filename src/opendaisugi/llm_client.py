@@ -51,6 +51,8 @@ REASK_TEXT = "Correct your JSON ONLY RESPONSE, based on the following errors:\n"
 
 _KEY_RE = re.compile(r"(sk-[a-zA-Z0-9_-]{4})[a-zA-Z0-9_-]{8,}([a-zA-Z0-9_-]{4})")
 _USERINFO_RE = re.compile(r"://[^/@]*@")
+_BEARER_RE = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
+_QUERY_KEY_RE = re.compile(r"(?i)\b((?:api[_-]?key|access[_-]?token|key|token)=)[^&\s\"']+")
 
 
 class ModelCallError(EnvelopeGenerationError):
@@ -58,8 +60,12 @@ class ModelCallError(EnvelopeGenerationError):
 
 
 def clean(text: str) -> str:
-    """``text`` with API-key-shaped tokens shortened and URL credentials dropped."""
-    return _KEY_RE.sub(r"\1...\2", _USERINFO_RE.sub("://", text))
+    """``text`` with API-key-shaped tokens shortened, URL credentials dropped,
+    ``Bearer`` tokens and ``key=``/``api_key=``/``token=`` values hidden."""
+    text = _USERINFO_RE.sub("://", text)
+    text = _BEARER_RE.sub(r"\1...", text)
+    text = _QUERY_KEY_RE.sub(r"\1...", text)
+    return _KEY_RE.sub(r"\1...\2", text)
 
 
 def _fail(text: str) -> ModelCallError:
@@ -251,7 +257,7 @@ class Reply:
 
 
 def _unreadable(text: str) -> ModelCallError:
-    return _fail(f"the model reply could not be read: {text[:200]}")
+    return _fail(f"the model reply could not be read: {clean(text)[:200]}")
 
 
 def _int(v: Any) -> int | None:
@@ -262,7 +268,7 @@ def read_reply(wire: Wire, status: int, text: str) -> Reply:
     """Read a response: a status other than 2xx, or a body that is not the
     wire's reply, raises ModelCallError."""
     if not 200 <= status <= 299:
-        raise _fail(f"the model server answered HTTP {status}: {text[:500]}")
+        raise _fail(f"the model server answered HTTP {status}: {clean(text)[:500]}")
     try:
         obj = json.loads(text)
     except (ValueError, RecursionError):

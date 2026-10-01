@@ -1,0 +1,62 @@
+# A headless sprig pane runs one fake process per prompt and reads the
+# session tree the fake writes. The first turn starts the session with
+# --session, the second resumes it with --resume. A deny verdict in the
+# tree blocks the pane. A turn that fails names sprig's last line and the
+# exit code. The pane's facts read the session tree. A pane resuming a
+# session that does not exist is refused at its first prompt.
+#!env COPPICE_SPRIG_BIN={FIXTURES}/adapters/fake-sprig.sh
+#!watch state,note
+#!settle 300
+{"id":"1","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{WORK}","label":"sp","cmd_argv":["--session-dir","{WORK}/sessions","--session","s1","--max-turns","3"],"env":{"COPPICE_SPRIG_ECHO_ARGV":"{WORK}/sprig-argv.txt"}}
+{"id":"$id","ok":true,"result":{"pane":"$sp"}}
+{"id":"2","cmd":"agent.prompt","pane":"$sp","text":"first task","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$sp","state":"idle","source":"headless"}}
+{"id":"3","cmd":"agent.get","pane":"$sp"}
+{"id":"$id","ok":true,"result":{"pane":"$sp","detail":"turn complete","harness_session_id":"s1"}}
+{"id":"4","cmd":"pane.send_text","pane":"$sp","text":"x"}
+{"id":"$id","ok":false,"error":{"code":"internal","message":"sprig: this harness does not support that. Use agent prompt."}}
+{"id":"5","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sh","-c","printf '%s\\n' '{\"type\":\"assistant\",\"id\":\"a1\",\"text\":\"Looking.\",\"model\":\"sprig-fake-2\",\"usage\":{\"input_tokens\":10,\"output_tokens\":4}}' '{\"type\":\"tool_call\",\"name\":\"bash\",\"detail\":\"rm -rf /\"}' '{\"type\":\"verdict\",\"decision\":\"deny\",\"clause\":\"no-rm\"}' '{\"type\":\"tool_result\",\"ok\":false,\"summary\":\"refused\"}' > rows.jsonl; echo ready; exec sleep 600"],"label":"rows"}
+{"id":"$id","ok":true,"result":{"pane":"$rows"}}
+{"id":"6","cmd":"pane.wait_output","pane":"$rows","contains":"ready","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"7","cmd":"pane.close","pane":"$rows"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"8","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{WORK}","label":"deny","cmd_argv":["--session-dir","{WORK}/sessions","--session","s2"],"env":{"COPPICE_SPRIG_FIXTURE":"{WORK}/rows.jsonl"}}
+{"id":"$id","ok":true,"result":{"pane":"$deny"}}
+{"id":"9","cmd":"agent.prompt","pane":"$deny","text":"clean up","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$deny","state":"idle","source":"headless"}}
+{"id":"10","cmd":"pane.read","pane":"$deny"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"11","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"12","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"13","cmd":"agent.prompt","pane":"$sp","text":"second task"}
+{"id":"$id","ok":true,"result":{"pane":"$sp","sent":11}}
+#!retry 10000
+{"id":"13r","cmd":"pane.read","pane":"$sp"}
+{"id":"$id","ok":true,"result":{"source":"visible","text":"[working] prompt\n[idle] turn complete\n[working] prompt\n[idle] turn complete"}}
+{"id":"14","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{WORK}","label":"fail","cmd_argv":["--session-dir","{WORK}/sessions","--session","s3"],"env":{"COPPICE_SPRIG_EXIT":"9"}}
+{"id":"$id","ok":true,"result":{"pane":"$fail"}}
+{"id":"15","cmd":"agent.prompt","pane":"$fail","text":"doomed"}
+{"id":"$id","ok":true,"result":{"pane":"$fail","sent":6}}
+#!retry 10000
+{"id":"16","cmd":"agent.get","pane":"$fail"}
+{"id":"$id","ok":true,"result":{"pane":"$fail","state":"unknown","detail":"sprig: turn done: doomed exit=9"}}
+{"id":"17","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{WORK}","label":"gone","cmd_argv":["--session-dir","{WORK}/sessions","--resume","nope"]}
+{"id":"$id","ok":true,"result":{"pane":"$gone"}}
+{"id":"18","cmd":"agent.prompt","pane":"$gone","text":"hello"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"sprig: session nope not found. Create a new pane."}}
+{"id":"18m","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{WORK}","label":"mint","cmd_argv":["--session-dir","{WORK}/sessions"]}
+{"id":"$id","ok":true,"result":{"pane":"$mint"}}
+{"id":"18p","cmd":"agent.prompt","pane":"$mint","text":"name yourself","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$mint","state":"idle"}}
+{"id":"18g","cmd":"agent.get","pane":"$mint"}
+{"id":"$id","ok":true,"result":{"pane":"$mint","harness_session_id":"*"}}
+{"id":"19","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sh","-c","cat sprig-argv.txt; cat sessions/s1.jsonl; echo shown; exec sleep 600"],"label":"show","cols":200}
+{"id":"$id","ok":true,"result":{"pane":"$show"}}
+{"id":"20","cmd":"pane.wait_output","pane":"$show","contains":"shown","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"21","cmd":"pane.read","pane":"$show"}
+{"id":"$id","ok":true,"result":"*"}
+#!tree

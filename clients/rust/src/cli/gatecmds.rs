@@ -7,7 +7,7 @@ use super::install::{self, HookOptions};
 use super::journal::{self, JournalErr};
 use super::words::KIND_UNKNOWN;
 use super::yaml::{self, Kind, Node};
-use super::{exit, parse_args, Env, Opt, Res};
+use super::{exit, parse_args, Env, Opt, Res, Stop};
 use crate::gate::pyjson::{dumps, dumps_indent, loads, LoadError, Object, Value};
 
 const ROOT_OPT: Opt = Opt::val(&["--root"], "PATH", "Gate state directory (envelopes, audit log, disarm marker).");
@@ -23,7 +23,7 @@ impl Env {
         if p.has("--root") {
             return path_str(&p.str("--root", ""));
         }
-        join(&self.home, ".opendaisugi/gate")
+        join(&self.data_home(), "gate")
     }
 
     /// `Path.cwd()`, or home when the directory is gone.
@@ -40,9 +40,12 @@ impl Env {
         if p.help {
             return self.cmd_help("gate disarm", "", "Kill switch: the gate allows everything until re-armed.", &opts);
         }
-        let (marker, followed, res) = gateroot::disarm(&self.root(&p));
-        self.note_file(&marker, &followed);
+        let (marker, res) = gateroot::disarm(&self.root(&p));
         if let Err(e) = res {
+            if let Some(text) = crate::gate::statewrite::write_refused(&e) {
+                self.errf(&format!("gate NOT disarmed: {text}\n"));
+                return exit(1);
+            }
             return self.fail("gate disarm", &e.to_string());
         }
         self.out(&format!("gate DISARMED (marker: {marker}) — `daisugi gate arm` to re-enable\n"));
@@ -59,6 +62,10 @@ impl Env {
             return self.cmd_help("gate arm", "", "Remove the disarm marker; the gate resumes evaluating calls.", &opts);
         }
         if let Err(e) = gateroot::arm(&self.root(&p)) {
+            if let Some(text) = crate::gate::statewrite::write_refused(&e) {
+                self.errf(&format!("gate NOT armed: {text}\n"));
+                return exit(1);
+            }
             return self.fail("gate arm", &e.to_string());
         }
         self.out("gate armed\n");
@@ -112,6 +119,14 @@ impl Env {
             .flat_map(|f| config::missing_hook_programs(f).into_iter().map(move |g| config::missing_hook_warning(f, &g)))
             .collect();
         gone.extend(files.iter().filter(|f| config::stale_mode_hooks(f)).map(|f| config::stale_mode_warning(f)));
+        // An old config.yaml may name a verifier client this box lacks (a
+        // restored Python-era config). The gate still decides; say so once.
+        if let Ok(cfg) = config::load(&join(&parent(&root), "config.yaml")) {
+            let msg = crate::gate::dispatch::client_problem(&cfg.verifier_client, &self.env);
+            if !msg.is_empty() {
+                gone.push(msg);
+            }
+        }
         // cli._gate_dialect_status: the dialect's hash, the pin config.yaml
         // names, the mode that follows, and the calls a word would deny.
         let pin = match config::dialect_pin(&join(&parent(&root), "config.yaml")) {
@@ -133,13 +148,19 @@ impl Env {
             .with("pin", pin.clone().map(Value::Str).unwrap_or(Value::Null))
             .with("mode", dialect_mode)
             .with("word_would_deny", word_would_deny as i64);
+        // Each path the gate refuses to read, with the fix (GR-R-8); the key
+        // and the lines appear only when there is one.
+        let refused = crate::gate::statewrite::refused_paths(&root);
         if p.flag("--json") {
-            let o = Object::new()
+            let mut o = Object::new()
                 .with("armed", armed)
                 .with("mode", mode.as_str())
                 .with("mode_source", source.as_str())
                 .with("envelopes", Value::List(envs.iter().map(|s| Value::Str(s.clone())).collect()))
                 .with("dialect", dialect);
+            if !refused.is_empty() {
+                o.set("refused", Value::List(refused.iter().map(|s| Value::Str(s.clone())).collect()));
+            }
             self.out(&format!("{}\n", dumps(&Value::Obj(o), true)));
             for g in &gone {
                 self.errf(&format!("{g}\n"));
@@ -155,6 +176,9 @@ impl Env {
         }
         for name in envs {
             self.out(&format!("  envelope: {name}\n"));
+        }
+        for line in &refused {
+            self.out(&format!("refused: {line}\n"));
         }
         let head = match (&pin, dialect_mode) {
             (Some(p), "pin_mismatch") => format!("dialect: {hash} · pinned {p}, not this build's: every word use denies"),
@@ -230,6 +254,7 @@ impl Env {
             mode: if p.flag("--enforce") { "enforce".into() } else { "audit".into() },
             root: self.root(&p),
             format: p.str("--format", "claude"),
+            captures_root: None,
             session: p.has("--session").then(|| p.str("--session", "")),
             ask: false,
         };
@@ -247,7 +272,7 @@ impl Env {
     pub(super) fn decompose_default(&mut self, root: &str, cmd: &str) -> Result<bool, super::Stop> {
         match config::load(&join(&parent(root), "config.yaml")) {
             Ok(c) => Ok(c.shell_allow_decomposition),
-            Err(e @ ConfigErr::Invalid) => Err(self.fail(cmd, &e.to_string()).unwrap_err()),
+            Err(e @ (ConfigErr::Invalid | ConfigErr::Yaml(_))) => Err(self.fail(cmd, &e.to_string()).unwrap_err()),
             Err(e) => Err(self.refuse(cmd, &e.to_string()).unwrap_err()),
         }
     }
@@ -301,9 +326,12 @@ impl Env {
             Ok(e) => e,
             Err(e) => return self.fail("gate init", &e.to_string()),
         };
-        let (path, followed, res) = envelope::register(&env, &session, &root);
-        self.note_file(&path, &followed);
+        let (path, res) = envelope::register(&env, &session, &root);
         if let Err(e) = res {
+            if let Some(text) = crate::gate::statewrite::write_refused(&e) {
+                self.errf(&format!("not registered: {text}\n"));
+                return exit(1);
+            }
             return self.fail("gate init", &e.to_string());
         }
         self.out(&format!("registered a starter envelope for {ws} → {path}\n"));
@@ -323,6 +351,11 @@ impl Env {
         let opts = [
             Opt::val(&["--session"], "TEXT", "Bind to one session id; omit to register the default envelope."),
             ROOT_OPT,
+            Opt::val(
+                &["--parent"],
+                "TEXT",
+                "Register a child of this session: the edge to it is proved first, and a refused edge registers nothing.",
+            ),
         ];
         let p = match parse_args(args, &opts, 1) {
             Ok(p) => p,
@@ -352,6 +385,8 @@ impl Env {
         // 1e-09 is a string, not a number.
         let y = match yaml::parse(&text) {
             Ok(y) => y,
+            // safe_load raises: the oracle's traceback names the exception.
+            Err(e @ yaml::YErr::Exc(_)) => return self.fail("gate register", &e.traceback_line()),
             Err(_) => return self.refuse("gate register", "the envelope uses YAML this binary does not read yet"),
         };
         let v = match yaml_to_json(&y) {
@@ -368,14 +403,56 @@ impl Env {
             Err(e) => return self.refuse("gate register", &e.to_string()),
         };
         let session = p.str("--session", "");
-        let (path, followed, res) = envelope::register(&env, &session, &self.root(&p));
-        self.note_file(&path, &followed);
+        let env = if p.has("--parent") {
+            let root = self.root(&p);
+            match self.proved_child(&env, &session, &p.str("--parent", ""), &root) {
+                Ok(e) => e,
+                Err(stop) => return Err(stop),
+            }
+        } else {
+            env
+        };
+        let (path, res) = envelope::register(&env, &session, &self.root(&p));
         if let Err(e) = res {
+            if let Some(text) = crate::gate::statewrite::write_refused(&e) {
+                self.errf(&format!("not registered: {text}\n"));
+                return exit(1);
+            }
             return self.fail("gate register", &e.to_string());
         }
         let which = if session.is_empty() { "default".to_string() } else { format!("session {session}") };
         self.out(&format!("registered {which} envelope → {path}\n"));
         Ok(())
+    }
+
+    /// `cli._proved_child`: the child as it registers once the edge from
+    /// `parent` is proved, or a one-line refusal and exit 1.
+    fn proved_child(&mut self, env: &Object, session: &str, parent: &str, root: &str) -> Result<Object, Stop> {
+        let mut refuse = |why: String| {
+            self.errf(&format!("not registered: {why}\n"));
+            Stop::Exit(1)
+        };
+        if parent.is_empty() {
+            return Err(refuse("--parent needs a session id".into()));
+        }
+        if session.is_empty() {
+            return Err(refuse("--parent needs --session; the starter names the child's session".into()));
+        }
+        if !crate::tree::valid_session(session) {
+            return Err(refuse(format!("the child's session id {} is not one the tree takes", crate::tree::q(&Value::Str(session.into())))));
+        }
+        let target = super::gateroot::join(&super::gateroot::envelopes_dir(root), &format!("{}.json", super::gateroot::safe_session_id(session)));
+        if std::fs::metadata(&target).is_ok() {
+            return Err(refuse(format!("session {session} is registered already")));
+        }
+        let penv = crate::tree::load_registered(parent, root);
+        let res = crate::tree::edge_ok(penv.as_ref(), Some(env), crate::tree::DEFAULT_TIMEOUT_MS);
+        if !res.holds {
+            return Err(refuse(format!("the edge from {parent} to {session} is refused: {}", res.reasons.join("; "))));
+        }
+        let child = res.child.expect("the edge holds");
+        let id = penv.expect("the edge holds, so the parent has an envelope").value("id").clone();
+        Ok(crate::tree::with_key(&child, "parent_envelope", id))
     }
 
     pub(super) fn gate_proposals(&mut self, args: &[String]) -> Res {
@@ -479,6 +556,7 @@ pub(super) fn yaml_to_json(v: &Node) -> Result<Value, String> {
         Kind::Int => loads(&v.text).map_err(|_| "an integer this binary does not read yet".to_string())?,
         Kind::Float => Value::Float(v.text.parse::<f64>().map_err(|e| e.to_string())?),
         Kind::Str => Value::Str(v.text.clone()),
+        Kind::Other => return Err("the envelope holds a date".into()),
         Kind::Seq => Value::List(v.items.iter().map(yaml_to_json).collect::<Result<Vec<_>, _>>()?),
         Kind::Map => {
             if v.non_str_keys > 0 {

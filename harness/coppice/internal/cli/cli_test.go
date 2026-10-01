@@ -886,3 +886,27 @@ func TestTaskCreateAbsolutizesCwdBeforeSending(t *testing.T) {
 		t.Fatalf("cwd sent = %v, want %s", res.Tasks[0]["cwd"], want)
 	}
 }
+
+// A server does not start on a coppice.toml whose fence value it does not
+// know: one line names the file, the value and the ones allowed (FN-R-33).
+func TestServerStartRefusesAnUnknownFenceValue(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	os.MkdirAll(filepath.Join(cfg, "coppice"), 0o700)
+	os.WriteFile(filepath.Join(cfg, "coppice", "coppice.toml"), []byte("fence = \"yes\"\n"), 0o600)
+	dir := t.TempDir()
+	code, _, errb := runCLI(t, filepath.Join(dir, "s.sock"), dir, "server", "start", "--foreground")
+	want := "cannot read " + filepath.Join(cfg, "coppice", "coppice.toml") + `: fence must be "on", "off" or "auto", not "yes".`
+	if code != 1 || strings.TrimSpace(errb) != want {
+		t.Fatalf("code %d, stderr %q, want %q", code, errb, want)
+	}
+	// A bare word and a boolean: the same error, one line (FN-R-37).
+	for _, v := range []string{"on", "true"} {
+		os.WriteFile(filepath.Join(cfg, "coppice", "coppice.toml"), []byte("fence = "+v+"\n"), 0o600)
+		code, _, errb := runCLI(t, filepath.Join(dir, "s.sock"), dir, "server", "start", "--foreground")
+		want := "cannot read " + filepath.Join(cfg, "coppice", "coppice.toml") + `: fence must be "on", "off" or "auto", not ` + v + "."
+		if code != 1 || strings.TrimSpace(errb) != want {
+			t.Fatalf("%s: code %d, stderr %q", v, code, errb)
+		}
+	}
+}

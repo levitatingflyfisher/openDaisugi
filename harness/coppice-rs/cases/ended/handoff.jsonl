@@ -1,0 +1,71 @@
+# Moving a conversation to another loop (F12b). agent.move reads the pane's
+# transcript the way pane.messages does (a Claude transcript only when the
+# pane's own hook named it, here report.py once the case writes a go file)
+# and starts a new agent of another harness in the same directory with a
+# brief of the newest owner and agent texts. A tool row never goes in, not
+# even its one-line input. With preview nothing starts and the reply says
+# the brief's size and the transcript's own count, so a client shows the
+# cost first. The new agent here is a terminal agent that writes what it
+# reads to brief.txt; a second pane prints the file back.
+#!config [harness.claude]
+#!config command = "/usr/bin/python3"
+#!config args = ["{FIXTURES}/transcripts/report.py"]
+#!config [harness.shown]
+#!config command = "/bin/sh"
+#!config args = ["-c", "exec cat > {WORK}/brief.txt"]
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"alpha","args":["{WORK}/claude/projects/chat/{pane}.jsonl","--copy","{FIXTURES}/transcripts/claude-chat.jsonl","--when","{WORK}/go-alpha"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"2","cmd":"agent.move","pane":"$c","harness":"shown","preview":true}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"alpha (w1:p1) has no transcript to move. Its hook reported none."}}
+{"id":"3","write":"{WORK}/go-alpha","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"4","cmd":"pane.wait_output","pane":"$c","contains":"REPORT ok","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"5","cmd":"agent.move","pane":"$c","harness":"shown","preview":true}
+{"id":"$id","ok":true,"result":{"from":"claude","harness":"shown","tokens":"*","messages":5,"trimmed":false}}
+{"id":"6","cmd":"agent.move","pane":"$c","harness":"claude","preview":true}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"alpha already runs on claude."}}
+{"id":"7","cmd":"agent.move","pane":"$c","harness":"nosuch","preview":true}
+{"id":"$id","ok":false,"error":{"code":"bad_request"}}
+{"id":"8","cmd":"agent.move","pane":"$c","harness":"two words","preview":true}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"harness must be a name of at most 32 letters, digits, '.', '_' or '-', as in coppice.toml."}}
+{"id":"9","cmd":"agent.move","pane":"w9:p9","harness":"shown","preview":true}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane"}}
+{"id":"10","cmd":"agent.move","pane":"$c","harness":"shown"}
+{"id":"$id","ok":true,"result":{"from":"claude","harness":"shown","tokens":"*","messages":5,"trimmed":false,"pane":"$n","workspace":"w1","tab":"w1:t1","when":"typed"}}
+{"id":"11","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sh","-c","until grep -q 'A fake reply with no time' brief.txt; do sleep 0.1; done; cat brief.txt; echo TOOLS=$(grep -c -E 'pytest|Bash|clock.py|Glob|FAKE-' brief.txt) shown; exec sleep 600"],"label":"show","cols":200}
+{"id":"$id","ok":true,"result":{"pane":"$show"}}
+{"id":"12","cmd":"pane.wait_output","pane":"$show","contains":"TOOLS=0 shown","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"13","cmd":"pane.wait_output","pane":"$show","contains":"owner: now push it, please","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"14","cmd":"agent.move","pane":"$c","harness":"shown","preview":true}
+{"id":"$id","ok":true,"result":{"from":"claude","harness":"shown"}}
+{"id":"15","write":"{WORK}/claude/projects/usage/beta.jsonl","text":"{\"type\":\"user\",\"timestamp\":\"2099-01-01T00:00:00Z\",\"cwd\":\"{FIXTURES}\",\"message\":{\"content\":\"hello there\"}}\n{\"type\":\"assistant\",\"timestamp\":\"2099-01-01T00:00:01Z\",\"message\":{\"id\":\"m1\",\"model\":\"claude-fake-1\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"usage\":{\"input_tokens\":100,\"cache_creation_input_tokens\":50,\"cache_read_input_tokens\":9000,\"output_tokens\":20}}}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"16","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"beta","args":["{WORK}/claude/projects/usage/beta.jsonl"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$b"}}
+{"id":"17","cmd":"pane.wait_output","pane":"$b","contains":"REPORT ok","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"18","cmd":"agent.move","pane":"$b","harness":"shown","preview":true}
+{"id":"$id","ok":true,"result":{"from":"claude","harness":"shown","messages":2,"trimmed":false,"conversation":150}}
+{"id":"19","cmd":"hello","role":"pane","pane":"$c"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$c"}}
+{"id":"20","cmd":"agent.move","pane":"$c","harness":"shown","preview":true}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator moves an agent's conversation."}}
+{"id":"21","cmd":"agent.move","pane":"$c","harness":"shown"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator moves an agent's conversation."}}
+# A named web token may not read the chat, so it may not move it: preview
+# and move are both refused, and no agent starts.
+{"id":"w0","write":"{DATA}/web/token","text":"pinned-web-token-0001\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w1","write":"{DATA}/web/token-names.json","text":"{\"tokens\":[{\"name\":\"kid\",\"token\":\"kid-token-0001\"}]}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"v1","cli":["web","serve","--tls","off","--listen","{ADDR}","--qr=false"],"bg":"web"}
+{"id":"$id","ok":true,"result":{"started":true}}
+{"id":"g0","http":"GET","url":"http://{ADDR}/","wait_ms":8000}
+{"id":"$id","ok":true,"result":{"status":200}}
+{"id":"s1","ws":"ws://{ADDR}/ws","protocols":["daisugi.v1","daisugi.bearer.kid-token-0001"],"send":["{\"id\":\"1\",\"cmd\":\"agent.move\",\"pane\":\"$c\",\"harness\":\"shown\",\"preview\":true}"]}
+{"id":"$id","ok":true,"result":{"status":101,"frames":[{"id":"1","ok":false,"error":{"code":"unauthorized","message":"the chat is for the owner's own sign-in."}}]}}
+{"id":"s2","ws":"ws://{ADDR}/ws","protocols":["daisugi.v1","daisugi.bearer.kid-token-0001"],"send":["{\"id\":\"2\",\"cmd\":\"agent.move\",\"pane\":\"$c\",\"harness\":\"shown\"}"]}
+{"id":"$id","ok":true,"result":{"status":101,"frames":[{"id":"2","ok":false,"error":{"code":"unauthorized","message":"the chat is for the owner's own sign-in."}}]}}

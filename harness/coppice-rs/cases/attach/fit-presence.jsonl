@@ -1,0 +1,21 @@
+# A pane.resize that ends a fit sends a presence event for the pane, so a
+# phone that fitted the agent asks again instead of keeping its cached answer.
+# The watcher sees the attach, the resize that ended the fit, and the detach.
+#!watch presence
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "alpha", "cols": 40, "rows": 10}
+{"id": "$id", "ok": true, "result": {"pane": "$a"}}
+{"id": "a1", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 50, "rows": 30}}
+{"id": "$id", "ok": true, "result": {"fitted": true}}
+{"id": "y1", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "r1", "cmd": "pane.resize", "pane": "$a", "cols": 60, "rows": 20}
+{"id": "$id", "ok": true, "result": {"cols": 60, "rows": 20}}
+{"id": "y2", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "r2", "cmd": "pane.resize", "pane": "$a", "cols": 61, "rows": 21}
+{"id": "$id", "ok": true, "result": {"cols": 61, "rows": 21}}
+{"id": "y3", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "d1", "cmd": "pane.detach", "pane": "$a"}
+{"id": "$id", "ok": true, "result": {"attached": false}}
+#!settle 300

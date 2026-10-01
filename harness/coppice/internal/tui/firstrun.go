@@ -11,6 +11,15 @@ import (
 	"github.com/opendaisugi/coppice/internal/config"
 )
 
+// needsModelNote labels a harness that has no model until you set one up.
+// sprig is on PATH after every install but has no model of its own.
+func needsModelNote(name string) string {
+	if name == "sprig" {
+		return "  (needs a model: see docs/how-to/foreman-any-model.md)"
+	}
+	return ""
+}
+
 // FirstRun writes the config file the first time coppice runs. It takes
 // the harnesses Discover found. With none it prints the app-only note and
 // returns it as the error, and writes nothing. With one it makes that one
@@ -27,11 +36,11 @@ func FirstRun(found []config.Found, in io.Reader, out io.Writer) (config.Config,
 	}
 	pick := found[0]
 	if len(found) == 1 {
-		fmt.Fprintf(out, "%s is your default. Enter opens it here.\n", pick.Name)
+		fmt.Fprintf(out, "%s is your default. Enter opens it here.%s\n", pick.Name, needsModelNote(pick.Name))
 	} else {
 		fmt.Fprintln(out, "Which harness should Enter open?")
 		for i, f := range found {
-			fmt.Fprintf(out, "  %d. %s    %s\n", i+1, f.Name, f.Path)
+			fmt.Fprintf(out, "  %d. %s    %s%s\n", i+1, f.Name, f.Path, needsModelNote(f.Name))
 		}
 		fmt.Fprint(out, "Pick a number [1]: ")
 		line, _ := bufio.NewReader(in).ReadString('\n')

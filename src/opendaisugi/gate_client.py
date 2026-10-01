@@ -5,6 +5,10 @@ plus one socket round trip. Every failure of the server path (no socket,
 refused, timeout, malformed reply, or a socket that isn't a private one we
 trust) falls back to the real gate. There is no path from a broken or rogue
 server to an allow.
+
+Inside ``daisugi fence`` (``DAISUGI_FENCED`` set) the gate's state is read
+only, so there is no in-process fallback: every call, an ask too, goes to
+the resident gate, and a server that does not answer is a deny (FN-R-12).
 """
 
 from __future__ import annotations
@@ -18,8 +22,11 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+from opendaisugi.datahome import data_home
+
 SOCK_NAME = "gate.sock"
-_DEFAULT_ROOT = Path.home() / ".opendaisugi" / "gate"
+FENCED_ENV = "DAISUGI_FENCED"
+_DEFAULT_ROOT = data_home() / "gate"
 _SERVER_TIMEOUT_S = 5.0  # well under any host hook timeout, so the fallback still fits
 
 
@@ -108,7 +115,9 @@ def ask_server(
             s.connect(str(sock_path))
             req: dict[str, object] = {
                 "v": 1,
-                "argv": list(argv),
+                # --root only found the socket; the server has its own root
+                # and takes no path from a request (FN-R-21).
+                "argv": _strip_path_flags(list(argv)),
                 "stdin_b64": base64.b64encode(raw).decode(),
             }
             if caller_pane:
@@ -136,12 +145,81 @@ def _has_ask_flag(argv: list[str]) -> bool:
     return any(a == "--ask" or a.startswith("--ask=") for a in argv)
 
 
+def _has_flag(argv: list[str], flag: str) -> bool:
+    return any(a == flag or a.startswith(flag + "=") for a in argv)
+
+
+def _strip_path_flags(argv: list[str]) -> list[str]:
+    """fence_runs.strip_path_flags, kept here so the hot path stays stdlib."""
+    out: list[str] = []
+    skip = False
+    for a in argv:
+        if skip:
+            skip = False
+        elif a in ("--root", "--captures-root"):
+            skip = True
+        elif not a.startswith(("--root=", "--captures-root=")):
+            out.append(a)
+    return out
+
+
+def _arg_float(argv: list[str], flag: str, default: float) -> float:
+    for i, a in enumerate(argv):
+        v = argv[i + 1] if a == flag and i + 1 < len(argv) else None
+        if a.startswith(flag + "="):
+            v = a.split("=", 1)[1]
+        if v is not None:
+            try:
+                return float(v)
+            except ValueError:
+                return default
+    return default
+
+
+def fenced_deadline_s(argv: list[str]) -> float:
+    """How long a fenced hook waits for the server: the verify budget, the
+    ask's too when it asks, and a margin."""
+    budget = _arg_float(argv, "--verify-timeout", 10.0)
+    if _has_ask_flag(argv):
+        budget += max(_arg_float(argv, "--ask-timeout", 90.0), 0.0)
+    return budget + 10.0
+
+
+def _fenced_deny(argv: list[str], why: str) -> dict:
+    import time
+
+    from opendaisugi.gate import _deny, _fmt_from_argv, _outcome
+
+    out = _outcome(
+        _deny(
+            "enforce",
+            f"the fenced gate hook cannot reach the resident gate ({why}), so it denies. "
+            "Start it with: daisugi gate serve",
+            t0=time.monotonic(),
+        ),
+        _fmt_from_argv(argv),
+    )
+    return {"stdout": out.stdout, "stderr": out.stderr, "exit_code": out.exit_code}
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
         raw = sys.stdin.buffer.read()
     except Exception:  # noqa: BLE001
         raw = b""
+    if os.environ.get(FENCED_ENV):
+        sock = _root_from_argv(argv) / SOCK_NAME
+        reply = ask_server(
+            sock,
+            argv,
+            raw,
+            timeout_s=fenced_deadline_s(argv),
+            caller_pane=caller_pane_fields(os.environ),
+        )
+        if reply is None:
+            reply = _fenced_deny(argv, f"no answer on {sock}")
+        return _emit(reply)
     # --ask can legitimately block for up to --ask-timeout seconds waiting on
     # a present operator, so it always runs straight in-process — never
     # through the resident server. Going through the server first is a
@@ -156,9 +234,14 @@ def main(argv: list[str] | None = None) -> int:
     # stale server-side wait as a mismatch (a lost answer, not a security
     # hole — ask.py still denies — but a real usability break). One process,
     # one ask cycle, one nonce.
+    # A captures root is fixed when the server starts, and a checkpoint
+    # needs a workspace a fence run bound (FN-R-21): outside the fence the
+    # gate runs those in-process, as it runs an ask.
     reply = (
         None
         if _has_ask_flag(argv)
+        or _has_flag(argv, "--captures-root")
+        or _has_flag(argv, "--checkpoints")
         else ask_server(
             _root_from_argv(argv) / SOCK_NAME,
             argv,
@@ -171,6 +254,10 @@ def main(argv: list[str] | None = None) -> int:
 
         out = run_argv(argv, raw)
         reply = {"stdout": out.stdout, "stderr": out.stderr, "exit_code": out.exit_code}
+    return _emit(reply)
+
+
+def _emit(reply: dict) -> int:
     try:
         if reply["stdout"]:
             print(reply["stdout"])

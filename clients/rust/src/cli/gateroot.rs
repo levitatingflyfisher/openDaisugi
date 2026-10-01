@@ -34,31 +34,30 @@ pub fn legacy_audit_dir(root: &str) -> String {
     join(root, "shadow")
 }
 
-/// `gate.disarm`: the root made private and the marker written. The second
-/// value is the file written when the marker path was a symlink.
-pub fn disarm(root: &str) -> (String, Option<String>, io::Result<()>) {
+/// `gate.disarm`: the marker written through the root's directory fd
+/// (GR-R-9) and read back with the gate's reader. A link planted at DISARMED
+/// is refused, and so is a marker the gate would not read, so this never
+/// reports a kill switch the gate ignores. The error says so (see
+/// `statewrite::write_refused`).
+pub fn disarm(root: &str) -> (String, io::Result<()>) {
+    use crate::gate::statewrite::{verify_written, write_file};
     let marker = join(root, DISARM_FILE);
-    if let Err(e) = mkdir_private(root) {
-        return (marker, None, Err(e));
-    }
-    match write_file(&marker, "disarmed by operator\n") {
-        Ok(f) => (marker, f, Ok(())),
-        Err(e) => (marker, None, Err(e)),
-    }
+    let res = write_file(root, &[], DISARM_FILE, "disarmed by operator\n", false)
+        .and_then(|_| verify_written(root, &[], DISARM_FILE));
+    (marker, res)
 }
 
-/// `gate.arm`: the marker removed if `Path.exists()` sees it.
+/// `gate.arm`: the marker removed through the root's directory fd (GR-R-9).
+/// A refused root is a refusal (see `statewrite::write_refused`), so this
+/// never reports an armed gate it did not arm.
 pub fn arm(root: &str) -> io::Result<()> {
-    let marker = join(root, DISARM_FILE);
-    if exists(&marker) {
-        return fs::remove_file(&marker);
-    }
-    Ok(())
+    crate::gate::statewrite::unlink_file(root, &[], DISARM_FILE).map(|_| ())
 }
 
 /// `gate.is_disarmed`.
 pub fn is_disarmed(root: &str) -> bool {
-    exists(&join(root, DISARM_FILE))
+    // GR-R-1: a regular file this user owns, read through no link.
+    crate::gate::statefile::open(root, &[], DISARM_FILE, None).is_some()
 }
 
 /// `sorted(e.stem for e in envelopes.glob("*.json"))`: every entry whose
@@ -317,7 +316,8 @@ pub fn exists(p: &str) -> bool {
 /// itself 0700 whether it was made now or not.
 pub fn mkdir_private(d: &str) -> io::Result<()> {
     mkdir_parents(d, 0o700)?;
-    let _ = fs::set_permissions(d, fs::Permissions::from_mode(0o700));
+    // On the directory's own fd, never through a link (GR-R-9).
+    crate::gate::statewrite::chmod_private(d);
     Ok(())
 }
 
@@ -431,13 +431,6 @@ fn process_umask() -> u32 {
 pub fn write_file(p: &str, text: &str) -> io::Result<Option<String>> {
     let target = resolve_links(p)?;
     replace_file(&target, text, None)?;
-    Ok((target != p).then_some(target))
-}
-
-/// `write_file` for a private file: `mode` from the moment it exists.
-pub fn write_file_mode(p: &str, text: &str, mode: u32) -> io::Result<Option<String>> {
-    let target = resolve_links(p)?;
-    replace_file(&target, text, Some(mode))?;
     Ok((target != p).then_some(target))
 }
 

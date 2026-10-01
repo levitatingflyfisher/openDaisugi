@@ -172,7 +172,14 @@ impl Env {
             let (me, _) = install::hook_path(&me, &self.env, &|tool: &str| install::mise_which(&env, tool));
             let entry = install::hook_entry(
                 &me,
-                &HookOptions { mode: mode.into(), root: root.clone(), format: "claude".into(), session: Some(key.clone()), ask },
+                &HookOptions {
+                    mode: mode.into(),
+                    root: root.clone(),
+                    format: "claude".into(),
+                    captures_root: None,
+                    session: Some(key.clone()),
+                    ask,
+                },
             );
             match install::plan_claude_gate(&settings, &entry) {
                 Ok(e) => edit = e,
@@ -209,6 +216,11 @@ impl Env {
             if let Err(e) = std::fs::create_dir_all(parent(&settings)) {
                 return Err(self.pw_err(CMD, crate::pathways::PwErr::Io(e)));
             }
+            // install._absolute_gate_root raises here, after the directory is made.
+            if let Err(install::InstErr::GateRoot(m)) = install::check_gate_root(&root) {
+                self.errf(&format!("Traceback (most recent call last): ...\nValueError: {m}\n"));
+                return Err(exit(1).unwrap_err());
+            }
             if let Some(e) = &edit {
                 if !e.warning.is_empty() {
                     self.errf(&format!("warning: {}\n", e.warning));
@@ -241,11 +253,10 @@ impl Env {
             out.push(step("envelope", "skipped", format!("an envelope for this directory is already registered at {env_path}")));
         } else if act {
             let env = starter.unwrap_or_default();
-            let (_, followed, res) = envelope::register(&env, &key, &root);
+            let (_, res) = envelope::register(&env, &key, &root);
             if let Err(e) = res {
                 return Err(self.pw_err(CMD, crate::pathways::PwErr::Io(e)));
             }
-            self.note_file(&env_path, &followed);
             out.push(step("envelope", "done", format!("registered a starter envelope for {cwd} at {env_path}")));
         } else {
             out.push(step("envelope", "would", format!("register a starter envelope for {cwd}")));
@@ -287,14 +298,16 @@ impl Env {
         Ok(out)
     }
 
-    /// Starts `<self> gate serve --root root` detached, with this
+    /// Starts `<self> gate serve --root root --captures-root root/captures` detached, with this
     /// process's environment and no stdin, stdout or stderr. A spawn that
     /// fails is seen as a socket that never appears.
     fn spawn_gate_server(&self, root: &str) {
         use std::os::unix::process::CommandExt;
         let Ok(me) = self.self_path() else { return };
         let mut c = Command::new(me);
-        c.args(["gate", "serve", "--root", root])
+        // The first server wins, so start fixes the captures root the fence
+        // fixes (FN-R-35).
+        c.args(start_gate_args(root))
             .env_clear()
             .envs(&self.env)
             .stdin(Stdio::null())
@@ -308,5 +321,25 @@ impl Env {
             });
         }
         let _ = c.spawn();
+    }
+}
+
+/// The argv start gives `<self>`: `gate serve`, its root, and the captures
+/// root the fence gives (FN-R-35).
+fn start_gate_args(root: &str) -> Vec<String> {
+    let mut v: Vec<String> = ["gate", "serve", "--root", root].iter().map(|s| s.to_string()).collect();
+    v.extend(crate::fence::gate_captures_args(root));
+    v
+}
+
+#[cfg(test)]
+mod captures_tests {
+    /// tests/test_start.py is the oracle's copy.
+    #[test]
+    fn start_gives_the_resident_gate_the_captures_root_the_fence_gives() {
+        assert_eq!(
+            super::start_gate_args("/d/gate"),
+            ["gate", "serve", "--root", "/d/gate", "--captures-root", "/d/gate/captures"]
+        );
     }
 }

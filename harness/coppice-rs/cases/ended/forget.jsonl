@@ -1,0 +1,46 @@
+# pane.forget removes an ended record: one by its id, or every ended record
+# with ended: true. A pane whose process ends on its own keeps its record,
+# listed under ended: true. A pane the operator closes leaves at once and is
+# never listed as ended.
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sh","-c","exit 3"],"label":"quits"}
+{"id":"$id","ok":true,"result":{"pane":"$quits"}}
+{"id":"2","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sh","-c","exit 0"],"label":"ends"}
+{"id":"$id","ok":true,"result":{"pane":"$ends"}}
+{"id":"3","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"],"label":"stays"}
+{"id":"$id","ok":true,"result":{"pane":"$stays"}}
+{"id":"4","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"],"label":"closed"}
+{"id":"$id","ok":true,"result":{"pane":"$closed"}}
+{"id":"5","cmd":"pane.close","pane":"$closed"}
+{"id":"$id","ok":true,"result":{"closed":true}}
+#!retry 5000
+{"id":"6","cmd":"pane.list","ended":true}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$ends","closed":true,"exit_code":0,"state":"done","source":"process","detail":"exit=0"},{"id":"$quits","closed":true,"exit_code":3,"state":"done","source":"process","detail":"exit=3"}],"path":"*"}}
+{"id":"7","cmd":"agent.list","ended":true}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"8","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$stays"}],"path":"*"}}
+{"id":"9","cmd":"pane.forget"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"pane.forget needs pane, or ended: true to forget every ended record."}}
+{"id":"10","cmd":"pane.forget","pane":"$quits","ended":true}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"pane.forget takes pane, or ended: true, not both."}}
+{"id":"11","cmd":"pane.forget","pane":"w9:p9"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"w9:p9\". Run: coppice pane list --ended"}}
+{"id":"12","cmd":"pane.forget","pane":"$stays"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"13","cmd":"pane.forget","pane":"$closed"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"*"}}
+{"id":"14","cmd":"pane.forget","pane":"$quits"}
+{"id":"$id","ok":true,"result":{"pane":"$quits","forgot":true}}
+{"id":"15","cmd":"pane.forget","pane":"$quits"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"*"}}
+{"id":"16","cmd":"pane.forget","ended":false}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"17","cmd":"pane.forget","pane":"","ended":true}
+{"id":"$id","ok":true,"result":{"forgot":1}}
+{"id":"18","cmd":"pane.forget","ended":true}
+{"id":"$id","ok":true,"result":{"forgot":0}}
+{"id":"19","cmd":"pane.list","ended":true}
+{"id":"$id","ok":true,"result":{"panes":[],"path":"*"}}
+{"id":"20","cmd":"server.status"}
+{"id":"$id","ok":true,"result":{"panes":1,"panes_live":1,"resumable":0}}
+#!tree

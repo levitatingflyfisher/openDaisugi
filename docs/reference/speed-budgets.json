@@ -1,0 +1,54 @@
+{
+  "budgets_ms": {
+    "coppice/go/help": 9,
+    "coppice/go/version": 9,
+    "coppice/rs/help": 7,
+    "coppice/rs/version": 7,
+    "daisugi-gate/go/gate-hook": 25,
+    "daisugi-gate/py-client/gate-hook": 775,
+    "daisugi-gate/py/gate-hook": 775,
+    "daisugi-gate/rs/gate-hook": 15,
+    "daisugi/go/gate-check": 30,
+    "daisugi/go/gate-status": 15,
+    "daisugi/go/help": 15,
+    "daisugi/go/version": 15,
+    "daisugi/py/gate-check": 1000,
+    "daisugi/py/gate-status": 925,
+    "daisugi/py/help": 950,
+    "daisugi/py/version": 90,
+    "daisugi/rs/gate-check": 20,
+    "daisugi/rs/gate-status": 9,
+    "daisugi/rs/help": 8,
+    "daisugi/rs/version": 8,
+    "sprig/go/help": 8,
+    "sprig/go/version": 8,
+    "sprig/rs/help": 7,
+    "sprig/rs/version": 7
+  },
+  "ci_factor": 3,
+  "how": "budget = tidy_up(max(2 x median, median + 5 ms)) of the larger of two 21-run medians; see speed-budgets.md",
+  "relative": [
+    {
+      "fast": "daisugi-gate/go/gate-hook",
+      "max_ratio": 0.1,
+      "slow": "daisugi-gate/py/gate-hook"
+    },
+    {
+      "fast": "daisugi-gate/rs/gate-hook",
+      "max_ratio": 0.1,
+      "slow": "daisugi-gate/py/gate-hook"
+    },
+    {
+      "fast": "daisugi/go/gate-check",
+      "max_ratio": 0.1,
+      "slow": "daisugi/py/gate-check"
+    },
+    {
+      "fast": "daisugi/rs/gate-check",
+      "max_ratio": 0.1,
+      "slow": "daisugi/py/gate-check"
+    }
+  ],
+  "schema": 1,
+  "unit": "ms"
+}

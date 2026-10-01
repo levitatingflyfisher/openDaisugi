@@ -131,7 +131,8 @@ func (r *editOnRead) Read(b []byte) (int, error) {
 }
 
 // The plan is made again after the prompt: a hook added while it waited
-// is kept, not overwritten by the plan read before it.
+// is kept, not overwritten by the plan read before it. The second answer
+// is the auto-tend question the install asks after the confirm.
 func TestInstallPlansAgainAfterThePrompt(t *testing.T) {
 	home := t.TempDir()
 	if err := os.Mkdir(filepath.Join(home, ".claude"), 0o755); err != nil {
@@ -142,7 +143,7 @@ func TestInstallPlansAgainAfterThePrompt(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Main(&Env{
 		Args:    []string{"install", "--gate"},
-		Stdin:   &editOnRead{path: p, text: late, answer: strings.NewReader("y\n")},
+		Stdin:   &editOnRead{path: p, text: late, answer: strings.NewReader("y\nn\n")},
 		Stdout:  &out,
 		Stderr:  &errb,
 		Environ: []string{"HOME=" + home, "PATH=/nonexistent"},

@@ -16,9 +16,37 @@ const GATE_TIMEOUT_MS = 5000;
 const REPORT_TIMEOUT_MS = 1000;
 const UNREACHABLE_REASON = "openDaisugi gate unreachable: run `daisugi start`, or `daisugi gate serve`";
 
+// A data home variable as opendaisugi.datahome reads it: a leading ~ or ~/
+// is the home directory, and a value that is still not absolute is
+// ignored (""), so the socket is never looked for relative to the cwd.
+function usable(v: string | undefined, home: string): string {
+  if (!v) return "";
+  if ((v === "~" || v.startsWith("~/")) && !home) return "";
+  if (v === "~") v = home;
+  else if (v.startsWith("~/")) v = home + v.slice(1);
+  return path.isAbsolute(v) ? path.normalize(v) : "";
+}
+
+// The data home, as opendaisugi.datahome picks it: OPENDAISUGI_HOME, else
+// $XDG_DATA_HOME/opendaisugi when ~/.opendaisugi does not exist, else
+// ~/.opendaisugi. The gate's socket sits under it, in gate/. "" when
+// neither variable is usable and HOME is not absolute.
+function dataHome(env: NodeJS.ProcessEnv): string {
+  const home = env.HOME && path.isAbsolute(env.HOME) ? env.HOME : "";
+  const od = usable(env.OPENDAISUGI_HOME, home);
+  if (od) return od;
+  if (!home) return "";
+  const dot = path.join(home, ".opendaisugi");
+  const xdg = usable(env.XDG_DATA_HOME, home);
+  if (xdg && !fs.existsSync(dot)) return path.join(xdg, "opendaisugi");
+  return dot;
+}
+
 function gateSocketPath(env: NodeJS.ProcessEnv): string {
   if (env.OPENDAISUGI_GATE_SOCK) return env.OPENDAISUGI_GATE_SOCK;
-  return path.join(env.HOME || "", ".opendaisugi", "gate", "gate.sock");
+  const home = dataHome(env);
+  if (!home) return "";
+  return path.join(home, "gate", "gate.sock");
 }
 
 // This process's own coppice/Herdr pane identity, read from ITS OWN
@@ -145,6 +173,9 @@ function sendGateRequest(
 // flag absent the gate resolves the mode server-side from config.yaml, the
 // same trust level every other unset-mode caller gets.
 //
+// No --root either: the server's root is fixed when it starts, and it
+// denies a request that names one (FN-R-21).
+//
 // --verify-timeout 4 keeps the gate's inner verify budget under this
 // client's own 5 s socket timeout, so a slow verify returns its verdict
 // instead of reading as an unreachable gate.
@@ -164,7 +195,7 @@ async function askGate(
   };
   if (env.OPENDAISUGI_SESSION_ID) payload.session_id = env.OPENDAISUGI_SESSION_ID;
   const sockPath = gateSocketPath(env);
-  const argv = ["--format", "pi", "--root", path.dirname(sockPath), "--verify-timeout", "4"];
+  const argv = ["--format", "pi", "--verify-timeout", "4"];
   const reply = await sendGateRequest(sockPath, argv, payload, timeoutMs, callerPaneFields(env));
   if (reply === null) return { allow: false, reason: UNREACHABLE_REASON };
   if (reply.exitCode === 0) return { allow: true, reason: "" };

@@ -211,11 +211,11 @@ pub fn target(url: &str) -> io::Result<(bool, String, u16, String)> {
     Ok((tls, host, port, path))
 }
 
-fn connect(key: &Key) -> io::Result<Wire> {
+fn connect(key: &Key, connect_timeout: Option<std::time::Duration>) -> io::Result<Wire> {
     let (tls, host, port) = key;
     let origin = netproxy::Origin { tls: *tls, host: host.clone(), port: *port, explicit_port: true };
     let route = netproxy::process_httpx().route(&origin).map_err(|r| bad(&format!("{r:?}")))?;
-    let conn = netproxy::open(&route, &origin, &netproxy::Dial::default()).map_err(netproxy::Fail::into_io)?;
+    let conn = netproxy::open(&route, &origin, &netproxy::Dial { connect_timeout, ..Default::default() }).map_err(netproxy::Fail::into_io)?;
     Ok(Wire { conn, buf: Vec::new(), pos: 0 })
 }
 
@@ -335,6 +335,12 @@ impl Read for Body {
 /// Sends one POST and reads the answer's head. `headers` are sent as given
 /// (names already lower case), with Host and Content-Length added.
 pub fn post(url: &str, headers: &[(String, Vec<u8>)], body: &[u8]) -> io::Result<Response> {
+    post_timed(url, headers, body, None)
+}
+
+/// [`post`] with a limit on every read and write of the connection. The
+/// connection is not kept for reuse, so the limit never reaches a later turn.
+pub fn post_timed(url: &str, headers: &[(String, Vec<u8>)], body: &[u8], limit: Option<std::time::Duration>) -> io::Result<Response> {
     let (tls, host, port, path) = target(url)?;
     let key: Key = (tls, host.clone(), port);
     let default_port = if tls { 443 } else { 80 };
@@ -375,11 +381,15 @@ pub fn post(url: &str, headers: &[(String, Vec<u8>)], body: &[u8]) -> io::Result
         let reused = pooled.is_some();
         let mut w = match pooled {
             Some(w) => w,
-            None => connect(&key)?,
+            None => connect(&key, limit)?,
         };
         let req = build(&w.conn);
+        if limit.is_some() {
+            w.conn.sock.set_read_timeout(limit)?;
+            w.conn.sock.set_write_timeout(limit)?;
+        }
         match send_and_read_head(&mut w, &req) {
-            Ok((status, hs)) => return Ok(finish_head(w, key, status, hs)),
+            Ok((status, hs)) => return Ok(finish_head(w, key, status, hs, limit.is_none())),
             Err((written, e)) => {
                 if reused && !written {
                     continue;
@@ -449,7 +459,7 @@ fn send_and_read_head(w: &mut Wire, req: &[u8]) -> Result<Head, (bool, io::Error
     }
 }
 
-fn finish_head(w: Wire, key: Key, status: u16, headers: Vec<(String, Vec<u8>)>) -> Response {
+fn finish_head(w: Wire, key: Key, status: u16, headers: Vec<(String, Vec<u8>)>, reusable: bool) -> Response {
     let get = |n: &str| -> Vec<String> {
         headers
             .iter()
@@ -469,7 +479,7 @@ fn finish_head(w: Wire, key: Key, status: u16, headers: Vec<(String, Vec<u8>)>) 
     } else {
         Framing::Close
     };
-    let keep = !close && !matches!(framing, Framing::Close);
+    let keep = reusable && !close && !matches!(framing, Framing::Close);
     let mut body = Body { wire: Some(w), framing, key, keep };
     if matches!(body.framing, Framing::None | Framing::Length(0)) {
         body.finish();
@@ -506,6 +516,12 @@ pub fn decoded(resp: Response) -> (u16, Vec<(String, Vec<u8>)>, Box<dyn Read + S
 enum Kind {
     Gzip,
     Deflate,
+}
+
+/// A gzip decoder over `src` (the pack installer reads a CPython tarball
+/// with it).
+pub fn gunzip(src: Box<dyn Read + Send>) -> Box<dyn Read + Send> {
+    Box::new(Inflater::new(src, Kind::Gzip))
 }
 
 /// A streaming decoder: each read passes on what the input read so far

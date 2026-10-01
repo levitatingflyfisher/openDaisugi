@@ -83,9 +83,9 @@ func TestLaxInt(t *testing.T) {
 
 func TestDisarmArm(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "a", "gate")
-	marker, followed, err := Disarm(root)
-	if err != nil || !IsDisarmed(root) || followed != "" {
-		t.Fatal(marker, followed, err)
+	marker, err := Disarm(root)
+	if err != nil || !IsDisarmed(root) {
+		t.Fatal(marker, err)
 	}
 	st, _ := os.Stat(root)
 	if st.Mode().Perm() != 0o700 {

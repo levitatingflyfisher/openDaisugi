@@ -34,10 +34,25 @@ func TestMCPVerifyPlanZ3UnknownFailsClosed(t *testing.T) {
 	}
 }
 
+// The server reports the binary's own version, the one --version prints,
+// and not the MCP SDK's.
+func TestMCPServerInfoVersionIsTheBinarys(t *testing.T) {
+	old := Version
+	defer func() { Version = old }()
+	Version = "9.8.7-test"
+	code, out, errs := run(t, t.TempDir(), mcpInit, "mcp", "serve")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errs)
+	}
+	if !strings.Contains(out, `"serverInfo":{"name":"opendaisugi","version":"9.8.7-test"}`) {
+		t.Fatal(out)
+	}
+}
+
 // A request this binary does not answer the oracle's way gets a JSON-RPC
 // error that says so, and the server goes on.
 func TestMCPUnportedMethodIsRefused(t *testing.T) {
-	req := `{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"x://y"}}` + "\n" +
+	req := `{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"http://a/%41"}}` + "\n" +
 		`{"jsonrpc":"2.0","id":3,"method":"ping"}` + "\n"
 	code, out, _ := run(t, t.TempDir(), mcpInit+req, "mcp", "serve")
 	lines := strings.Split(strings.TrimSpace(out), "\n")

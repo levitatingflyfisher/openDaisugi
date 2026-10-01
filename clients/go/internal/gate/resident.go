@@ -28,6 +28,10 @@ import (
 type Caller struct {
 	Sock, Pane, HerdrPane, DataDir *string
 	PeerPid                        *int
+	// Workspace is the workspace of the fence run above the caller
+	// (fenceruns.BoundWorkspace), set by the server, never by the request;
+	// "" when there is none (FN-R-21).
+	Workspace string
 }
 
 // MaxRequestBytes is gate_server._MAX_REQUEST: a request line is read up
@@ -281,7 +285,8 @@ func encodeRequest(q *Request) []byte {
 		Set("pane", opt(q.Caller.Pane)).
 		Set("herdr_pane", opt(q.Caller.HerdrPane)).
 		Set("data_dir", opt(q.Caller.DataDir)).
-		Set("peer_pid", pid)
+		Set("peer_pid", pid).
+		Set("workspace", q.Caller.Workspace)
 	return []byte(pyjson.Dumps(o, true))
 }
 
@@ -315,6 +320,7 @@ func decodeRequest(b []byte) (*Request, error) {
 	q.Caller.Pane = strField(o, "pane")
 	q.Caller.HerdrPane = strField(o, "herdr_pane")
 	q.Caller.DataDir = strField(o, "data_dir")
+	q.Caller.Workspace, _ = o.Value("workspace").(string)
 	if n, ok := o.Value("peer_pid").(pyjson.Int); ok {
 		var pid int
 		if _, err := fmt.Sscan(n.Text, &pid); err == nil {

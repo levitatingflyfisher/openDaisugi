@@ -46,7 +46,7 @@ func (s *Server) handleSetForeman(_ *Client, r *proto.Request) proto.Response {
 	if err := s.tree.SetForeman(id, pane); err != nil {
 		return noTask(r.ID, id)
 	}
-	s.saveLayout()
+	s.markLayoutDirty()
 	s.recheckHolds()
 	return proto.OKResp(r.ID, map[string]any{"task": id, "foreman": pane})
 }
@@ -110,7 +110,7 @@ func (s *Server) handleTaskCreate(_ *Client, r *proto.Request) proto.Response {
 		}
 		return proto.ErrResp(r.ID, proto.ErrInternal, err.Error())
 	}
-	s.saveLayout()
+	s.markLayoutDirty()
 	return proto.OKResp(r.ID, map[string]any{"task": rec.ID, "worktree": path})
 }
 
@@ -186,6 +186,7 @@ func (s *Server) handleTaskList(_ *Client, r *proto.Request) proto.Response {
 	if bad != nil {
 		return *bad
 	}
+	s.refreshProcess()
 	paneState := func(id string) string {
 		ev, ok := s.effectiveState(id)
 		if !ok {
@@ -266,10 +267,10 @@ func (s *Server) handleTaskClose(_ *Client, r *proto.Request) proto.Response {
 			}
 			repo, err := worktree.Repo(tk.Worktree)
 			if err == nil {
-				err = worktree.Remove(repo, tk.Label, false)
+				err = worktree.RemoveAt(repo, tk.Worktree)
 			}
 			if err != nil {
-				s.saveLayout()
+				s.markLayoutDirty()
 				return proto.ErrResp(r.ID, proto.ErrInternal,
 					fmt.Sprintf("task %s: its panes closed, but git kept the worktree at %s: %v. %s",
 						id, tk.Worktree, err, keepWorktreeHint))
@@ -277,10 +278,10 @@ func (s *Server) handleTaskClose(_ *Client, r *proto.Request) proto.Response {
 		}
 	}
 	if err := s.tree.CloseTask(id); err != nil {
-		s.saveLayout()
+		s.markLayoutDirty()
 		return noTask(r.ID, id)
 	}
-	s.saveLayout()
+	s.markLayoutDirty()
 	return proto.OKResp(r.ID, map[string]any{"task": id, "closed": true, "panes": closed})
 }
 
@@ -302,7 +303,7 @@ func (s *Server) handleTaskMove(_ *Client, r *proto.Request) proto.Response {
 		}
 		return noTask(r.ID, missing)
 	}
-	s.saveLayout()
+	s.markLayoutDirty()
 	s.recheckHolds()
 	return proto.OKResp(r.ID, map[string]any{"task": id, "parent": parent})
 }

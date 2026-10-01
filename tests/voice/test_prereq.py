@@ -15,13 +15,26 @@ def test_check_voice_prereqs_returns_a_result_with_the_three_flags():
     assert isinstance(result.espeak_available, bool)
 
 
-def test_ok_is_true_only_when_faster_whisper_is_available():
+def test_ok_is_true_only_when_a_speech_engine_is_available():
     assert PrereqResult(
         faster_whisper_available=True, ffmpeg_available=False, espeak_available=False
+    ).ok
+    assert PrereqResult(
+        faster_whisper_available=False,
+        ffmpeg_available=False,
+        espeak_available=False,
+        whisper_cpp_available=True,
     ).ok
     assert not PrereqResult(
         faster_whisper_available=False, ffmpeg_available=True, espeak_available=True
     ).ok
+
+
+def test_whisper_cpp_available_follows_whisper_cli_on_path(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: "/x" if name == "whisper-cli" else None)
+    assert check_voice_prereqs().whisper_cpp_available
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    assert not check_voice_prereqs().whisper_cpp_available
 
 
 def test_faster_whisper_available_is_true_when_the_module_is_real():

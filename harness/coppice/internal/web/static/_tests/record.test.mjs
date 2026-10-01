@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reset, element } from './browser-stub.mjs';
+import { reset, element, timers } from './browser-stub.mjs';
+import { createSpeech } from '../speech.js';
 import { mountRecord, statusForReply, contentTypeFor, canRecord, applyReply, voiceDownMessage, cleanTranscript, retryVoice } from '../record.js';
 
 const CLIP_BYTES = 'clip-bytes';
@@ -227,6 +228,33 @@ test('no MediaRecorder support leaves one sentence and never asks for the microp
   assert.equal(getUserMediaCalled, false, 'the microphone was requested on a browser with no MediaRecorder');
 });
 
+// Over plain http from another machine the browser gives no microphone at
+// all. The mic says that this is why, and that the fix is on the box, not
+// that the browser is too old.
+test('a page that is not a secure context says the mic needs https and names the fix on the box', async () => {
+  reset();
+  let getUserMediaCalled = false;
+  delete global.navigator.mediaDevices;
+  global.window.isSecureContext = false;
+  global.window.coppice = {
+    api: async () => ({}),
+    status: (msg) => { global.window.coppice.lastStatus = msg; },
+  };
+  try {
+    mountRecord();
+    element('record').dispatchEvent({ type: 'click' });
+    await flush();
+  } finally {
+    delete global.window.isSecureContext;
+  }
+  const m = global.window.coppice.lastStatus;
+  assert.equal(typeof m, 'object', 'the mic shows a message with its fix');
+  assert.ok(m.text.startsWith('The mic needs https here.'), m.text);
+  assert.ok(m.text.includes('coppice web serve --tls tailscale'), m.text);
+  assert.equal(m.away, true, 'the fix is on the box');
+  assert.equal(getUserMediaCalled, false);
+});
+
 // The failure this names: a transcribe the server refuses for another
 // reason, a clip too large, say, must leave the server's own sentence on
 // the status line, with no Retry, since trying again changes nothing.
@@ -437,4 +465,163 @@ test('two taps during the permission wait leave exactly one live stream, and Sto
   await flush();
 
   assert.equal(tracksStopped, 1, 'the microphone stream was not closed exactly once');
+});
+
+test('Retry on a starting voice follows it to Voice is ready', async () => {
+  reset();
+  const said = [];
+  let step = 0;
+  const replies = [
+    { ready: false, state: 'starting', message: 'Voice is starting.' },
+    { ready: false, state: 'starting', message: 'Voice is starting.', fetch: { done: 41000000, total: 160000000 } },
+    { ready: true, state: 'ready', message: '' },
+  ];
+  const api = async () => replies[Math.min(step++, replies.length - 1)];
+  const first = await retryVoice(api, (m) => said.push(m));
+  assert.equal(first.text, 'Voice is starting.');
+  for (let i = 0; i < 5 && said.at(-1)?.text !== 'Voice is ready.'; i += 1) {
+    await flush();
+    const t = timers.filter((x) => !x.cancelled).pop();
+    t.cancelled = true;
+    t.fn();
+    await flush();
+  }
+  assert.equal(said.at(-1).text, 'Voice is ready.');
+  assert.ok(said.some((m) => m.text === 'Getting the speech model, 41 of 160 MB.'));
+});
+
+test('voiceDownMessage says how far the speech model is, with no Retry', () => {
+  const m = voiceDownMessage({ ready: false, state: 'starting', message: 'Voice is starting.', fetch: { done: 41000000, total: 160000000 } });
+  assert.equal(m.text, 'Getting the speech model, 41 of 160 MB.');
+  assert.deepEqual(m.actions, []);
+  // Megabytes are 10**6, rounded half up.
+  assert.equal(voiceDownMessage({ ready: false, state: 'starting', fetch: { done: 499999, total: 1500000 } }).text,
+    'Getting the speech model, 0 of 2 MB.');
+  // A starting voice with no fetch keeps its Retry line.
+  assert.deepEqual(voiceDownMessage({ ready: false, state: 'starting', message: 'x' }).actions, [{ kind: 'voice', label: 'Retry' }]);
+});
+
+// The failure this names: the voice banner showed on every load, before
+// the owner had pressed the mic.
+test('the page says nothing about voice until the first Mic press', async () => {
+  reset();
+  installRecordingSupport();
+  const said = [];
+  global.window.coppice = {
+    api: async () => ({ ready: false, state: 'down', message: "Voice needs daisugi's voice extra. Press Retry." }),
+    status: (msg) => said.push(msg),
+  };
+  mountRecord();
+  await flush();
+  assert.deepEqual(said, [], 'a voice banner showed before the first Mic press');
+  element('record').dispatchEvent({ type: 'click' });
+  await flush();
+  assert.equal(said.length, 1);
+  assert.equal(said[0].text, "Voice needs daisugi's voice extra. Press Retry.");
+});
+
+// The failure this names: the first start was a silent minute. The mic
+// follows the download, then says Voice is ready.
+test('a mic pressed while voice gets its model follows the download and ends with Voice is ready', async () => {
+  reset();
+  installRecordingSupport();
+  const said = [];
+  let step = 0;
+  const replies = [
+    { ready: false, state: 'starting', message: 'Voice is starting.', fetch: { done: 41000000, total: 160000000 } },
+    { ready: false, state: 'starting', message: 'Voice is starting.', fetch: { done: 100000000, total: 160000000 } },
+    { ready: true, state: 'ready', message: '' },
+  ];
+  global.window.coppice = {
+    api: async () => replies[Math.min(step++, replies.length - 1)],
+    status: (msg) => said.push(msg),
+  };
+  mountRecord(); // step 0 is read here, silently
+  await flush();
+  assert.deepEqual(said, []);
+  element('record').dispatchEvent({ type: 'click' });
+  await flush();
+  assert.equal(said.at(-1).text, 'Getting the speech model, 100 of 160 MB.');
+  for (let i = 0; i < 4 && said.at(-1).text !== 'Voice is ready.'; i += 1) {
+    const t = timers.filter((x) => !x.cancelled).pop();
+    t.cancelled = true;
+    t.fn();
+    await flush();
+  }
+  assert.equal(said.at(-1).text, 'Voice is ready.');
+});
+
+// The failure this names: the chat bar's mic could send what it heard. It
+// only fills the chat box; a Send is the owner's.
+test('the chat bar mic fills the chat box and sends nothing', async () => {
+  reset();
+  installRecordingSupport();
+  const calls = [];
+  global.window.coppice = {
+    api: async (path) => {
+      calls.push(path);
+      return path.startsWith('/api/voice/transcribe') ? { text: 'check the tests' } : { ready: true };
+    },
+    status: () => {},
+  };
+  element('tell-mic').textContent = 'Mic';
+  mountRecord('tell-mic', 'tell-text', 'chat box');
+  await flush();
+  element('tell-mic').dispatchEvent({ type: 'click' });
+  await flush();
+  element('tell-mic').dispatchEvent({ type: 'click' });
+  await flush();
+  await flush();
+  assert.equal(element('tell-text').value, 'check the tests');
+  assert.ok(calls.every((c) => c.startsWith('/api/voice/')), 'the mic called ' + calls.join(', '));
+});
+
+// A clip that fills the tell bar marks the next message to the foreman as
+// spoken, so its reply is read aloud. A clip into a pane's own prompt box
+// is for that agent, and marks nothing.
+test('the tell bar mic marks the message as spoken', async () => {
+  reset();
+  installRecordingSupport();
+  const speech = { marks: 0, markVoiced() { this.marks += 1; }, pressMic() {} };
+  global.window.coppice = { api: async (path) => (path.startsWith('/api/voice/transcribe') ? { text: 'check the tests' } : { ready: true }), status: () => {}, speech };
+  element('tell-mic').textContent = 'Mic';
+  mountRecord('tell-mic', 'tell-text', 'tell bar', true);
+  await flush();
+  element('tell-mic').dispatchEvent({ type: 'click' });
+  await flush();
+  element('tell-mic').dispatchEvent({ type: 'click' });
+  await flush();
+  await flush();
+  assert.equal(speech.marks, 1);
+});
+
+test('a pane prompt mic marks nothing, so a typed message to the foreman is not read aloud', async () => {
+  reset();
+  installRecordingSupport();
+  const spoken = [];
+  const chat = [];
+  const speech = createSpeech({
+    say: async () => { throw new Error('no server'); },
+    info: async () => ({ mode: 'browser' }),
+    chat: async () => chat.slice(),
+    audio: () => null,
+    synth: () => ({ speak: async (t) => { spoken.push(t); }, cancel() {}, unlock() {} }),
+    status: () => {},
+    storage: null,
+  });
+  global.window.coppice = { api: async (path) => (path.startsWith('/api/voice/transcribe') ? { text: 'echo hello' } : { ready: true }), status: () => {}, speech };
+  mountRecord(); // the pane's own record button and prompt box
+  await flush();
+  element('record').dispatchEvent({ type: 'click' });
+  await flush();
+  element('record').dispatchEvent({ type: 'click' });
+  await flush();
+  await flush();
+  assert.equal(element('text').value, 'echo hello');
+  // The owner then types a sentence to the foreman, and the foreman answers.
+  await speech.beforeSend();
+  chat.push({ id: 1, role: 'agent', text: 'The foreman answers the typed sentence.' });
+  await speech.onEvent({ event: 'messages', chat: true });
+  await flush();
+  assert.deepEqual(spoken, []);
 });

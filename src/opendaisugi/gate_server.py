@@ -47,6 +47,21 @@ def _peer_pid(sock: socket.socket) -> int | None:
     return pid
 
 
+def _path_refusal(argv: list[str], report: bool):
+    """The deny for a request that names a path, in the caller's format."""
+    from opendaisugi.fence_runs import PATH_REFUSAL
+
+    if report:
+        from opendaisugi._state_report import HookReportOutcome
+
+        return HookReportOutcome("", f"daisugi hook report: {PATH_REFUSAL}", 1)
+    import time
+
+    from opendaisugi.gate import _deny, _fmt_from_argv, _outcome
+
+    return _outcome(_deny("enforce", PATH_REFUSAL, t0=time.monotonic()), _fmt_from_argv(argv))
+
+
 class _Handler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
         from opendaisugi.gate import run_argv
@@ -82,18 +97,29 @@ class _Handler(socketserver.StreamRequestHandler):
             # The caller's coppice data directory. It can only add a
             # directory the hard-deny rules guard, never remove one.
             caller_data_dir = _str_or_none(req.get("coppice_data_dir"))
-            if argv[:2] == ["hook", "report"]:
+            from opendaisugi import fence_runs
+
+            root: Path = self.server.gate_root  # type: ignore[attr-defined]
+            captures: Path | None = self.server.captures_root  # type: ignore[attr-defined]
+            report = argv[:2] == ["hook", "report"]
+            words = argv[2:] if report else argv
+            if fence_runs.names_a_path(words):
+                # The server takes no path from a request (FN-R-21): its
+                # root and captures root were fixed when it started.
+                out = _path_refusal(words, report)
+            elif report:
                 from opendaisugi._state_report import hook_report_argv
                 from opendaisugi.gate import _pane_free_env
 
                 out = hook_report_argv(
-                    argv[2:],
+                    ["--root", str(root), *words],
                     raw,
                     coppice_sock=caller_sock,
                     coppice_pane=caller_pane,
                     herdr_pane=caller_herdr_pane,
                     peer_pid=caller_peer_pid,
                     env=_pane_free_env(),
+                    resident=True,
                 )
             else:
                 from opendaisugi.gate import resident_call
@@ -104,8 +130,12 @@ class _Handler(socketserver.StreamRequestHandler):
                     herdr_pane=caller_herdr_pane,
                     peer_pid=caller_peer_pid,
                     data_dir=caller_data_dir,
+                    workspace=fence_runs.bound_workspace(root, caller_peer_pid),
                 ):
-                    out = run_argv(argv, raw)
+                    fixed = ["--root", str(root)]
+                    if captures is not None:
+                        fixed += ["--captures-root", str(captures)]
+                    out = run_argv([*fixed, *words], raw)
             reply = {"v": 1, "stdout": out.stdout, "stderr": out.stderr, "exit_code": out.exit_code}
         self.wfile.write(json.dumps(reply).encode() + b"\n")
 
@@ -168,9 +198,17 @@ class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
 
 
 def serve(
-    root: Path, *, ready: threading.Event | None = None, stop: threading.Event | None = None
+    root: Path,
+    *,
+    captures_root: Path | None = None,
+    ready: threading.Event | None = None,
+    stop: threading.Event | None = None,
 ) -> None:
     """Serve gate verdicts on ``<root>/gate.sock`` until ``stop`` is set (or forever).
+
+    ``root`` and ``captures_root`` are fixed here, by the trusted parent that
+    starts the server. A request never names either (FN-R-21): the server
+    puts its own in front of every call and denies a request that names one.
 
     Thread-per-connection (``ThreadingMixIn``): a later plan blocks a gate
     call for up to 90 s waiting on an operator, and a single-connection
@@ -232,6 +270,8 @@ def serve(
     if state == "stale":
         sock.unlink()
     with _Server(str(sock), _Handler) as srv:
+        srv.gate_root = root  # type: ignore[attr-defined]
+        srv.captures_root = captures_root  # type: ignore[attr-defined]
         inode = os.lstat(sock).st_ino
         try:
             os.chmod(sock, 0o600)

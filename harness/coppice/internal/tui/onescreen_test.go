@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -121,7 +122,7 @@ func TestALeftWindowFillsAndTheCursorStaysOnALiveRow(t *testing.T) {
 
 func TestStartOnANarrowScreenKeepsTheKeysOnTheRail(t *testing.T) {
 	m := startModel()
-	f := testFloor(m, 100)
+	f := testFloor(m, 80)
 	f.startFill()
 	if m.Typing != "" || m.Talking {
 		t.Fatalf("typing %q talking %v, want the rail", m.Typing, m.Talking)
@@ -608,11 +609,18 @@ func TestEscKeepsTheOldLabel(t *testing.T) {
 // exit. The line stays.
 func TestAnAgentThatEndsLeavesWithTheEndedLine(t *testing.T) {
 	s := newTestServer(t)
-	id := createShellPane(t, s.Socket(), "sh", "-c", "echo hello; sleep 1; exit 3")
+	// The agent ends when the test says so, not after a wall-clock sleep: a
+	// slow layout save on a busy disk can make create and rename take over a
+	// second, and a timed agent then ended before the floor started.
+	stop := filepath.Join(t.TempDir(), "stop")
+	id := createShellPane(t, s.Socket(), "sh", "-c", "echo hello; while [ ! -e "+stop+" ]; do sleep 0.1; done; exit 3")
 	rawCall(t, s.Socket(), "pane.rename", map[string]any{"pane": id, "label": "flaky"})
 	pw, out, done := startFloor(t, s.Socket(), 140)
 	if !waitFor(t, 5*time.Second, func() bool { return typingHeader(strings.Split(lastFrame(out.String()), "\r\n")) != "" }) {
-		t.Fatal("the floor did not open typing in the window")
+		t.Fatalf("the floor did not open typing in the window: %q", stripSGR(lastFrame(out.String())))
+	}
+	if err := os.WriteFile(stop, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if !waitFor(t, 8*time.Second, func() bool {
 		return strings.Contains(lastFrame(out.String()), sgrAmber+"flaky ended (exit 3)")
@@ -637,9 +645,16 @@ func TestAnAgentThatEndsLeavesWithTheEndedLine(t *testing.T) {
 // back with the ended line.
 func TestAnAttachedAgentThatEndsReturnsToTheFloor(t *testing.T) {
 	s := newTestServer(t)
-	createShellPane(t, s.Socket(), "sh", "-c", "echo hello; sleep 1; exit 0")
+	stop := filepath.Join(t.TempDir(), "stop")
+	createShellPane(t, s.Socket(), "sh", "-c", "echo hello; while [ ! -e "+stop+" ]; do sleep 0.1; done; exit 0")
 	pw, out, done := startFloor(t, s.Socket(), 80)
 	_, _ = io.WriteString(pw, "\r")
+	if !waitFor(t, 5*time.Second, func() bool { return strings.Contains(stripSGR(out.String()), "hello") }) {
+		t.Fatalf("the floor did not attach: %q", stripSGR(lastFrame(out.String())))
+	}
+	if err := os.WriteFile(stop, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if !waitFor(t, 8*time.Second, func() bool {
 		last := stripSGR(lastFrame(out.String()))
 		return strings.Contains(last, "ended (exit 0)") && strings.Contains(last, "Recent (1)")

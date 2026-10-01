@@ -73,15 +73,67 @@ func (s *Server) handleAttach(c *Client, r *proto.Request) proto.Response {
 	// A view-only attach watches the pane at the size it has. It never
 	// resizes, and the connection may not write to the pane afterwards.
 	viewOnly, _ := r.Bool("view_only")
+	fit, hasFit, badFit := fitOf(r)
+	if badFit != nil {
+		return *badFit
+	}
+	// fitMu covers the whole attach, so two clients that attach at once
+	// cannot both find the pane free.
+	// The record's new size goes to disk after the fit lock is let go
+	// (CP-R-53): a save waits on a slow disk, and the lock held through it
+	// made every other attach wait too, past its 5 s ack. The full attach
+	// saves before it tells presence; this defer, which runs after
+	// unlockFit's, saves for the attach that was already in place.
+	needSave := false
+	defer func() {
+		if needSave {
+			s.markLayoutDirty()
+		}
+	}()
+	s.fitMu.Lock()
+	fitUnlocked := false
+	unlockFit := func() {
+		if !fitUnlocked {
+			fitUnlocked = true
+			s.fitMu.Unlock()
+		}
+	}
+	defer unlockFit()
+	// Another client's fit ends the moment this client attaches.
+	s.restoreFitLocked(id, c)
+	fitted := false
 	if cols, okc := r.Int("cols"); okc && !viewOnly {
 		if rows, okr := r.Int("rows"); okr && cols > 0 && rows > 0 {
-			if lp.PTY != nil {
-				_ = lp.PTY.Resize(cols, rows)
-			} else {
-				_ = lp.Grid.Resize(cols, rows)
-			}
-			_ = s.updatePane(id, func(x *layout.Pane) { x.Cols, x.Rows = cols, rows })
+			s.resizeLocked(id, lp, cols, rows)
+			needSave = true
 		}
+	}
+	// A client whose fit a resize ended is not fitted again until it
+	// detaches and attaches fresh.
+	c.mu.Lock()
+	refused := c.fitEnded[id]
+	c.mu.Unlock()
+	if hasFit && !viewOnly && !refused {
+		if held, mine := s.fits[id]; mine && held.client == c {
+			resizeLive(lp, fit[0], fit[1])
+			fitted = true
+		} else if !s.othersAttached(id, c) {
+			if info, ok := s.paneInfo(id); ok {
+				if s.fits == nil {
+					s.fits = map[string]fitHold{}
+				}
+				s.fits[id] = fitHold{client: c, cols: info.Cols, rows: info.Rows}
+				resizeLive(lp, fit[0], fit[1])
+				fitted = true
+			}
+		}
+	}
+	reply := func() proto.Response {
+		res := map[string]any{"pane": id, "attached": true}
+		if hasFit {
+			res["fitted"] = fitted
+		}
+		return proto.OKResp(r.ID, res)
 	}
 
 	c.mu.Lock()
@@ -92,7 +144,7 @@ func (s *Server) handleAttach(c *Client, r *proto.Request) proto.Response {
 	}
 	if _, already := c.Attached[id]; already {
 		c.mu.Unlock()
-		return proto.OKResp(r.ID, map[string]any{"pane": id, "attached": true})
+		return reply()
 	}
 	fs := pane.NewFrameState()
 	c.Attached[id] = fs
@@ -114,8 +166,117 @@ func (s *Server) handleAttach(c *Client, r *proto.Request) proto.Response {
 	c.mu.Unlock()
 
 	go s.framePump(c, id, fs, flow)
+	unlockFit()
+	// The save comes before the presence event, as in the Rust server.
+	if needSave {
+		needSave = false
+		s.markLayoutDirty()
+	}
 	s.tellPresence(id)
-	return proto.OKResp(r.ID, map[string]any{"pane": id, "attached": true})
+	return reply()
+}
+
+// fitHold is the size a pane had before a client fitted it, and the client
+// that holds the fit.
+type fitHold struct {
+	client     *Client
+	cols, rows int
+}
+
+// FitMaxCols and FitMaxRows cap a fit. A phone never needs more.
+const (
+	FitMaxCols = 1000
+	FitMaxRows = 500
+)
+
+// fitOf reads the fit of a pane.attach. ok is false when the request has
+// none. A fit that is not an object with whole cols from 1 to FitMaxCols
+// and rows from 1 to FitMaxRows is a bad_request.
+func fitOf(r *proto.Request) (size [2]int, ok bool, bad *proto.Response) {
+	raw, has := r.Raw("fit")
+	if !has {
+		return size, false, nil
+	}
+	var f struct {
+		Cols *int `json:"cols"`
+		Rows *int `json:"rows"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil || f.Cols == nil || f.Rows == nil ||
+		*f.Cols <= 0 || *f.Rows <= 0 || *f.Cols > FitMaxCols || *f.Rows > FitMaxRows {
+		resp := proto.ErrResp(r.ID, proto.ErrBadRequest, "fit needs cols from 1 to 1000 and rows from 1 to 500.")
+		return size, false, &resp
+	}
+	return [2]int{*f.Cols, *f.Rows}, true, nil
+}
+
+// resizeLive sets the size of a pane's terminal and grid and nothing else.
+// A fit and its restore use it, so the layout record keeps the owner's size
+// and a crash or restart never saves the phone's.
+func resizeLive(lp *LivePane, cols, rows int) {
+	if lp.PTY != nil {
+		_ = lp.PTY.Resize(cols, rows)
+	} else {
+		_ = lp.Grid.Resize(cols, rows)
+	}
+}
+
+// resizeLocked sets a pane's size and its record in memory. The caller
+// holds fitMu, and saves the layout once it let go of it.
+func (s *Server) resizeLocked(id string, lp *LivePane, cols, rows int) {
+	resizeLive(lp, cols, rows)
+	_ = s.setRecord(id, func(x *layout.Pane) { x.Cols, x.Rows = cols, rows })
+}
+
+// othersAttached is true when a client other than c is attached to pane id,
+// a view included.
+func (s *Server) othersAttached(id string, c *Client) bool {
+	s.mu.Lock()
+	clients := make([]*Client, 0, len(s.clients))
+	for o := range s.clients {
+		clients = append(clients, o)
+	}
+	s.mu.Unlock()
+	for _, o := range clients {
+		if o == c || o.Dead() {
+			continue
+		}
+		o.mu.Lock()
+		_, on := o.Attached[id]
+		o.mu.Unlock()
+		if on {
+			return true
+		}
+	}
+	return false
+}
+
+// restoreFitLocked puts the old size back when a client other than c holds
+// the fit of pane id. With c nil it puts it back whoever holds it. The
+// caller holds fitMu.
+func (s *Server) restoreFitLocked(id string, c *Client) {
+	held, ok := s.fits[id]
+	if !ok || (c != nil && held.client == c) {
+		return
+	}
+	delete(s.fits, id)
+	if lp, live := s.Live(id); live {
+		resizeLive(lp, held.cols, held.rows)
+	}
+}
+
+// releaseFit puts the old size back when c holds the fit of pane id, as the
+// client detaches or ends. It also clears the mark a resize left, so the
+// client's next attach is fresh and may fit again. Both happen under fitMu,
+// so a resize cannot mark the client after the mark is cleared.
+func (s *Server) releaseFit(id string, c *Client) {
+	s.fitMu.Lock()
+	defer s.fitMu.Unlock()
+	c.mu.Lock()
+	delete(c.fitEnded, id)
+	c.mu.Unlock()
+	if held, ok := s.fits[id]; ok && held.client == c {
+		s.restoreFitLocked(id, nil)
+	}
 }
 
 // looking is the sorted names of the people attached to pane id now: each
@@ -223,6 +384,7 @@ func (s *Server) framePump(c *Client, paneID string, fs *pane.FrameState, flow *
 		}
 		c.mu.Unlock()
 		if was {
+			s.releaseFit(paneID, c)
 			s.tellPresence(paneID)
 		}
 	}
@@ -407,6 +569,7 @@ func (s *Server) handleDetach(c *Client, r *proto.Request) proto.Response {
 		return proto.ErrResp(r.ID, proto.ErrNotAttached,
 			fmt.Sprintf("this client is not attached to %s. Run: coppice attach %s", id, id))
 	}
+	s.releaseFit(id, c)
 	s.tellPresence(id)
 	return proto.OKResp(r.ID, map[string]any{"pane": id, "attached": false})
 }
@@ -425,10 +588,10 @@ func (s *Server) handleSubscribe(c *Client, r *proto.Request) proto.Response {
 	}
 	for _, k := range kinds {
 		switch k {
-		case "state", "layout", "frame", "note", "child", "presence":
+		case "state", "layout", "frame", "note", "child", "presence", "messages":
 		default:
 			return proto.ErrResp(r.ID, proto.ErrBadRequest,
-				fmt.Sprintf("kind %q is not state, layout, frame, note, child or presence", k))
+				fmt.Sprintf("kind %q is not state, layout, frame, note, child, presence or messages", k))
 		}
 	}
 	var panes []string
@@ -474,5 +637,10 @@ func (s *Server) handleSubscribe(c *Client, r *proto.Request) proto.Response {
 		}
 	}
 	c.mu.Unlock()
+	for _, k := range kinds {
+		if k == "messages" {
+			s.watchMessages()
+		}
+	}
 	return proto.OKResp(r.ID, map[string]any{"kinds": kinds, "panes": panes})
 }

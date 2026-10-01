@@ -11,8 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	"daisugi-verify/internal/fenceruns"
 	"daisugi-verify/internal/gate"
 	"daisugi-verify/internal/gateroot"
+	"daisugi-verify/internal/statefile"
 )
 
 // maxResidentChildren bounds the calls decided at once. Each is a child
@@ -24,8 +26,13 @@ const maxResidentChildren = 32
 // line, then the connection is closed. Each gate call is decided in a
 // child process of this binary, so no crash of one call ends the server
 // or reads as an allow.
+// capturesServeOpt fixes the captures root when the server starts: a
+// request never names one (FN-R-21).
+var capturesServeOpt = opt{names: []string{"--captures-root"}, value: true, metavar: "PATH",
+	help: "Mirror allowed calls into this captures root. Fixed at start: a request never names one."}
+
 func (e *Env) gateServe(args []string) error {
-	opts := []opt{rootOpt}
+	opts := []opt{rootOpt, capturesServeOpt}
 	p, err := parseArgs(args, opts, 0)
 	if err != nil {
 		return e.usage("gate serve", err)
@@ -34,6 +41,10 @@ func (e *Env) gateServe(args []string) error {
 		return e.cmdHelp("gate serve", "", "Run the resident gate in the foreground (Ctrl-C to stop).", opts)
 	}
 	root := e.root(p)
+	srv := serveRoots{root: root}
+	if p.has("--captures-root") {
+		srv.captures = gateroot.PathStr(p.str("--captures-root", ""))
+	}
 	sock := gateroot.Join(root, "gate.sock")
 	// A live gate keeps its socket; a second server never takes it over.
 	if probeGate(sock) == gateLive {
@@ -91,7 +102,7 @@ func (e *Env) gateServe(args []string) error {
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
-		go e.serveConn(c, childEnv, slots)
+		go e.serveConn(c, childEnv, slots, srv)
 	}
 }
 
@@ -198,8 +209,11 @@ func mkdirPy(d string) error {
 	return err
 }
 
+// serveRoots are the paths a server fixes when it starts.
+type serveRoots struct{ root, captures string }
+
 // serveConn answers one connection: _Handler.handle.
-func (e *Env) serveConn(c *net.UnixConn, childEnv []string, slots chan struct{}) {
+func (e *Env) serveConn(c *net.UnixConn, childEnv []string, slots chan struct{}, srv serveRoots) {
 	defer c.Close()
 	// A failure here ends this connection with no reply, which every
 	// client reads as a deny; it never ends the server.
@@ -212,11 +226,31 @@ func (e *Env) serveConn(c *net.UnixConn, childEnv []string, slots chan struct{})
 		return
 	}
 	q.Caller.PeerPid = peer
+	report := q.IsHookReport()
+	words := q.Argv
+	if report {
+		words = q.Argv[2:]
+	}
 	var reply []byte
-	if q.IsHookReport() {
-		out, errText, code := gate.HookReport(q.Argv[2:], q.Stdin, q.Caller, childEnv)
+	if fenceruns.NamesAPath(words) {
+		// The server takes no path from a request (FN-R-21): its root and
+		// captures root were fixed when it started.
+		if report {
+			reply = gate.ReplyLine("", "daisugi hook report: "+fenceruns.PathRefusal, 1)
+		} else {
+			res := gate.DenyResult(gate.FormatFromArgv(words), fenceruns.PathRefusal)
+			reply = gate.ReplyLine(res.OutStdout, res.OutStderr, res.Exit)
+		}
+	} else if report {
+		out, errText, code := gate.HookReport(append([]string{"--root", srv.root}, words...), q.Stdin, q.Caller, childEnv)
 		reply = gate.ReplyLine(out, errText, code)
 	} else {
+		fixed := []string{"--root", srv.root}
+		if srv.captures != "" {
+			fixed = append(fixed, "--captures-root", srv.captures)
+		}
+		q.Argv = append(fixed, words...)
+		q.Caller.Workspace = fenceruns.BoundWorkspace(srv.root, peer)
 		slots <- struct{}{}
 		var res gate.Result
 		if e.GateExe != "" {
@@ -225,6 +259,7 @@ func (e *Env) serveConn(c *net.UnixConn, childEnv []string, slots chan struct{})
 			res = gate.RunResident(q, childEnv)
 		}
 		<-slots
+		statefile.GiveNotes([]byte(res.Notes))
 		if res.Help {
 			// argparse's --help is SystemExit(0) in the oracle's handler:
 			// the connection ends with no reply.

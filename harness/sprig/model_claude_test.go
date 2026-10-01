@@ -175,13 +175,17 @@ func TestAgentRunsEndToEndWithClaudeCodeModelFake(t *testing.T) {
 }
 
 func TestClaudeArgsRequestsJSONOutputAndBindsModelSafely(t *testing.T) {
-	args := claudeArgs("claude", "haiku")
+	args := claudeArgs("claude", "haiku", false, "", nil)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "--output-format json") {
 		t.Fatalf("want --output-format json in argv, got %v", args)
 	}
 	if !strings.Contains(joined, "--model=haiku") {
 		t.Fatalf("want --model=haiku (bound form, never a separate token), got %v", args)
+	}
+	// A call that persists a session shows up in the owner's old chats.
+	if !strings.Contains(joined, "--no-session-persistence") {
+		t.Fatalf("want --no-session-persistence in argv, got %v", args)
 	}
 	for _, a := range args {
 		if a == "haiku" {

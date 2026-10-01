@@ -103,7 +103,7 @@ fn main() {
             if let Some(p) = &prepared {
                 let original = t.value("original") == &Value::Bool(true) && p.decision.downgraded;
                 let served = t.value("served").as_str().map(String::from);
-                record(&gw, p, &usage, original, t.value("answer").as_str().unwrap_or_default(), served.as_deref(), now_ns());
+                record(&gw, p, &usage, original, t.value("answer").as_str().unwrap_or_default(), served.as_deref(), false, now_ns());
             }
             let after = lines(&journal);
             let recs: Vec<Value> = after[before.min(after.len())..]

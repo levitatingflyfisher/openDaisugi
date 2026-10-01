@@ -1,0 +1,31 @@
+# A pane.resize from a client that is not attached ends the fit of the
+# case's connection, the phone here. The presence it sends makes a phone
+# attach with its fit again, and that refit must not undo the resize: it
+# answers fitted false and the pane keeps the resized size. A detach and a
+# fresh attach fit again, and the detach after it puts the resized size back.
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "alpha", "cols": 40, "rows": 10}
+{"id": "$id", "ok": true, "result": {"pane": "$a"}}
+{"id": "a1", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 50, "rows": 30}}
+{"id": "$id", "ok": true, "result": {"attached": true, "fitted": true}}
+{"id": "y1", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "r1", "cli": ["pane", "resize", "$a", "--cols", "60", "--rows", "20"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "a2", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 50, "rows": 30}}
+{"id": "$id", "ok": true, "result": {"attached": true, "fitted": false}}
+{"id": "l1", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 60, "rows": 20}]}}
+{"id": "y2", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "d1", "cmd": "pane.detach", "pane": "$a"}
+{"id": "$id", "ok": true, "result": {"attached": false}}
+{"id": "a3", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 50, "rows": 30}}
+{"id": "$id", "ok": true, "result": {"attached": true, "fitted": true}}
+{"id": "l2", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 50, "rows": 30}]}}
+{"id": "y3", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "d2", "cmd": "pane.detach", "pane": "$a"}
+{"id": "$id", "ok": true, "result": {"attached": false}}
+{"id": "l3", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 60, "rows": 20}]}}

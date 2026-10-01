@@ -131,6 +131,11 @@ class DryRunExecutor:
                 msg = f"[dry-run] would skill: {step.skill_id} input={step.skill_input!r}"
             case "mcp":
                 msg = f"[dry-run] would mcp: {step.server}/{step.tool} args={step.arguments!r}"
+            case "agentic":
+                msg = (
+                    f"[dry-run] would agentic: {step.prompt!r} in {step.workspace} "
+                    f"tools={step.tools!r}"
+                )
             case _:  # pragma: no cover - unreachable; Pydantic rejects at parse time
                 msg = f"[dry-run] unknown step kind: {step.type!r}"
         return ExecutorResult(rc=0, stdout=msg, duration_ms=0.0, timed_out=False)
@@ -597,10 +602,12 @@ class SubprocessExecutor:
         # stdout (single pipe), so a lone reader thread can't deadlock. When the
         # cap is hit the reader stops; the process then blocks on a full pipe and
         # is killed below, so it can't run unbounded.
-        holder: dict = {"out": b"", "truncated": False}
+        # The reader appends to buf as it reads, so the output read so far is
+        # there even when a writer outlives the step and the reader is left.
+        buf = bytearray()
+        holder: dict = {"truncated": False}
 
         def _reader() -> None:
-            buf = bytearray()
             try:
                 while len(buf) < max_output_bytes:
                     chunk = proc.stdout.read(min(65536, max_output_bytes - len(buf)))
@@ -619,7 +626,6 @@ class SubprocessExecutor:
                         pass
             except (ValueError, OSError):
                 pass
-            holder["out"] = bytes(buf)
 
         reader = threading.Thread(target=_reader, daemon=True)
         reader.start()
@@ -637,15 +643,28 @@ class SubprocessExecutor:
         # if it's still alive, kill the group so it can't keep running.
         if proc.poll() is None:
             self._kill_group(proc)
-        reader.join(timeout=2)
-        try:
-            proc.stdout.close()
-        except Exception:
-            pass
+        # Read to EOF. A background child the shell left can hold the pipe
+        # open after the shell exits, so the wait is bounded by the step's
+        # own time; past it the group is killed and the output read so far
+        # is kept.
+        reader.join(timeout=max(0.0, start + timeout_s - time.monotonic()))
+        if reader.is_alive():
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            reader.join(timeout=2)
+        if not reader.is_alive():
+            # Closing the pipe while the reader is still in a read would
+            # block until that read returns.
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
 
         duration_ms = (time.monotonic() - start) * 1000.0
         rc = proc.returncode if proc.returncode is not None else -1
-        stdout = holder["out"].decode(errors="replace")
+        stdout = bytes(buf).decode(errors="replace")
         if holder["truncated"]:
             stdout += "\n... [truncated]"
         return ExecutorResult(

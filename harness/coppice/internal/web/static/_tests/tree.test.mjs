@@ -374,7 +374,7 @@ test('a booted page fills Recent, and Resume all and Clear all reach the server'
   assert.equal(element('status').textContent, 'Forgot 1 ended agent.');
 });
 
-function newStub(reply) {
+function newStub(reply, extra = {}) {
   reset();
   for (const id of ['go-new', 'new-menu-btn', 'new-menu']) element(id);
   element('new-menu').hidden = true;
@@ -392,6 +392,7 @@ function newStub(reply) {
     near: () => near,
     made: (pane) => made.push(pane),
     go: (h) => went.push(h),
+    ...extra,
   });
   return { calls, made, said, went, api, setNear: (v) => { near = v; } };
 }
@@ -598,4 +599,152 @@ test('a failed project list says why in the menu', async () => {
 test('the empty rail names New', () => {
   stub({ panes: [], width: 1000 });
   assert.equal(element('roster-empty').textContent, 'No agents yet. Press New to start one.');
+});
+
+// F7: the picker counts, the missing rows, the New line that says where and
+// why, and the one line that tells the owner agents can come back.
+test('the New menu draws a missing project dim with (missing) and Remove, and Remove runs project.remove', async () => {
+  let listed = 0;
+  const s = newStub((cmd) => {
+    if (cmd === 'project.list') {
+      listed += 1;
+      return {
+        default: 'claude',
+        projects: listed > 1
+          ? [{ path: '/p/here', name: 'here', pinned: true, missing: false }]
+          : [{ path: '/p/gone', name: 'gone', pinned: true, missing: true }, { path: '/p/here', name: 'here', pinned: true, missing: false }],
+      };
+    }
+    return {};
+  });
+  click(element('new-menu-btn'));
+  await drain();
+  const row = element('new-menu').children[0];
+  assert.ok(row.className.includes('missing'), 'the missing row is not marked');
+  assert.equal(row.querySelector('.name').textContent, 'gone (missing)');
+  click(row);
+  await drain();
+  assert.equal(s.calls.filter((c) => c.cmd === 'pane.create').length, 0, 'a click on a missing row started an agent');
+  const remove = row.querySelectorAll('button').find((b) => b.textContent === 'Remove');
+  assert.ok(remove, 'no Remove on the missing row');
+  click(remove);
+  await drain();
+  assert.deepEqual(s.calls.find((c) => c.cmd === 'project.remove'), { cmd: 'project.remove', path: '/p/gone' });
+  assert.deepEqual(s.said, ['Removed gone from the list.']);
+  assert.equal(element('new-menu').children[0].querySelector('.name').textContent, 'here');
+});
+
+test('each picker row shows the state counts of the agents in that project', async () => {
+  const panes = [
+    { id: 'a', state: 'blocked', cwd: '/p/one' }, { id: 'b', state: 'working', cwd: '/p/one' },
+    { id: 'c', state: 'working', cwd: '/p/one' }, { id: 'd', state: 'idle', cwd: '/p/two' },
+  ];
+  newStub((cmd) => (cmd === 'project.list'
+    ? { default: 'claude', projects: [{ path: '/p/one', name: 'one', pinned: true }, { path: '/p/two', name: 'two', pinned: true }, { path: '/p/zero', name: 'zero', pinned: true }] }
+    : {}), { panes: () => panes });
+  click(element('new-menu-btn'));
+  await drain();
+  const subs = element('new-menu').children.slice(0, 3).map((b) => b.querySelector('.sub').textContent);
+  assert.deepEqual(subs, ['1 needs · 2 working · pinned · /p/one', '1 idle · pinned · /p/two', 'pinned · /p/zero']);
+});
+
+test('the status line after New names the directory and says why it was chosen', async () => {
+  const replies = [
+    { pane: 'w1:p9', label: 'claude-glean', cwd: '/src/glean', why: 'recent' },
+    { pane: 'w1:p10', label: 'claude-glean-2', cwd: '/src/glean', why: 'near' },
+    { pane: 'w1:p11', label: 'claude-x', cwd: '/src/x', why: 'pinned' },
+    { pane: 'w1:p12', label: 'claude-y', cwd: '/src/y', why: 'start' },
+  ];
+  const s = newStub((cmd) => (cmd === 'pane.create' ? replies.shift() : {}));
+  for (let i = 0; i < 4; i++) { click(element('go-new')); await drain(); }
+  assert.deepEqual(s.said, [
+    'Started claude-glean in /src/glean (your last project).',
+    'Started claude-glean-2 in /src/glean.',
+    'Started claude-x in /src/x (a pinned project).',
+    'Started claude-y in /src/y (the start directory).',
+  ]);
+});
+
+// The booted page asks the server once. Agents that stopped at a restart
+// and can come back get one line with Resume all and Show them.
+async function bootWithStatus(statusResult) {
+  reset();
+  global.localStorage.setItem('coppice.token', TOKEN);
+  for (const id of ['recent', 'recent-list', 'recent-count', 'recent-resume-all', 'recent-clear', 'recent-confirm', 'roster', 'roster-empty', 'status', 'status-fix']) element(id);
+  setFetch(async () => ({ ok: true, status: 200, json: async () => ({ panes: [] }) }));
+  await freshApp();
+  await settle();
+  const ws = lastSocket();
+  const sent = [];
+  ws.send = (data) => {
+    const m = JSON.parse(data);
+    sent.push(m);
+    let result = {};
+    if (m.cmd === 'server.status') result = statusResult;
+    if (m.cmd === 'pane.list') result = { panes: m.ended ? [{ id: 'x', label: 'sh-x', cwd: '/w', exit_code: 1, ended_at: 1 }, { id: 'y', label: 'sh-y', cwd: '/w', ended_at: 1 }] : [] };
+    if (m.cmd === 'task.list') result = { tasks: [] };
+    if (m.cmd === 'pane.resume') result = { pane: 'n1', resumed: true };
+    setImmediate(() => ws.fire('message', { data: JSON.stringify({ id: m.id, ok: true, result }) }));
+  };
+  ws.simulateOpen();
+  await drain();
+  return { ws, sent };
+}
+
+test('after a restart with resumable agents the status line offers Resume all and Show them, once', async () => {
+  const { ws, sent } = await bootWithStatus({ resumable: 9, restore: { marked_done: 1, marked_unknown: 1, resumable: 2 } });
+  assert.equal(element('status').textContent, '2 agents stopped when coppice restarted.');
+  const labels = element('status-fix').children.map((b) => b.textContent);
+  assert.deepEqual(labels, ['Resume all', 'Show them']);
+  assert.equal(sent.filter((m) => m.cmd === 'server.status').length, 1);
+  click(element('status-fix').children[1]);
+  await drain();
+  assert.equal(element('recent').open, true, 'Show them did not open Recent');
+  assert.equal(element('status').textContent, '');
+  // A second open of the socket does not say it again.
+  ws.simulateOpen();
+  await drain();
+  assert.equal(element('status').textContent, '');
+  assert.equal(sent.filter((m) => m.cmd === 'server.status').length, 1);
+});
+
+test('Resume all on the restart line resumes every ended agent', async () => {
+  const { sent } = await bootWithStatus({ resumable: 9, restore: { marked_done: 1, marked_unknown: 0, resumable: 1 } });
+  assert.equal(element('status').textContent, '1 agent stopped when coppice restarted.');
+  click(element('status-fix').children[0]);
+  await drain();
+  assert.deepEqual(sent.filter((m) => m.cmd === 'pane.resume').map((m) => m.pane), ['x', 'y']);
+});
+
+test('no restart line when nothing stopped at a restart or nothing can resume', async () => {
+  // Every record the restart stopped has been resumed or forgotten since,
+  // though other ended records can still resume.
+  await bootWithStatus({ resumable: 3, restore: { marked_done: 2, marked_unknown: 0, resumable: 0 } });
+  assert.equal(element('status').textContent, '');
+  await bootWithStatus({ resumable: 3, restore: { marked_done: 0, marked_unknown: 0, resumable: 0 } });
+  assert.equal(element('status').textContent, '');
+});
+
+test('the restart line never takes the place of a line already on the status line', async () => {
+  reset();
+  global.localStorage.setItem('coppice.token', TOKEN);
+  for (const id of ['recent', 'recent-list', 'recent-count', 'recent-resume-all', 'recent-clear', 'recent-confirm', 'roster', 'roster-empty', 'status', 'status-fix']) element(id);
+  setFetch(async () => ({ ok: true, status: 200, json: async () => ({ panes: [] }) }));
+  await freshApp();
+  await settle();
+  const ws = lastSocket();
+  ws.send = (data) => {
+    const m = JSON.parse(data);
+    let result = {};
+    if (m.cmd === 'server.status') {
+      element('status').textContent = 'Could not reach the box.';
+      result = { restore: { resumable: 2 } };
+    }
+    if (m.cmd === 'pane.list') result = { panes: [] };
+    if (m.cmd === 'task.list') result = { tasks: [] };
+    setImmediate(() => ws.fire('message', { data: JSON.stringify({ id: m.id, ok: true, result }) }));
+  };
+  ws.simulateOpen();
+  await drain();
+  assert.equal(element('status').textContent, 'Could not reach the box.');
 });

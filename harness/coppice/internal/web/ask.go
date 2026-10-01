@@ -3,10 +3,10 @@ package web
 import (
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/opendaisugi/coppice/internal/gatefs"
 )
 
 var (
@@ -135,8 +135,11 @@ func (a AskChannel) Answer(r Reply) error {
 		return errors.New("web: no gate root. Options.Gate was never set")
 	}
 	id := SafeID(r.ToolUseID)
-	raw, err := os.ReadFile(filepath.Join(a.Root, "asks", id+".json"))
-	if err != nil {
+	// GR-R-10: the ask is read as the gate reads it, through no link and
+	// only from a file this user owns that group and other cannot write. A
+	// linked or shared ask is as good as gone.
+	raw, found, _ := gatefs.Read(a.Root, []string{"asks"}, id+".json", -1)
+	if !found {
 		return ErrNoAsk
 	}
 	var ask struct {
@@ -173,32 +176,11 @@ func (a AskChannel) Answer(r Reply) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(a.Root, "answers")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".answer-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(body); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	// Rename so a reader never sees half a file. Answer already read the ask
-	// before writing anything, so the answer's mtime is not earlier than the
-	// ask's. The gate's wait_answer rejects an answer older than the ask it
-	// claims to answer.
-	return os.Rename(tmp.Name(), filepath.Join(dir, id+".json"))
+	// GR-R-10: answers/ is checked with no link followed before anything is
+	// written, and the answer is made by openat and renamed inside that
+	// directory, so a link planted at answers/ or at the answer's name never
+	// carries the write elsewhere. The answer is made after the ask was
+	// read, so its mtime is not earlier than the ask's. The gate's
+	// wait_answer rejects an answer older than the ask it claims to answer.
+	return gatefs.Write(a.Root, []string{"answers"}, id+".json", body)
 }

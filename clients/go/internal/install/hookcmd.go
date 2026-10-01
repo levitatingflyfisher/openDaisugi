@@ -124,3 +124,27 @@ func SettingsJSON(self string, o HookOptions) string {
 		Set("PreToolUse", []any{HookEntry(self, o)}))
 	return pyjson.Dumps(doc, true)
 }
+
+// GateRootError is the ValueError install._absolute_gate_root raises.
+type GateRootError struct{ Msg string }
+
+func (g *GateRootError) Error() string { return g.Msg }
+
+// CheckGateRoot is install._absolute_gate_root. The hook bakes the gate
+// root, and the hook runs in the agent's workspace, so a relative root
+// would put the gate's state where the agent can write. It is refused.
+func CheckGateRoot(root string) error {
+	if strings.HasPrefix(root, "/") {
+		return nil
+	}
+	q := "'"
+	if strings.Contains(root, "'") && !strings.Contains(root, `"`) {
+		q = `"`
+	}
+	r := strings.ReplaceAll(root, `\`, `\\`)
+	if q == "'" {
+		r = strings.ReplaceAll(r, "'", `\'`)
+	}
+	return &GateRootError{"the gate root " + q + r + q + " is not an absolute path; " +
+		"set HOME, OPENDAISUGI_HOME or XDG_DATA_HOME to an absolute path"}
+}

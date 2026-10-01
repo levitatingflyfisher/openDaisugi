@@ -107,7 +107,7 @@ def test_install_router_switchyard_refuses_one_model_for_both_tiers(tmp_path, mo
 def test_install_rejects_an_unknown_router(tmp_path, monkeypatch):
     result = _install(tmp_path, monkeypatch, "--router", "fancy")
     assert result.exit_code == 1
-    assert "rules, switchyard, off" in _out(result)
+    assert "rules, switchyard, knn, model, off" in _out(result)
 
 
 def test_install_router_off_and_rules_persist_the_choice(tmp_path, monkeypatch):
@@ -153,7 +153,7 @@ def test_gateway_router_switchyard_needs_an_efficient_model(tmp_path, monkeypatc
 def test_gateway_rejects_an_unknown_router(tmp_path):
     result = runner.invoke(app, ["gateway", "--router", "fancy", "--data-dir", str(tmp_path)])
     assert result.exit_code == 1
-    assert "rules, switchyard, off" in _out(result)
+    assert "rules, switchyard, knn, model, off" in _out(result)
 
 
 def test_gateway_router_defaults_to_config(tmp_path, monkeypatch):
@@ -316,6 +316,7 @@ def test_router_status_json_shape(tmp_path, monkeypatch):
         "weeks",
         "escalation_built",
         "delegate",
+        "trial",
     }
     assert payload["children"] == []
 

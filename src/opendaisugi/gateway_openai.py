@@ -54,6 +54,16 @@ def extract_openai_text(data: dict) -> str:
         return ""
 
 
+def openai_stop_reason(finish: object) -> str | None:
+    """A chat finish_reason on the Anthropic stop-reason words the grader reads:
+    ``stop`` ends the turn and ``tool_calls`` is a tool step."""
+    if finish == "stop":
+        return "end_turn"
+    if finish in ("tool_calls", "function_call"):
+        return "tool_use"
+    return finish if isinstance(finish, str) else None
+
+
 class OpenAIUsageSniffer:
     """Incremental SSE reader: chat-chunk text deltas + the final usage chunk.
 
@@ -67,6 +77,7 @@ class OpenAIUsageSniffer:
     def __init__(self) -> None:
         self.usage: dict[str, int] = {}
         self.text: str = ""
+        self.stop_reason: str | None = None
         self._buf = ""
 
     def feed(self, chunk: bytes) -> None:
@@ -90,6 +101,9 @@ class OpenAIUsageSniffer:
                         text = delta.get("content")
                         if isinstance(text, str):
                             self.text += text
+                    stop = openai_stop_reason(choice.get("finish_reason"))
+                    if stop is not None:
+                        self.stop_reason = stop
                 normalized = normalize_openai_usage(obj.get("usage"))
                 if normalized:
                     self.usage.update(normalized)

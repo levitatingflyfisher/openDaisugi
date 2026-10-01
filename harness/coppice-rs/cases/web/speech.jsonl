@@ -1,0 +1,35 @@
+# The speech frame: a speech.say answer reaches the page as one binary
+# frame (4 byte header length, JSON header, audio), only on the socket that
+# asked. A failure and every other reply stay text. A socket that asked
+# for nothing gets no frame. The fake speech server is the one the cli
+# slice uses.
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/web/bin/fake-daisugi
+#!env FAKE_BUNDLE_FILE={FIXTURES}/web/speech-bundle.json
+#!config [voice]
+#!config enabled = false
+#!config speak_url = "http://{ADDR2}"
+#!config speak_model = "m1"
+#!config speak_voice = "v1"
+#!config speak_profile = "tts"
+{"id":"w0","write":"{DATA}/web/token","text":"pinned-web-token-0001\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"n1","write":"{DATA}/web/token-names.json","text":"{\"tokens\":[{\"name\":\"kid\",\"token\":\"kid-token-0001\"}]}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"p1","cmd":"pane.create","cwd":"{START}","cmd_argv":["/usr/bin/python3","{FIXTURES}/web/fake-speech.py","{ADDR2}"],"kind":"pty","label":"speech"}
+{"id":"$id","ok":true,"result":{"pane":"$sp"}}
+{"id":"v1","cli":["web","serve","--tls","off","--listen","{ADDR}","--qr=false"],"bg":"web"}
+{"id":"$id","ok":true,"result":{"started":true}}
+{"id":"g0","http":"GET","url":"http://{ADDR}/","wait_ms":8000}
+{"id":"$id","ok":true,"result":{"status":200}}
+#!retry 8000
+{"id":"s1","ws":"ws://{ADDR}/ws","protocols":["daisugi.v1","daisugi.bearer.pinned-web-token-0001"],"order_free":true,"send":["{\"id\":\"1\",\"cmd\":\"speech.say\",\"text\":\"Hello there.\"}","{\"id\":\"2\",\"cmd\":\"speech.say\",\"text\":\"error\"}","{\"id\":\"3\",\"cmd\":\"pane.list\"}","{\"id\":\"4\",\"cmd\":\"speech.say\",\"text\":\"whoami\"}","{\"id\":\"5\",\"cmd\":\"speech.status\"}"]}
+{"id":"$id","ok":true,"result":{"status":101,"frames":[{"id":"1","binary":{"keys":["event","id","type"],"event":"speech","type":"audio/mpeg","audio":"SUQzIGZha2UgYXVkaW8="}},{"id":"2","ok":false,"error":{"code":"adapter_error","message":"The speech server at {ADDR2} answered 404. Check [voice] speak_model, speak_voice and speak_profile in coppice.toml."}},{"id":"3","ok":true,"result":"*"},{"id":"4","binary":{"keys":["event","id","type"],"event":"speech","type":"audio/mpeg","audio":"YXV0aD1CZWFyZXIgc2stdGVzdC0wMDAwIG1vZGVsPW0xIHZvaWNlPXYxIGZvcm1hdD1tcDM="}},{"id":"5","ok":true,"result":{"mode":"server","model":"m1","profile":"tts","url":"http://{ADDR2}/v1/audio/speech","voice":"v1"}}]}}
+# A socket that asked for no speech gets no frame.
+{"id":"s2","ws":"ws://{ADDR}/ws","protocols":["daisugi.v1","daisugi.bearer.pinned-web-token-0001"],"send":["{\"id\":\"1\",\"cmd\":\"pane.list\"}"]}
+{"id":"$id","ok":true,"result":{"status":101,"frames":[{"id":"1","ok":true,"result":"*"}]}}
+# A named token (a kid's) may not read aloud, as it may not read the chat:
+# both refusals stay text, and no frame comes.
+{"id":"k1","ws":"ws://{ADDR}/ws","protocols":["daisugi.bearer.kid-token-0001","daisugi.v1"],"order_free":true,"send":["{\"id\":\"1\",\"cmd\":\"speech.say\",\"text\":\"Hello there.\"}","{\"id\":\"2\",\"cmd\":\"speech.status\"}"]}
+{"id":"$id","ok":true,"result":{"status":101,"frames":[{"id":"1","ok":false,"error":{"code":"unauthorized","message":"only the operator reads aloud."}},{"id":"2","ok":false,"error":{"code":"unauthorized","message":"only the operator reads aloud."}}]}}
+{"id":"x1","stop":"web"}
+{"id":"$id","ok":true,"result":{"code":0}}

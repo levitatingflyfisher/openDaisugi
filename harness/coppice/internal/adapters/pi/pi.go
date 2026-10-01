@@ -88,7 +88,8 @@ func (a adapter) Start(ctx context.Context, o pane.StartOpts, _ *pane.Grid) (pan
 	argv = append(argv, o.Argv...)
 
 	bin := a.binary()
-	cmd := exec.CommandContext(ctx, bin, argv...)
+	name, args := pane.Wrapped(o.Wrap, bin, argv)
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = o.Cwd
 	// Rule 1: the only path by which the gate extension finds COPPICE_SOCK
 	// and COPPICE_PANE.

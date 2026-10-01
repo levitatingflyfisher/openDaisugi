@@ -109,6 +109,9 @@ input.rename { font: inherit; width: 100%; min-width: 6rem; min-height: 0; margi
 #new-menu .menu-item:hover, #new-menu .menu-item:focus-visible { background: #26312f; }
 #new-menu .menu-item .sub { font-size: .75rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #new-menu .menu-note { margin: .3rem .6rem; font-size: .85rem; }
+#new-menu .menu-item.missing { opacity: .6; cursor: default; }
+#new-menu .menu-item.missing:hover { background: transparent; }
+#new-menu .menu-item.missing .remove { align-self: flex-start; margin-top: .2rem; min-height: 0; padding: .1rem .5rem; font-size: .8rem; opacity: 1; }
 /* The quiet screen: a real screen when nothing is blocked. */
 .quiet { padding: 1rem .8rem; text-align: center; }
 .quiet[hidden], #roster[hidden] { display: none; }
@@ -257,11 +260,28 @@ section input, section select { width: calc(100% - 1.6rem); margin: 0 .8rem; min
   background: #1b2422; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; font: inherit; padding: 0 .5rem; }
 section > button { margin: .8rem; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-/* The phone. Home is the overview; an agent's sheet slides in from the
-   right over most of the screen, and the overview stays in sight at the
-   left edge. A tap on that edge goes back. */
-body.phone { --edge: 44px; }
-body.phone #facts { display: none; }
+/* The phone. Home is the overview, one column: the facts line, the cards
+   that need you, the agents fold, the chat, and the chat bar docked at the
+   bottom. An agent's sheet slides in from the right over most of the
+   screen, and the overview stays in sight at the left edge. A tap on that
+   edge goes back. */
+body.phone { --edge: 44px; --tell-h: 64px; }
+/* The facts line takes its own row under the bar's buttons, and says only
+   who works and who needs you. */
+body.phone #bar { flex-wrap: wrap; row-gap: .3rem; }
+body.phone #bar h1 { flex: 1 1 auto; }
+body.phone #facts { order: 10; flex: 1 1 100%; }
+body.phone #facts .fact { display: none; }
+body.phone #facts .fact-needing, body.phone #facts .fact-working { display: block; }
+body.phone #rail { display: flex; flex-direction: column; padding-bottom: calc(var(--tell-h) + env(safe-area-inset-bottom)); }
+body.phone #chat { order: 2; }
+body.phone #tell { order: 3; }
+body.phone #rail-foot { order: 4; }
+/* The colony strip at the top of home shows the dots with labels, so the
+   minimap does not draw on a phone. */
+body.phone #minimap-frame { display: none; }
+body.phone #rail[data-fold="shut"] #agents, body.phone #rail[data-fold="shut"] #recent,
+body.phone #rail[data-fold="shut"] #view-list { display: none; }
 body.phone #needs { padding-top: .3rem; }
 #needs[hidden] { display: none; }
 body.phone .card.row.amber .label { color: var(--blocked); }
@@ -278,7 +298,8 @@ body.phone #screen-pane { position: fixed; top: 0; bottom: var(--kb, 0px); left:
   overscroll-behavior: contain; animation: sheet-in .2s ease-out; transition: transform .18s ease-out; }
 body.phone #screen-pane[hidden] { display: none; }
 body.phone #screen-pane > * { flex: none; }
-body.phone #canvas-wrap { flex: 1 1 0; min-height: 0; }
+body.phone #canvas-wrap, body.phone #reading { flex: 1 1 0; min-height: 0; }
+body.phone #canvas-wrap[hidden], body.phone #reading[hidden] { display: none; }
 body.phone #screen-pane #status-row { margin: .2rem .6rem; }
 @keyframes sheet-in { from { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) {
@@ -287,11 +308,43 @@ body.phone #screen-pane #status-row { margin: .2rem .6rem; }
 #sheet-edge { position: fixed; top: 0; bottom: 0; left: 0; width: var(--edge, 44px); z-index: 19; min-width: 0; padding: 0;
   border: 0; border-radius: 0; background: rgba(0, 0, 0, .4); }
 #sheet-edge[hidden] { display: none; }
-/* Tell the floor: one line, the microphone, and Send. The microphone only
-   fills the line. */
+/* Tell the floor, the chat bar: one line, the microphone, and Send. The
+   microphone only fills the line. On a wide page it sits at the foot of the
+   rail, above Recent. On a phone it is docked at the bottom of the screen,
+   above the on-screen keyboard, and an open sheet covers it. */
 #tell { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: .4rem; padding: .4rem .8rem; align-items: center; }
 #tell label { grid-column: 1 / -1; margin: 0; }
 section #tell input { width: 100%; margin: 0; }
+body.phone #tell { position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); z-index: 15; min-height: var(--tell-h);
+  padding: .4rem .5rem calc(.4rem + env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--line); }
+body.phone #tell label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+body.phone #tell button { padding: 0 .6rem; }
+body.phone #tell-send { border-color: var(--accent); color: var(--accent); font-weight: bold; }
+body.phone.sheet-open #tell { display: none; }
+/* The agents fold and the chat are the phone's. The desk gets its chat
+   window later. */
+body:not(.phone) #chat, body:not(.phone) #agents-fold { display: none; }
+#agents-fold { margin: .4rem .8rem 0; text-align: left; color: var(--muted); }
+#agents-fold[aria-expanded="true"] { color: var(--fg); }
+/* The chat with the foreman: oldest at the top, newest above the bar. */
+#chat { margin: .4rem 0 0; padding: .4rem .8rem; border-top: 1px solid var(--line); }
+.import-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 0 0 .55rem; padding: .4rem .6rem; border: 1px solid currentColor; border-radius: 6px; }
+.import-bar[hidden] { display: none; }
+.import-bar .import-text { flex: 1 1 12rem; }
+.import-bar button { min-height: 44px; min-width: 44px; }
+#chat-list, #reading-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .55rem; }
+.msg p { margin: 0; }
+.msg-head { font-size: .78rem; color: var(--muted); }
+.msg-head .who { font-weight: bold; color: var(--fg); }
+.msg-owner .msg-head .who { color: var(--accent); }
+.msg-head .mark-read { color: var(--working); }
+.msg-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg-tool { margin-top: -.4rem; }
+.msg-tool .msg-text { color: var(--muted); font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-note .msg-text, .msg-empty { color: var(--muted); font-size: .85rem; text-align: center; }
+.msg-error { color: var(--warn); }
+button.chip-agent { min-height: 44px; min-width: 44px; padding: 0 .65rem; margin: .1rem .1rem; border-radius: 999px;
+  border-color: var(--accent); color: var(--accent); background: transparent; font-size: .85rem; }
 /* Views: the rail lists them, and one opens in a frame under the bar. */
 .views { list-style: none; margin: 0; padding: .4rem .8rem; display: flex; gap: .5rem; flex-wrap: wrap; }
 .views[hidden] { display: none; }
@@ -327,6 +380,32 @@ section #tell input { width: 100%; margin: 0; }
   padding: .15rem 0; border-bottom: 1px solid var(--line); align-items: baseline; }
 .journal-row > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .journal-row .gate-mark { font-weight: bold; text-align: center; }
+/* The New form and Settings are panels over the floor, like a view: from
+   900 px a panel over part of the windows, below that a sheet that rises
+   from the bottom. The rail and a window stay in sight. */
+.panel { display: flex; flex-direction: column; min-height: 0; z-index: 31; background: var(--bg); overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: -10px 0 28px rgba(0, 0, 0, .55); }
+.panel[hidden] { display: none; }
+.panel > * { flex: none; }
+.panel-head { display: flex; gap: .5rem; align-items: center; padding: .25rem .4rem .25rem .7rem; border-bottom: 1px solid var(--line); }
+.panel-head strong { flex: 1; min-width: 0; }
+.panel-head button { min-height: 32px; font-size: 1.2rem; min-width: 40px; }
+@media (min-width: 900px) {
+  .panel { grid-column: 2; grid-row: 1; justify-self: end; width: var(--overlay-w, 60%); max-width: calc(100% - 1rem);
+    margin: .4rem .5rem .5rem 0; }
+}
+@media (max-width: 899px) {
+  .panel { position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); max-height: 80vh; border-radius: 12px 12px 0 0;
+    animation: panel-up .2s ease-out; }
+}
+@keyframes panel-up { from { transform: translateY(100%); } }
+@media (prefers-reduced-motion: reduce) { .panel { animation: none; } }
+/* A pane screen on a wide page covers the floor, which stays drawn under it. */
+body.pane-page #screen-pane { position: fixed; inset: 0; z-index: 20; background: var(--bg); overflow: auto; }
+/* The colony as one line of dots in the bar, when the strip would take a window. */
+#strip-dots { display: inline-flex; gap: .2rem; align-items: center; min-height: 28px; padding: 0 .4rem; }
+#strip-dots[hidden] { display: none; }
+#strip-dots .dot { width: .5em; height: .5em; }
 /* The colony pinned as a strip above the windows. */
 #strip { display: flex; gap: .3rem; height: 45px; flex: none; margin-bottom: 8px; border: 1px solid var(--line);
   border-radius: 6px; overflow: hidden; }
@@ -355,9 +434,6 @@ section #tell input { width: 100%; margin: 0; }
 #gate-hint[hidden] { display: none; }
 @media (min-width: 600px) { body:not(.phone) #gate-hint { display: none; } }
 @media (max-width: 899px) { #facts .fact-tokens, #facts .fact-working { display: none; } }
-/* A phone's bar has no room for the facts; the attention queue below says
-   who needs you. */
-@media (max-width: 599px) { #facts { display: none; } }
 body.phone #status-row:has(#status:empty):has(#status-fix[hidden]) { display: none; }
 /* The stack bar: one bar per window header, in steps like an order
    tracker. Each step is a button; the words are the choice, the colour is
@@ -409,6 +485,10 @@ body.phone #status-row:has(#status:empty):has(#status-fix[hidden]) { display: no
 .stack-details dt { color: var(--muted); }
 .stack-details dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stack-details .details-note { margin: .1rem 0 0; }
+.stack-details .mode-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .2rem 0; }
+.stack-details .mode-ask { flex-basis: 100%; margin: 0; }
+.stack-details .router-set:disabled { opacity: .45; cursor: not-allowed; }
+.stack-details .swap-input { flex: 1 1 8rem; min-width: 0; min-height: 26px; padding: 0 .4rem; font-size: .8rem; }
 /* A headless agent's window: no keys reach it; its line sends whole
    messages. */
 .tile .prompt-line { flex: none; margin-top: 4px; }
@@ -416,6 +496,53 @@ body.phone #status-row:has(#status:empty):has(#status-fix[hidden]) { display: no
 .tile .prompt-line input.prompt-input { width: 100%; min-height: 34px; margin: 0; padding: 0 .5rem; font: inherit;
   background: #1b2422; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; }
 .tile.typing .prompt-line input.prompt-input { border-color: var(--accent); }
+/* The line above the agent: where it is read from, and the button to
+   switch between the reading view and the live screen. */
+#view-bar { display: flex; gap: .5rem; align-items: center; justify-content: space-between; min-width: 0;
+  padding: 0 .6rem; font-size: .85rem; color: var(--muted); border-bottom: 1px solid var(--line); }
+#view-bar[hidden] { display: none; }
+#view-line { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+#view-toggle { flex: none; min-height: 44px; min-width: 44px; padding: 0 .8rem; }
+#view-toggle[hidden] { display: none; }
+/* The reading view: the transcript as messages, wrapped to the phone. It
+   scrolls on its own, inside the sheet. */
+#reading { overflow-y: auto; overscroll-behavior: contain; padding: .5rem .6rem; background: var(--bg); }
+#reading[hidden] { display: none; }
 #pane-note { margin: .2rem .6rem; font-size: .85rem; }
 #pane-note[hidden] { display: none; }
 .tile.ended .ended-fix { display: flex; gap: .4rem; justify-content: center; margin: .4rem 0 0; }
+
+/* Machines: a panel like Settings, read only. One row for each box, its
+   profiles under it with the time each answers. */
+.machines { list-style: none; margin: 0; padding: 0 .7rem .7rem; }
+.machine { padding: .5rem 0; border-bottom: 1px solid var(--line); }
+.machine-head { display: flex; flex-wrap: wrap; gap: .1rem .5rem; align-items: baseline; }
+.machine-name { flex: none; }
+.machine-profiles { list-style: none; margin: .25rem 0 0 1.1rem; padding: 0; }
+.machine-profile { display: flex; flex-wrap: wrap; gap: .1rem .6rem; align-items: baseline; }
+.machine-profile.down .machine-answer { color: var(--blocked); }
+.machine-key { color: var(--blocked); }
+.machine-address { overflow-wrap: anywhere; }
+#machines-line, #machines-note, .machines-foot { margin: .4rem .7rem; }
+/* The foreman's window on the desk: the chat in place of the terminal, with
+   its own line under it. The Screen button in the header shows the terminal. */
+.tile.chat-window .chat-body { flex: 1; min-height: 0; overflow: auto; background: #0b0f10; margin-top: 4px; padding: .3rem .5rem; cursor: text; }
+.tile.chat-window .chat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+.tile .screen-toggle { min-height: 26px; min-width: 0; padding: 0 .5rem; font-size: .8rem; }
+
+/* Reading replies aloud: the Listen button on a reply, Stop, and the
+   Settings choice. Touch targets are 44px. */
+button.listen { min-height: 44px; min-width: 44px; padding: 0 .65rem; margin: 0 .1rem; background: none; color: inherit; }
+#speech-stop { min-height: 44px; min-width: 44px; }
+#speech-stop[hidden] { display: none; }
+.check { display: flex; gap: .5rem; align-items: center; margin-top: .8rem; min-height: 44px; }
+/* The garden: one canvas under a thin bar. */
+#garden { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#garden[hidden] { display: none; }
+.garden-bar { display: flex; flex-wrap: wrap; gap: .4rem .8rem; align-items: center; padding: .3rem .7rem; border-bottom: 1px solid var(--line); }
+.garden-bar button { min-height: 32px; font-size: .85rem; }
+.garden-words input { width: 1.1rem; height: 1.1rem; min-height: 0; padding: 0; margin: 0 .3rem 0 0; }
+.garden-words { white-space: nowrap; display: flex; align-items: center; min-height: 32px; line-height: 1; gap: .2rem; color: var(--muted); font-size: .85rem; cursor: pointer; }
+.garden-canvas { display: block; flex: 1; min-height: 0; width: 100%; cursor: pointer; touch-action: manipulation; }
+/* The garden expanded: the overlay covers the whole page until it shrinks or closes. */
+#overlay.wide { position: fixed; inset: 0; justify-self: stretch; width: 100vw; max-width: none; height: 100vh; margin: 0; border-radius: 0; z-index: 50; box-shadow: none; }

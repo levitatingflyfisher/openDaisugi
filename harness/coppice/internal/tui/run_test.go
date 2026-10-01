@@ -166,7 +166,7 @@ func TestTheFirstFrameListsThePaneAndTheBar(t *testing.T) {
 	if !strings.Contains(first, "working") && !strings.Contains(first, "idle") {
 		t.Fatalf("state missing: %q", first)
 	}
-	for _, b := range Table() {
+	for _, b := range withoutMode(Table()) {
 		if !strings.Contains(first, b.Keys+" "+b.Help) {
 			t.Fatalf("footer lacks %q: %q", b.Keys+" "+b.Help, first)
 		}
@@ -179,7 +179,7 @@ func TestQIsTextOnlyAfterCtrlT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "Nothing running. Enter opens claude here.") {
+	if !strings.Contains(out, "Nothing running. Enter opens claude.") {
 		t.Fatalf("empty floor frame missing: %q", out)
 	}
 	frames := splitFrames(out)

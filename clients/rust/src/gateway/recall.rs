@@ -38,10 +38,13 @@ pub struct RecallResult {
     /// The plan as `model_dump(mode="json")` gives it.
     pub plan: Value,
     pub provenance: Option<Provenance>,
+    /// The stale-embeddings warning find gave, or "" (not in Python's
+    /// result: its find prints it).
+    pub warning: String,
 }
 
 fn miss(reason: &'static str) -> RecallResult {
-    RecallResult { hit: false, reason: Some(reason), plan: Value::Null, provenance: None }
+    RecallResult { hit: false, reason: Some(reason), plan: Value::Null, provenance: None, warning: String::new() }
 }
 
 fn pw_text(e: PwErr) -> String {
@@ -74,7 +77,21 @@ pub fn recall(
         Err(FindErr::NotCarried(nc)) => return Err(nc.0),
         Err(FindErr::Err(e)) => return Err(pw_text(e)),
     };
-    let Some((p, sim)) = r.matched else { return Ok(miss("no matching pathway")) };
+    let mut res = found(r.matched, task, envelope, z3_ms, llm, model)?;
+    res.warning = r.warning;
+    Ok(res)
+}
+
+/// The rest of `recall` once find has answered.
+fn found(
+    matched: Option<(crate::pathways::pathway::Pathway, f64)>,
+    task: &str,
+    envelope: &Value,
+    z3_ms: u32,
+    llm: Option<&mut crate::llm::Client>,
+    model: &str,
+) -> Result<RecallResult, String> {
+    let Some((p, sim)) = matched else { return Ok(miss("no matching pathway")) };
     let (tier, tmpl) = match p.obj.value("parameters") {
         Value::List(l) if !l.is_empty() => {
             ("typed", Value::Obj(crate::envgen::bind::bind(llm, &p.obj, task, envelope, model, z3_ms)))
@@ -101,6 +118,7 @@ pub fn recall(
             distilled_at: p.obj.value("distilled_at").clone(),
             hit_count: p.obj.value("hit_count").clone(),
         }),
+        warning: String::new(),
     })
 }
 

@@ -27,6 +27,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 import threading
 import time
 import warnings
@@ -42,6 +43,16 @@ if TYPE_CHECKING:
     from opendaisugi.session_tree import SessionTree
 
 from opendaisugi import delegate
+from opendaisugi._state_files import (
+    StateWriteRefused,
+    open_state_file,
+    probe_state_text,
+    read_state_text,
+    unlink_state_file,
+    verify_written,
+    write_state_file,
+)
+from opendaisugi.datahome import data_home
 from opendaisugi.effects import (
     PERMANENT,
     SILENT,
@@ -59,6 +70,8 @@ from opendaisugi.floor_config import (
     opencode_plugin_hit,
 )
 from opendaisugi.floor_config import REFUSAL as FLOOR_REFUSAL
+from opendaisugi.gate_state_rule import gate_state_hit
+from opendaisugi.gate_state_rule import refusal as gate_state_refusal
 from opendaisugi.hook import (
     APPLY_PATCH_TOOL,
     EXIT_CODE_FORMATS,
@@ -71,14 +84,25 @@ from opendaisugi.hook import (
     stdout_for_format,
 )
 from opendaisugi.models import ActionPlan, Envelope, Permission
+from opendaisugi.owner_rule import (
+    LABEL_REFUSAL,
+    PACK_REFUSAL,
+    gate_change_hit,
+    label_hit,
+    pack_hit,
+)
+from opendaisugi.owner_rule import REFUSAL as GATE_CHANGE_REFUSAL
+from opendaisugi.pane_rule import CHAT_REFUSAL as CHAT_WIRE_REFUSAL
 from opendaisugi.pane_rule import REFUSAL as PANE_REFUSAL
-from opendaisugi.pane_rule import pane_rule_hit
+from opendaisugi.pane_rule import chat_wire_hit, pane_rule_hit
 from opendaisugi.rank_rule import REFUSAL as RANK_REFUSAL
 from opendaisugi.rank_rule import rank_record_hit
 from opendaisugi.search_rule import SEARCH_REFUSAL, search_above_secret_hit
+from opendaisugi.tree_rule import REFUSAL as TREE_REFUSAL
+from opendaisugi.tree_rule import tree_write_hit
 from opendaisugi.verify import is_z3_timeout_warning, verify
 
-DEFAULT_GATE_ROOT = Path.home() / ".opendaisugi" / "gate"
+DEFAULT_GATE_ROOT = data_home() / "gate"
 
 # re warns (FutureWarning) on a character class a future Python may read
 # differently, such as a nested set "[[" in a predicate regex. The warning
@@ -117,6 +141,12 @@ def resolve_gate_mode(explicit: str | None, *, root: Path = DEFAULT_GATE_ROOT) -
     the flag, especially to flip an installed ``enforce`` down to ``audit``.
     The config path is ``root.parent / config.yaml`` (the gate root lives under
     the data dir). Any read error or unrecognized value falls back to ``audit``.
+
+    Two files in the gate root do override an installed ``--mode enforce``,
+    both written by the operator's tools and both protected from typed
+    writes by the gate-state rule: ``DISARMED`` turns the gate off, and a
+    per-agent mode marker (``agents/<floor>/<pane>.mode``, see
+    :func:`effective_gate_mode`) lowers one agent to ``audit`` (F11-R-12).
     """
     if explicit is not None:
         return explicit
@@ -127,6 +157,79 @@ def resolve_gate_mode(explicit: str | None, *, root: Path = DEFAULT_GATE_ROOT) -
     except Exception:
         return "audit"
     return mode if mode in ("audit", "enforce") else "audit"
+
+
+# The per-agent mode marker (F11-R-1, F11-R-6): coppice writes
+# ``<gate root>/agents/<floor>/<pane>.mode`` when the owner lowers one
+# agent from enforcing to watching. ``<floor>`` is agent_mode_floor of the
+# floor's socket path, so two floors that share a gate root (and so pane
+# ids such as w1:p1) never read each other's markers. These are the only
+# bytes that lower it.
+AGENT_MODE_DIR = "agents"
+AGENT_MODE_WATCHING = (b"watching", b"watching\n")
+# A marker larger than this is not read at all.
+AGENT_MODE_MAX_BYTES = 64
+
+
+def agent_mode_floor(sock: str) -> str:
+    """The floor's directory name under agents/: the first 16 hex digits
+    of the SHA-256 of the floor's socket path, as the OS spells it."""
+    import hashlib
+
+    return hashlib.sha256(os.fsencode(sock)).hexdigest()[:16]
+
+
+def agent_mode_lowered(root: Path) -> bool:
+    """True when the calling pane's marker says ``watching``.
+
+    The calling pane and its floor are COPPICE_PANE and COPPICE_SOCK for a
+    hook call, and the pane and socket the request names for a resident
+    call (the resident server's own environment names no pane). Only an
+    id of coppice's own shape (``w1:p3``) is read, so an id cannot lead
+    out of the floor's directory, and a call that names no socket reads
+    nothing. The gate root, ``agents/`` and the floor's directory are
+    opened as directories without following a symlink, and the marker is
+    opened in the floor's directory by its fd, without following a symlink
+    and without blocking (F11-R-7, GR-R-1). The marker must be a regular
+    file this user owns, with one link, writable by no group and no other
+    user, of at most AGENT_MODE_MAX_BYTES bytes, and its bytes must be
+    exactly ``watching`` with at most one newline after it. Anything else,
+    a read error included, is False: the hook's own mode stands.
+    """
+    try:
+        from opendaisugi._state_report import _valid_coppice_pane_id
+
+        if getattr(_resident, "on", False):
+            caller = getattr(_resident, "caller", None) or {}
+            pane, sock = caller.get("pane"), caller.get("sock")
+        else:
+            pane, sock = os.environ.get("COPPICE_PANE"), os.environ.get("COPPICE_SOCK")
+        if not _valid_coppice_pane_id(pane) or not isinstance(sock, str) or not sock:
+            return False
+        fd = open_state_file(
+            Path(root),
+            (AGENT_MODE_DIR, agent_mode_floor(sock)),
+            f"{pane}.mode",
+            max_bytes=AGENT_MODE_MAX_BYTES,
+        )
+        if fd is None:
+            return False
+        try:
+            data = os.read(fd, AGENT_MODE_MAX_BYTES + 1)
+        finally:
+            os.close(fd)
+        return data in AGENT_MODE_WATCHING
+    except Exception:  # noqa: BLE001 - a marker that cannot be read lowers nothing
+        return False
+
+
+def effective_gate_mode(mode: str, root: Path) -> str:
+    """The mode the call is decided in: ``mode``, except that an enforce
+    hook becomes audit when the calling pane's marker says watching. The
+    marker never raises a mode and never turns the gate off."""
+    if mode == "enforce" and agent_mode_lowered(root):
+        return "audit"
+    return mode
 
 
 @dataclass
@@ -240,23 +343,30 @@ def _maybe_ask(
     tool_use_id = payload.get("tool_use_id")
     if not tool_use_id or not _ask.operator_present(root):
         return decision
+    # GR-R-10: an asks/ or answers/ the gate refuses (a link, another user's,
+    # writable by others) takes no ask, so the deny stands.
+    if not _ask.channel_ok(root):
+        return decision
     tid = str(tool_use_id)
     deadline = time.time() + timeout_s
-    _ask.post_ask(
-        root,
-        tool_use_id=tid,
-        question={
-            "sessionId": payload.get("session_id"),
-            "toolName": decision.tool_name,
-            "detail": decision.detail,
-            "reason": decision.reason,
-            "clause": decision.clause,
-            "counterexample": decision.counterexample,
-            "toolInput": payload.get("tool_input"),
-            "tier": decision.tier,
-        },
-        deadline=deadline,
-    )
+    try:
+        _ask.post_ask(
+            root,
+            tool_use_id=tid,
+            question={
+                "sessionId": payload.get("session_id"),
+                "toolName": decision.tool_name,
+                "detail": decision.detail,
+                "reason": decision.reason,
+                "clause": decision.clause,
+                "counterexample": decision.counterexample,
+                "toolInput": payload.get("tool_input"),
+                "tier": decision.tier,
+            },
+            deadline=deadline,
+        )
+    except StateWriteRefused:
+        return decision
     try:
         _report_blocked(
             root,
@@ -446,6 +556,7 @@ def resident_call(
     herdr_pane: str | None = None,
     peer_pid: int | None = None,
     data_dir: str | None = None,
+    workspace: str | None = None,
 ) -> Iterator[None]:
     """Mark the calls made inside this block as served by the resident gate.
 
@@ -478,6 +589,10 @@ def resident_call(
     it. The hard-deny rules guard that directory's secrets and files the
     same as the default data directory's. It can only add a guarded
     directory, never take the default ones away.
+
+    ``workspace`` is the workspace of the fence run the caller runs under
+    (fence_runs.bound_workspace, from the peer pid), or None. A resident
+    checkpoint is taken only inside it (FN-R-21).
     """
     prev_on = getattr(_resident, "on", False)
     prev_caller = getattr(_resident, "caller", None)
@@ -488,6 +603,7 @@ def resident_call(
         "herdr_pane": herdr_pane,
         "peer_pid": peer_pid,
         "data_dir": data_dir,
+        "workspace": workspace,
     }
     try:
         yield
@@ -1055,6 +1171,34 @@ def evaluate_call(
 _TIER_RANK = {SILENT: 0, UNDOABLE: 1, PERMANENT: 2}
 
 
+# DAISUGI_GATE_NOW pins the clock the deadline check reads, for tests. It
+# is read as plain decimal Unix seconds, and only a later time than the real
+# one counts: a pin can add denies, never extend a deadline.
+_NOW_ENV = "DAISUGI_GATE_NOW"
+_NOW_PIN = re.compile(r"[0-9]{1,12}(\.[0-9]{1,6})?")
+
+
+def gate_now() -> float:
+    """The time the deadline check reads: the real time, or a later pin."""
+    now = time.time()
+    pin = os.environ.get(_NOW_ENV)
+    if pin is not None and _NOW_PIN.fullmatch(pin):
+        now = max(now, float(pin))
+    return now
+
+
+def past_deadline(envelope: Envelope) -> bool:
+    """True when the envelope has a deadline and the time is after it."""
+    return envelope.deadline is not None and gate_now() > envelope.deadline
+
+
+def deadline_reason(deadline: float | None) -> str:
+    return (
+        f"the envelope's deadline {json.dumps(deadline)} (Unix seconds) has passed; "
+        "it starts no new work"
+    )
+
+
 def _decide(
     payload: dict[str, Any],
     record: dict[str, Any] | None,
@@ -1065,7 +1209,7 @@ def _decide(
     root: Path | None,
     t0: float,
 ) -> GateDecision:
-    """Decide one normalized record of a call: the pane rule and the two
+    """Decide one normalized record of a call: the pane rule and the
     hard-deny rules first, then the envelope."""
     command = record.get("command") if record else None
     if record and record.get("step_type") == "shell" and isinstance(command, str):
@@ -1091,11 +1235,16 @@ def _decide(
             pane_rule=True,
         )
     for hit, refusal in (
+        (chat_wire_hit, CHAT_WIRE_REFUSAL),
         (floor_config_hit, FLOOR_REFUSAL),
         (functools.partial(daisugi_config_hit, root=root), DAISUGI_CONFIG_REFUSAL),
         (opencode_plugin_hit, OPENCODE_PLUGIN_REFUSAL),
         (search_above_secret_hit, SEARCH_REFUSAL),
         (rank_record_hit, RANK_REFUSAL),
+        (tree_write_hit, TREE_REFUSAL),
+        (gate_change_hit, GATE_CHANGE_REFUSAL),
+        (label_hit, LABEL_REFUSAL),
+        (pack_hit, PACK_REFUSAL),
     ):
         if hit(payload, record):
             return GateDecision(
@@ -1109,6 +1258,28 @@ def _decide(
                 elapsed_ms=(time.monotonic() - t0) * 1000,
                 pane_rule=True,
             )
+    state_dir = gate_state_hit(payload, record, root)
+    if state_dir is not None:
+        return GateDecision(
+            allow=False,
+            would_deny=True,
+            reason=gate_state_refusal(state_dir),
+            mode=mode,
+            tool_name=tool_name,
+            step_type=record.get("step_type") if record else None,
+            detail=str((record or {}).get("command") or (record or {}).get("path") or ""),
+            elapsed_ms=(time.monotonic() - t0) * 1000,
+            pane_rule=True,
+        )
+    if past_deadline(envelope):
+        return _deny(
+            mode,
+            deadline_reason(envelope.deadline),
+            tool_name=tool_name,
+            step_type=record.get("step_type") if record else None,
+            detail=str((record or {}).get("command") or (record or {}).get("path") or ""),
+            t0=t0,
+        )
     if record is None:
         return _deny(
             mode,
@@ -1181,6 +1352,13 @@ def _decide_delegate_call(
             t0=t0,
         )
     norm = os.path.normpath(path)
+    # A code write reads its target only when the target exists; a new
+    # file is drafted from the request alone. lexists, as the tool reads it.
+    writes_new = args.get("mode") == "code_write" and not os.path.lexists(norm)
+    if writes_new:
+        return _delegate_send(
+            payload, decision, envelope, mode, verify_timeout_s, root, cwd, call_cwd, norm
+        )
     read = {
         "captured_at": time.time(),
         "session_id": _safe_session_id(payload.get("session_id")),
@@ -1200,6 +1378,27 @@ def _decide_delegate_call(
     )
     if got.would_deny:
         return replace(got, tool_name=tool_name, reason=f"delegate reads {norm}: {got.reason}")
+    return _delegate_send(
+        payload, decision, envelope, mode, verify_timeout_s, root, cwd, call_cwd, norm
+    )
+
+
+def _delegate_send(
+    payload: dict[str, Any],
+    decision: GateDecision,
+    envelope: Envelope,
+    mode: str,
+    verify_timeout_s: float,
+    root: Path | None,
+    cwd: Any,
+    call_cwd: str | None,
+    norm: str,
+) -> GateDecision:
+    """The network send of a delegate call to a remote worker: the
+    envelope must allow it."""
+    from dataclasses import replace
+
+    tool_name = decision.tool_name
     if root is None:
         return decision
     rule = delegate.acting_rule(root)
@@ -1251,6 +1450,7 @@ def _maybe_graft(
     envelope: Envelope,
     fmt: str,
     verify_timeout_s: float = _DEFAULT_VERIFY_TIMEOUT_S,
+    session_id: str | None = None,
 ) -> GateDecision:
     """Apply a deny_redirect graft to an allowed whole read of a large file.
 
@@ -1264,6 +1464,10 @@ def _maybe_graft(
     does any rule under an audit-mode gate: a cost deny never surprises an
     audit-mode user. The redirect is never a would-deny: it is a cost rule,
     not a safety one.
+
+    A rule in audit or trial records the session's arm (``delegate.arm_of``
+    of the safe session id) on every graft record. A trial rule redirects
+    only in the graft arm.
     """
     from dataclasses import replace
 
@@ -1287,6 +1491,10 @@ def _maybe_graft(
     if isinstance(m, str) or m.lines <= rule.min_lines:
         return decision
     graft: dict[str, Any] = {**rule.as_dict(), "lines": m.lines, "file_lines_over": rule.min_lines}
+    arm = None
+    if rule.state in ("audit", "trial"):
+        arm = delegate.arm_of(rule, _safe_session_id(session_id))
+        graft["arm"] = arm
     route = delegate.route_delegate(root.parent, envelope, allow_remote=rule.allow_remote)
     if not route.ok:
         graft.update(applied=False, why=route.reason)
@@ -1316,8 +1524,13 @@ def _maybe_graft(
             why=f"the envelope would not allow the delegate tool: {got.reason}",
         )
         return replace(decision, graft=graft)
-    if rule.state != "active":
+    if rule.state == "audit":
         graft.update(applied=False, why="the rule is in audit: the read is not denied")
+        return replace(decision, graft=graft)
+    if rule.state == "trial" and arm == "control":
+        graft.update(
+            applied=False, why="the session is in the trial's control arm: the read is not denied"
+        )
         return replace(decision, graft=graft)
     if decision.mode == "audit":
         graft.update(applied=False, why="the gate is in audit mode: the read is not denied")
@@ -1415,11 +1628,21 @@ def _legacy_audit_dir(root: Path) -> Path:
 
 
 def _mkdir_private(d: Path) -> None:
+    """Make ``d`` (and its parents) and set it 0700. The mode is set on the
+    directory's own fd, opened without following a link, so a link planted
+    at ``d`` is never chmod-ed through (GR-R-9): the link is left alone."""
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
-        os.chmod(d, 0o700)
+        fd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return
+    try:
+        if os.fstat(fd).st_uid == os.geteuid():
+            os.fchmod(fd, 0o700)
     except OSError:
         pass
+    finally:
+        os.close(fd)
 
 
 # A conservative starting shell allowlist for a generated envelope: read-
@@ -1503,16 +1726,36 @@ def register_envelope(
     private (0700 dir / 0600 file) — envelopes reveal what a session is
     allowed to touch.
     """
-    d = _envelopes_dir(root)
-    _mkdir_private(d)
+    # The gate reads its state only from directories no group or other user
+    # can write (GR-R-1), so the root and envelopes/ are made private
+    # whatever the umask, through no link (GR-R-9). A link at the file's name
+    # is refused, never written through, and the file is read back with the
+    # gate's own reader: a refusal there raises, so a registration never
+    # reports success for an envelope the gate would not load.
     name = _safe_session_id(session_id) if session_id else "default"
-    path = d / f"{name}.json"
-    path.write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+    path = write_state_file(
+        root,
+        ("envelopes",),
+        f"{name}.json",
+        envelope.model_dump_json(indent=2),
+        replace_link=False,
+    )
+    verify_written(root, ("envelopes",), f"{name}.json")
     return path
+
+
+def load_envelope_checked(
+    session_id: str | None, *, root: Path = DEFAULT_GATE_ROOT
+) -> tuple[Envelope | None, str | None]:
+    """``load_envelope`` with the third answer: (envelope, None); (None,
+    None) when none is registered; (None, refusal) when the root, envelopes/
+    or the file is refused (GR-R-7). A caller for whom an absence is the
+    looser reading must treat the refusal as "cannot be read"."""
+    name = _safe_session_id(session_id) if session_id else "default"
+    text, refusal = probe_state_text(root, ("envelopes",), f"{name}.json")
+    if text is None:
+        return None, refusal
+    return Envelope.model_validate_json(text), None
 
 
 def load_envelope(session_id: str | None, *, root: Path = DEFAULT_GATE_ROOT) -> Envelope | None:
@@ -1521,32 +1764,42 @@ def load_envelope(session_id: str | None, *, root: Path = DEFAULT_GATE_ROOT) -> 
     A named session never falls back to ``default``: a session with no
     envelope of its own has none, and the gate denies its calls.
     """
-    name = _safe_session_id(session_id) if session_id else "default"
-    path = _envelopes_dir(root) / f"{name}.json"
-    if path.exists():
-        return Envelope.model_validate_json(path.read_text(encoding="utf-8"))
-    return None
+    return load_envelope_checked(session_id, root=root)[0]
 
 
 def disarm(root: Path = DEFAULT_GATE_ROOT) -> Path:
     """One-command kill switch: an armed gate allows everything while the
     marker exists. Deliberately requires no allowed tool call — the operator
-    runs it from any shell, outside the gated agent."""
-    _mkdir_private(root)
-    marker = root / _DISARM_FILENAME
-    marker.write_text("disarmed by operator\n", encoding="utf-8")
-    return marker
+    runs it from any shell, outside the gated agent.
+
+    The marker is written through the root's directory fd (GR-R-9): a link
+    planted at ``DISARMED`` is refused, and the marker is read back with the
+    gate's reader, so this never reports a kill switch the gate ignores."""
+    path = write_state_file(
+        root, (), _DISARM_FILENAME, "disarmed by operator\n", replace_link=False
+    )
+    verify_written(root, (), _DISARM_FILENAME)
+    return path
 
 
 def arm(root: Path = DEFAULT_GATE_ROOT) -> None:
-    """Remove the disarm marker; the gate resumes evaluating calls."""
-    marker = root / _DISARM_FILENAME
-    if marker.exists():
-        marker.unlink()
+    """Remove the disarm marker; the gate resumes evaluating calls. The
+    marker goes through the root's directory fd (GR-R-9); a refused root
+    raises StateWriteRefused, so this never reports an armed gate it did
+    not arm."""
+    unlink_state_file(root, (), _DISARM_FILENAME)
 
 
 def is_disarmed(root: Path = DEFAULT_GATE_ROOT) -> bool:
-    return (root / _DISARM_FILENAME).exists()
+    """True when DISARMED is a regular file this user owns (GR-R-1): the
+    root and the file are opened without following a symlink, and a file
+    with a second link or one that group or other can write does not count.
+    A refusal reads as armed, and leaves a stderr note."""
+    fd = open_state_file(Path(root), (), _DISARM_FILENAME)
+    if fd is None:
+        return False
+    os.close(fd)
+    return True
 
 
 @dataclass
@@ -1651,6 +1904,12 @@ def _outcome(decision: GateDecision, fmt: str) -> GateOutcome:
     )
 
 
+# The deny of an enforce-mode allow whose audit line could not be written
+# (FN-R-17): an agent that can chmod the log must not turn the audit off
+# with no word.
+AUDIT_REFUSAL = "the gate cannot write its audit log, so it denies the call"
+
+
 def _log_audit(
     root: Path,
     session_id: str | None,
@@ -1658,9 +1917,10 @@ def _log_audit(
     payload_session_id: str | None = None,
     *,
     join: dict[str, Any] | None = None,
-) -> None:
+) -> bool:
     """Best-effort JSONL decision log — the raw material of the audit
-    report. Never raises; a logging failure must not change a verdict."""
+    report. Never raises; True when the line landed. Only the caller of an
+    enforce-mode allow reads the answer (FN-R-17)."""
     try:
         d = _audit_dir(root)
         _mkdir_private(d)
@@ -1709,7 +1969,8 @@ def _log_audit(
             except OSError:
                 pass
     except Exception:  # noqa: BLE001 — logging is best-effort by contract
-        pass
+        return False
+    return True
 
 
 _HARNESS_BY_FMT = {
@@ -1831,24 +2092,41 @@ def _maybe_checkpoint(root: Path, payload: dict[str, Any], *, session_id: str | 
     """
     try:
         from opendaisugi.checkpoints import is_repo, snapshot
-        from opendaisugi.claude_transcript import last_prompt_uuid, read_turns
+        from opendaisugi.claude_transcript import last_prompt_uuid, parse_turns, read_turns
         from opendaisugi.session_tree import SessionTree
 
         cwd = payload.get("cwd")
         tpath = payload.get("transcript_path")
-        if not cwd or not tpath or not is_repo(Path(cwd)):
+        if not cwd or not tpath:
             return
-        prompt = last_prompt_uuid(read_turns(Path(tpath)))
+        # A resident call snapshots the workspace its fence run bound, never
+        # a tree git finds from the cwd, and reads only a transcript under
+        # ~/.claude/projects (FN-R-27, FN-R-29). resident_refusal already
+        # denied a cwd outside it and a git dir that leads out.
+        workspace: str | None = None
+        if getattr(_resident, "on", False):
+            from opendaisugi.fence_runs import resident_transcript
+
+            workspace = (getattr(_resident, "caller", None) or {}).get("workspace")
+            text = resident_transcript(tpath) if workspace else None
+            if text is None:
+                return
+            turns = parse_turns(text)
+        else:
+            if not is_repo(Path(cwd)):
+                return
+            turns = read_turns(Path(tpath))
+        prompt = last_prompt_uuid(turns)
         if not prompt:
             return
         sid = _safe_session_id(session_id or payload.get("session_id"))
-        state = root / "checkpoint-state" / f"{sid}.json"
-        last = json.loads(state.read_text()).get("prompt") if state.exists() else None
+        text = read_state_text(root, ("checkpoint-state",), f"{sid}.json")
+        last = json.loads(text).get("prompt") if text is not None else None
         if last == prompt:
             return
         tree = SessionTree.open(root.parent / "sessions", sid)
         entry_id = tree.head() or "root"
-        cp = snapshot(Path(cwd), session_id=sid, entry_id=entry_id)
+        cp = snapshot(Path(cwd), session_id=sid, entry_id=entry_id, workspace=workspace)
         tree.append(
             "checkpoint",
             {
@@ -1860,14 +2138,28 @@ def _maybe_checkpoint(root: Path, payload: dict[str, Any], *, session_id: str | 
                 "promptUuid": prompt,
             },
         )
-        _mkdir_private(state.parent)
-        state.write_text(json.dumps({"prompt": prompt}))
-        try:
-            os.chmod(state, 0o600)
-        except OSError:
-            pass
+        # A link planted at the state file is replaced, never written through.
+        write_state_file(
+            root,
+            ("checkpoint-state",),
+            f"{sid}.json",
+            json.dumps({"prompt": prompt}),
+            replace_link=True,
+        )
     except Exception:  # noqa: BLE001 — best-effort by contract, same as _log_tree
         pass
+
+
+def _resident_refusal(payload: Any, pin_session: str | None, checkpoints: bool) -> str | None:
+    """Why a resident call is denied before it is checked (FN-R-21), or None
+    for a call this process makes for itself."""
+    if not getattr(_resident, "on", False):
+        return None
+    from opendaisugi.fence_runs import resident_refusal
+
+    caller = getattr(_resident, "caller", None) or {}
+    body = payload if isinstance(payload, dict) else {}
+    return resident_refusal(body, pin_session, checkpoints, caller.get("workspace"))
 
 
 def gate_and_contract(
@@ -1941,8 +2233,24 @@ def gate_and_contract(
         # Pinned, the call gets the pin's own envelope or none; unpinned, it
         # gets the default.
         session_id = pin_session or payload_session
-        envelope = load_envelope(pin_session or None, root=root)
-        if envelope is None:
+        why = _resident_refusal(payload, pin_session, checkpoints)
+        envelope, refusal = (
+            (None, None) if why else load_envelope_checked(pin_session or None, root=root)
+        )
+        if why:
+            # Denied in every mode: the server makes the writes, so it must
+            # not make them where the caller points (FN-R-21).
+            decision = GateDecision(
+                allow=False,
+                would_deny=True,
+                reason=why,
+                mode=mode,
+                elapsed_ms=(time.monotonic() - t0) * 1000,
+            )
+        elif envelope is None and refusal is not None:
+            # A refusal is not an absence: say which file, and the fix (GR-R-8).
+            decision = _deny(mode, f"the gate refused its envelope state: {refusal}", t0=t0)
+        elif envelope is None:
             decision = _deny(
                 mode,
                 "no envelope registered for this session — run "
@@ -1989,10 +2297,18 @@ def gate_and_contract(
                     )
             if isinstance(payload, dict) and not decision.ask:
                 decision = _maybe_graft(
-                    root, payload, decision, envelope, fmt, verify_timeout_s=verify_timeout_s
+                    root,
+                    payload,
+                    decision,
+                    envelope,
+                    fmt,
+                    verify_timeout_s=verify_timeout_s,
+                    session_id=session_id,
                 )
         join = join_keys(payload) if isinstance(payload, dict) else {}
-        _log_audit(root, session_id, decision, payload_session_id=payload_session, join=join)
+        logged = _log_audit(
+            root, session_id, decision, payload_session_id=payload_session, join=join
+        )
         tree = _log_tree(root, payload, decision, session_id=session_id, fmt=fmt)
         if checkpoints and decision.allow and isinstance(payload, dict):
             _maybe_checkpoint(root, payload, session_id=session_id)
@@ -2007,6 +2323,8 @@ def gate_and_contract(
             _maybe_report_state(root, payload, decision, session_id=session_id, fmt=fmt, tree=tree)
         except Exception:  # noqa: BLE001 — reporting is best-effort by contract (B4, spec-01)
             pass
+        if not logged and mode == "enforce" and decision.allow:
+            return _outcome(_deny(mode, AUDIT_REFUSAL, t0=t0), fmt)
         return _outcome(decision, fmt)
     except Exception as exc:  # noqa: BLE001 — mode-selected failure policy
         decision = _deny(mode, f"gate I/O error (denied fail-closed): {exc}", t0=t0)
@@ -2226,10 +2544,17 @@ def gate_settings_json(
     import shlex
     import sys as _sys
 
+    # -I (isolated): the host runs the hook in the agent's working
+    # directory with the agent's environment. `python -m` would put that
+    # directory first on sys.path, and so would an empty or relative
+    # PYTHONPATH entry, so an agent that may write there could plant its own
+    # opendaisugi.gate_client or sitecustomize. -I drops the cwd, every
+    # PYTHON* variable and the user site, and keeps the interpreter's own
+    # site-packages, where the installed package lives.
     py = python or _sys.executable
     inner = min(verify_timeout_s, max(1.0, hook_timeout_s - 5.0))
     command = (
-        f"{shlex.quote(py)} -m opendaisugi.gate_client"
+        f"{shlex.quote(py)} -I -m opendaisugi.gate_client"
         f" --mode {shlex.quote(mode)}"
         f" --root {shlex.quote(str(root))}"
         f" --format {shlex.quote(fmt)}"
@@ -2408,7 +2733,7 @@ def run_argv(argv: list[str], raw: bytes) -> GateOutcome:
             raise
         return _escape_outcome(mode, exc, fmt=_fmt_from_argv(argv))
     try:
-        mode = resolve_gate_mode(args.mode, root=args.root)
+        mode = effective_gate_mode(resolve_gate_mode(args.mode, root=args.root), args.root)
         return gate_and_contract(
             raw,
             root=args.root,

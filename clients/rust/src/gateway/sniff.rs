@@ -15,6 +15,8 @@ pub struct Sniffer {
     pub text: String,
     /// message_start's message.model, None when none was a str.
     pub model: Option<String>,
+    /// message_delta's delta.stop_reason, empty when none was a str.
+    pub stop_reason: String,
     /// Set when json.loads raised something the sniffer does not catch (a
     /// RecursionError, an integer past the digit limit): the oracle's
     /// stream then ends there with an error.
@@ -23,7 +25,7 @@ pub struct Sniffer {
 
 impl Sniffer {
     pub fn new(openai: bool) -> Sniffer {
-        Sniffer { openai, buf: String::new(), usage: Object::new(), text: String::new(), model: None, raised: false }
+        Sniffer { openai, buf: String::new(), usage: Object::new(), text: String::new(), model: None, stop_reason: String::new(), raised: false }
     }
 
     /// Reads one chunk: decoded on its own with replacement characters, as
@@ -74,6 +76,11 @@ impl Sniffer {
             return;
         } else if super::pyops::eq_str(typ, "message_delta") {
             u = o.get("usage");
+            if let Some(Value::Obj(d)) = o.get("delta") {
+                if let Some(Value::Str(sr)) = d.get("stop_reason") {
+                    self.stop_reason = sr.clone();
+                }
+            }
         } else if super::pyops::eq_str(typ, "content_block_delta") {
             if let Some(Value::Obj(delta)) = o.get("delta") {
                 if super::pyops::eq_str(delta.get("type"), "text_delta") {
@@ -114,11 +121,26 @@ impl Sniffer {
                     self.text.push_str(t);
                 }
             }
+            let st = openai_stop(co.get("finish_reason"));
+            if !st.is_empty() {
+                self.stop_reason = st;
+            }
         }
         let n = normalize_openai_usage(o.get("usage"));
         for (k, v) in n.iter() {
             self.usage.set(k, v.clone());
         }
+    }
+}
+
+/// `openai_stop_reason`: a chat finish_reason on the Anthropic stop-reason
+/// words the grader reads. Empty for none.
+pub fn openai_stop(finish: Option<&Value>) -> String {
+    match finish {
+        Some(Value::Str(f)) if f == "stop" => "end_turn".into(),
+        Some(Value::Str(f)) if f == "tool_calls" || f == "function_call" => "tool_use".into(),
+        Some(Value::Str(f)) => f.clone(),
+        _ => String::new(),
     }
 }
 

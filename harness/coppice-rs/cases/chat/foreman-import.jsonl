@@ -1,0 +1,83 @@
+# Import of old Claude Code and Codex chats (FM-R-71 to FM-R-85). Fake
+# transcripts are written under the side's own HOME; nothing real is read. The
+# poll is off (a test knob, FM-R-84), so the compactor loop feeds only when a
+# verb wakes it, and the cases do not race the loop. coppice foreman import is
+# the owner's command; floor.import is the same choice for the floor. Nothing
+# is masked: the first case waits for the startup scan (the home is empty then,
+# so the estimate is 0 and 0), so every later estimate is the same on both
+# sides, and the case before the decline reads the estimate of the floor's
+# path, which counts a message at the last time as new (CP-R-60).
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_TEST_HOOKS=1
+#!env COPPICE_IMPORT_POLL_MS=off
+#!retry 20000
+{"id":"s0","cmd":"floor.import"}
+{"id":"$id","ok":true,"result":{"state":"off","offered":false,"paused":false,"done":0,"total":0,"queued":0,"sessions":0,"messages":0,"estimating":false}}
+{"id":"p0","cmd":"floor.import","action":"progress"}
+{"id":"$id","ok":true,"result":{"state":"off","offered":false,"paused":false,"done":0,"total":0,"queued":0,"sessions":0,"messages":0,"estimating":false}}
+{"id":"w1","write":"{HOME}/.claude/projects/p/s1.jsonl","text":"{\"type\":\"user\",\"uuid\":\"u1\",\"sessionId\":\"s1\",\"timestamp\":\"2026-03-01T10:00:00.000Z\",\"cwd\":\"/w/proj\",\"message\":{\"role\":\"user\",\"content\":\"hello there\"}}\n{\"type\":\"assistant\",\"uuid\":\"a1\",\"sessionId\":\"s1\",\"timestamp\":\"2026-03-01T10:00:05.000Z\",\"cwd\":\"/w/proj\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"secret\"},{\"type\":\"text\",\"text\":\"hi\"},{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"ls\"}}]}}\n{\"type\":\"user\",\"uuid\":\"u2\",\"sessionId\":\"s1\",\"timestamp\":\"2026-03-02T09:00:00.000Z\",\"cwd\":\"/w/proj\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"thanks\"}]}}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w2","write":"{HOME}/.codex/sessions/2026/03/05/rollout-2026-03-05T08-00-00-c1.jsonl","text":"{\"timestamp\":\"2026-03-05T08:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"c1\",\"cwd\":\"/w/o\"}}\n{\"timestamp\":\"2026-03-05T08:00:02.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"write a test\"}]}}\n{\"timestamp\":\"2026-03-05T08:00:04.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"shell\",\"arguments\":\"{\\\"command\\\": [\\\"bash\\\", \\\"-lc\\\", \\\"go test\\\"]}\",\"call_id\":\"k1\"}}\n{\"timestamp\":\"2026-03-05T08:00:07.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"written\"}]}}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cli":["foreman","import","--dry-run"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"past chats: 2 (about 5 messages)\n  claude: 1 chat, 3 messages\n  codex: 1 chat, 2 messages\nnothing was changed\n","stderr":""}}
+{"id":"2","cli":["foreman","import","--dry-run","--tools"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"past chats: 2 (about 7 messages)\n  claude: 1 chat, 4 messages\n  codex: 1 chat, 3 messages\nnothing was changed\n","stderr":""}}
+{"id":"3","cli":["foreman","import","--dry-run","--from","codex","--since","2026-03-04"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"past chats: 1 (about 2 messages)\n  codex: 1 chat, 2 messages\nnothing was changed\n","stderr":""}}
+{"id":"4","cli":["foreman","import","--status"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"import: off\n","stderr":""}}
+{"id":"5","cli":["foreman","import","--from","gemini"]}
+{"id":"$id","ok":true,"result":{"code":1,"stdout":"","stderr":"--from needs claude, codex or all, not \"gemini\"\n"}}
+{"id":"6","cli":["foreman","import","--since","march"]}
+{"id":"$id","ok":true,"result":{"code":1,"stdout":"","stderr":"--since needs a date like 2026-03-01, not \"march\"\n"}}
+{"id":"7","cli":["foreman","import","--pause","--resume"]}
+{"id":"$id","ok":true,"result":{"code":1,"stdout":"","stderr":"import takes one of --dry-run, --pause, --resume and --status\n"}}
+{"id":"8","cli":["foreman","import","--status","--json"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"{\"state\":\"off\",\"offered\":false,\"paused\":false,\"done\":0,\"total\":0,\"queued\":0}\n","stderr":""}}
+{"id":"9","cli":["foreman","import","--from","codex"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"past chats: 1 (about 2 messages)\n  codex: 1 chat, 2 messages\nqueued: they import one message at a time while coppice runs, never ahead of a live message\n","stderr":""}}
+{"id":"10","cli":["foreman","import","--status"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"import: running\nprogress: 0 of 2 messages\n","stderr":""}}
+{"id":"11","cli":["foreman","import","--pause"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"import paused (0 of 2 messages)\n","stderr":""}}
+{"id":"p1","cmd":"floor.import","action":"progress"}
+{"id":"$id","ok":true,"result":{"state":"paused","offered":true,"paused":true,"done":0,"total":2,"queued":1,"sessions":0,"messages":0,"estimating":false}}
+{"id":"12","cli":["foreman","import","--status","--json"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"{\"state\":\"paused\",\"offered\":true,\"paused\":true,\"done\":0,\"total\":2,\"queued\":1}\n","stderr":""}}
+{"id":"13","cmd":"floor.import","action":"resume"}
+{"id":"$id","ok":true,"result":{"state":"running","offered":true,"paused":false,"done":0,"total":2,"queued":1,"sessions":0,"messages":0,"estimating":false}}
+#!retry 20000
+{"id":"14","cli":["foreman","import","--status","--json"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"{\"state\":\"done\",\"offered\":true,\"paused\":false,\"done\":2,\"total\":2,\"queued\":0}\n","stderr":""}}
+{"id":"15","cli":["foreman","log"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"0 2026-03-05T08:00:02Z past|codex user in o: write a test\n1 2026-03-05T08:00:07Z past|codex assistant in o: written\n","stderr":""}}
+{"id":"16","cli":["foreman","import"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"past chats: 1 (about 3 messages)\n  claude: 1 chat, 3 messages\nqueued: they import one message at a time while coppice runs, never ahead of a live message\n","stderr":""}}
+{"id":"17","cmd":"floor.import","action":"resume"}
+{"id":"$id","ok":true,"result":{"state":"running","offered":true,"paused":false,"done":0,"total":3,"queued":1,"sessions":0,"messages":0,"estimating":false}}
+#!retry 20000
+{"id":"18","cli":["foreman","import","--status","--json"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"{\"state\":\"done\",\"offered\":true,\"paused\":false,\"done\":3,\"total\":3,\"queued\":0}\n","stderr":""}}
+{"id":"19","cli":["foreman","log","--day","2026-03-01"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"2 2026-03-01T10:00:00Z past|claude user in proj: hello there\n3 2026-03-01T10:00:05Z past|claude assistant in proj: hi\n","stderr":""}}
+{"id":"20","cli":["foreman","import","--dry-run"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"past chats: 0 (about 0 messages)\nnothing was changed\n","stderr":""}}
+{"id":"20b","cmd":"floor.import","action":"accept","since":"2030-01-01"}
+{"id":"$id","ok":true,"result":{"state":"done","offered":true,"paused":false,"done":3,"total":3,"queued":0,"sessions":0,"messages":0,"estimating":true,"note":"nothing new to import"}}
+#!retry 20000
+{"id":"20c","cmd":"floor.import"}
+{"id":"$id","ok":true,"result":{"state":"done","offered":true,"paused":false,"done":3,"total":3,"queued":0,"sessions":2,"messages":2,"estimating":false}}
+{"id":"21","cmd":"floor.import","action":"decline"}
+{"id":"$id","ok":true,"result":{"state":"declined","offered":true,"paused":false,"done":3,"total":3,"queued":0,"sessions":0,"messages":0,"estimating":false}}
+{"id":"22","cli":["foreman","import","--status"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"import: declined\nprogress: 3 of 3 messages\n","stderr":""}}
+{"id":"23","cli":["foreman","import","--dry-run","--tools"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"past chats: 2 (about 2 messages)\n  claude: 1 chat, 1 message\n  codex: 1 chat, 1 message\nnothing was changed\n","stderr":""}}
+{"id":"p1","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"],"label":"kid"}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"h1","cmd":"hello","role":"pane","pane":"$c"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$c"}}
+{"id":"m2","cmd":"floor.import"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator imports old chats into the foreman."}}

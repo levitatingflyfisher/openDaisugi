@@ -65,10 +65,10 @@ gate is **audit by default** ([ADR-0007](../adr/)) — it observes and never
 denies until you pass `--enforce`.
 
 Harness coverage is stated honestly, not faked. The base_url pointer is wired
-for **Claude Code** and **OpenClaw** (both speak the Anthropic Messages wire the
-gateway emits); **Codex** and **Hermes-custom** expect an OpenAI wire the gateway
-does not emit yet, so `--gateway` reports them as an *honest gap* rather than
-handing you a broken config. The verify gate is wired for **Claude Code**;
+for **Claude Code** and **OpenClaw** (both speak the Anthropic Messages wire) and
+for **Codex** (the gateway also answers the OpenAI `/chat/completions` wire);
+**Hermes-custom** expects an OpenAI wire that `install` does not wire yet, so
+`--gateway` reports it as an *honest gap* rather than handing you a broken config. The verify gate is wired for **Claude Code**;
 OpenClaw needs a small JS shim and Codex has no external gate at all (its safety
 rides the MCP boundary) — both surfaced in the install output, not silently
 dropped ([ADR-0013](../adr/)).
@@ -88,6 +88,22 @@ dropped ([ADR-0013](../adr/)).
 3. **Streams the reply back byte-for-byte** while reading the `usage` off the SSE
    events in passing — it never buffers the stream to measure it.
 4. **Journals the turn** to `~/.opendaisugi/gateway/turns.jsonl`.
+
+A harness can name its pane. A base URL of the form
+`<gateway>/pane/<floor>/<pane>` (the floor is 16 lower-case hex digits and the
+pane is `w<n>:p<n>`, as coppice names them) is routed as the plain
+`<gateway>/...` path: the gateway takes the prefix off before it routes, so the
+upstream never sees it, and it adds `"pane"` and `"floor"` to that turn's
+journal line. A line with no well-formed prefix has neither key.
+
+The gateway says that it takes the prefix: `GET /_caps` from the same machine
+answers `{"pane_prefix": true}`. Like `/_reload`, it is answered by the gateway
+itself, loopback only, and never sent on to the model provider. coppice asks once
+for each gateway address, and sets the prefix on the base URL of an agent it
+starts only when the answer is yes, so its floor can show the tokens saved for each
+agent. An older gateway has no such route and does not strip the prefix; coppice
+then leaves the base URL plain, and the pane works as before with no savings figure
+of its own. Restart the gateway after you update daisugi to turn it on.
 
 If the cheap model returns a 4xx on the swapped body (say a `max_tokens` above its
 ceiling), the turn is retried once on the original model before the client sees
@@ -120,6 +136,86 @@ The dollar counterfactual is an **estimate** (flagged as one on every record): i
 prices what the frontier model *would* have cost at the same token split, and does
 not model the frontier's own warm cache. Actual spend is always exact, taken from
 the model's own usage report.
+
+## Learn from outcomes: the knn router
+
+The rules router uses a guess: short and plain tasks are easy. The knn router
+learns instead. It sends a turn to the model that did well on similar past tasks.
+
+```bash
+daisugi install --gateway --router knn   # or: daisugi gateway --router knn
+```
+
+How it works:
+
+- After each routed turn the gateway books one row in
+  `<data-dir>/gateway/routing.db`: a hash of the task, its vector (from the
+  matcher you already use for pathways), the model, the cost, the time and an
+  outcome. The text of the task is not stored.
+- A turn is **bad** when the upstream answers with an error or the model refuses.
+  The next new ask in the same conversation, within 10 minutes, labels the turn
+  before it: a near copy of the earlier ask is a retry, so the earlier turn was
+  **bad**. An ask that moves on makes it **good**. Every other turn stays
+  **unknown**.
+- To route a turn, the router takes the 8 nearest past turns. With at least 3
+  known outcomes, it scores each model by the share of good outcomes (weighted by
+  similarity, smoothed by one) less a small cost term, and picks the best. With
+  fewer, it says so and the rules router decides. The router never picks a model
+  above the one the harness asked for. Only rows made by a model the router may pick count as known. A cheaper model
+  wins only with at least one good row and a success value at or above the
+  requested model's.
+- It does not try cheaper models to learn about them. Its first cheaper-model
+  rows come from the rules router, which decides while knn has too few outcomes.
+  Cache stickiness (ADR-0015) applies on top, unchanged.
+
+Every turn in the journal carries the reason line, for example
+`knn: claude-haiku-4-5; 6 neighbours, 5 known; scores claude-haiku-4-5 0.79, claude-opus-4-8 0.55`.
+A booked turn also carries its `turn_id`.
+
+Check and correct it:
+
+```bash
+daisugi route "rename the helper in the parser" --knn   # the choice and its nearest turns; books nothing
+daisugi router status                                    # counts by outcome and the last turns
+daisugi route feedback t12 bad                           # set an outcome by hand
+```
+
+The numbers and the rules are in ruling RT-R-1 to RT-R-7 and RT-R-3a of
+`clients/ADJUDICATIONS.md`. The Go and Rust binaries do the same, and the three
+are checked on one fixed outcome table.
+
+## Pick how smart the router is
+
+The router slot holds five choices, from no thinking to a model that thinks:
+
+| `gateway_router` | What decides | Cost per turn |
+|---|---|---|
+| `off` | Nothing. The turn goes as sent and is metered. | none |
+| `rules` | A heuristic: short and plain means easy. | none |
+| `knn` | Past outcomes. Cosine over the matcher's vectors; no model call. | one local embed |
+| `model` | A model you name picks from the allowed names. | one short model call |
+| `switchyard` | NVIDIA NeMo Switchyard, a trained router. | its own |
+
+`knn` and `model` never pick a model above the one the harness asked for. A bad
+pick, an error or a timeout falls back to the rules router, and the reason line says so.
+
+**The model router.** Set `gateway_router: model` and `gateway_router_model: <model>`
+in `config.yaml`. For each turn with new text, and a cheaper model to pick,
+the gateway asks that model, through your own upstream, to name one of the
+allowed models (the requested one and the cheaper rungs). The answer must be one
+of those names. A tool-loop step is not asked: it stays on the model the
+conversation used last.
+
+**The grader.** Set `gateway_grader: <model>` (default `off`). After the reply is
+sent, the gateway asks that model one question: did the answer do the task, good
+or bad. It asks only when the reply is a finished answer, not a tool call. The answer goes to the outcome table, above the automatic labels. A grade
+from you (`daisugi route feedback`) always wins over the grader. A grader error or
+an odd answer writes nothing and logs one line. The grader reads the task and the
+answer, so it sees what your upstream sees. It needs `knn` or `model`, which book
+the turns.
+
+A small learned net that picks from the vectors and the grader labels is planned,
+once enough labels exist. It will fill the same slot.
 
 ## Compose with a trained router: NeMo Switchyard
 

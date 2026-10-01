@@ -481,6 +481,8 @@ def test_potion_adapter_normalizes_and_returns_numpy(monkeypatch):
     )
     from opendaisugi import _search
 
+    monkeypatch.setattr(_search, "_potion_source", lambda mid: mid)
+
     _search._reset_embedder_cache()
     out = _search._get_model().encode(["a", "b"], convert_to_numpy=True)
     assert isinstance(out, np.ndarray)
@@ -550,6 +552,8 @@ def test_potion_load_failure_does_not_fall_back_to_lexical(monkeypatch):
 
     monkeypatch.setattr(model2vec.StaticModel, "from_pretrained", staticmethod(_raise))
     from opendaisugi import _search
+
+    monkeypatch.setattr(_search, "_potion_source", lambda mid: mid)
 
     _search._reset_embedder_cache()
     with pytest.raises(MatcherNotAvailable, match="OPENDAISUGI_POTION_MODEL") as exc_info:
@@ -1149,3 +1153,40 @@ def test_tiers_setup_matcher_sets_potion_in_one_step(tmp_path):
         app, ["tiers", "setup", "--data-dir", str(tmp_path), "--matcher", "nope"]
     )
     assert bad.exit_code == 2
+
+
+def test_the_default_potion_model_is_fetched_at_its_pinned_commit(monkeypatch, tmp_path):
+    """model2vec's loader takes no revision, so the default is fetched at
+    the commit the Go and Rust ports pin, and loaded from that snapshot; an
+    id or directory the operator names is loaded as it is."""
+    import huggingface_hub
+
+    from opendaisugi import _search
+
+    calls = []
+
+    def fake_snapshot(repo_id, revision=None, tqdm_class=None, **kw):
+        calls.append((repo_id, revision))
+        # The bar a load would print is off, cached or not.
+        assert tqdm_class(total=1).disable
+        return str(tmp_path / "snap")
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot)
+    assert _search._potion_source("minishlab/potion-base-8M") == str(tmp_path / "snap")
+    assert calls == [("minishlab/potion-base-8M", "bf8b056651a2c21b8d2565580b8569da283cab23")]
+    assert _search._potion_source("/models/potion") == "/models/potion"
+    assert len(calls) == 1
+
+
+def test_the_int8_cache_honours_xdg_cache_home(monkeypatch, tmp_path):
+    """The int8 cache follows XDG_CACHE_HOME, as the Go and Rust potion
+    caches do, and falls back to ~/.cache when it is unset."""
+    from opendaisugi._search import _int8_cache_dir
+
+    monkeypatch.delenv("OPENDAISUGI_INT8_MODEL", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    assert _int8_cache_dir() == tmp_path / "xdg" / "opendaisugi" / "models" / "minilm-int8"
+    monkeypatch.setenv("XDG_CACHE_HOME", "")
+    want = tmp_path / "home" / ".cache" / "opendaisugi" / "models" / "minilm-int8"
+    assert _int8_cache_dir() == want

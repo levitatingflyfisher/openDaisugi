@@ -77,6 +77,28 @@ func (r *runner) clientArgv(name string, spec clientSpec) []string {
 	return []string{path}
 }
 
+// ClientProblem says in one line why the verifier client config.yaml
+// names cannot run on this box, or "" when nothing is wrong. The gate does
+// not break in either case: the built-in verifier decides every call and a
+// client only tightens its verdict. env holds PATH and the
+// OPENDAISUGI_<NAME>_CLIENT variables. "" and python name the built-in
+// verifier; the Go and Rust builds need no Python.
+func ClientProblem(name string, env map[string]string) string {
+	if name == "" || name == "python" {
+		return ""
+	}
+	spec, known := verifierClients[name]
+	if !known {
+		return "verifier_client: " + name + " names no client (python, go, rust, typescript or lean). " +
+			"The built-in verifier decides every call. Set verifier_client: python in config.yaml."
+	}
+	if (&runner{env: env}).clientArgv(name, spec) == nil {
+		return "verifier_client: " + name + " is not installed here (daisugi-conform-" + name + " is not on PATH). " +
+			"The built-in verifier decides every call. Set verifier_client: python in config.yaml."
+	}
+	return ""
+}
+
 // verifyVia is verifier_dispatch.verify_via on the gate's own verdict vs
 // for the one-step plan. oracleS is how long that verdict took.
 func (r *runner) verifyVia(client string, rec *record, env *envelope, vs []violation, oracleS float64) ([]violation, bool) {

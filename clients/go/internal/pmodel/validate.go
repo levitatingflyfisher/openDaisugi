@@ -411,6 +411,9 @@ type Field struct {
 	Required bool
 	// Default gives the value of an absent field.
 	Default func() any
+	// OmitNone leaves the field out of the result when its value is None,
+	// as a pydantic field with exclude_if=lambda v: v is None dumps.
+	OmitNone bool
 }
 
 // Model is a pydantic BaseModel with extra fields ignored.
@@ -461,13 +464,17 @@ func (m *Model) fields(o *pyjson.Object, loc []any, mode Mode) (any, []Err) {
 				errs = append(errs, Err{Loc: with(loc, f.Name), Type: "missing", Msg: "Field required", Input: o})
 				continue
 			}
-			out.Set(f.Name, f.Default())
+			if d := f.Default(); d != nil || !f.OmitNone {
+				out.Set(f.Name, d)
+			}
 			continue
 		}
 		at[len(loc)] = names[fi]
 		y, e := f.Schema.validate(x, at, mode)
 		errs = append(errs, e...)
-		out.Set(f.Name, y)
+		if y != nil || !f.OmitNone {
+			out.Set(f.Name, y)
+		}
 	}
 	if m.Finite && len(errs) == 0 {
 		errs = NonFinite(out, loc)

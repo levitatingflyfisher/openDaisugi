@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -56,6 +57,36 @@ func FromEnviron(environ []string) []Var {
 		}
 	}
 	return out
+}
+
+// OrderedFromMap lists a map's variables in this process's environment
+// order, and says whether that is the order Python's os.environ would
+// give: true when every *_proxy variable of the map is in the process
+// environment with the same value (the map was read from it). A variable
+// the process does not hold comes after, in name order.
+func OrderedFromMap(env map[string]string) ([]Var, bool) {
+	var out []Var
+	taken := map[string]bool{}
+	for _, v := range FromEnviron(os.Environ()) {
+		if val, ok := env[v.Name]; ok && val == v.Value && !taken[v.Name] {
+			out = append(out, v)
+			taken[v.Name] = true
+		}
+	}
+	var rest []Var
+	for k, v := range env {
+		if !taken[k] {
+			rest = append(rest, Var{k, v})
+		}
+	}
+	sort.Slice(rest, func(i, j int) bool { return rest[i].Name < rest[j].Name })
+	ordered := true
+	for _, v := range rest {
+		if len(v.Name) > 5 && strings.HasSuffix(strings.ToLower(v.Name), "_proxy") {
+			ordered = false
+		}
+	}
+	return append(out, rest...), ordered
 }
 
 // FromMap lists a map's variables, in no order.
@@ -214,11 +245,17 @@ type Refusal struct {
 	Fails string
 	// Unported names a shape of variable this binary does not model.
 	Unported string
+	// Invalid is httpx.InvalidURL's text: the client cannot be built, and
+	// the error is not one the callers' except clauses name.
+	Invalid string
 }
 
 func (r *Refusal) Error() string {
 	if r.Fails != "" {
 		return r.Fails
+	}
+	if r.Invalid != "" {
+		return r.Invalid
 	}
 	return "a proxy setting this binary does not read as the oracle does: " + r.Unported
 }
@@ -301,73 +338,32 @@ func isSchemeChar(r rune) bool {
 	return r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("+-.", r))
 }
 
-// parseURL cuts an httpx URL; only the shapes read as httpx reads them.
+// parseURL cuts a URL as httpx parses it (parseHttpx): an *InvalidURL
+// when httpx raises, an *unportedURL when this binary does not model it.
 func parseURL(s string) (purl, error) {
-	bad := fmt.Errorf("the URL %q", s)
-	scheme, after, ok := strings.Cut(s, "://")
-	if !ok || scheme == "" || strings.IndexFunc(scheme, func(r rune) bool { return !isSchemeChar(r) }) >= 0 {
-		return purl{}, bad
+	u, err := parseHttpx(s)
+	if err != nil {
+		return purl{}, err
 	}
-	end := strings.IndexAny(after, "/?#")
-	if end < 0 {
-		end = len(after)
+	out := purl{scheme: u.scheme, host: u.host, rest: u.rest()}
+	if u.port > 0 {
+		out.port = u.port
 	}
-	authority, rest := after[:end], after[end:]
-	var userinfo *string
-	hostport := authority
-	if i := strings.LastIndex(authority, "@"); i >= 0 {
-		u := authority[:i]
-		userinfo = &u
-		hostport = authority[i+1:]
+	if u.userinfo != "" {
+		ui := u.userinfo
+		out.userinfo = &ui
 	}
-	var host string
-	var portText *string
-	if strings.HasPrefix(hostport, "[") {
-		h, p, ok := strings.Cut(hostport[1:], "]")
-		if !ok {
-			return purl{}, bad
-		}
-		if a, err := netip.ParseAddr(h); err != nil || !a.Is6() || a.Zone() != "" {
-			return purl{}, bad
-		}
-		host = strings.ToLower(h)
-		if p != "" {
-			if !strings.HasPrefix(p, ":") {
-				return purl{}, bad
-			}
-			pt := p[1:]
-			portText = &pt
-		}
-	} else if i := strings.LastIndex(hostport, ":"); i >= 0 {
-		host = hostport[:i]
-		pt := hostport[i+1:]
-		portText = &pt
-	} else {
-		host = hostport
+	return out, nil
+}
+
+// failsOr is the refusal a parse error gives: httpx's InvalidURL fails
+// every request, as the client cannot be built; anything else is not
+// modelled.
+func failsOr(err error, why string) *Httpx {
+	if inv, ok := err.(*InvalidURL); ok {
+		return &Httpx{refusal: &Refusal{Invalid: inv.Msg}}
 	}
-	for _, r := range host {
-		if r >= 128 || strings.ContainsRune("% []\\\"<>^`{|}", r) {
-			return purl{}, bad
-		}
-	}
-	host = strings.ToLower(host)
-	port := 0
-	if portText != nil && *portText != "" {
-		pt := *portText
-		if len(pt) > 5 || strings.IndexFunc(pt, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
-			return purl{}, bad
-		}
-		n, _ := strconv.Atoi(pt)
-		if n > 65535 {
-			return purl{}, bad
-		}
-		port = n
-	}
-	scheme = strings.ToLower(scheme)
-	if port != 0 && port == defaultPort(scheme) {
-		port = 0
-	}
-	return purl{scheme: scheme, host: host, userinfo: userinfo, port: port, rest: rest}, nil
+	return unported(why + ": " + err.Error())
 }
 
 func isIPv4(h string) bool {
@@ -436,8 +432,6 @@ func httpxFrom(p []kv) *Httpx {
 			return &Httpx{}
 		case h == "":
 			continue
-		case strings.Contains(h, "%"):
-			return unported(fmt.Sprintf("NO_PROXY entry %q", h))
 		case strings.Contains(h, "://"):
 			put(h, nil)
 		case isIPv4(h):
@@ -463,7 +457,7 @@ func httpxFrom(p []kv) *Httpx {
 		}
 		u, err := parseURL(*e.v)
 		if err != nil {
-			return unported("a proxy URL: " + err.Error())
+			return failsOr(err, "a proxy URL")
 		}
 		switch u.scheme {
 		case "http", "https", "socks5", "socks5h":
@@ -479,7 +473,7 @@ func httpxFrom(p []kv) *Httpx {
 	for _, e := range ps {
 		pat, err := toPattern(e.k)
 		if err != nil {
-			return unported(err.Error())
+			return failsOr(err, "a NO_PROXY entry")
 		}
 		var proxy *Proxy
 		if e.u != nil {
@@ -487,7 +481,9 @@ func httpxFrom(p []kv) *Httpx {
 			if strings.HasPrefix(u.scheme, "socks5") {
 				return &Httpx{refusal: &Refusal{Fails: SocksText}}
 			}
-			if u.host == "" {
+			if u.host == "" || strings.Contains(u.host, "%") {
+				// No host, or one httpx sends percent-encoded: where the
+				// connection fails is not modelled.
 				return unported(fmt.Sprintf("the proxy URL %q", e.v))
 			}
 			pr := &Proxy{TLS: u.scheme == "https", Host: u.host, Port: u.port}
@@ -520,21 +516,24 @@ func httpxFrom(p []kv) *Httpx {
 
 func toPattern(key string) (pattern, error) {
 	if key != "" && !strings.Contains(key, ":") {
-		return pattern{}, fmt.Errorf("the proxy key %q", key)
+		return pattern{}, &unportedURL{fmt.Sprintf("the proxy key %q", key)}
 	}
 	u, err := parseURL(key)
 	if err != nil {
-		return pattern{}, fmt.Errorf("a NO_PROXY entry: %v", err)
+		return pattern{}, err
 	}
-	if u.userinfo != nil || !(u.rest == "" || strings.HasPrefix(u.rest, "/")) {
-		return pattern{}, fmt.Errorf("a NO_PROXY entry %q", key)
-	}
+	// URLPattern reads the scheme, the host and the port, nothing else.
 	p := pattern{scheme: u.scheme, host: u.host, port: u.port}
 	if p.scheme == "all" {
 		p.scheme = ""
 	}
 	if p.host == "*" {
 		p.host = ""
+	}
+	if strings.Contains(p.host, "xn--") {
+		// URLPattern's host is the IDNA-decoded one: its length orders
+		// the mounts.
+		return pattern{}, &unportedURL{fmt.Sprintf("the IDNA host in %q", key)}
 	}
 	return p, nil
 }
@@ -572,7 +571,12 @@ func (h *Httpx) Route(o Origin) (Route, error) {
 	if o.TLS {
 		scheme = "https"
 	}
-	host := strings.ToLower(o.Host)
+	// encode_host lower-cases a name, and keeps an IPv6 address as
+	// written.
+	host := o.Host
+	if !strings.Contains(host, ":") {
+		host = strings.ToLower(host)
+	}
 	port := o.Port
 	if port == defaultPort(scheme) {
 		port = 0

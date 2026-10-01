@@ -5,7 +5,10 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"syscall"
 	"unicode/utf8"
+
+	"daisugi-verify/internal/statefile"
 )
 
 // DisarmFile is the kill-switch marker's name in the gate root.
@@ -21,28 +24,38 @@ func AuditDir(root string) string { return Join(root, "audit") }
 // mode was called shadow mode. Only the report reads it.
 func LegacyAuditDir(root string) string { return Join(root, "shadow") }
 
-// Disarm is gate.disarm: the root made private and the marker written.
-// followed is the file written when the marker path was a symlink.
-func Disarm(root string) (marker, followed string, err error) {
-	if err := mkdirPrivate(root); err != nil {
-		return "", "", err
+// Disarm is gate.disarm: the marker written through the root's directory fd
+// (GR-R-9) and read back with the gate's reader. A link planted at DISARMED
+// is refused, and so is a marker the gate would not read, so this never
+// reports a kill switch the gate ignores. The error is a
+// *statefile.WriteRefused for either.
+func Disarm(root string) (marker string, err error) {
+	if _, err := statefile.WriteFile(root, nil, DisarmFile, "disarmed by operator\n", false); err != nil {
+		return "", err
 	}
-	marker = Join(root, DisarmFile)
-	followed, err = WriteFile(marker, "disarmed by operator\n")
-	return marker, followed, err
+	if err := statefile.VerifyWritten(root, nil, DisarmFile); err != nil {
+		return "", err
+	}
+	return Join(root, DisarmFile), nil
 }
 
-// Arm is gate.arm: the marker removed if Path.exists() sees it.
+// Arm is gate.arm: the marker removed through the root's directory fd
+// (GR-R-9). A refused root is a *statefile.WriteRefused, so this never
+// reports an armed gate it did not arm.
 func Arm(root string) error {
-	marker := Join(root, DisarmFile)
-	if exists(marker) {
-		return os.Remove(marker)
-	}
-	return nil
+	_, err := statefile.UnlinkFile(root, nil, DisarmFile)
+	return err
 }
 
-// IsDisarmed is gate.is_disarmed.
-func IsDisarmed(root string) bool { return exists(Join(root, DisarmFile)) }
+// IsDisarmed is gate.is_disarmed: DISARMED is a regular file this user
+// owns, read through no link (GR-R-1). A refusal reads as armed.
+func IsDisarmed(root string) bool {
+	fd, ok := statefile.Open(root, nil, DisarmFile, -1)
+	if ok {
+		syscall.Close(fd)
+	}
+	return ok
+}
 
 // ErrName marks a directory entry whose name is not valid UTF-8, which
 // Python would carry as surrogate escapes.

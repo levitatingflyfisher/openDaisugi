@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -39,6 +40,10 @@ type VoiceConfig struct {
 	// Args are added after the flags the server passes to daisugi voice
 	// serve.
 	Args []string
+	// SpeakURL is a speech server for the foreman's replies, and the model
+	// and voice it is asked for. SpeakProfile names an operator agent
+	// profile whose key it gets. See speech.go.
+	SpeakURL, SpeakModel, SpeakVoice, SpeakProfile string
 }
 
 // Voice states, as voice.status reports them.
@@ -70,11 +75,17 @@ type voiceSup struct {
 	fix    string
 	// command is the shell line that fixes a down voice, for a client to
 	// type and not run, or "".
-	command   string
-	cmd       *exec.Cmd
-	gen       int
-	restarted bool
-	stopping  bool
+	command string
+	// bin is the daisugi the process runs from. fetch is the model download
+	// the process shows while it starts, from daisugi voice status.
+	bin   string
+	fetch *voiceFetch
+	// fetchEvery is how often a starting voice asks daisugi voice status.
+	fetchEvery time.Duration
+	cmd        *exec.Cmd
+	gen        int
+	restarted  bool
+	stopping   bool
 	// exited is closed when the running process's Wait returns.
 	exited chan struct{}
 }
@@ -86,7 +97,7 @@ func newVoiceSup(cfg VoiceConfig, dataDir string) *voiceSup {
 		}
 	}
 	v := &voiceSup{cfg: cfg, dataDir: dataDir, lookPath: exec.LookPath,
-		health: 3 * time.Minute, every: 250 * time.Millisecond, state: voiceIdle}
+		health: 3 * time.Minute, every: 250 * time.Millisecond, fetchEvery: time.Second, state: voiceIdle}
 	switch {
 	case cfg.Off:
 		v.state = voiceOff
@@ -98,11 +109,79 @@ func newVoiceSup(cfg VoiceConfig, dataDir string) *voiceSup {
 
 // installVoice and upgradeVoice are the shell lines that install
 // daisugi with its voice extra. A client may type them in a shell for the
-// owner to read and run.
+// owner to read and run. Only the Python daisugi has a voice extra.
 const (
 	installVoice = "pip install 'opendaisugi[voice]'"
 	upgradeVoice = "pip install --upgrade 'opendaisugi[voice]'"
 )
+
+// The kinds of daisugi, as daisugi voice status names them.
+const (
+	kindPython = "python"
+	kindGo     = "go"
+	kindRust   = "rust"
+)
+
+// voiceFetch is a model download under way.
+type voiceFetch struct{ Done, Total int64 }
+
+// voiceAnswer is what daisugi voice status --json says that coppice reads.
+type voiceAnswer struct {
+	Kind    string `json:"kind"`
+	Fetched bool   `json:"fetched"`
+	Fetch   *struct {
+		Done  int64 `json:"done"`
+		Total int64 `json:"total"`
+	} `json:"fetch"`
+}
+
+// askDaisugi runs daisugi voice status --json. A daisugi without that
+// verb, or one that fails, answers nothing: the kind is then unknown.
+func askDaisugi(bin string, extra ...string) voiceAnswer {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	args := append([]string{"voice", "status", "--json"}, extra...)
+	out, err := exec.CommandContext(ctx, bin, args...).Output()
+	var a voiceAnswer
+	if err != nil || json.Unmarshal(out, &a) != nil {
+		return voiceAnswer{}
+	}
+	return a
+}
+
+// dataDirArgs is the --data-dir that [voice] args gives daisugi voice serve,
+// as arguments for daisugi voice status, so both read the same config.
+func dataDirArgs(args []string) []string {
+	for i, a := range args {
+		if a == "--data-dir" && i+1 < len(args) {
+			return []string{"--data-dir", args[i+1]}
+		}
+		if strings.HasPrefix(a, "--data-dir=") {
+			return []string{a}
+		}
+	}
+	return nil
+}
+
+// extraMissing is the fix for a daisugi that has no speech engine. A kind
+// that is not known gets the Python fix (ruling VO-R-3). The
+// Python daisugi gets its pip line; a Go or Rust daisugi gets no pip line,
+// because pip would install a second daisugi.
+func extraMissing(kind string) (reason, fix, command string) {
+	if kind == kindGo || kind == kindRust {
+		return "Voice needs a speech engine, and daisugi cannot find one.",
+			"Install the opendaisugi-voice package, or build the engines with scripts/install.sh --voice", ""
+	}
+	return "Voice needs daisugi's voice extra.", "Install it with " + installVoice, installVoice
+}
+
+// cannotServe is the fix for a daisugi that has no voice serve.
+func cannotServe(kind string) (reason, fix, command string) {
+	if kind == kindGo || kind == kindRust {
+		return "This daisugi cannot serve voice.", "Update daisugi", ""
+	}
+	return "This daisugi cannot serve voice.", "Update opendaisugi and install its voice extra", upgradeVoice
+}
 
 // managedFlags are the flags the server passes to daisugi voice serve
 // itself. The voice server listens on loopback and checks the server's
@@ -182,6 +261,9 @@ func (v *voiceSup) status() map[string]any {
 	if v.state == voiceReady || v.state == voiceStarting {
 		out["url"] = v.url
 	}
+	if v.state == voiceStarting && v.fetch != nil {
+		out["fetch"] = map[string]any{"done": v.fetch.Done, "total": v.fetch.Total}
+	}
 	if v.cmd != nil && v.cmd.Process != nil {
 		out["pid"] = v.cmd.Process.Pid
 	}
@@ -232,6 +314,7 @@ func (v *voiceSup) ensure() {
 // down records why voice cannot run and what fixes it.
 func (v *voiceSup) downLocked(reason, fix string) {
 	v.state, v.reason, v.fix, v.url, v.cmd, v.command = voiceDown, reason, fix, "", nil, ""
+	v.fetch = nil
 }
 
 // beginLocked marks voice as starting and starts it on its own goroutine.
@@ -239,6 +322,7 @@ func (v *voiceSup) downLocked(reason, fix string) {
 func (v *voiceSup) beginLocked(probe bool) {
 	v.gen++
 	v.state, v.reason, v.fix, v.url, v.command = voiceStarting, "", "", "", ""
+	v.fetch = nil
 	go v.start(v.gen, probe, 0)
 }
 
@@ -266,8 +350,8 @@ func (v *voiceSup) start(gen int, probe bool, tries int) {
 		err := exec.CommandContext(ctx, bin, "voice", "serve", "--help").Run()
 		cancel()
 		if err != nil {
-			failWith("This daisugi cannot serve voice.",
-				"Update opendaisugi and install its voice extra", upgradeVoice)
+			reason, fix, command := cannotServe(askDaisugi(bin, dataDirArgs(v.cfg.Args)...).Kind)
+			failWith(reason, fix, command)
 			return
 		}
 	}
@@ -312,7 +396,7 @@ func (v *voiceSup) start(gen int, probe bool, tries int) {
 		v.mu.Unlock()
 		return
 	}
-	v.cmd, v.url = cmd, url
+	v.cmd, v.url, v.bin = cmd, url, bin
 	exited := make(chan struct{})
 	v.exited = exited
 	v.mu.Unlock()
@@ -323,7 +407,36 @@ func (v *voiceSup) start(gen int, probe bool, tries int) {
 		close(exited)
 		v.onExit(gen, cmd, err, tries)
 	}()
+	go v.watchFetch(gen, bin, exited)
 	v.waitHealthy(gen, url, exited)
+}
+
+// watchFetch asks daisugi voice status while voice starts, so voice.status
+// can show the model download. It ends when the process ends or voice
+// leaves the starting state.
+func (v *voiceSup) watchFetch(gen int, bin string, exited <-chan struct{}) {
+	for {
+		a := askDaisugi(bin, dataDirArgs(v.cfg.Args)...)
+		v.mu.Lock()
+		if gen != v.gen || v.state != voiceStarting || v.stopping {
+			v.mu.Unlock()
+			return
+		}
+		v.fetch = nil
+		if a.Fetch != nil {
+			v.fetch = &voiceFetch{a.Fetch.Done, a.Fetch.Total}
+		}
+		v.mu.Unlock()
+		if a.Fetched {
+			// The model is there; nothing more to follow.
+			return
+		}
+		select {
+		case <-exited:
+			return
+		case <-time.After(v.fetchEvery):
+		}
+	}
 }
 
 // waitHealthy polls /health until it answers, the process exits, or the
@@ -364,12 +477,24 @@ func (v *voiceSup) waitHealthy(gen int, url string, exited <-chan struct{}) {
 // voice down, with the reason read from its log.
 func (v *voiceSup) onExit(gen int, cmd *exec.Cmd, err error, tries int) {
 	v.mu.Lock()
+	if v.stopping || gen != v.gen || v.cmd != cmd {
+		v.mu.Unlock()
+		return
+	}
+	last := lastLine(v.logPath())
+	bin := v.bin
+	v.mu.Unlock()
+	// Only a missing speech engine needs the kind, to name the right fix.
+	kind := ""
+	if missingEngine(last) {
+		kind = askDaisugi(bin, dataDirArgs(v.cfg.Args)...).Kind
+	}
+	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.stopping || gen != v.gen || v.cmd != cmd {
 		return
 	}
 	was := v.state
-	last := lastLine(v.logPath())
 	code := -1
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
@@ -381,10 +506,10 @@ func (v *voiceSup) onExit(gen int, cmd *exec.Cmd, err error, tries int) {
 		v.beginLocked(false)
 	case was == voiceReady:
 		v.downLocked("Voice stopped twice.", "See "+v.logPath()+"")
-	case strings.Contains(last, "not installed"):
-		v.downLocked("Voice needs daisugi's voice extra.",
-			"Install it with "+installVoice)
-		v.command = installVoice
+	case strings.Contains(last, "not installed") || (missingEngine(last) && (kind == kindGo || kind == kindRust)):
+		reason, fix, command := extraMissing(kind)
+		v.downLocked(reason, fix)
+		v.command = command
 	case strings.Contains(strings.ToLower(last), "address already in use") && tries == 0:
 		v.gen++
 		v.state = voiceStarting
@@ -429,6 +554,13 @@ func freePort() (int, error) {
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port, nil
+}
+
+// missingEngine reports whether a log line says the speech engine is not
+// there: the Python daisugi's missing extra, or a Go or Rust daisugi
+// without its engine program.
+func missingEngine(last string) bool {
+	return strings.Contains(last, "not installed") || strings.Contains(last, "is not on PATH")
 }
 
 // lastLine is the last line of path that is not empty and that coppice

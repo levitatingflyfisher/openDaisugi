@@ -99,11 +99,11 @@ pub fn py_which(name: &str, path: Option<&str>) -> Option<PathBuf> {
 /// `bench.options.gate_client_argv(spec)`: the client named by
 /// OPENDAISUGI_<NAME>_CLIENT, else daisugi-conform-<name> on PATH; never a
 /// source checkout. `None` when this box has none.
-fn client_argv(r: &Runner, name: &str, s: &Spec) -> Option<Vec<String>> {
+fn client_argv(env: &std::collections::HashMap<String, String>, name: &str, s: &Spec) -> Option<Vec<String>> {
     let var = format!("OPENDAISUGI_{}_CLIENT", name.to_uppercase());
-    let found = match r.env.get(&var).filter(|v| !v.is_empty()) {
+    let found = match env.get(&var).filter(|v| !v.is_empty()) {
         Some(v) => v.clone(),
-        None => py_which(&format!("daisugi-conform-{name}"), r.env.get("PATH").map(String::as_str))?
+        None => py_which(&format!("daisugi-conform-{name}"), env.get("PATH").map(String::as_str))?
             .to_string_lossy()
             .into_owned(),
     };
@@ -112,13 +112,31 @@ fn client_argv(r: &Runner, name: &str, s: &Spec) -> Option<Vec<String>> {
         return None;
     }
     if s.argv[0] == "node" {
-        let node = py_which("node", r.env.get("PATH").map(String::as_str))?;
+        let node = py_which("node", env.get("PATH").map(String::as_str))?;
         return Some(vec![node.to_string_lossy().into_owned(), found]);
     }
     if access(&fp, libc::X_OK) {
         Some(vec![found])
     } else {
         None
+    }
+}
+
+/// One line on why the verifier client config.yaml names cannot run on this
+/// box, or "" when nothing is wrong. The gate does not break either way:
+/// the built-in verifier decides every call and a client only tightens its
+/// verdict. "" and python name the built-in verifier (no Python needed).
+pub fn client_problem(name: &str, env: &std::collections::HashMap<String, String>) -> String {
+    if name.is_empty() || name == "python" {
+        return String::new();
+    }
+    let fix = "The built-in verifier decides every call. Set verifier_client: python in config.yaml.";
+    match spec(name) {
+        None => format!("verifier_client: {name} names no client (python, go, rust, typescript or lean). {fix}"),
+        Some(s) if client_argv(env, name, &s).is_none() => {
+            format!("verifier_client: {name} is not installed here (daisugi-conform-{name} is not on PATH). {fix}")
+        }
+        Some(_) => String::new(),
     }
 }
 
@@ -196,7 +214,7 @@ impl Runner {
         let mut verdict: Option<Object> = None;
         let failure = match spec(client) {
             None => format!("no client named {}", super::py::text::repr(client)),
-            Some(s) => match client_argv(self, client, &s) {
+            Some(s) => match client_argv(&self.env, client, &s) {
                 None => format!("not built; cd {} && {}", s.build_cwd, s.build_steps.join(" && ")),
                 Some(_) if left <= 0.0 => {
                     format!("no time left after the oracle, which took {oracle_s:.2} s of {} s", fmt_g(budget_s))
@@ -474,6 +492,20 @@ fn well_formed(v: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A config.yaml that names a verifier client this box lacks gets one
+    /// clear line; python and the empty name are the built-in verifier.
+    #[test]
+    fn client_problem_names_what_is_missing() {
+        let env: std::collections::HashMap<String, String> =
+            [("PATH".to_string(), "/usr/bin:/bin".to_string())].into();
+        assert_eq!(client_problem("python", &env), "");
+        assert_eq!(client_problem("", &env), "");
+        let rust = client_problem("rust", &env);
+        assert!(rust.contains("daisugi-conform-rust") && !rust.contains('\n'), "{rust}");
+        assert!(rust.contains("built-in verifier decides"), "{rust}");
+        assert!(client_problem("cobol", &env).contains("names no client"));
+    }
 
     /// A verifier client past its timeout ends at once, and so does
     /// everything it started.

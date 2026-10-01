@@ -606,7 +606,7 @@ func TestRestoreStampsEndedAtOnAPtyPaneTheProcessDidNotSurvive(t *testing.T) {
 	s1.RegisterPaneCommands()
 	roundTrip(t, s1,
 		`{"id":"1","cmd":"pane.create","cwd":"`+t.TempDir()+`","cmd_argv":["sh","-c","sleep 5"],"kind":"pty"}`)
-	s1.saveLayout()
+	s1.saveLayoutNow()
 	_ = s1.Close()
 
 	s2, err := New(Config{SocketPath: dir + "/b.sock", DataDir: dir})
@@ -653,7 +653,7 @@ func TestPaneListReportsDoneForAPaneThatEndedBeforeARestart(t *testing.T) {
 	if !got[1].OK {
 		t.Fatalf("waiting for done failed: %+v", got[1].Error)
 	}
-	s1.saveLayout()
+	s1.saveLayoutNow()
 	_ = s1.Close()
 
 	s2, err := New(Config{SocketPath: dir + "/b.sock", DataDir: dir})

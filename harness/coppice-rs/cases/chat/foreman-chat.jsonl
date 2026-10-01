@@ -1,0 +1,75 @@
+# The foreman as a chat ([foreman] mode = "chat", FM-R-3 to FM-R-7 and
+# FM-R-38). floor.foreman has no pane to start. floor.talk logs the owner's
+# words (trimmed, word for word) and queues one turn; the turn runs the fake
+# claude (cases/chat/fixtures/fake-turn-claude.py), which records its argv,
+# its system prompt and its stdin with each date written as DATE, so the Go
+# and the Rust records must be the same bytes. Its reply is logged as the
+# foreman's. floor.chat reads the log (source log, ids log/N); an owner line
+# is read once its turn started. A turn reaches the four tools through the
+# MCP relay coppice foreman tools --sock t-N.sock, and each call is logged as
+# a tool message that floor.chat shows by its name only. The hook refuses a
+# built-in. A turn that fails, or that claude reports as an error, adds one
+# note. coppice foreman view, zoom and stats read the same log, and the turn
+# socket is gone once the turn is over.
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env FAKE_TURN_DIR={WORK}/turns
+{"id":"1","cmd":"floor.foreman"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"the foreman runs as a chat in this mode. It has no pane to start. Talk to it with floor.talk."}}
+{"id":"2","cmd":"floor.talk","text":"  hello foreman  "}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/0","queued":1,"label":"foreman"}}
+#!retry 20000
+{"id":"3","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"source":"log","more":false,"messages":[{"id":"log/0","role":"owner","text":"hello foreman","read":true},{"id":"log/1","role":"agent","text":"heard: hello foreman"}]}}
+{"id":"4","file":"{WORK}/turns/turn-0.json"}
+{"id":"$id","ok":true,"result":{"text":"*","mode":"*"}}
+{"id":"5","cmd":"floor.talk","text":"zoom 0 1"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/2","queued":1}}
+#!retry 20000
+{"id":"6","cmd":"floor.chat","since":"log/2"}
+{"id":"$id","ok":true,"result":{"source":"log","more":false,"messages":[{"id":"log/3","role":"agent","tool":"zoom"},{"id":"log/4","role":"agent","text":"tools zoom,date,spawn,status; zoom gave error=False: hello foreman"}]}}
+{"id":"7","file":"{WORK}/turns/turn-1.json"}
+{"id":"$id","ok":true,"result":{"text":"*","mode":"*"}}
+{"id":"8","cmd":"floor.talk","text":"date 99"}
+{"id":"$id","ok":true,"result":{"message":"log/5"}}
+#!retry 20000
+{"id":"9","cmd":"floor.chat","since":"log/5"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/6","role":"agent","tool":"date"},{"id":"log/7","role":"agent","text":"tools zoom,date,spawn,status; date gave error=True: foreman: no message 99"}]}}
+{"id":"10","cmd":"floor.talk","text":"status"}
+{"id":"$id","ok":true,"result":{"message":"log/8"}}
+#!retry 20000
+{"id":"11","cmd":"floor.chat","since":"log/8"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/9","role":"agent","tool":"status"},{"id":"log/10","role":"agent","text":"tools zoom,date,spawn,status; status gave error=False: no workers"}]}}
+{"id":"12","cmd":"floor.talk","text":"hook Bash"}
+{"id":"$id","ok":true,"result":{"message":"log/11"}}
+#!retry 20000
+{"id":"13","cmd":"floor.chat","since":"log/11"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/12","role":"agent","text":"hook Bash: exit 2 the foreman may use only its four tools (zoom, date, spawn, status). \"Bash\" is not one of them."}]}}
+{"id":"14","cmd":"floor.talk","text":"hook mcp__foreman__zoom"}
+{"id":"$id","ok":true,"result":{"message":"log/13"}}
+#!retry 20000
+{"id":"15","cmd":"floor.chat","since":"log/13"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/14","role":"agent","text":"hook mcp__foreman__zoom: exit 0"}]}}
+{"id":"16","cmd":"floor.talk","text":"fail"}
+{"id":"$id","ok":true,"result":{"message":"log/15"}}
+#!retry 20000
+{"id":"17","cmd":"floor.chat","since":"log/15"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/16","role":"note","text":"The foreman's turn failed: claude ended with an error: the turn failed. Say it again to try again."}]}}
+{"id":"18","cmd":"floor.talk","text":"error"}
+{"id":"$id","ok":true,"result":{"message":"log/17"}}
+#!retry 20000
+{"id":"19","cmd":"floor.chat","since":"log/17"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/18","role":"note","text":"The foreman's turn failed: claude reported an error: the turn failed. Say it again to try again."}]}}
+{"id":"20","cmd":"floor.chat","limit":2}
+{"id":"$id","ok":true,"result":{"source":"log","more":true,"messages":[{"id":"log/17","role":"owner","read":true},{"id":"log/18"}]}}
+{"id":"21","cli":["foreman","view"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"*","stderr":""}}
+{"id":"22","cli":["foreman","zoom","0+2"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"0+1|hello foreman\n1+1|heard: hello foreman\n","stderr":""}}
+{"id":"23","cli":["foreman","stats"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"turns: 8 (ok 6, failed 2, timeout 0)\ncache read share: 90.0% of 600 input tokens (fresh 60, cache read 540, cache write 0); output 18\n","stderr":""}}
+{"id":"24","cli":["foreman","tools","--sock","{DATA}/foreman/turns/t-0.sock"],"stdin":"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"status\",\"arguments\":{}}}\n"}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"{\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"the foreman's tools are closed: this turn is over\",\"type\":\"text\"}],\"isError\":true}}\n","stderr":""}}
+{"id":"25","ls":"{DATA}/foreman"}
+{"id":"$id","ok":true,"result":"*"}

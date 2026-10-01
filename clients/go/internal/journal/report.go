@@ -116,6 +116,19 @@ func Build(files []string) (*Report, error) {
 			rep.Records = append(rep.Records, o)
 		}
 	}
+	return rep.summarize()
+}
+
+// FromRecords is gate._build_report over records already in hand (the
+// records gate replay decides).
+func FromRecords(records []*pyjson.Object) (*Report, error) {
+	rep := &Report{Reasons: pyjson.NewObject(), Records: records}
+	return rep.summarize()
+}
+
+// summarize fills the counts, the denied list and the reasons from the
+// records, as _build_report does.
+func (rep *Report) summarize() (*Report, error) {
 	for _, r := range rep.Records {
 		if len(wordLines(r)) > 0 {
 			rep.Word = append(rep.Word, r)

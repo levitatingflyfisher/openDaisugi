@@ -1,0 +1,23 @@
+# The pause (FM-R-49, FM-R-55). Both accounts are out, so the turn pauses and
+# the chat gets the pause note naming both accounts. A second message ends the
+# pause: the first turn fails with "every account is still out", and the
+# second turn pauses with its own note. Clock times are masked (CP-R-58).
+#!config [foreman]
+#!config mode = "chat"
+#!config turn_profiles = ["desk", "work"]
+#!config turn_model = "m1"
+#!env COPPICE_SPRIG_BIN={FIXTURES}/chat/fake-turn-sprig.py
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_BUNDLE_FILE={WORK}/bundle.json
+{"id":"w1","write":"{WORK}/bundle.json","text":"{\"desk\":{\"wire\":\"anthropic\",\"base_url\":null,\"model\":\"m1\",\"key\":\"sk-out-0001\"},\"work\":{\"wire\":\"anthropic\",\"base_url\":null,\"model\":\"m1\",\"key\":\"sk-out-0002\"}}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"floor.talk","text":"one"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/0","queued":1,"label":"foreman"}}
+#!retry 20000
+{"id":"2","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"source":"log","more":false,"messages":[{"id":"log/0","role":"owner","text":"one","read":true},{"id":"log/1","role":"note","text":"*"}]}}
+{"id":"3","cmd":"floor.talk","text":"two"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/2","queued":"*","label":"foreman"}}
+#!retry 20000
+{"id":"4","cmd":"floor.chat","since":"log/1"}
+{"id":"$id","ok":true,"result":{"source":"log","more":false,"messages":"*"}}

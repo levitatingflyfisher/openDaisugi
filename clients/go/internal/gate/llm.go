@@ -4,23 +4,16 @@ import (
 	"errors"
 
 	"daisugi-verify/internal/llm"
-	"daisugi-verify/internal/netproxy"
+	"daisugi-verify/internal/llmcheck"
 	"daisugi-verify/internal/pyjson"
-	"daisugi-verify/internal/pystr"
 )
 
-// This file is llm_check.run_llm_check on the HTTP backend, the model
-// call an llm_check predicate makes: one plain call through the model
-// client (internal/llm, the oracle's llm_client.py), the verdict read from
-// the reply, and every failure worded as the oracle words it, since the
-// failure text becomes the deny reason (LLM-12). A call through the
-// claude-code backend (`claude -p`), or under settings the port does not
-// read the oracle's way, is denied undecided.
-
-const (
-	llmDefaultModel = "anthropic/claude-haiku-4-5-20251001"
-	llmSystem       = `You are a strict verifier. Answer in strict JSON: {"satisfied": true|false, "rationale": "short reason"}. No prose outside the JSON.`
-)
+// This file is llm_check.run_llm_check in the gate: the model call an
+// llm_check predicate makes goes through internal/llmcheck, on the
+// claude-code backend (`claude -p`) or the HTTP backend, and every failure
+// is worded as the oracle words it, since the failure text becomes the
+// deny reason (LLM-12). A call under settings the port does not read the
+// oracle's way is denied undecided.
 
 // llmResult is llm_check.LLMCheckResult.
 type llmResult struct {
@@ -75,82 +68,27 @@ func (r *runner) llmBackend() string {
 // configuredBackend is config.configured_backend(DEFAULT_DATA_DIR /
 // "config.yaml"): the stripped llm_backend, or "".
 func (r *runner) configuredBackend() string {
-	c := loadConfig(pathJoin(pathJoin(r.pathHome(), ".opendaisugi"), "config.yaml"))
+	c := loadConfig(pathJoin(r.dataHome(), "config.yaml"))
 	return pyStrip(c.llmBackend)
 }
 
-// llmUnportedEnv names a setting that makes httpx behave in a way the
-// port does not model.
-func (r *runner) llmUnportedEnv() string {
-	for _, k := range []string{"SSL_CERT_FILE", "SSL_CERT_DIR"} {
-		if r.env[k] != "" {
-			return k
-		}
-	}
-	return ""
-}
-
-// invokeModel is llm_check._invoke_model on the HTTP backend.
+// invokeModel is llm_check._invoke_model, through the shared
+// internal/llmcheck: a call it does not make the oracle's way is denied
+// undecided, and an exception it raises fails the check closed.
 func (r *runner) invokeModel(rule string, payload *pyjson.Object) (bool, string) {
-	model, ok := r.envGet("OPENDAISUGI_LLM_CHECK_MODEL")
-	if !ok {
-		model = llmDefaultModel
-	}
-	backend := r.llmBackend()
-	if llm.Renamed(backend) {
-		// resolve_backend raises on the old name: the check fails closed.
-		llmFail(llm.RenamedText)
-	}
-	if backend == "claude-code" {
-		unported("an llm_check through the claude-code backend, which runs claude -p")
-	}
-	if k := r.llmUnportedEnv(); k != "" {
-		unported("an llm_check under " + k + ", which changes how httpx calls the model")
-	}
-	pj := pystr.Slice(pyjson.Dumps(payload, true), 0, 4000)
-	user := "Rule:\n" + rule + "\n\nPlan payload (JSON):\n" + pj + "\n\nDoes the plan payload satisfy the rule?"
-	w, e := llm.ResolveWire(model, "", "", r.envGet)
-	if e != nil {
-		llmFail(e.Msg)
-	}
-	zero := 0
-	body := llm.Body(w, []llm.Message{{Role: "system", Content: llmSystem}, {Role: "user", Content: user}},
-		llm.BodyOpts{MaxTokens: 200, Temperature: &zero})
-	proxies := netproxy.HttpxFromVars(netproxy.FromMap(r.env), false)
-	status, text, err := llm.Post(w, body, llm.Timeout(r.envGet), proxies)
-	if err != nil {
-		var le *llm.Error
-		if errors.As(err, &le) {
-			llmFail(le.Msg)
+	claude := llm.New(llm.Env{Getenv: r.envGet, Home: r.home, LookPath: func(name string) (string, error) {
+		if p := r.which(name); p != "" {
+			return p, nil
 		}
-		unported("an llm_check " + err.Error())
+		return "", errors.New("not found")
+	}})
+	o := llmcheck.Invoke(llmcheck.Env{Getenv: r.envGet, Vars: r.env, Backend: r.llmBackend(), Claude: claude},
+		rule, pyjson.Dumps(payload, true))
+	if o.Unported != "" {
+		unported(o.Unported)
 	}
-	reply, e := llm.ReadReply(w, status, text)
-	if e != nil {
-		llmFail(e.Msg)
+	if o.Raised {
+		llmFail(o.Failure)
 	}
-	parsed, derr := pyjson.LoadsPy(reply.Text, llmJSONDepth)
-	if derr != nil {
-		if derr.TooDeep {
-			unported("an llm_check reply nested past what json.loads reads")
-		}
-		llmFail(derr.Error())
-	}
-	o, isObj := parsed.(*pyjson.Object)
-	if !isObj {
-		llmFail("'" + pyTypeName(parsed) + "' object has no attribute 'get'")
-	}
-	sat, has := o.Get("satisfied")
-	if !has {
-		sat = false
-	}
-	why, has := o.Get("rationale")
-	if !has {
-		why = ""
-	}
-	return pyjson.Truthy(sat), pyStrOf(why)
+	return o.Satisfied, o.Reason
 }
-
-// llmJSONDepth is well under the nesting where json.loads, in the
-// verifier's thread, would raise RecursionError; deeper is undecided.
-const llmJSONDepth = 900

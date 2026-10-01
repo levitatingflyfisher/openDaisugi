@@ -7,7 +7,7 @@ use super::config;
 use super::gateroot::{join, path_str};
 use super::statuscmd::{py_fixed, py_round1, ram_gb};
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::envgen::tier1::{Tier1, CONFIG_FILE};
+use crate::envgen::tier1::{classify, Tier1, CONFIG_FILE, OUTCOME_ERROR, OUTCOME_VALID, QUALIFY_TIMEOUT};
 use crate::gate::py::text::repr;
 use crate::gate::pyjson::{dumps_indent, float_repr, round, Object, Value};
 
@@ -23,7 +23,7 @@ Options:
 
 Commands:
   setup  Detect hardware, recommend a local model, and optionally qualify and wire it.
-  stats  Not yet in this binary.
+  stats  Show per-tier call counts, estimated tokens, and pathway hit rate.
 ";
 
 /// `hardware.HardwareProfile` on Linux.
@@ -107,7 +107,7 @@ struct Recommendation {
 }
 
 /// `format(f, "g")`.
-fn py_g(f: f64) -> String {
+pub(super) fn py_g(f: f64) -> String {
     if f == 0.0 {
         return if f.is_sign_negative() {
             "-0".into()
@@ -175,9 +175,9 @@ fn recommend(h: &Hardware) -> Recommendation {
         py_fixed(b, 0)
     );
     let families = if params >= 3 {
-        vec!["Qwen2.5", "Gemma", "Llama", "Phi"]
+        vec!["Granite", "Ministral", "Gemma", "Llama"]
     } else {
-        vec!["Qwen2.5", "Gemma"]
+        vec!["Granite", "Llama"]
     };
     Recommendation {
         size,
@@ -200,14 +200,30 @@ fn py_percent0(f: f64) -> String {
     format!("{}%", py_fixed(f * 100.0, 0))
 }
 
+struct ProbeOutcome {
+    task: &'static str,
+    outcome: &'static str,
+    reason: String,
+}
+
 struct Qualification {
     attempts: i64,
     valid: i64,
     rate: f64,
     passed: bool,
+    outcomes: Vec<ProbeOutcome>,
+    /// The window the endpoint serves, when it says.
+    context: Option<i64>,
 }
 
 impl Env {
+    /// The probe below, for the engine a box with no voice choice gets
+    /// (ruling VO-17).
+    pub(super) fn voice_hardware(&self) -> crate::voice::hardware::VoiceHardware {
+        let h = self.detect_hardware();
+        crate::voice::hardware::VoiceHardware { ram_gb: h.ram, cpus: h.cpus as i64, vram_gb: h.vram }
+    }
+
     fn detect_hardware(&self) -> Hardware {
         let (system, arch) = uname();
         let (mut vram, gpu) = self.gpu_probe();
@@ -231,7 +247,7 @@ impl Env {
         }
         match args[0].as_str() {
             "setup" => return self.tiers_setup(&args[1..]),
-            "stats" => return self.not_yet("daisugi tiers stats"),
+            "stats" => return self.tiers_stats(&args[1..]),
             _ => {}
         }
         self.errf(&format!(
@@ -352,7 +368,7 @@ impl Env {
         if p.has("--context") {
             self.click_int(CMD, &p, "--context", 0)?;
         }
-        let data_dir = path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         if p.has("--matcher") {
             return self.set_matcher(CMD, &join(&data_dir, "config.yaml"), &p.str("--matcher", ""));
         }
@@ -367,7 +383,17 @@ impl Env {
             ));
         }
         if !remote.is_empty() {
-            return self.not_yet("daisugi tiers setup --remote");
+            let model = p.has("--model").then(|| p.str("--model", ""));
+            let context = if p.has("--context") {
+                let n = self.click_int(CMD, &p, "--context", 0)?;
+                match i64::try_from(n) {
+                    Ok(n) => Some(n),
+                    Err(_) => return self.refuse(CMD, "a --context this binary does not hold"),
+                }
+            } else {
+                None
+            };
+            return self.setup_remote(CMD, &data_dir, &remote, &p.str("--kind", "auto"), model, context);
         }
         let model = p.str("--model", "");
         if !endpoint.is_empty() && model.is_empty() {
@@ -382,19 +408,53 @@ impl Env {
         let mut wired = false;
         if !endpoint.is_empty() {
             let mut c = self.llm_client();
-            let t = Tier1::new(&model, Some(endpoint.clone()), None, "");
+            // An endpoint is an HTTP server. The claude-code backend ignores
+            // it, so it must never be chosen here, by auto-detection or by
+            // force.
+            if c.configured().trim() == "claude-code" {
+                self.errf(
+                    "--endpoint cannot be used with the claude-code backend: it would never call the endpoint. \
+                     Unset OPENDAISUGI_LLM_BACKEND (or llm_backend in config.yaml), or set it to api.\n",
+                );
+                return exit(2);
+            }
+            c.pin("api");
+            let mut t = Tier1::new(&model, Some(endpoint.clone()), None, "");
+            t.timeout = QUALIFY_TIMEOUT;
             if let Err(why) = c.check(&t.model) {
                 return self.refuse(CMD, &why);
             }
             let n = repeats.max(1);
             let mut valid = 0i64;
+            let mut outcomes: Vec<ProbeOutcome> = vec![];
+            let total = PROBE_TASKS.len() * n as usize;
+            self.note(&format!(
+                "qualifying {model} at {endpoint}: {total} probes, up to {} s each",
+                QUALIFY_TIMEOUT.as_secs()
+            ));
+            let mut done = 0;
             for _ in 0..n {
                 for task in PROBE_TASKS {
-                    if t.generate(&mut c, task, None).is_some() {
-                        valid += 1;
+                    let r = t.generate_err(&mut c, task, None);
+                    done += 1;
+                    match r {
+                        Ok(_) => {
+                            valid += 1;
+                            outcomes.push(ProbeOutcome { task, outcome: OUTCOME_VALID, reason: String::new() });
+                            self.note(&format!("  probe {done}/{total}: valid"));
+                        }
+                        Err(msg) => {
+                            let (outcome, reason) = classify(&msg);
+                            self.note(&format!("  probe {done}/{total}: {outcome}: {reason}"));
+                            outcomes.push(ProbeOutcome { task, outcome, reason });
+                        }
                     }
                 }
             }
+            // The window the server serves, when it says; one best-effort probe.
+            let root = endpoint.trim_end_matches('/');
+            let root = root.strip_suffix("/v1").unwrap_or(root);
+            let context = self.endpoint_context(root, &model);
             let attempts = PROBE_TASKS.len() as i64 * n as i64;
             let rate = round(valid as f64 / attempts as f64, 2);
             let q = Qualification {
@@ -402,6 +462,8 @@ impl Env {
                 valid,
                 rate,
                 passed: attempts > 0 && rate >= threshold,
+                outcomes,
+                context,
             };
             if q.passed && p.flag("--wire") {
                 if let Err(e) = std::fs::create_dir_all(&data_dir) {
@@ -429,15 +491,32 @@ impl Env {
         let budget = h.budget();
         if p.flag("--json") {
             let q = match &qual {
-                Some(q) => Value::Obj(
-                    Object::new()
+                Some(q) => {
+                    let outs: Vec<Value> = q
+                        .outcomes
+                        .iter()
+                        .map(|o| {
+                            Value::Obj(
+                                Object::new()
+                                    .with("task", o.task)
+                                    .with("outcome", o.outcome)
+                                    .with("reason", o.reason.as_str()),
+                            )
+                        })
+                        .collect();
+                    let mut qo = Object::new()
                         .with("attempts", q.attempts)
                         .with("valid", q.valid)
                         .with("pass_rate", q.rate)
                         .with("passed", q.passed)
                         .with("threshold", threshold)
-                        .with("wired", wired),
-                ),
+                        .with("wired", wired)
+                        .with("outcomes", Value::List(outs));
+                    if let Some(n) = q.context {
+                        qo = qo.with("context_window", n);
+                    }
+                    Value::Obj(qo)
+                }
                 None => Value::Null,
             };
             let fams: Vec<Value> = rec
@@ -504,14 +583,11 @@ impl Env {
         ));
         b.push_str(&format!("  {}\n\n", rec.rationale));
         let Some(q) = qual else {
-            b.push_str(
-                "Get a local server running (one file, no install), then qualify + wire it:\n",
-            );
-            b.push_str("  1. Find a trusted, commit-pinned model llamafile:  daisugi models\n");
-            b.push_str(
-                "     (canonical engine repo: github.com/mozilla-ai/llamafile; model org: huggingface.co/mozilla-ai)\n",
-            );
-            b.push_str("  2. Serve it:  ./<model>.llamafile --server --port 8080 --nobrowser\n");
+            b.push_str("Get a local server running, then qualify + wire it:\n");
+            b.push_str("  1. Pick a model:  daisugi models list   (or any: daisugi models search QUERY)\n");
+            b.push_str("     Fetch its GGUF pinned to a commit:  daisugi models pin <gguf-repo> --pull\n");
+            b.push_str("  2. Serve it with llamafile (github.com/mozilla-ai/llamafile):\n");
+            b.push_str("     llamafile --server -m <model>.gguf --port 8080 --nobrowser\n");
             b.push_str(
                 "  3. Qualify:   daisugi tiers setup --endpoint http://localhost:8080/v1 --model <name> --wire\n",
             );
@@ -528,13 +604,25 @@ impl Env {
             py_percent0(q.rate),
             py_percent0(threshold)
         ));
+        if let Some(n) = q.context {
+            b.push_str(&format!("  Context window: {n} tokens (what the server serves).\n"));
+        }
+        if !q.passed {
+            if let Some(o) = q.outcomes.iter().find(|o| o.outcome != OUTCOME_VALID) {
+                b.push_str(&format!("  → First failure ({}): {}\n", o.outcome, o.reason));
+            }
+        }
+        let errored = q.outcomes.iter().filter(|o| o.outcome == OUTCOME_ERROR).count() as i64;
         if wired {
             b.push_str(&format!("  → Wired as Tier-1 in {data_dir}; `daisugi onboard`/`tend` will now defer to it.\n"));
         } else if q.passed {
             b.push_str("  → Passed. Re-run with --wire to persist it as Tier-1.\n");
+        } else if errored == q.attempts {
+            b.push_str(
+                "  → ALL attempts errored — this is a wiring problem, not model capacity. Check the server is \
+                 reachable at --endpoint and serving /v1, and that --model matches the name it serves.\n",
+            );
         } else {
-            // The provider declines rather than raises, so no attempt is an
-            // error and the all-errored hint is never reached (K3-9).
             b.push_str("  → Not promoted. Try a larger model, a higher quant, or lower --threshold deliberately.\n");
         }
         self.out(&b);

@@ -1,0 +1,18 @@
+# pane.create takes a fence word, on or off: the pane's own setting for
+# daisugi fence. Anything else is bad_request. A pane with no harness is the
+# operator's own and runs bare unless its own word is on; then it needs
+# daisugi, which this world has not, so it fails to start rather than run
+# bare. The fence never shows in the pane's command.
+{"id":"f1","cmd":"pane.create","cwd":"{START}","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","fence":"maybe"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"fence must be on or off, not \"maybe\"."}}
+{"id":"f2","cmd":"pane.create","cwd":"{START}","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","fence":"off","label":"bare"}
+{"id":"$id","ok":true,"result":{"pane":"$a"}}
+{"id":"f3","cmd":"pane.create","cwd":"{START}","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","fence":"on","label":"shellpane"}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"*"}}
+{"id":"f4","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$a","cmd":["/bin/sh","-c","exec sleep 600"]}]}}
+# A pane never turns a fence off (FN-R-15).
+{"id":"f5","cmd":"hello","role":"pane","pane":"w1:p9"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"f6","cmd":"pane.create","cwd":"{START}","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","fence":"off"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator turns a pane's fence off."}}

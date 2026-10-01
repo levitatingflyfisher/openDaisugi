@@ -1,0 +1,6 @@
+# An upper-case scheme is an address, and shows in lower case.
+#!config [voice]
+#!config enabled = false
+#!config speak_url = "HTTP://127.0.0.1:8880/v1/"
+{"id":"s0","cmd":"speech.status"}
+{"id":"$id","ok":true,"result":{"mode":"server","model":"kokoro","voice":"af_heart","url":"http://127.0.0.1:8880/v1/audio/speech"}}

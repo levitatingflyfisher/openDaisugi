@@ -42,6 +42,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Literal
 
+from opendaisugi.datahome import coppice_data_home
 from opendaisugi.exceptions import OpenDaisugiError
 from opendaisugi.floor import Frame, PaneInfo, PaneRef, PaneStateEvent, TaskInfo
 
@@ -130,7 +131,9 @@ class CoppiceError(OpenDaisugiError):
 
 
 def default_socket_path(env: Mapping[str, str] | None = None) -> Path:
-    """`$XDG_RUNTIME_DIR/coppice/server.sock`, else `~/.opendaisugi/coppice/server.sock`.
+    """`$XDG_RUNTIME_DIR/coppice/server.sock`, else `<data home>/coppice/server.sock`
+    (opendaisugi.datahome.coppice_data_home: OPENDAISUGI_HOME, then
+    XDG_DATA_HOME/opendaisugi when set, then ~/.opendaisugi).
 
     Matches `harness/coppice/internal/server/paths.go` `SocketPath` exactly.
     """
@@ -138,18 +141,16 @@ def default_socket_path(env: Mapping[str, str] | None = None) -> Path:
     runtime = env.get("XDG_RUNTIME_DIR")
     if runtime:
         return Path(runtime) / "coppice" / "server.sock"
-    return Path.home() / ".opendaisugi" / "coppice" / "server.sock"
+    return coppice_data_home(env) / "coppice" / "server.sock"
 
 
 def default_data_dir(env: Mapping[str, str] | None = None) -> Path:
-    """`~/.opendaisugi/coppice`. Never the runtime dir, which the system clears on logout.
+    """`<data home>/coppice` (opendaisugi.datahome). Never the runtime dir,
+    which the system clears on logout.
 
     Matches `harness/coppice/internal/server/paths.go` `DataDir` exactly.
-    `env` is accepted for symmetry with `default_socket_path` and is unused:
-    Go's own `DataDir` reads no environment variable either.
     """
-    del env
-    return Path.home() / ".opendaisugi" / "coppice"
+    return coppice_data_home(env) / "coppice"
 
 
 class CoppiceBackend:

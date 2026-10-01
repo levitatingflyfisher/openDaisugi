@@ -1,0 +1,72 @@
+# The floor on a mid-width terminal, 100 columns by 36 rows: the slim rail,
+# 6 columns a row, and one window of 80 columns or more that shows and takes
+# keys. The floor runs in a pane of the alt server, as in rail.jsonl, and
+# each "screen" is a checkpoint read through that server's libghostty-vt.
+# A second floor at 140 columns draws the full rail, to show a subtask
+# nested under its task. A pane that prints is read only after 6 s of
+# quiet, so its state does not follow the pty's timing. Every harness is a
+# fake. Pane ids on the case's server: w1:p1 ask, w1:p2 cat, w1:p3 in the
+# task ship, w1:p4 in the subtask docs under ship.
+#!config default = "sh"
+#!config [harness.sh]
+#!config command = "/bin/sleep"
+#!config args = ["600"]
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sleep", "600"], "label": "e2e ask"}
+{"id": "$id", "ok": true, "result": {"pane": "$ask"}}
+{"id": "p2", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/cat"], "label": "e2e cat"}
+{"id": "$id", "ok": true, "result": {"pane": "$cat"}}
+{"id": "t1", "cmd": "task.create", "label": "ship", "cwd": "{START}"}
+{"id": "$id", "ok": true, "result": {"task": "$ship", "worktree": ""}}
+{"id": "t2", "cmd": "task.create", "label": "docs", "cwd": "{START}", "parent": "$ship"}
+{"id": "$id", "ok": true, "result": {"task": "$docs", "worktree": ""}}
+{"id": "p3", "cmd": "pane.create", "task": "$ship", "cmd_argv": ["/bin/sleep", "600"], "label": "e2e build"}
+{"id": "$id", "ok": true, "result": {"pane": "$build"}}
+{"id": "p4", "cmd": "pane.create", "task": "$docs", "cmd_argv": ["/bin/sleep", "600"], "label": "e2e notes"}
+{"id": "$id", "ok": true, "result": {"pane": "$notes"}}
+{"id": "r1", "cmd": "pane.report_state", "pane": "$ask", "event": {"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": "$ask", "state": "blocked", "source": "gate", "ask": {"id": "toolu_02", "tool": "Write", "summary": "src/main.py", "deadline": 4102444800, "tier": "undoable"}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": {"pane": "$ask", "state": "blocked", "source": "gate"}}
+{"id": "a1", "cli": ["server", "start"], "alt": true, "autostart": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "a2", "cli": ["pane", "create", "--json", "--label", "floor", "--kind", "pty", "--cols", "100", "--rows", "36", "--cwd", "{START}", "--", "/usr/bin/env", "-u", "COPPICE_PANE", "{BIN}", "--socket", "{SOCK}", "--data-dir", "{DATA}"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# The floor opens with the agent that needs you in a window, typing there.
+{"id": "open", "screen": "w1:p1", "alt": true, "until": "typing here"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# The leave key gives the keys back to the rail.
+{"id": "k1", "cli": ["pane", "send-keys", "w1:p1", "ctrl+space"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "rail", "screen": "w1:p1", "alt": true, "until": "Enter go in"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# Enter on a row types in the window; what is typed reaches cat.
+{"id": "k2", "cli": ["pane", "send-keys", "w1:p1", "down"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k3", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "typing-cat", "screen": "w1:p1", "alt": true, "until": "typing here · ctrl-space leaves"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "k4", "cli": ["pane", "send-text", "w1:p1", "hello", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k5", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "quiet1", "sleep": 6500}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "typed", "screen": "w1:p1", "alt": true, "until": "hello"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "k6", "cli": ["pane", "send-keys", "w1:p1", "ctrl+space"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# The cursor goes up to a group header, which names its keys.
+{"id": "k7", "cli": ["pane", "send-keys", "w1:p1", "up"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k8", "cli": ["pane", "send-keys", "w1:p1", "up"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "header", "screen": "w1:p1", "alt": true, "until": "Enter or Space"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# A second floor at 140 columns draws the full rail with the subtask nested.
+{"id": "b1", "cli": ["pane", "create", "--json", "--label", "floor wide", "--kind", "pty", "--cols", "140", "--rows", "36", "--cwd", "{START}", "--", "/usr/bin/env", "-u", "COPPICE_PANE", "{BIN}", "--socket", "{SOCK}", "--data-dir", "{DATA}"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "nested", "screen": "w1:p2", "alt": true, "until": "  ▾ docs"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# The alt server goes with the file, as in rail.jsonl; one left running is
+# a leak the driver reports.
+{"id": "z", "cli": ["server", "stop"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}

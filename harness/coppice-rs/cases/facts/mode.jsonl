@@ -1,0 +1,117 @@
+# agent.set_mode (F11): the owner lowers one agent from enforcing to
+# watching, or puts it back. Watching writes the marker the gate reads on
+# that agent's next tool call, <gate root>/agents/<floor>/<pane>.mode (the
+# gate root is {WORK}/gate, beside the data dir; <floor> is {FLOOR}, the
+# key of this floor's socket); enforcing removes it. Off is never a mode
+# here. Only a live harness agent takes a mode, only the operator sets it,
+# and the marker goes when the agent's record goes and at every start of
+# its own floor (F11-R-4, F11-R-6). A second floor (the alt server, its
+# data dir {WORK}/alt-data, so the same gate root) also has a w1:p1: it
+# keeps its own directory, {FLOOR_ALT}, and its start clears nothing of
+# this floor's. Pane ids: w1:p1 auth, w1:p2 plain (no harness), w1:p3
+# second.
+#!config [harness.claude]
+#!config command = "/bin/sh"
+#!config args = ["-c", "exec sleep 600"]
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"auth"}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"2","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"],"label":"plain"}
+{"id":"$id","ok":true,"result":{"pane":"$d"}}
+{"id":"3","cmd":"agent.set_mode","pane":"$c","mode":"off"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"mode must be enforcing or watching. Turning the gate off stays a command: daisugi gate disarm"}}
+{"id":"4","cmd":"agent.set_mode","pane":"$c","mode":"audit"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"mode must be enforcing or watching. Turning the gate off stays a command: daisugi gate disarm"}}
+{"id":"5","cmd":"agent.set_mode","pane":"$c"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"mode must be enforcing or watching. Turning the gate off stays a command: daisugi gate disarm"}}
+{"id":"6","cmd":"agent.set_mode","pane":"$d","mode":"watching"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"plain runs no harness, so no gate checks it."}}
+{"id":"7","cmd":"agent.set_mode","pane":"w9:p9","mode":"watching"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"w9:p9\". Run: coppice agent list"}}
+{"id":"8","cmd":"agent.set_mode","pane":"../gate/agents/w1:p1","mode":"watching"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"../gate/agents/w1:p1\". Run: coppice agent list"}}
+{"id":"9","file":"{WORK}/gate/agents/{FLOOR}/w1:p1.mode"}
+{"id":"$id","ok":true,"result":{"missing":true}}
+{"id":"10","cmd":"agent.set_mode","pane":"$c","mode":"watching"}
+{"id":"$id","ok":true,"result":{"pane":"$c","mode":"watching"}}
+{"id":"11","file":"{WORK}/gate/agents/{FLOOR}/w1:p1.mode"}
+{"id":"$id","ok":true,"result":{"text":"watching\n","mode":"0o600"}}
+{"id":"12","ls":"{WORK}/gate"}
+{"id":"$id","ok":true,"result":{"tree":[["agents","dir","0o700"],["agents/{FLOOR}","dir","0o700"],["agents/{FLOOR}/w1:p1.mode","file","0o600"]]}}
+{"id":"13","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$c","stack":{"loop":"claude","daisugi":{"mode":"off","armed":true,"marker":"watching"}}},{"id":"$d"}],"path":"*"}}
+{"id":"14","cmd":"pane.report_state","pane":"$c","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$c","state":"working","source":"gate","detail":"PreToolUse","mode":"watching"}}
+{"id":"$id","ok":true,"result":{"pane":"$c","state":"working","source":"gate"}}
+{"id":"15","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":{"daisugi":{"mode":"watching","enforcing":0,"watching":1,"off":0}}}
+# The second floor: its start clears its own directory only, and its own
+# w1:p1 has no marker, so the gate keeps it enforcing.
+{"id":"a1","write":"{WORK}/gate/agents/{FLOOR_ALT}/w7:p7.mode","text":"watching\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"a2","cli":["server","start"],"alt":true,"autostart":true}
+{"id":"$id","ok":true,"result":{"code":0}}
+{"id":"a3","cli":["pane","create","--json","--harness","claude","--cwd","{START}","--","/bin/sleep","600"],"alt":true}
+{"id":"$id","ok":true,"result":{"code":0}}
+{"id":"a4","file":"{WORK}/gate/agents/{FLOOR_ALT}/w7:p7.mode"}
+{"id":"$id","ok":true,"result":{"missing":true}}
+{"id":"a4b","file":"{WORK}/gate/agents/{FLOOR_ALT}/w1:p1.mode"}
+{"id":"$id","ok":true,"result":{"missing":true}}
+{"id":"a4c","file":"{WORK}/gate/agents/{FLOOR}/w1:p1.mode"}
+{"id":"$id","ok":true,"result":{"text":"watching\n","mode":"0o600"}}
+{"id":"a5","cli":["server","stop"],"alt":true}
+{"id":"$id","ok":true,"result":{"code":0}}
+{"id":"16","cmd":"agent.set_mode","pane":"$c","mode":"enforcing"}
+{"id":"$id","ok":true,"result":{"pane":"$c","mode":"enforcing"}}
+{"id":"17","file":"{WORK}/gate/agents/{FLOOR}/w1:p1.mode"}
+{"id":"$id","ok":true,"result":{"missing":true}}
+{"id":"18","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$c","stack":{"daisugi":{"mode":"watching","armed":true}}},{"id":"$d"}],"path":"*"}}
+{"id":"19","cmd":"agent.set_mode","pane":"$c","mode":"enforcing"}
+{"id":"$id","ok":true,"result":{"pane":"$c","mode":"enforcing"}}
+{"id":"20","cmd":"agent.set_mode","pane":"$c","mode":"watching"}
+{"id":"$id","ok":true,"result":{"pane":"$c","mode":"watching"}}
+{"id":"21","cmd":"pane.close","pane":"$c"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"22","file":"{WORK}/gate/agents/{FLOOR}/w1:p1.mode"}
+{"id":"$id","ok":true,"result":{"missing":true}}
+{"id":"23","cmd":"agent.set_mode","pane":"$c","mode":"watching"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"w1:p1\". Run: coppice agent list"}}
+{"id":"24","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"second"}
+{"id":"$id","ok":true,"result":{"pane":"$e"}}
+{"id":"25","cmd":"agent.set_mode","pane":"$e","mode":"watching"}
+{"id":"$id","ok":true,"result":{"pane":"$e","mode":"watching"}}
+{"id":"26","write":"{WORK}/gate/agents/{FLOOR}/w7:p7.mode","text":"watching\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"27","write":"{WORK}/gate/agents/{FLOOR}/notes.txt","text":"kept\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"27x","write":"{WORK}/gate/agents/{FLOOR_ALT}/w1:p3.mode","text":"watching\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"27a","cmd":"pane.attach","pane":"$e","view_only":true}
+{"id":"$id","ok":true,"result":{"attached":true}}
+{"id":"27b","cmd":"agent.set_mode","pane":"$e","mode":"enforcing"}
+{"id":"$id","ok":false,"error":{"code":"not_attached","message":"this connection is attached to w1:p3 view only. Run: coppice attach w1:p3"}}
+{"id":"27c","cmd":"agent.set_mode","pane":"$e","mode":"off"}
+{"id":"$id","ok":false,"error":{"code":"not_attached","message":"this connection is attached to w1:p3 view only. Run: coppice attach w1:p3"}}
+{"id":"28","cmd":"hello","role":"pane","pane":"$d"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$d"}}
+{"id":"29","cmd":"agent.set_mode","pane":"$e","mode":"enforcing"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator sets an agent's daisugi mode."}}
+{"id":"30","cmd":"agent.set_mode","pane":"$d","mode":"watching"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator sets an agent's daisugi mode."}}
+{"id":"31","file":"{WORK}/gate/agents/{FLOOR}/w1:p3.mode"}
+{"id":"$id","ok":true,"result":{"text":"watching\n","mode":"0o600"}}
+#!restart
+# This floor's start clears its own markers and keeps the other floor's.
+{"id":"32","ls":"{WORK}/gate/agents/{FLOOR}"}
+{"id":"$id","ok":true,"result":{"tree":[["notes.txt","file","0o644"]]}}
+{"id":"33","file":"{WORK}/gate/agents/{FLOOR_ALT}/w1:p3.mode"}
+{"id":"$id","ok":true,"result":{"text":"watching\n","mode":"0o644"}}
+# F11-R-15: a hook that names another gate root makes a mode set here do
+# nothing, and floor.facts says which root the hook reads.
+{"id":"34","write":"{HOME}/.claude/settings.json","text":"{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"python -m opendaisugi.gate --mode enforce --root /elsewhere/gate\"}]}]}}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"35","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":{"daisugi":{"installed":true,"hook_root":"/elsewhere/gate"}}}
+{"id":"36","write":"{HOME}/.claude/settings.json","text":"{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"python -m opendaisugi.gate --mode enforce --root {WORK}/gate\"}]}]}}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"37","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":{"daisugi":{"installed":true}}}

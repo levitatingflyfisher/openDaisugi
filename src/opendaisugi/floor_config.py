@@ -74,6 +74,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from opendaisugi.datahome import guarded_data_dirs
 from opendaisugi.effects import _next_cwd, _resolve
 
 REFUSAL = "this is the floor's own config. Edit it yourself."
@@ -123,7 +124,32 @@ def custom_data_dirs() -> list[Path]:
 def coppice_data_dirs() -> list[Path]:
     """Every coppice data directory the gate knows: the default one and
     any the caller's pane names, each as written and as resolved."""
-    return _spellings([Path.home() / ".opendaisugi" / "coppice", *custom_data_dirs()])
+    return _spellings([*[d / "coppice" for d in guarded_data_dirs()], *custom_data_dirs()])
+
+
+def foreman_log_dirs() -> list[Path]:
+    """The foreman's log dirs, beside the coppice data dir under each data
+    home and under each data dir a pane names through COPPICE_DATA_DIR.
+    Each comes as written and as resolved. A pane never works in one, so
+    the floor rule guards them like the data dirs."""
+    home = Path.home()
+    out: list[Path] = [d / "foreman" for d in guarded_data_dirs(home=home)]
+    out.extend(d / "foreman" for d in custom_data_dirs())
+    return _spellings(out)
+
+
+def foreman_dirs() -> list[Path]:
+    """The foreman's private directories: its log dirs and its turn dir
+    under the state home. The pane-mode foreman works from the turn dir, so
+    the floor rule does not guard it (it would refuse every call that
+    foreman makes); the pane door and the search rule do keep a file read
+    out of it."""
+    home = Path.home()
+    out: list[Path] = list(foreman_log_dirs())
+    for base in (os.environ.get("XDG_STATE_HOME"), str(home / ".local" / "state")):
+        if base:
+            out.append(Path(base) / "coppice" / "foreman")
+    return _spellings(out)
 
 
 def _roots() -> list[Path]:
@@ -139,8 +165,9 @@ def _roots() -> list[Path]:
     for base in (os.environ.get("XDG_DATA_HOME"), str(home / ".local" / "share")):
         if base:
             out.append(Path(base) / "coppice")
-    out.append(home / ".opendaisugi" / "coppice")
+    out.extend([d / "coppice" for d in guarded_data_dirs(home=home)])
     out.extend(custom_data_dirs())
+    out.extend(foreman_log_dirs())
     return _spellings(out)
 
 
@@ -193,19 +220,36 @@ def _opencode_text(text: str) -> bool:
     return _OPENCODE_TEXT.search(text) is not None
 
 
+# COPPICE_DATA_DIR is on every pane coppice starts, so it spells the data
+# dir; OPENDAISUGI_HOME spells the home that holds it. Any parameter
+# expansion of one, ${VAR:-x}, ${VAR-x}, ${VAR:=x}, ${VAR%/} and the like,
+# counts as the variable.
 _VARS = re.compile(
-    r"\$\{(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME)\}|\$(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME)\b"
+    r"\$\{(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME|COPPICE_DATA_DIR|OPENDAISUGI_HOME)"
+    r"(?:[^A-Za-z0-9_}][^}]*)?\}"
+    r"|\$(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME|COPPICE_DATA_DIR|OPENDAISUGI_HOME)\b"
 )
 
 
 def _expand_home(text: str) -> str:
-    """Expand ~, $HOME and the two XDG homes the way the shell will. An
-    unset XDG home expands to nothing, as in the shell."""
+    """Expand ~, $HOME, the two XDG homes, $COPPICE_DATA_DIR and
+    $OPENDAISUGI_HOME the way the shell will. An unset variable expands to
+    nothing, as in the shell."""
     home = str(Path.home())
+
+    from opendaisugi.gate import _resident
+
+    caller = getattr(_resident, "caller", None) or {}
 
     def var(m: re.Match) -> str:
         name = m.group(1) or m.group(2)
-        return home if name == "HOME" else os.environ.get(name, "")
+        if name == "HOME":
+            return home
+        # On a resident call the caller's own data dir is its pane's
+        # COPPICE_DATA_DIR.
+        if name == DATA_DIR_ENV and isinstance(caller.get("data_dir"), str) and caller["data_dir"]:
+            return caller["data_dir"]
+        return os.environ.get(name, "")
 
     text = _VARS.sub(var, text)
     out = []
@@ -473,7 +517,7 @@ def daisugi_config_roots(root: Path | None) -> list[Path]:
     from opendaisugi.gate import _gate_root
 
     return _spellings(
-        [_gate_root(root).parent / "config.yaml", Path.home() / ".opendaisugi" / "config.yaml"]
+        [_gate_root(root).parent / "config.yaml", *[d / "config.yaml" for d in guarded_data_dirs()]]
     )
 
 

@@ -183,6 +183,7 @@ def _git(
     *args: str,
     env: dict[str, str] | None = None,
     deadline: float | None = None,
+    bound: dict[str, str] | None = None,
 ) -> str:
     """Run one git call against ``repo``, hardened against its own config.
 
@@ -192,8 +193,13 @@ def _git(
     sequence as a whole cannot run longer than the budget its caller set
     regardless of how many calls it makes. A bare call (``is_repo``) gets
     the flat per-call ceiling instead.
+
+    ``bound`` (a resident checkpoint, FN-R-27) is GIT_DIR, GIT_COMMON_DIR
+    and GIT_WORK_TREE, set so git never chooses the tree from repo config;
+    ``core.worktree`` is cleared on the command line as well.
     """
-    argv = ["git", "-C", str(repo), *_SAFE_GIT_ARGS, *args]
+    pre = ("-c", "core.worktree=") if bound else ()
+    argv = ["git", "-C", str(repo), *_SAFE_GIT_ARGS, *pre, *args]
     # git can start processes of its own (an alias, a helper). A kill of
     # git's pid alone leaves those running, holding its pipes. So git gets
     # a process group of its own, and the whole group is killed when the
@@ -208,6 +214,7 @@ def _git(
             **os.environ,
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": "/dev/null",
+            **(bound or {}),
             **(env or {}),
         },
         process_group=0,
@@ -247,7 +254,11 @@ def _rstrip_newlines(stdout: str) -> str:
 
 
 def _filter_overrides(
-    repo: Path, *, env: dict[str, str] | None = None, deadline: float
+    repo: Path,
+    *,
+    env: dict[str, str] | None = None,
+    deadline: float,
+    bound: dict[str, str] | None = None,
 ) -> list[str]:
     """``-c`` args that turn every filter driver THIS repo's own local
     config defines into a safe no-op. See the module-level comment above
@@ -255,7 +266,16 @@ def _filter_overrides(
     and why ``required=false`` rides along.
     """
     try:
-        raw = _git(repo, "config", "-z", "--get-regexp", r"^filter\.", env=env, deadline=deadline)
+        raw = _git(
+            repo,
+            "config",
+            "-z",
+            "--get-regexp",
+            r"^filter\.",
+            env=env,
+            deadline=deadline,
+            bound=bound,
+        )
     except subprocess.CalledProcessError:
         return []  # no filter.* key defined at all (git config's "not found" exit)
     names: set[str] = set()
@@ -400,20 +420,28 @@ def _toplevel(repo: Path, *, deadline: float | None = None) -> Path:
     return Path(top)
 
 
-def _git_dir(repo: Path, *, deadline: float | None = None) -> Path:
+def _git_dir(
+    repo: Path, *, deadline: float | None = None, bound: dict[str, str] | None = None
+) -> Path:
+    if bound:
+        return Path(bound["GIT_DIR"])
     d = Path(_git(repo, "rev-parse", "--git-dir", deadline=deadline))
     return d if d.is_absolute() else repo / d
 
 
-def _head(repo: Path, *, deadline: float | None = None) -> str | None:
+def _head(
+    repo: Path, *, deadline: float | None = None, bound: dict[str, str] | None = None
+) -> str | None:
     try:
-        return _git(repo, "rev-parse", "--verify", "-q", "HEAD", deadline=deadline)
+        return _git(repo, "rev-parse", "--verify", "-q", "HEAD", deadline=deadline, bound=bound)
     except subprocess.CalledProcessError:
         return None
 
 
 @contextlib.contextmanager
-def _temp_index(repo: Path, *, deadline: float | None = None) -> Iterator[dict[str, str]]:
+def _temp_index(
+    repo: Path, *, deadline: float | None = None, bound: dict[str, str] | None = None
+) -> Iterator[dict[str, str]]:
     """A ``GIT_INDEX_FILE`` env pointing at a fresh index only this call sees.
 
     Created then unlinked before use: git treats a missing index file as an
@@ -423,7 +451,7 @@ def _temp_index(repo: Path, *, deadline: float | None = None) -> Iterator[dict[s
     ``.git/index`` is never opened, so their real staged state, HEAD,
     branches, tags and working tree are never touched by any of this.
     """
-    git_dir = _git_dir(repo, deadline=deadline)
+    git_dir = _git_dir(repo, deadline=deadline, bound=bound)
     with tempfile.NamedTemporaryFile(dir=git_dir, prefix="daisugi-index-", delete=False) as tmp:
         index = tmp.name
     os.unlink(index)
@@ -436,6 +464,12 @@ def _temp_index(repo: Path, *, deadline: float | None = None) -> Iterator[dict[s
             pass
 
 
+def _stays_in(path: str, workspace: str) -> bool:
+    """path, every link followed, is still inside workspace."""
+    real = os.path.realpath(path)
+    return real == workspace or real.startswith(workspace.rstrip("/") + "/")
+
+
 def snapshot(
     repo: Path,
     *,
@@ -444,6 +478,7 @@ def snapshot(
     prefix: str = "checkpoints",
     max_file_bytes: int = 5_000_000,
     timeout_s: float = _CHECKPOINT_BUDGET_S,
+    workspace: str | None = None,
 ) -> Checkpoint:
     """Commit the current working tree to ``refs/daisugi/<prefix>/<session>/<id>``.
 
@@ -466,15 +501,34 @@ def snapshot(
     the gate's checkpoint path swallows it (best-effort, never touches the
     verdict), and callers that don't (the TUI restore) already surface any
     other git failure the same way.
+
+    ``workspace`` (a resident checkpoint, FN-R-27) is the workspace a fence
+    run bound, resolved. Then ``repo`` is ignored: the tree is that
+    workspace, its ``.git`` (or, for a git worktree whose link checks out,
+its admin dir and common dir) is the git dir, git is told both and finds
+    neither itself, and a file whose resolved path leaves the workspace
+    (a link that leads out) is left out of the commit and named in
+    ``skipped``.
     """
     deadline = time.monotonic() + timeout_s
-    if not is_repo(repo):
-        raise NotAGitRepo(f"not a git repository: {repo}")
-    repo = _toplevel(
-        repo, deadline=deadline
-    )  # one namespace for every git command and fs join below
+    bound: dict[str, str] | None = None
+    if workspace is not None:
+        from opendaisugi.fence_runs import git_layout
+
+        why, dirs = git_layout(workspace)
+        if why is not None or dirs is None:
+            raise NotAGitRepo(why or f"not a git repository: {workspace}")
+        repo = Path(workspace)
+        bound = {"GIT_DIR": dirs[0], "GIT_COMMON_DIR": dirs[1], "GIT_WORK_TREE": workspace}
+    else:
+        if not is_repo(repo):
+            raise NotAGitRepo(f"not a git repository: {repo}")
+        repo = _toplevel(
+            repo, deadline=deadline
+        )  # one namespace for every git command and fs join below
     ref = f"refs/daisugi/{prefix}/{_safe(session_id)}/{_safe(entry_id)}"
-    with _temp_index(repo, deadline=deadline) as env:
+    b = bound
+    with _temp_index(repo, deadline=deadline, bound=b) as env:
         # Computed ONCE and passed to EVERY call below, not just `add`. An
         # index entry whose mtime lands in the same filesystem-timestamp
         # granularity as when it was staged is "racy", so git's own racy-git
@@ -483,9 +537,11 @@ def snapshot(
         # rather than trusting the cached stat. That re-runs the clean
         # filter, from the repo's live config, on a call that didn't carry
         # its own override.
-        filter_args = _filter_overrides(repo, env=env, deadline=deadline)
-        _git(repo, *filter_args, "add", "-A", "--", ".", env=env, deadline=deadline)
-        listed = _git(repo, *filter_args, "ls-files", "-z", env=env, deadline=deadline).split("\0")
+        filter_args = _filter_overrides(repo, env=env, deadline=deadline, bound=b)
+        _git(repo, *filter_args, "add", "-A", "--", ".", env=env, deadline=deadline, bound=b)
+        listed = _git(
+            repo, *filter_args, "ls-files", "-z", env=env, deadline=deadline, bound=b
+        ).split("\0")
         covers: list[str] = []
         skipped: list[str] = []
         for name in filter(None, listed):
@@ -496,6 +552,9 @@ def snapshot(
                 skipped.append(name)
                 continue
             if not stat.S_ISLNK(st.st_mode) and st.st_size > max_file_bytes:
+                skipped.append(name)
+                continue
+            if workspace is not None and not _stays_in(str(p), workspace):
                 skipped.append(name)
                 continue
             covers.append(name)
@@ -510,9 +569,10 @@ def snapshot(
                 *skipped,
                 env=env,
                 deadline=deadline,
+                bound=b,
             )
-        tree = _git(repo, *filter_args, "write-tree", env=env, deadline=deadline)
-        parent = _head(repo, deadline=deadline)
+        tree = _git(repo, *filter_args, "write-tree", env=env, deadline=deadline, bound=b)
+        parent = _head(repo, deadline=deadline, bound=b)
         args = [
             *filter_args,
             "commit-tree",
@@ -523,8 +583,8 @@ def snapshot(
         ]
         if parent:
             args += ["-p", parent]
-        commit = _git(repo, *args, env={**env, **_AUTHOR}, deadline=deadline)
-        _git(repo, *filter_args, "update-ref", ref, commit, deadline=deadline)
+        commit = _git(repo, *args, env={**env, **_AUTHOR}, deadline=deadline, bound=b)
+        _git(repo, *filter_args, "update-ref", ref, commit, deadline=deadline, bound=b)
     return Checkpoint(ref=ref, commit=commit, covers=sorted(covers), skipped=sorted(skipped))
 
 

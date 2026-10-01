@@ -1,0 +1,10 @@
+# agent.set_mode from a plugin (F11): a connection that is the probe
+# policy is refused as a pane is, before the verb looks at the pane.
+#!plugins userplugs
+#!config plugins = ["probe"]
+{"id": "1", "cmd": "hello", "role": "plugin", "plugin": "probe"}
+{"id": "$id", "ok": true, "result": {"role": "plugin", "plugin": "probe"}}
+{"id": "2", "cmd": "agent.set_mode", "pane": "w1:p1", "mode": "watching"}
+{"id": "$id", "ok": false, "error": {"code": "unauthorized", "message": "only the operator sets an agent's daisugi mode."}}
+{"id": "3", "cmd": "agent.set_mode", "pane": "w1:p1", "mode": "enforcing"}
+{"id": "$id", "ok": false, "error": {"code": "unauthorized", "message": "only the operator sets an agent's daisugi mode."}}

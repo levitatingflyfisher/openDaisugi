@@ -592,7 +592,7 @@ func TestNarrowingBelowTilesWhileTypingGivesTheKeyboardBack(t *testing.T) {
 	cols.Store(140)
 	id, p, pw, out, done, resize := startSizedFloor(t, &cols)
 	clickTile(t, pw, out)
-	cols.Store(100)
+	cols.Store(80)
 	resize <- syscall.SIGWINCH
 	if !waitFor(t, time.Second, func() bool { return strings.Contains(lastFrame(out.String()), "Enter go in") }) {
 		t.Fatalf("the roster did not take the keyboard back: %q", stripSGR(lastFrame(out.String())))

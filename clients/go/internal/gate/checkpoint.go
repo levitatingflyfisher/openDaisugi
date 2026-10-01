@@ -2,6 +2,8 @@ package gate
 
 import (
 	"context"
+	"daisugi-verify/internal/fenceruns"
+	"daisugi-verify/internal/statefile"
 	"math"
 	"math/big"
 	"os"
@@ -27,6 +29,9 @@ import (
 // that remembers the last prompt checkpointed. nil means none is due.
 type checkpointDue struct {
 	cwd, prompt, sid, statePath string
+	// workspace is the bound workspace of a resident call: the tree the
+	// snapshot takes, whatever git would find from cwd (FN-R-27).
+	workspace string
 }
 
 // dueCheckpoint runs _maybe_checkpoint's reads, which have no effects.
@@ -44,10 +49,27 @@ func (r *runner) dueCheckpoint(p *pyjson.Object, sessionID any) (due *checkpoint
 		if !ok {
 			return
 		}
-		if !r.isRepo(pathStr(c)) {
-			return
+		// A resident call snapshots the workspace its fence run bound and
+		// reads only a transcript under ~/.claude/projects (FN-R-27,
+		// FN-R-29); residentRefusal already denied a cwd outside it and a
+		// git dir that leads out.
+		var prompt, workspace string
+		if r.resident {
+			workspace = r.caller.Workspace
+			if workspace == "" {
+				return
+			}
+			raw, ok := fenceruns.ResidentTranscript(t)
+			if !ok {
+				return
+			}
+			prompt = lastPromptUUIDText(raw)
+		} else {
+			if !r.isRepo(pathStr(c)) {
+				return
+			}
+			prompt = lastPromptUUID(pathStr(t))
 		}
-		prompt := lastPromptUUID(pathStr(t))
 		if prompt == "" {
 			return
 		}
@@ -56,8 +78,15 @@ func (r *runner) dueCheckpoint(p *pyjson.Object, sessionID any) (due *checkpoint
 		}
 		sid := r.safeSession(sessionID)
 		state := pathJoin(pathJoin(r.root, "checkpoint-state"), sid+".json")
-		if exists(state) {
-			v, err := pyjson.Loads(readText(state))
+		// GR-R-1: read through no link; a file that is refused is none.
+		raw, haveState, rerr := statefile.ReadFile(pathStr(r.root), []string{"checkpoint-state"}, sid+".json")
+		if rerr != nil {
+			// A read that fails after the open abandons the checkpoint, as
+			// the broad except in gate._maybe_checkpoint does.
+			return
+		}
+		if haveState {
+			v, err := pyjson.Loads(decodeText(raw))
 			if err == pyjson.ErrUnsupported {
 				unported("a checkpoint state file the port does not read")
 			}
@@ -72,7 +101,7 @@ func (r *runner) dueCheckpoint(p *pyjson.Object, sessionID any) (due *checkpoint
 				return
 			}
 		}
-		due = &checkpointDue{cwd: pathStr(c), prompt: prompt, sid: sid, statePath: state}
+		due = &checkpointDue{cwd: pathStr(c), prompt: prompt, sid: sid, statePath: state, workspace: workspace}
 	})
 	return due
 }
@@ -89,6 +118,12 @@ func lastPromptUUID(path string) string {
 	if err != nil {
 		return ""
 	}
+	return lastPromptUUIDText(raw)
+}
+
+// lastPromptUUIDText is last_prompt_uuid(parse_turns(text)): the same, on
+// a transcript already read.
+func lastPromptUUIDText(raw []byte) string {
 	text, derr := pystr.DecodeStrict(raw)
 	if derr != nil {
 		return ""
@@ -299,7 +334,7 @@ func (r *runner) takeCheckpoint(due *checkpointDue) {
 			}
 			entryID = s
 		}
-		cp, ok := r.snapshot(due.cwd, due.sid, entryID)
+		cp, ok := r.snapshot(due.cwd, due.sid, entryID, due.workspace)
 		if !ok {
 			return
 		}
@@ -317,14 +352,10 @@ func (r *runner) takeCheckpoint(due *checkpointDue) {
 		if appendText(treeFile, dumpsLine(entry, false)) != nil {
 			return
 		}
-		if mkdirPrivate(pathParent(due.statePath)) != nil {
-			return
-		}
+		// A link planted at the state file is replaced, never written
+		// through (GR-R-9).
 		body := pyjson.Dumps(pyjson.NewObject().Set("prompt", due.prompt), true)
-		if os.WriteFile(fsEnc(due.statePath), []byte(body), 0o666) != nil {
-			return
-		}
-		_ = os.Chmod(fsEnc(due.statePath), 0o600)
+		_, _ = statefile.WriteFile(pathStr(r.root), []string{"checkpoint-state"}, due.sid+".json", body, true)
 	})
 }
 
@@ -372,12 +403,23 @@ var gitSafeArgs = []string{
 // changes a verdict. Every caller already treats "false" the same way it
 // treats a git failure, which was always possible here.
 func (r *runner) git(repo string, deadline time.Time, env []string, args ...string) (string, bool) {
+	return r.gitIn(repo, deadline, nil, env, args...)
+}
+
+// gitIn is git with bound (a resident checkpoint, FN-R-27): GIT_DIR,
+// GIT_COMMON_DIR and GIT_WORK_TREE set so git never chooses the tree from
+// repo config, and core.worktree cleared on the command line as well.
+func (r *runner) gitIn(repo string, deadline time.Time, bound, env []string, args ...string) (string, bool) {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	argv := append(append([]string{"-C", fsEnc(repo)}, gitSafeArgs...), args...)
+	argv := append([]string{"-C", fsEnc(repo)}, gitSafeArgs...)
+	if bound != nil {
+		argv = append(argv, "-c", "core.worktree=")
+	}
+	argv = append(argv, args...)
 	cmd := exec.CommandContext(ctx, "git", argv...)
 	inGroup(cmd)
-	cmd.Env = append(append(r.environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"), env...)
+	cmd.Env = append(append(append(r.environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"), bound...), env...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", false
@@ -393,8 +435,8 @@ func (r *runner) git(repo string, deadline time.Time, env []string, args ...stri
 // every filter driver THIS repo's own local config defines into a safe
 // no-op. required=false rides along: an empty clean/smudge/process value
 // alone can still fail the call, see the oracle's docstring.
-func (r *runner) filterOverrides(repo string, deadline time.Time, env []string) []string {
-	raw, ok := r.git(repo, deadline, env, "config", "-z", "--get-regexp", `^filter\.`)
+func (r *runner) filterOverrides(repo string, deadline time.Time, bound, env []string) []string {
+	raw, ok := r.gitIn(repo, deadline, bound, env, "config", "-z", "--get-regexp", `^filter\.`)
 	if !ok {
 		return nil
 	}
@@ -494,24 +536,42 @@ func refSafe(raw string) string {
 // snapshot is checkpoints.snapshot with its defaults: the whole work tree
 // committed to refs/daisugi/checkpoints/<session>/<entry> through a fresh
 // index, with files over 5,000,000 bytes (symlinks never) left out.
-func (r *runner) snapshot(repo, sid, entryID string) (checkpoint, bool) {
-	if !r.isRepo(repo) {
-		return checkpoint{}, false
-	}
+//
+// workspace (a resident checkpoint, FN-R-27) is the bound workspace,
+// resolved: then repo is ignored, the tree is that workspace, its .git (or
+// a git worktree's admin dir and common dir, W-1) is the git dir, git is told both, and a file whose resolved path leaves the
+// workspace is left out and named in skipped.
+func (r *runner) snapshot(repo, sid, entryID, workspace string) (checkpoint, bool) {
+	var bound []string
+	var gitDir string
 	deadline := r.gitDeadline()
-	top, ok := r.git(repo, deadline, nil, "rev-parse", "--show-toplevel")
-	if !ok || top == "" {
-		return checkpoint{}, false
+	if workspace != "" {
+		why, gd, common := fenceruns.GitLayout(workspace)
+		if why != "" || gd == "" {
+			return checkpoint{}, false
+		}
+		repo = workspace
+		gitDir = gd
+		bound = []string{"GIT_DIR=" + gitDir, "GIT_COMMON_DIR=" + common, "GIT_WORK_TREE=" + workspace}
+	} else {
+		if !r.isRepo(repo) {
+			return checkpoint{}, false
+		}
+		top, ok := r.git(repo, deadline, nil, "rev-parse", "--show-toplevel")
+		if !ok || top == "" {
+			return checkpoint{}, false
+		}
+		repo = pathStr(top)
+		gd, ok := r.git(repo, deadline, nil, "rev-parse", "--git-dir")
+		if !ok {
+			return checkpoint{}, false
+		}
+		gitDir = gd
+		if !isabs(gitDir) {
+			gitDir = pathJoin(repo, gitDir)
+		}
 	}
-	repo = pathStr(top)
 	ref := "refs/daisugi/checkpoints/" + refSafe(sid) + "/" + refSafe(entryID)
-	gitDir, ok := r.git(repo, deadline, nil, "rev-parse", "--git-dir")
-	if !ok {
-		return checkpoint{}, false
-	}
-	if !isabs(gitDir) {
-		gitDir = pathJoin(repo, gitDir)
-	}
 	f, err := os.CreateTemp(fsEnc(gitDir), "daisugi-index-")
 	if err != nil {
 		return checkpoint{}, false
@@ -527,13 +587,13 @@ func (r *runner) snapshot(repo, sid, entryID string) (checkpoint, bool) {
 	// to confirm its blob rather than trust a cached stat, running the clean
 	// filter again from the repo's live config on a call that didn't carry
 	// its own override.
-	filterArgs := r.filterOverrides(repo, deadline, env)
+	filterArgs := r.filterOverrides(repo, deadline, bound, env)
 	addArgv := append(append([]string{}, filterArgs...), "add", "-A", "--", ".")
-	if _, ok := r.git(repo, deadline, env, addArgv...); !ok {
+	if _, ok := r.gitIn(repo, deadline, bound, env, addArgv...); !ok {
 		return checkpoint{}, false
 	}
 	lsArgv := append(append([]string{}, filterArgs...), "ls-files", "-z")
-	listed, ok := r.git(repo, deadline, env, lsArgv...)
+	listed, ok := r.gitIn(repo, deadline, bound, env, lsArgv...)
 	if !ok {
 		return checkpoint{}, false
 	}
@@ -551,20 +611,24 @@ func (r *runner) snapshot(repo, sid, entryID string) (checkpoint, bool) {
 			skipped = append(skipped, name)
 			continue
 		}
+		if workspace != "" && !staysIn(pathJoin(repo, name), workspace) {
+			skipped = append(skipped, name)
+			continue
+		}
 		covers = append(covers, name)
 	}
 	if len(skipped) > 0 {
 		rmArgv := append(append([]string{}, filterArgs...), append([]string{"rm", "--cached", "-q", "--"}, skipped...)...)
-		if _, ok := r.git(repo, deadline, env, rmArgv...); !ok {
+		if _, ok := r.gitIn(repo, deadline, bound, env, rmArgv...); !ok {
 			return checkpoint{}, false
 		}
 	}
 	wtArgv := append(append([]string{}, filterArgs...), "write-tree")
-	tree, ok := r.git(repo, deadline, env, wtArgv...)
+	tree, ok := r.gitIn(repo, deadline, bound, env, wtArgv...)
 	if !ok {
 		return checkpoint{}, false
 	}
-	parent, hasParent := r.git(repo, deadline, nil, "rev-parse", "--verify", "-q", "HEAD")
+	parent, hasParent := r.gitIn(repo, deadline, bound, nil, "rev-parse", "--verify", "-q", "HEAD")
 	args := append(append([]string{}, filterArgs...), "commit-tree", tree, "-m",
 		"daisugi checkpoints "+sid+"/"+entryID, "--no-gpg-sign")
 	if hasParent && parent != "" {
@@ -572,15 +636,27 @@ func (r *runner) snapshot(repo, sid, entryID string) (checkpoint, bool) {
 	}
 	author := append(env, "GIT_AUTHOR_NAME=daisugi", "GIT_AUTHOR_EMAIL=daisugi@localhost",
 		"GIT_COMMITTER_NAME=daisugi", "GIT_COMMITTER_EMAIL=daisugi@localhost")
-	commit, ok := r.git(repo, deadline, author, args...)
+	commit, ok := r.gitIn(repo, deadline, bound, author, args...)
 	if !ok {
 		return checkpoint{}, false
 	}
 	urArgv := append(append([]string{}, filterArgs...), "update-ref", ref, commit)
-	if _, ok := r.git(repo, deadline, nil, urArgv...); !ok {
+	if _, ok := r.gitIn(repo, deadline, bound, nil, urArgv...); !ok {
 		return checkpoint{}, false
 	}
 	sort.Strings(covers)
 	sort.Strings(skipped)
 	return checkpoint{ref: ref, commit: commit, covers: covers, skipped: skipped}, true
+}
+
+// staysIn is checkpoints._stays_in: path, every link followed, is still
+// inside workspace.
+func staysIn(path, workspace string) bool {
+	real := fenceruns.Realpath(fsEnc(path))
+	return real == workspace || strings.HasPrefix(real, strings.TrimRight(workspace, "/")+"/")
+}
+
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }

@@ -80,6 +80,18 @@ width, and the web floor at phone width.
 - **1i. Readable windows.** The web windows are sharp and sized right.
 - **1j. The foreman.** Talking to the floor reaches a foreman agent that can
   start, direct and stop agents across projects.
+  Design: `design-foreman.md` (2026-10-08): one chat that never ends, whose
+  memory is a summary tree of the whole chat; its only acting tool is a gated
+  spawn. Built after the sprig agentic executor and delegation-tree step 4.
+- **1k. Speech out.** The foreman can answer aloud. The phone's own browser voice
+  works with no setup; a small local voice (Piper or Kokoro class, on the CPU of
+  the floor host) sounds better and streams to the phone over the tailnet; a box
+  with a GPU can serve a larger voice the same way a profile serves a model.
+  Added 2026-10-14.
+- **1l. Machines.** A read-only view of the boxes on the tailnet that serve the
+  floor: which are up, what each serves (models, voice), how fast each answers,
+  and which profiles point at it. Adding machines and access rules stay in
+  Tailscale's own console. Added 2026-10-14.
 
 ## Part 3: the publication sweep
 
@@ -127,6 +139,14 @@ Rulings to make with measurements before 2c and 2d:
   predicate algebra.
 - **libghostty-vt, tree-sitter-bash and the potion embedder** are not Go or
   Rust. For each, choose FFI, a native port, or a documented exception.
+
+## Later
+
+- **Dialect pack.** Parked (ruling DL-P1). `design-dialects.md` keeps the design.
+- **Argument-level MCP policy.** The envelope checks the arguments of an MCP tool
+  call, not only which tool it is.
+- **Constrained decoding for local models, with worker training.** A local model
+  writes envelopes through a grammar. Worker training gives it the words.
 
 ## Scale
 

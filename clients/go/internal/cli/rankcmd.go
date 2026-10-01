@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -73,7 +72,7 @@ func rankOpts() []opt {
 }
 
 func (e *Env) rankDataDir(p *parsed) string {
-	return gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	return gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 }
 
 // rankRead is cli._rank_read: the attempts file, checked.

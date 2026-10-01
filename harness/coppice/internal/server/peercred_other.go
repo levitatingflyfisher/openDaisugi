@@ -24,4 +24,6 @@ func procStat(int) (int, int, error) { return 0, 0, errors.New("no /proc on this
 
 func leadsSession() bool { return false }
 
+func procStartTime(int) (uint64, bool) { return 0, false }
+
 func listPIDs() ([]int, error) { return nil, errors.New("no /proc on this system") }

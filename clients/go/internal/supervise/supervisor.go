@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"daisugi-verify/internal/pathways"
@@ -39,7 +40,25 @@ type Supervisor struct {
 	VerifyStep func(plan verify.ActionPlan, env verify.Envelope, z3ms int) verify.VerifyResultGo
 	// Hook is a runner's per-step hook (weave); nil changes nothing.
 	Hook Hook
+	// MaxParallel is max_parallel: above 1, a dependency level's
+	// parallel-safe steps are prefetched concurrently, at most this many
+	// at a time.
+	MaxParallel int
 }
+
+// Prefetcher is a hook with prefetchable: a step it says false for is
+// never prefetched.
+type Prefetcher interface {
+	Prefetchable(step *pyjson.Object) bool
+}
+
+// ParallelSafe is an executor with a truthy parallel_safe.
+type ParallelSafe interface {
+	ParallelSafe() bool
+}
+
+// parallelSafeTypes is Supervisor._PARALLEL_SAFE_TYPES.
+var parallelSafeTypes = map[string]bool{"shell": true, "file_read": true, "file_write": true, "network": true}
 
 // Hook is supervisor.StepHook: a runner's hook into each step.
 type Hook interface {
@@ -134,7 +153,21 @@ func (s *Supervisor) Run(plan, env *pyjson.Object, venv verify.Envelope, verific
 		return sess
 	}
 	sess.Status = Running
-	ordered, err := tracejournal.TopoOrderErr(plan)
+	var ordered []*pyjson.Object
+	var levels [][]*pyjson.Object
+	stepLevel := map[string]int{}
+	var err error
+	if s.MaxParallel > 1 {
+		levels, err = tracejournal.Levels(plan)
+		for i, l := range levels {
+			for _, st := range l {
+				ordered = append(ordered, st)
+				stepLevel[str(st, "id")] = i
+			}
+		}
+	} else {
+		ordered, err = tracejournal.TopoOrderErr(plan)
+	}
 	if err != nil {
 		// A plan that verified has no cycle; fail closed if it has one.
 		sess.Status = Failed
@@ -165,8 +198,21 @@ func (s *Supervisor) Run(plan, env *pyjson.Object, venv verify.Envelope, verific
 		return r
 	}
 	completed := true
+	prefetched := map[string]ExecResult{}
+	prefetchedApproved := map[string]Decision{}
+	prefetchedLevel := -1
 	for _, step := range ordered {
-		if s.Hook != nil {
+		if levels != nil {
+			// Parallel mode: on entering a new dependency level, run its
+			// independent parallel-safe steps concurrently. The loop below
+			// still approves, receipts and halts on each step in order.
+			if lvl := stepLevel[str(step, "id")]; lvl != prefetchedLevel {
+				prefetched, prefetchedApproved = s.prefetch(levels[lvl], env, sess.ID, stepCheck)
+				prefetchedLevel = lvl
+			}
+		}
+		pre, isPre := prefetched[str(step, "id")]
+		if s.Hook != nil && !isPre {
 			next, skip, stop, status := s.Hook.Prepare(step)
 			if stop != nil {
 				sess.Steps = append(sess.Steps, *stop)
@@ -180,7 +226,12 @@ func (s *Supervisor) Run(plan, env *pyjson.Object, venv verify.Envelope, verific
 			}
 			step = next
 		}
-		res := stepCheck(step)
+		// A prefetched step already passed its verify and ran: it is not
+		// verified again.
+		res := verify.VerifyResultGo{OK: true}
+		if !isPre {
+			res = stepCheck(step)
+		}
 		if !res.OK {
 			replacement := s.onRejection(sess, step, res, env)
 			if replacement == nil {
@@ -209,7 +260,7 @@ func (s *Supervisor) Run(plan, env *pyjson.Object, venv verify.Envelope, verific
 				break
 			}
 		}
-		if s.Hook != nil {
+		if s.Hook != nil && !isPre {
 			if stop, status := s.Hook.Checked(step); stop != nil {
 				sess.Steps = append(sess.Steps, *stop)
 				sess.Status = status
@@ -233,7 +284,7 @@ func (s *Supervisor) Run(plan, env *pyjson.Object, venv verify.Envelope, verific
 			completed = false
 			break
 		}
-		if s.Hook != nil {
+		if s.Hook != nil && !isPre {
 			if why := s.Hook.Started(step, sess.ID); why != "" {
 				// The runner could not record that the step starts, so the
 				// step does not run.
@@ -244,7 +295,11 @@ func (s *Supervisor) Run(plan, env *pyjson.Object, venv verify.Envelope, verific
 				break
 			}
 		}
-		out := s.executeOne(step, started, decision)
+		var preRes *ExecResult
+		if isPre {
+			preRes = &pre
+		}
+		out := s.executeOne(step, started, decision, preRes)
 		if out.Status == Succeeded {
 			if msg := s.stage2(step, out, venv); msg != "" {
 				out.Status = Failed
@@ -265,6 +320,9 @@ func (s *Supervisor) Run(plan, env *pyjson.Object, venv verify.Envelope, verific
 	}
 	if completed {
 		sess.Status = Succeeded
+	}
+	if levels != nil && prefetchedLevel >= 0 {
+		s.flushPrefetch(sess, levels[prefetchedLevel], prefetched, prefetchedApproved)
 	}
 	sess.EndedAt = strp(NowISO())
 	s.checkIntegrity(sess, plan)
@@ -332,11 +390,127 @@ func (s *Supervisor) onRejection(sess *Session, step *pyjson.Object, res verify.
 	return replacement
 }
 
-func (s *Supervisor) executeOne(step *pyjson.Object, started string, d Decision) Outcome {
+// parallelSafe is Supervisor._parallel_safe.
+func (s *Supervisor) parallelSafe(step *pyjson.Object) bool {
+	if pf, ok := s.Hook.(Prefetcher); ok && !pf.Prefetchable(step) {
+		return false
+	}
+	kind := str(step, "type")
+	if parallelSafeTypes[kind] {
+		return true
+	}
+	ps, ok := s.Executors[kind].(ParallelSafe)
+	return ok && ps.ParallelSafe()
+}
+
+// prefetch is Supervisor._prefetch_independent: a level's parallel-safe
+// steps that pass their verify and approval, run concurrently (at most
+// MaxParallel at a time) when there are two or more. It returns the
+// results of the runs that ended without an executor error, and their
+// approvals.
+func (s *Supervisor) prefetch(level []*pyjson.Object, env *pyjson.Object, runID string,
+	check func(*pyjson.Object) verify.VerifyResultGo) (map[string]ExecResult, map[string]Decision) {
+	var cands []*pyjson.Object
+	approvals := map[string]Decision{}
+	for _, step := range level {
+		if !s.parallelSafe(step) {
+			continue
+		}
+		if !check(step).OK {
+			continue
+		}
+		d, err := s.Approval.Decide(step, env)
+		if err != nil || !d.Approved {
+			continue
+		}
+		cands = append(cands, step)
+		approvals[str(step, "id")] = d
+	}
+	if len(cands) < 2 {
+		return map[string]ExecResult{}, map[string]Decision{}
+	}
+	if s.Hook != nil {
+		// A step whose start mark fails is left to the main loop, which
+		// stops the run before it.
+		var kept []*pyjson.Object
+		for _, c := range cands {
+			if s.Hook.Started(c, runID) == "" {
+				kept = append(kept, c)
+			}
+		}
+		cands = kept
+		if len(cands) < 2 {
+			return map[string]ExecResult{}, map[string]Decision{}
+		}
+	}
+	type res struct {
+		r  ExecResult
+		ok bool
+	}
+	results := make([]res, len(cands))
+	sem := make(chan struct{}, s.MaxParallel)
+	var wg sync.WaitGroup
+	for i, c := range cands {
+		ex, ok := s.Executors[str(c, "type")]
+		if !ok {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, c *pyjson.Object, ex Executor) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			r, err := ex.Run(c, s.StepTimeoutS, s.MaxOutputBytes)
+			results[i] = res{r, err == nil}
+		}(i, c, ex)
+	}
+	wg.Wait()
+	out := map[string]ExecResult{}
+	approved := map[string]Decision{}
+	for i, c := range cands {
+		if results[i].ok {
+			id := str(c, "id")
+			out[id] = results[i].r
+			approved[id] = approvals[id]
+		}
+	}
+	return out, approved
+}
+
+// flushPrefetch is Supervisor._flush_unconsumed_prefetch: a prefetched
+// step of the last level that ran but that the loop never reached gets
+// its outcome and receipt.
+func (s *Supervisor) flushPrefetch(sess *Session, level []*pyjson.Object, pre map[string]ExecResult, approved map[string]Decision) {
+	if len(pre) == 0 {
+		return
+	}
+	done := map[string]bool{}
+	for _, o := range sess.Steps {
+		done[o.StepID] = true
+	}
+	for _, step := range level {
+		id := str(step, "id")
+		r, ok := pre[id]
+		if !ok || done[id] {
+			continue
+		}
+		d, ok := approved[id]
+		if !ok {
+			continue
+		}
+		out := s.executeOne(step, NowISO(), d, &r)
+		sess.Steps = append(sess.Steps, out)
+		s.writeReceipt(step, out, sess.ID)
+	}
+}
+
+func (s *Supervisor) executeOne(step *pyjson.Object, started string, d Decision, pre *ExecResult) Outcome {
 	kind := str(step, "type")
 	ex, ok := s.Executors[kind]
 	var r ExecResult
-	if !ok {
+	if pre != nil {
+		r = *pre
+	} else if !ok {
 		r = ExecResult{RC: 1, Stdout: fmt.Sprintf("no executor for kind '%s'", kind)}
 	} else {
 		var err error

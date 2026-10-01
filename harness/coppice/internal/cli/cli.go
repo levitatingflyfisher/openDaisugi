@@ -20,7 +20,9 @@ import (
 	"time"
 
 	"github.com/opendaisugi/coppice/internal/attach"
+	"github.com/opendaisugi/coppice/internal/broken"
 	"github.com/opendaisugi/coppice/internal/config"
+	"github.com/opendaisugi/coppice/internal/foreman"
 	"github.com/opendaisugi/coppice/internal/plugins"
 	"github.com/opendaisugi/coppice/internal/server"
 	"github.com/opendaisugi/coppice/internal/tmuxmirror"
@@ -42,6 +44,8 @@ const usage = `coppice: panes, agents and their state, on one machine.
   coppice tab list [--workspace ID]
   coppice pane create [--cwd DIR] [--label TEXT] [--kind pty|headless]
                       [--harness NAME] [--cols N] [--rows N] [--task ID] -- COMMAND...
+  coppice agent list --ended|forget AGENT|--ended|resume AGENT
+                                           the pane verbs of the same names
   coppice pane list [--ended]|send-text|send-keys|run|read|close|resize|wait-output|explain
   coppice pane fork PANE [--label TEXT]
   coppice pane forget PANE|--ended        remove an ended pane's record; a live pane refuses
@@ -49,6 +53,8 @@ const usage = `coppice: panes, agents and their state, on one machine.
   coppice pane rename PANE LABEL...       change a pane's label in place, live or ended
   coppice pane trust PANE [--not-now]     answer Claude's folder trust screen; --not-now
                                            presses Esc, which ends Claude
+  coppice pane ack-changed DIR            let starts in DIR go on after a fenced run
+                                           changed its config
   coppice new [PROJECT] [--no-attach]     the default harness, in a project by name or
                                            path, or here; attaches, unless --no-attach
   coppice project add|list|rm [DIR]       pin, list or unpin a working directory
@@ -60,6 +66,8 @@ const usage = `coppice: panes, agents and their state, on one machine.
   coppice floor note TEXT                  print one line on the floor
   coppice floor talk TEXT                  say TEXT to the floor's foreman; starts one if none runs
   coppice skill foreman                    print the page that makes a pane the foreman
+  coppice backup [FILE]                    foreman log and memory, layout and config in one .tgz
+  coppice restore FILE [--force]           put it back; stop the server first
   coppice task create --label NAME [--parent ID] [--cwd DIR] [--worktree] [--model NAME]
   coppice task list [--tree]
   coppice task close ID [--keep-worktree]
@@ -123,6 +131,9 @@ func (c *CLI) stdinIsTerminal() bool {
 // does.
 func (c *CLI) Run(argv []string) int {
 	remote := ""
+	// dataDirFlag is --data-dir when given here; c.DataDir also holds the
+	// default, which coppice foreman must not mistake for a choice.
+	dataDirFlag := ""
 	for len(argv) > 0 && strings.HasPrefix(argv[0], "--") {
 		switch argv[0] {
 		case "--version":
@@ -155,6 +166,7 @@ func (c *CLI) Run(argv []string) int {
 				return 1
 			}
 			c.DataDir = argv[1]
+			dataDirFlag = argv[1]
 			argv = argv[2:]
 			continue
 		default:
@@ -167,6 +179,19 @@ func (c *CLI) Run(argv []string) int {
 	}
 
 	switch argv[0] {
+	case "foreman":
+		// Hidden: it reads the foreman's chat files and dials no socket.
+		if remote != "" {
+			fmt.Fprintln(c.Err, "coppice foreman reads local files; it is not wired for --remote.")
+			return 1
+		}
+		if len(argv) > 1 && argv[1] == "tools" {
+			return foreman.ToolsMainIn(dataDirFlag, argv[2:], c.In, c.Out, c.Err)
+		}
+		if len(argv) > 1 && argv[1] == "hook" {
+			return foreman.HookMain(c.In, c.Err)
+		}
+		return foreman.Main(argv[1:], dataDirFlag, c.Out, c.Err)
 	case "server":
 		return c.runServer(remote, argv[1:])
 	case "attach":
@@ -183,6 +208,16 @@ func (c *CLI) Run(argv []string) int {
 		return c.runVerb(remote, argv)
 	case "skill":
 		return c.runSkill(argv[1:])
+	case "backup", "restore":
+		// Both read and write local files. Neither has a remote form.
+		if remote != "" {
+			fmt.Fprintf(c.Err, "coppice %s reads and writes local files; it is not wired for --remote.\n", argv[0])
+			return 1
+		}
+		if argv[0] == "backup" {
+			return c.runBackup(argv[1:])
+		}
+		return c.runRestore(argv[1:])
 	case "open":
 		return c.runOpen(remote, argv[1:])
 	case "new":
@@ -401,6 +436,10 @@ func (c *CLI) runVerb(remote string, argv []string) int {
 	if errMsg != "" {
 		fmt.Fprintln(c.Err, errMsg)
 		return 1
+	}
+
+	if agentAsPane(group, verb, params) {
+		group = "pane"
 	}
 
 	cl, code := c.dial(remote)
@@ -640,6 +679,9 @@ func (c *CLI) serverStart(foreground, asJSON bool) int {
 			fmt.Fprintf(c.Out, "already running. Socket: %s\n", c.Socket)
 			return 0
 		}
+		if !c.fenceConfigOK() {
+			return 1
+		}
 		if err := StartBackgroundServer(c.Socket, c.DataDir); err != nil {
 			fmt.Fprintln(c.Err, err)
 			return 1
@@ -653,7 +695,10 @@ func (c *CLI) serverStart(foreground, asJSON bool) int {
 		return 0
 	}
 
-	s, err := server.New(server.Config{SocketPath: c.Socket, DataDir: c.DataDir, Voice: voiceConfig()})
+	if !c.fenceConfigOK() {
+		return 1
+	}
+	s, err := server.New(server.Config{SocketPath: c.Socket, DataDir: c.DataDir, Voice: voiceConfig(), Foreman: foremanConfig(), LayoutSaveSettle: applyStateSettings(), Fence: fenceSetting()})
 	if err != nil {
 		fmt.Fprintln(c.Err, err)
 		return 1
@@ -694,6 +739,8 @@ func (c *CLI) serverStart(foreground, asJSON bool) int {
 	// whatever it just found ended. This is the hourly half, for as long
 	// as this process keeps running.
 	s.StartEndedSweep()
+	// In chat mode the foreman's log opens now, and its compactor starts.
+	s.StartForeman()
 	// Voice starts on its own goroutine, so a model that loads slowly never
 	// holds up the socket or the started line.
 	s.StartVoice()
@@ -1362,4 +1409,31 @@ func (c *CLI) runTmuxMirror(remote string, argv []string) int {
 			}
 		}
 	}
+}
+
+// fenceConfigOK says whether coppice.toml's fence value is one coppice
+// knows. Else it prints one line naming the file, the value and the ones
+// allowed, and the server does not start (FN-R-33).
+func (c *CLI) fenceConfigOK() bool {
+	if _, _, err := config.Load(); errors.Is(err, config.ErrBadFence) {
+		fmt.Fprintf(c.Err, "cannot read %s: %v\n", config.Path(), err)
+		return false
+	}
+	return true
+}
+
+// fenceSetting is the coppice config's fence setting.
+func fenceSetting() string {
+	cfg, _, _ := config.Load()
+	return cfg.FenceMode()
+}
+
+// applyStateSettings reads the coppice config for the settings that shape
+// how the server keeps state. It sets how many .broken copies stay, and
+// returns the layout save settle time. An unreadable file gives the
+// defaults.
+func applyStateSettings() time.Duration {
+	cfg, _, _ := config.Load()
+	broken.SetKeep(cfg.BrokenKeepN())
+	return cfg.LayoutSettle()
 }

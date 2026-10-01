@@ -410,6 +410,12 @@ def _data_dirs() -> list[str]:
     return [str(d) for d in coppice_data_dirs()]
 
 
+def _foreman_dir_names() -> list[str]:
+    from opendaisugi.floor_config import foreman_dirs
+
+    return [str(d) for d in foreman_dirs()]
+
+
 def secret_files() -> list[str]:
     """Every coppice secret file under every data directory the gate knows."""
     from opendaisugi.pane_rule import _SECRET_NAMES
@@ -421,7 +427,7 @@ def _reach_targets() -> list[str]:
     """Every path a search root must not match: each prefix of each secret
     file, from / down to the file."""
     out: list[str] = ["/"]
-    for f in secret_files():
+    for f in [*secret_files(), *_foreman_dir_names()]:
         parts = _parts(f)
         for i in range(1, len(parts) + 1):
             p = "/" + "/".join(parts[:i])
@@ -452,7 +458,8 @@ def path_above_secret(raw: str, cwd: str) -> bool:
         return False
     p = _place(raw, cwd)
     cands = {os.path.normpath(p), str(Path(p).resolve(strict=False))}
-    return any(d.startswith(c.rstrip("/") + "/") for d in _data_dirs() for c in cands)
+    dirs = [*_data_dirs(), *_foreman_dir_names()]
+    return any(d.startswith(c.rstrip("/") + "/") for d in dirs for c in cands)
 
 
 # A variable, a command substitution, or a ~ form the gate does not

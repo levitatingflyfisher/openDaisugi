@@ -25,7 +25,7 @@ Options:
 
 Commands:
   setup  Detect hardware, recommend a local model, and optionally qualify and wire it.
-  stats  Not yet in this binary.
+  stats  Show per-tier call counts, estimated tokens, and pathway hit rate.
 `
 
 func (e *Env) tiers(args []string) error {
@@ -37,7 +37,7 @@ func (e *Env) tiers(args []string) error {
 	case "setup":
 		return e.tiersSetup(args[1:])
 	case "stats":
-		return e.notYet("daisugi tiers stats")
+		return e.tiersStats(args[1:])
 	}
 	e.errf("Usage: daisugi tiers [OPTIONS] COMMAND [ARGS]...\nTry 'daisugi tiers --help' for help.\n\n"+
 		"Error: No such command '%s'.\n", args[0])
@@ -187,9 +187,9 @@ func recommend(h hardware) recommendation {
 		"against the real envelope schema and check the pass rate) before trusting it as Tier-1; the model " +
 		"family is your pick, not a verified default."
 	if r.params >= 3 {
-		r.families = []string{"Qwen2.5", "Gemma", "Llama", "Phi"}
+		r.families = []string{"Granite", "Ministral", "Gemma", "Llama"}
 	} else {
-		r.families = []string{"Qwen2.5", "Gemma"}
+		r.families = []string{"Granite", "Llama"}
 	}
 	return r
 }
@@ -242,7 +242,7 @@ func (e *Env) tiersSetup(args []string) error {
 			return e.usage(cmd, err)
 		}
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	if p.has("--matcher") {
 		return e.setMatcher(cmd, gateroot.Join(dataDir, "config.yaml"), p.str("--matcher", ""))
 	}
@@ -254,7 +254,17 @@ func (e *Env) tiersSetup(args []string) error {
 			"run one at a time: --endpoint URL --model NAME, or --remote HOST[:PORT].", 1)
 	}
 	if remote != "" {
-		return e.notYet("daisugi tiers setup --remote")
+		var model *string
+		if p.has("--model") {
+			m := p.str("--model", "")
+			model = &m
+		}
+		var context *int64
+		if p.has("--context") {
+			n, _ := clickInt(p, "--context", 0)
+			context = &n
+		}
+		return e.setupRemote(cmd, dataDir, remote, p.str("--kind", "auto"), model, context)
 	}
 	model := p.str("--model", "")
 	if endpoint != "" && model == "" {
@@ -263,17 +273,29 @@ func (e *Env) tiersSetup(args []string) error {
 	}
 	h := e.detectHardware()
 	rec := recommend(h)
+	type probeOutcome struct{ task, outcome, reason string }
 	type qualification struct {
 		attempts, valid int
 		rate            float64
 		passed          bool
+		outcomes        []probeOutcome
+		context         *int64
 	}
 	var qual *qualification
 	wired := false
 	if endpoint != "" {
 		c := e.llmClient()
+		// An endpoint is an HTTP server. The claude-code backend ignores it,
+		// so it must never be chosen here, by auto-detection or by force.
+		if strings.TrimSpace(c.Configured()) == "claude-code" {
+			e.errf("--endpoint cannot be used with the claude-code backend: it would never call the endpoint. " +
+				"Unset OPENDAISUGI_LLM_BACKEND (or llm_backend in config.yaml), or set it to api.\n")
+			return exit(2)
+		}
+		c.Pin("api")
 		base := endpoint
 		t := envgen.NewTier1(model, &base, nil, "")
+		t.Timeout = envgen.QualifyTimeout
 		if err := c.Check(t.Model); err != nil {
 			return e.refuse(cmd, err)
 		}
@@ -282,12 +304,30 @@ func (e *Env) tiersSetup(args []string) error {
 		if n < 1 {
 			n = 1
 		}
+		total := len(probeTasks) * int(n)
+		e.note("qualifying %s at %s: %d probes, up to %d s each", model, endpoint, total,
+			int(envgen.QualifyTimeout.Seconds()))
+		done := 0
 		for i := int64(0); i < n; i++ {
 			for _, task := range probeTasks {
-				if t.Generate(c, task, nil) != nil {
+				out, err := t.GenerateErr(c, task, nil)
+				done++
+				switch {
+				case out != nil:
 					q.valid++
+					q.outcomes = append(q.outcomes, probeOutcome{task, envgen.OutcomeValid, ""})
+					e.note("  probe %d/%d: valid", done, total)
+				default:
+					o, why := envgen.Classify(err)
+					q.outcomes = append(q.outcomes, probeOutcome{task, o, why})
+					e.note("  probe %d/%d: %s: %s", done, total, o, why)
 				}
 			}
+		}
+		// The window the server serves, when it says; one best-effort probe.
+		root := strings.TrimSuffix(strings.TrimRight(endpoint, "/"), "/v1")
+		if info, err := e.newHostClient().probeOpenAI(root, model); err == nil && info != nil {
+			q.context = info.context
 		}
 		q.attempts = len(probeTasks) * int(n)
 		q.rate = pyjson.Round(float64(q.valid)/float64(q.attempts), 2)
@@ -316,9 +356,16 @@ func (e *Env) tiersSetup(args []string) error {
 		}
 		var q any
 		if qual != nil {
+			outs := make([]any, len(qual.outcomes))
+			for i, o := range qual.outcomes {
+				outs[i] = pyjson.NewObject().Set("task", o.task).Set("outcome", o.outcome).Set("reason", o.reason)
+			}
 			q = pyjson.NewObject().Set("attempts", qual.attempts).Set("valid", qual.valid).
 				Set("pass_rate", floatAny(qual.rate)).Set("passed", qual.passed).Set("threshold", floatAny(threshold)).
-				Set("wired", wired)
+				Set("wired", wired).Set("outcomes", outs)
+			if qual.context != nil {
+				q.(*pyjson.Object).Set("context_window", int(*qual.context))
+			}
 		}
 		payload := pyjson.NewObject().
 			Set("hardware", pyjson.NewObject().Set("system", h.system).Set("arch", h.arch).Set("cpu_count", h.cpus).
@@ -349,10 +396,11 @@ func (e *Env) tiersSetup(args []string) error {
 	e.out("  candidate families (your pick, none verified-best): %s\n", strings.Join(rec.families, ", "))
 	e.out("  %s\n\n", rec.rationale)
 	if qual == nil {
-		e.out("Get a local server running (one file, no install), then qualify + wire it:\n")
-		e.out("  1. Find a trusted, commit-pinned model llamafile:  daisugi models\n")
-		e.out("     (canonical engine repo: github.com/mozilla-ai/llamafile; model org: huggingface.co/mozilla-ai)\n")
-		e.out("  2. Serve it:  ./<model>.llamafile --server --port 8080 --nobrowser\n")
+		e.out("Get a local server running, then qualify + wire it:\n")
+		e.out("  1. Pick a model:  daisugi models list   (or any: daisugi models search QUERY)\n")
+		e.out("     Fetch its GGUF pinned to a commit:  daisugi models pin <gguf-repo> --pull\n")
+		e.out("  2. Serve it with llamafile (github.com/mozilla-ai/llamafile):\n")
+		e.out("     llamafile --server -m <model>.gguf --port 8080 --nobrowser\n")
 		e.out("  3. Qualify:   daisugi tiers setup --endpoint http://localhost:8080/v1 --model <name> --wire\n")
 		e.out("\nPathway matcher: lexical by default (no model, no download). For better recall:\n")
 		e.out("  daisugi tiers setup --matcher potion   (a one-time download of about 30 MB)\n")
@@ -364,14 +412,33 @@ func (e *Env) tiersSetup(args []string) error {
 	}
 	e.out("Qualification: %s — %d/%d valid envelopes (pass rate %s, threshold %s).\n", verdict, qual.valid,
 		qual.attempts, pyPercent0(qual.rate), pyPercent0(threshold))
+	if qual.context != nil {
+		e.out("  Context window: %d tokens (what the server serves).\n", *qual.context)
+	}
+	if !qual.passed {
+		for _, o := range qual.outcomes {
+			if o.outcome != envgen.OutcomeValid {
+				e.out("  → First failure (%s): %s\n", o.outcome, o.reason)
+				break
+			}
+		}
+	}
+	errored := 0
+	for _, o := range qual.outcomes {
+		if o.outcome == envgen.OutcomeError {
+			errored++
+		}
+	}
 	switch {
 	case wired:
 		e.out("  → Wired as Tier-1 in %s; `daisugi onboard`/`tend` will now defer to it.\n", dataDir)
 	case qual.passed:
 		e.out("  → Passed. Re-run with --wire to persist it as Tier-1.\n")
+	case errored == qual.attempts:
+		e.out("  → ALL attempts errored — this is a wiring problem, not model capacity. " +
+			"Check the server is reachable at --endpoint and serving /v1, and that " +
+			"--model matches the name it serves.\n")
 	default:
-		// The provider declines rather than raises, so no attempt is an
-		// error and the all-errored hint is never reached (SET-3).
 		e.out("  → Not promoted. Try a larger model, a higher quant, or lower --threshold deliberately.\n")
 	}
 	return nil

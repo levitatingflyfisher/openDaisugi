@@ -33,6 +33,10 @@ tests and reality disagree, reality wins.
 | Install and release | `scripts/install.sh`, `scripts/preflight.sh`, `scripts/release.sh`, `packaging/aur/` | shell |
 | Docs | `docs/` (hub: `docs/README.md`); decisions `docs/adr/`; current plans and designs `docs/plans/2026-09-24-omarchy/` | Markdown |
 
+The slots these parts fill, and the other tools that fill them, are in
+[docs/explanation/landscape.md](docs/explanation/landscape.md). Recipes are in
+[docs/recipes/](docs/recipes/README.md).
+
 sprig and weave are **on hold with the owner**. grove is retired: coppice replaced it. Do not build on them, and write any design
 that touches them as Proposed. coppice's sprig adapter reads `harness/sprig/cli.go` to check its
 flag names, so a change there can break a coppice test.
@@ -49,6 +53,151 @@ Inside `src/opendaisugi/`, by concern:
 | Prompt to answer | `orchestrator.py`, `decomposer.py`, `model_sizer.py`, `budget.py`, `routing.py` |
 | The gateway and router | `gateway*.py`, `router_switchyard.py` |
 | Surfaces | `cli.py`, `mcp_server.py`, `install.py` |
+
+## Install
+
+Commands that work today. Run `--dry-run` first to see what a command writes.
+
+```bash
+daisugi install --gate               # the gate hook for Claude Code and Codex; audit mode
+daisugi install --gate --enforce     # needs a registered envelope: run `daisugi gate init --workspace ~/Work` first
+daisugi install --harness pi         # or: opencode
+daisugi install --gate --gateway     # also point the harness at the gateway
+daisugi modules --pieces             # which pieces run here, and the command for each
+coppice                              # the multiplexer; or: coppice web, for the browser and the phone
+```
+
+The Go `daisugi` installs only the gate and gateway layers. The Python `daisugi install` always
+adds the skill, the MCP server, the capture hook and the pathway instructions. A gate-only or
+gateway-only Python install flag does not exist yet. Hermes gets no `install --gateway` yet (it
+expects an OpenAI wire that `install` does not write).
+
+Memory over MCP alone: register the server by hand. Claude Code reads it from `~/.claude.json`.
+
+```json
+{"mcpServers": {"opendaisugi": {"type": "stdio", "command": "daisugi", "args": ["mcp", "serve"]}}}
+```
+
+Codex speaks the OpenAI wire. The gateway answers it on `/chat/completions`; see
+[the gateway guide](docs/how-to/token-saving-gateway.md).
+
+### Get the binaries
+
+None of these needs Python at run time.
+
+- **From source** (Linux): `scripts/install.sh`. You supply git, a C compiler (gcc), make,
+  pkgconf, curl, python3, binutils and go. It names any of those that is missing before it builds
+  anything. It fetches zig 0.16.0 and cmake itself (pinned, checksummed, no sudo, under
+  `~/.local/share/opendaisugi`), and uses `GOTOOLCHAIN=auto` when your go is older than 1.26. It
+  builds the pinned native libraries once, sends compiler output to a log file, and puts
+  `daisugi`, `coppice` and `sprig` in `~/.local/bin`. The voice engines build only with
+  `--voice`. `INSTALL_DRY=1` prints the plan and builds nothing. A Python `daisugi` script
+  already there is kept unless you pass `--replace-daisugi`.
+- **A release tarball**: `scripts/release.sh VERSION` builds it; `--rust` builds a second
+  tarball with the Rust `daisugi`. Unpack with
+  `tar -xzf opendaisugi-VERSION-linux-x86_64.tar.gz --strip-components=1 -C ~/.local/bin`.
+- **Omarchy and the AUR**: `omarchy-mise-install github:levitatingflyfisher/openDaisugi coppice`,
+  or the packages in `packaging/aur/`: `opendaisugi` (or `opendaisugi-bin`) puts `daisugi` (the
+  Go build), `daisugi-rs`, `daisugi-gate-rs`, `coppice` and `sprig` in `/usr/bin`, and
+  `daisugi-py` adds the Python one, so the three can check each other. `daisugi install` writes
+  hooks that run the Go `daisugi`; with `DAISUGI_PORT=rust` or `DAISUGI_PORT=python` it hands the
+  install to `daisugi-rs` or `daisugi-py`, whose hooks then run that port directly. Both routes
+  need a published release. **There is no published release yet.**
+
+### The Python package
+
+```bash
+uv add opendaisugi          # or: pip install opendaisugi
+```
+
+Python 3.12 or later. The Python package is the oracle: every command lives here, and the Go and
+Rust binaries are checked against it. Extras: `[generate]` (httpx, for model calls over
+HTTP: the Anthropic API, Ollama, llamafile), `[mcp]` (the MCP server), `[search]` (the sentence-transformers matcher), `[robotics]`,
+`[lora]`. With no extra, pathway reuse uses the zero-download lexical matcher.
+
+
+## The binaries
+
+| Binary | Language | What it carries |
+|---|---|---|
+| `daisugi` (Python) | Python | Everything: the gate, verify, pathways, garden, gateway, orchestrator, supervisor, MCP server, onboarding, dashboard. The oracle. |
+| `daisugi` (Go) | Go | Gate commands, `install` (`--gate`, `--harness`, `--gateway`), `pathways`, the garden (`gardener`, `tend`, `hook auto-tend`, `distill-repeats`), `gateway`, `gateway-report`, `router`, `route`, `status`, `config`, `start --no-ui`, `journal`. |
+| `daisugi` (Rust) | Rust | The same as the Go binary, except `status`, `config`, `start` and `journal`. |
+| `daisugi-gate` | Go and Rust | The hook contract alone. |
+| `coppice` | Go | The floor. |
+| `sprig` | Go | The loop, plus `sprig-hook`, `sprig-mcp` and `weave`. (grove is retired: coppice replaced it.) |
+
+The Go and Rust binaries link real Z3 5.1.0 statically and parse shell with tree-sitter-bash, the
+same grammar the oracle uses. Each links only glibc (the Rust one also `libgcc_s`). A command a
+binary does not carry prints `<command> is not in this binary yet.` and exits 2. Only the Python
+package has `orchestrate`, `dashboard`, `mcp`, `onboard` and model-written envelopes today.
+Porting them is stage K of the [part 2 plan](docs/plans/2026-09-24-omarchy/plan-part2-ports.md).
+
+
+## What is proven, and how
+
+The Python package is the oracle. It writes golden cases; each port must agree with it. Numbers
+below are from the reference box, 2026-09-25 and 2026-09-26, from `clients/go/README.md`,
+`clients/rust/README.md` and the build ledger. They prove the ports agree with the oracle
+(correctness). They say nothing about usefulness on real work.
+
+They were measured before five oracle fixes committed late on 2026-09-26 (the security queue in
+[VISION.md](VISION.md#honest-scorecard-2026-09-26)). The Go and Rust mirrors of those fixes are not
+committed yet, so the committed ports lag the committed oracle there.
+
+A refusal (exit 2, one line, nothing changed) is allowed only by a ruling and is never counted as
+agreement.
+
+| Suite | Cases | Go | Rust |
+|---|---|---|---|
+| gate cases (`clients/fixtures/gate/`) | 1,310 | 0 disagreements | 0 disagreements |
+| CLI cases (`clients/fixtures/cli/`) | 472 | 451 agree, 12 not ported, 9 refused, 0 disagreements | last full run at 306 cases: 0 disagreements; `status`, `config`, `start`, `journal` not ported |
+| pathway commands, matcher queries, verify messages | 158, 380, 577 | 0 disagreements | 0 disagreements |
+| garden cases | 215 | 0 disagreements; at 200 cases: 188 agree, 12 refused | the same |
+| gateway cases | 223 | 0 disagreements; 1 refused (GW-8) | the same |
+| weave cases (`clients/fixtures/weave/`, 2026-09-30) | 88 | 86 agree, 2 refused (WV-R-10), 0 disagreements | the same |
+
+- **Fuzz.** Seeded differential fuzz against the in-process oracle, for example 36,000 shell
+  commands plus 24,000 heredoc, multi-line, non-ASCII and envelope calls for the Go gate
+  ([clients/go/README.md](clients/go/README.md)). No run found a call a binary allowed and the
+  oracle denied.
+- **The verifier corpus.** 11,450 cases recorded from real use. It holds local paths, so it is
+  frozen on the owner's box and never published. Rust matches 11,450 of 11,450
+  ([clients/rust/README.md](clients/rust/README.md)). TypeScript and Lean 4 clients check the
+  verifier core too ([docs/client-diversity.md](docs/client-diversity.md)).
+- **Adjudications.** Every disagreement, and every oracle bug a port found, has an entry in
+  [clients/ADJUDICATIONS.md](clients/ADJUDICATIONS.md). Several were fail-open bugs in the
+  oracle itself, now fixed.
+- **Speed.** A gate call, cold process, p50: Go 8.8 ms, Rust 6.1 ms, Python about 430 ms. A call
+  that needs the Z3 vacuity check takes about 20 ms. From tarball to the first gate decision:
+  0.52 s.
+
+The method is in [docs/spec/conformance.md](docs/spec/conformance.md).
+
+
+## Honest limits
+
+- **Usefulness is not measured yet.** Every number above comes from synthetic cases. The next
+  step is a week of daily use: the gate's false-deny rate from its audit log, the gateway on
+  real traffic, and a friction log for coppice.
+- **Not an OS sandbox.** The gate decides tool calls a harness sends through its hook. For
+  process isolation, use SELinux, AppArmor or seccomp under it.
+- **Codex hooks fail open.** A Codex hook that crashes, times out or prints bad JSON lets the
+  tool run (`src/opendaisugi/install.py`). A deny works; a dead gate does not block.
+- **sprig and weave run with the gate off unless you pass `--gate`**
+  (`harness/sprig/cli.go`). The owner agreed to turn it on by default once it runs smoothly. That
+  is not done.
+- **Actions, not understanding.** An envelope can prove an action stayed in bounds. It cannot
+  prove the model understood the task. A perceptual check (`llm_check`) is a judgment, not a
+  proof.
+- **Token savings depend on your work.** A reused deterministic pathway spends zero tokens. The
+  average saving depends on how much of your work repeats. A large file read can go to a local
+  worker through the `delegate` tool, which returns checked quotes; that saving is an estimate,
+  and billed cost can rise while tokens fall. `daisugi router status` shows both per week.
+  Measure it with `examples/jit-metrics/`.
+- **No published release, no release signing.** Build from a git ref you have read.
+
+More in [docs/limitations.md](docs/limitations.md) and the scorecard in [VISION.md](VISION.md).
 
 ## Non-negotiables
 
@@ -145,8 +294,8 @@ The native prefix lives in `$XDG_CACHE_HOME/opendaisugi/native/<stamp>` (`~/.cac
 - Native libraries: versions and SHA-256 digests in `clients/go/scripts/native.sh` and the
   `NOTICE` files. `scripts/release.sh` fails when a NOTICE misses a static library.
 
-Ask the owner before you add a dependency. `docs/research/dependency-sweep-2026-09-26.md` has the
-verdict on each one that exists.
+Ask the owner before you add a dependency. `docs/reference/dependencies.md` has the
+licence, the reason and the status of each one that exists.
 
 ## Style
 
@@ -168,6 +317,8 @@ verdict on each one that exists.
 - Commit by explicit path. Never commit `CLAUDE.md` or `docs/superpowers/`.
 - Push only through the monthly fold script, on the owner's word. The public history is one
   commit a month.
+- Never run `git push --all` or `git push --mirror`. The local `backup*` branches hold old
+  history with machine paths in it. They stay in this clone and are never pushed.
 
 ## When you are unsure
 

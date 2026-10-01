@@ -49,14 +49,14 @@ func TestTheBarSaysQuietWhenNobodyNeedsYou(t *testing.T) {
 
 func TestAnEmptyFloorSaysWhatToDo(t *testing.T) {
 	lines := Render(&Model{Default: "claude"}, 80, 6)
-	if !strings.Contains(strings.Join(lines, "\n"), "Nothing running. Enter opens claude here.") {
+	if !strings.Contains(strings.Join(lines, "\n"), "Nothing running. Enter opens claude.") {
 		t.Fatal("empty state does not teach")
 	}
 }
 
 func TestAnEmptyFloorNamesTheDefaultHarness(t *testing.T) {
 	lines := Render(&Model{Default: "pi"}, 80, 6)
-	if !strings.Contains(strings.Join(lines, "\n"), "Enter opens pi here.") {
+	if !strings.Contains(strings.Join(lines, "\n"), "Enter opens pi.") {
 		t.Fatalf("empty state does not name pi: %q", lines)
 	}
 }
@@ -95,7 +95,7 @@ func TestTheFooterWrapsAndKeepsEveryKey(t *testing.T) {
 			}
 		}
 		joined := strings.Join(lines, " ")
-		for _, b := range Table() {
+		for _, b := range withoutMode(Table()) {
 			if !strings.Contains(joined, b.Keys+" "+b.Help) {
 				t.Fatalf("at %d columns the footer lacks %q: %q", cols, b.Keys+" "+b.Help, joined)
 			}

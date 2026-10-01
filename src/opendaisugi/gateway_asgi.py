@@ -22,9 +22,11 @@ only :func:`make_gateway_app` imports httpx.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
+import re
 import signal
 from dataclasses import replace
 from pathlib import Path
@@ -32,13 +34,16 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from opendaisugi.datahome import data_home
 from opendaisugi.gateway import _strictly_cheaper, estimate_prefix_tokens
 from opendaisugi.gateway_openai import (
     OpenAIUsageSniffer,
     extract_openai_text,
     is_openai_wire,
     normalize_openai_usage,
+    openai_stop_reason,
 )
+from opendaisugi.route_model import off
 from opendaisugi.router_switchyard import SELECTED_MODEL_HEADER
 
 if TYPE_CHECKING:
@@ -89,6 +94,7 @@ class _UsageSniffer:
         self.usage: dict[str, int] = {}
         self.text: str = ""
         self.model: str | None = None
+        self.stop_reason: str | None = None
         self._buf = ""
 
     def feed(self, chunk: bytes) -> None:
@@ -115,6 +121,9 @@ class _UsageSniffer:
                         self.model = model
                 elif obj.get("type") == "message_delta":
                     u = obj.get("usage")
+                    delta = obj.get("delta")
+                    if isinstance(delta, dict) and isinstance(delta.get("stop_reason"), str):
+                        self.stop_reason = delta["stop_reason"]
                 elif obj.get("type") == "content_block_delta":
                     delta = obj.get("delta")
                     if isinstance(delta, dict) and delta.get("type") == "text_delta":
@@ -140,11 +149,124 @@ async def _read_request_body(receive) -> bytes:
     return b"".join(chunks)
 
 
-def _prepare(gateway: "Gateway", body_bytes: bytes):
+_PENDING: set = set()
+
+
+async def _ask_model(cl, url: str, headers, body: bytes) -> str | None:
+    """One short question to a model through the user's own upstream: the same client,
+    URL and headers as the turn. None on any error or timeout (one log line)."""
+    from opendaisugi.route_model import ASK_TIMEOUT_S, reply_text
+
+    try:
+        # httpx times each phase on its own; wait_for caps the whole call.
+        resp = await asyncio.wait_for(
+            cl.request(
+                "POST",
+                url,
+                content=body,
+                headers=[(k, v) for k, v in headers if k.lower() != "content-length"],
+                timeout=ASK_TIMEOUT_S,
+            ),
+            ASK_TIMEOUT_S,
+        )
+        if resp.status_code >= 400:
+            _log.warning("gateway: the helper model answered with status %d", resp.status_code)
+            return None
+        return reply_text(resp.json())
+    except Exception as exc:
+        _log.warning("gateway: the helper model call failed: %s", type(exc).__name__)
+        return None
+
+
+async def _pick(cl, url: str, headers, gateway: "Gateway", body_bytes: bytes):
+    """Ask the router model which allowed name to use. Returns (name, why) for prepare()."""
+    from opendaisugi.route_model import parse_pick
+
+    try:
+        req = gateway.pick_request(json.loads(body_bytes))
+    except Exception:
+        return None
+    if req is None:
+        return None
+    request, cands = req
+    text = await _ask_model(cl, url, headers, request)
+    if text is None:
+        return None, "the router model call failed"
+    name = parse_pick(text, cands)
+    if name is None:
+        return None, "the router model named a model that is not allowed"
+    return name, None
+
+
+def _schedule_grade(cl, url, headers, gateway, record, prepared, answer, stop_reason) -> None:
+    """After the reply is sent: ask the grader model, and write its answer to the
+    outcome table. It never blocks the turn. Only a finished answer is graded: a turn
+    that ends in a tool call is one step of a loop, not an answer."""
+    if (
+        stop_reason != "end_turn"
+        or record is None
+        or not getattr(gateway, "grader_model", None)
+        or gateway.knn is None
+        or prepared is None
+        or not prepared.conversation
+        or not answer
+    ):
+        return
+    own = getattr(cl, "_daisugi_own", False)
+    task = asyncio.ensure_future(
+        _grade(
+            None if own else cl,
+            url,
+            headers,
+            gateway,
+            getattr(record, "turn_id", None),
+            prepared,
+            answer,
+        )
+    )
+    _PENDING.add(task)
+    task.add_done_callback(_PENDING.discard)
+
+
+async def _grade(cl, url, headers, gateway, turn_id: str | None, prepared, answer: str) -> None:
+    """Grade a finished answer against the governing ask (the latest human text, which
+    ``prepared.task`` holds). The grade goes to the row booked for that ask: this turn's
+    row, or on a tool-loop step the conversation's last booked row (RT-R-13a)."""
+    from opendaisugi.route_model import grader_body, parse_grade
+
+    owned = cl is None
+    if owned:
+        cl = httpx.AsyncClient(timeout=None)
+    try:
+        if not turn_id:
+            if prepared.ask.strip():
+                return  # a new ask whose booking failed has no row to grade
+            row = await asyncio.to_thread(
+                gateway.knn.store.last_in_conversation, prepared.conversation
+            )
+            if row is None:
+                return
+            turn_id = row.turn_id
+        text = await _ask_model(
+            cl, url, headers, grader_body(gateway.grader_model, prepared.task, answer)
+        )
+        grade = parse_grade(text)
+        if grade is None:
+            _log.warning("gateway grader: no usable answer for %s; nothing written", turn_id)
+            return
+        await asyncio.to_thread(gateway.knn.store.set_outcome, turn_id, grade, "grader")
+    except Exception as exc:
+        _log.warning("gateway grader failed for %s: %s", turn_id, type(exc).__name__)
+    finally:
+        if owned:
+            await cl.aclose()
+
+
+def _prepare(gateway: "Gateway", body_bytes: bytes, choice=None):
     """Route the turn, fail-open. Returns (outbound_bytes, prepared_or_None, wants_stream)."""
     try:
         body = json.loads(body_bytes)
-        prepared = gateway.prepare(body)
+        prepared = gateway.prepare(body, choice) if choice is not None else gateway.prepare(body)
         return json.dumps(prepared.outbound_body).encode(), prepared, body.get("stream") is True
     except Exception:  # unparseable / unroutable → forward the original bytes untouched
         return body_bytes, None, False
@@ -296,6 +418,22 @@ class ConfigReloader:
         return self._load()
 
 
+# A coppice pane's base URL carries its pane: <gateway>/pane/<floor>/<pane>.
+# The floor is 16 lower-case hex digits and the pane is w<n>:p<n>. The
+# gateway takes the prefix off before it routes, so the upstream never sees
+# it, and stamps the turn record with the pane and the floor.
+_PANE_PREFIX = re.compile(r"/pane/([0-9a-f]{16})/(w[0-9]{1,9}:p[0-9]{1,9})(?=/|\Z)", re.ASCII)
+
+
+def split_pane_path(path: str) -> tuple[str, str, str]:
+    """(floor, pane, path without the prefix). A path with no well-formed
+    prefix comes back unchanged with an empty floor and pane."""
+    m = _PANE_PREFIX.match(path)
+    if m is None:
+        return "", "", path
+    return m.group(1), m.group(2), path[m.end() :] or "/"
+
+
 def _is_loopback(client) -> bool:
     """True only for a connection from this machine's loopback address.
 
@@ -353,7 +491,9 @@ def make_gateway_app(
         if scope["type"] != "http":
             return
 
-        if scope["path"] == "/_reload":
+        floor, pane, path = split_pane_path(scope["path"])
+
+        if path == "/_reload":
             if reloader is None:
                 await _send_json(send, 404, {"error": "no reloader configured"})
                 return
@@ -366,7 +506,21 @@ def make_gateway_app(
             await _send_json(send, 200, {"reloaded": reloader.reload()})
             return
 
-        wire = "openai" if is_openai_wire(scope["path"]) else "anthropic"
+        if path == "/_caps":
+            # What this gateway understands, for coppice to read before it
+            # stamps a pane prefix on a base URL. Local, like /_reload: an
+            # older gateway has no such route and forwards it, so silence or
+            # an error is the 'no'.
+            if str(scope.get("method", "")).upper() != "GET":
+                await _send_json(send, 405, {"error": "caps accepts GET"})
+                return
+            if not _is_loopback(scope.get("client")):
+                await _send_json(send, 403, {"error": "caps is loopback only"})
+                return
+            await _send_json(send, 200, {"pane_prefix": True})
+            return
+
+        wire = "openai" if is_openai_wire(path) else "anthropic"
         if wire == "openai":
             active_gateway = openai_gateway
         else:
@@ -383,13 +537,35 @@ def make_gateway_app(
         if (
             wire == "anthropic"
             and upstream_kind != "anthropic"
-            and scope["path"].rstrip("/") == _COUNT_TOKENS_PATH
+            and path.rstrip("/") == _COUNT_TOKENS_PATH
         ):
             await _answer_count_tokens_locally(send, body_bytes, upstream_kind)
             return
 
+        headers = _forward_request_headers(scope)
+        url = (openai_base if wire == "openai" else base) + path
+        if scope.get("query_string"):
+            url += "?" + scope["query_string"].decode("latin-1")
+        owns_client = client is None
+        cl = client or httpx.AsyncClient(timeout=None)
+        cl._daisugi_own = owns_client  # a grade task opens its own client when this one is closed
+        choice = None
+        if (
+            active_gateway is not None
+            and getattr(active_gateway, "router_mode", "rules") == "model"
+            and path.rstrip("/") != _COUNT_TOKENS_PATH
+        ):
+            choice = await _pick(cl, url, headers, active_gateway, body_bytes)
         if active_gateway is not None:
-            outbound_bytes, prepared, wants_stream = _prepare(active_gateway, body_bytes)
+            if getattr(active_gateway, "router_mode", "rules") in ("knn", "model"):
+                # Embedding and the outcome table are blocking work: keep them off the loop.
+                outbound_bytes, prepared, wants_stream = await asyncio.to_thread(
+                    _prepare, active_gateway, body_bytes, choice
+                )
+            else:
+                outbound_bytes, prepared, wants_stream = _prepare(
+                    active_gateway, body_bytes, choice
+                )
         else:
             outbound_bytes, prepared = body_bytes, None
             try:
@@ -399,16 +575,14 @@ def make_gateway_app(
         # A count_tokens preflight is not a turn. Outside rules mode it still
         # goes to the upstream with the route id, but it is not journaled.
         record_prepared = prepared
+        if record_prepared is not None and pane:
+            record_prepared = replace(record_prepared, pane=pane, floor=floor)
         if (
             active_gateway is not None
             and getattr(active_gateway, "router_mode", "rules") != "rules"
-            and scope["path"].rstrip("/") == _COUNT_TOKENS_PATH
+            and path.rstrip("/") == _COUNT_TOKENS_PATH
         ):
             record_prepared = None
-        headers = _forward_request_headers(scope)
-        url = (openai_base if wire == "openai" else base) + scope["path"]
-        if scope.get("query_string"):
-            url += "?" + scope["query_string"].decode("latin-1")
 
         # Attempts: the (possibly downgraded) body first; on a downgrade, the original body is
         # the fail-open retry if the cheap model 4xxs. Only ever one retry, decided pre-stream.
@@ -416,8 +590,6 @@ def make_gateway_app(
         if prepared is not None and prepared.decision.downgraded:
             attempts.append((body_bytes, True))
 
-        owns_client = client is None
-        cl = client or httpx.AsyncClient(timeout=None)
         try:
             if wants_stream:
                 await _dispatch_streaming(
@@ -489,6 +661,7 @@ def _record(
     used_original: bool,
     answer_text: str | None = None,
     served_target: str | None = None,
+    failed: bool = False,
 ):
     """Measure and journal the turn — best-effort; a meter failure never breaks the proxy.
 
@@ -499,9 +672,10 @@ def _record(
 
     In external mode ``served_target`` is the target the response named, or
     None. The decision is replaced by :func:`_external_decision` before the
-    meter sees it."""
+    meter sees it. ``failed`` marks an upstream error or a refusal; the knn
+    router books such a turn as bad."""
     if prepared is None:
-        return
+        return None
     try:
         eff = prepared
         if getattr(gateway, "router_mode", "rules") == "external":
@@ -515,9 +689,17 @@ def _record(
                 reason="downgrade rejected by upstream 4xx; served the original model",
             )
             eff = replace(prepared, decision=reverted)
-        gateway.finish(eff, usage, answer_text=answer_text)
+        return gateway.finish(eff, usage, answer_text=answer_text, failed=failed)[1]
     except Exception as exc:  # pragma: no cover - defensive
         _log.warning("gateway meter/journal failed (turn still served): %s", exc)
+    return None
+
+
+async def _record_async(gateway, *args, **kwargs):
+    """:func:`_record`, on a worker thread when the turn is booked in the outcome table."""
+    if getattr(gateway, "router_mode", "rules") in ("knn", "model"):
+        return await asyncio.to_thread(_record, gateway, *args, **kwargs)
+    return _record(gateway, *args, **kwargs)
 
 
 async def _dispatch_streaming(
@@ -540,7 +722,7 @@ async def _dispatch_streaming(
                 sniffer.feed(chunk)
                 await send({"type": "http.response.body", "body": chunk, "more_body": True})
             await send({"type": "http.response.body", "body": b"", "more_body": False})
-            _record(
+            rec = await _record_async(
                 gateway,
                 prepared,
                 sniffer.usage,
@@ -549,6 +731,18 @@ async def _dispatch_streaming(
                 served_target=_served_target(
                     resp.headers.get(SELECTED_MODEL_HEADER), getattr(sniffer, "model", None)
                 ),
+                failed=resp.status_code >= 400
+                or getattr(sniffer, "stop_reason", None) == "refusal",
+            )
+            _schedule_grade(
+                cl,
+                url,
+                headers,
+                gateway,
+                rec,
+                prepared,
+                sniffer.text,
+                getattr(sniffer, "stop_reason", None),
             )
             return
 
@@ -572,6 +766,8 @@ async def _dispatch_buffered(
         usage = {}
         answer_text = ""
         body_model = None
+        refused = False
+        stop_reason = None
         try:
             data = resp.json()
         except (json.JSONDecodeError, ValueError):
@@ -580,19 +776,26 @@ async def _dispatch_buffered(
             if wire == "openai":
                 usage = normalize_openai_usage(data.get("usage"))
                 answer_text = extract_openai_text(data)
+                choices = data.get("choices")
+                if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                    stop_reason = openai_stop_reason(choices[0].get("finish_reason"))
             else:
                 usage = data.get("usage", {}) or {}
                 answer_text = _extract_buffered_text(data)
                 model = data.get("model")
                 body_model = model if isinstance(model, str) else None
-        _record(
+                stop_reason = data.get("stop_reason")
+                refused = stop_reason == "refusal"
+        rec = await _record_async(
             gateway,
             prepared,
             usage,
             used_original,
             answer_text=answer_text,
             served_target=_served_target(resp.headers.get(SELECTED_MODEL_HEADER), body_model),
+            failed=resp.status_code >= 400 or refused,
         )
+        _schedule_grade(cl, url, headers, gateway, rec, prepared, answer_text, stop_reason)
         return
 
 
@@ -625,6 +828,8 @@ def build_default_gateway(
     local_model: str | None = None,
     router_mode: str = "rules",
     external: "ExternalRouterConfig | None" = None,
+    router_model: str | None = None,
+    grader_model: str | None = None,
 ):
     """A :class:`~opendaisugi.gateway_pipeline.Gateway` with a turn journal under
     ``<data_dir>/gateway/turns.jsonl`` — the store the meter and any later reuse tool read.
@@ -640,6 +845,26 @@ def build_default_gateway(
         GatewayJournal(path=Path(data_dir) / "gateway" / "turns.jsonl") if journalling else None
     )
     kwargs: dict = {"journal": journal, "router_mode": router_mode, "external": external}
+    kwargs["router_model"] = router_model
+    kwargs["grader_model"] = grader_model
+    if router_mode in ("knn", "model"):
+        from opendaisugi._search import active_threshold
+        from opendaisugi.exceptions import MatcherNotAvailable
+        from opendaisugi.route_knn import KnnRouter, OutcomeStore, default_embed
+
+        try:
+            threshold = active_threshold()
+        except MatcherNotAvailable:
+            threshold = 1.0  # no built embedder: no neighbour matches, so the rules router runs
+        try:
+            from opendaisugi._search import _get_model
+
+            _get_model()  # load the embedder now, not on the first turn
+        except Exception as exc:
+            _log.warning("knn: the embedder did not load at start: %s", type(exc).__name__)
+        kwargs["knn"] = KnnRouter(
+            OutcomeStore(Path(data_dir) / "gateway" / "routing.db"), default_embed, threshold
+        )
     if cheap_model:
         kwargs["cheap_model"] = cheap_model
     if local_model:
@@ -693,7 +918,7 @@ def serve_gateway(
             "(or: pip install 'opendaisugi[gateway]')"
         ) from None
 
-    resolved_dir = data_dir or (Path.home() / ".opendaisugi")
+    resolved_dir = data_dir or data_home()
     config_path = resolved_dir / "config.yaml"
 
     def _rebuild(config):
@@ -706,6 +931,8 @@ def serve_gateway(
             local_model=local_model or config.gateway_local_model,
             router_mode=router_mode,
             external=external,
+            router_model=off(config.gateway_router_model),
+            grader_model=off(config.gateway_grader),
         )
 
     reloader: ConfigReloader | None = None

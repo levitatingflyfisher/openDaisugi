@@ -50,6 +50,21 @@ def translate_llm_error(exc: BaseException) -> EnvelopeGenerationError:
     return EnvelopeGenerationError(_redact_keys(message))
 
 
+def configured_backend_name() -> str | None:
+    """The backend the user named, in ``OPENDAISUGI_LLM_BACKEND`` or the config
+    file, with no auto-detection. None when nothing names one."""
+    named = os.environ.get("OPENDAISUGI_LLM_BACKEND")
+    if not named:
+        try:
+            from opendaisugi import DEFAULT_DATA_DIR
+            from opendaisugi.config import configured_backend
+
+            named = configured_backend(DEFAULT_DATA_DIR / "config.yaml")
+        except Exception:  # noqa: BLE001 - a broken config must not break backend choice
+            named = None
+    return named or None
+
+
 def resolve_backend(backend: str | None = None) -> str:
     """Return the active LLM backend name.
 

@@ -10,10 +10,13 @@ import (
 	"unicode/utf8"
 
 	"daisugi-verify/internal/config"
+	"daisugi-verify/internal/gate"
 	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/journal"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/statefile"
+	"daisugi-verify/internal/tree"
 	"daisugi-verify/internal/verify"
 )
 
@@ -25,7 +28,7 @@ func (e *Env) root(p *parsed) string {
 	if p.has("--root") {
 		return gateroot.PathStr(p.str("--root", ""))
 	}
-	return gateroot.Join(e.home, ".opendaisugi/gate")
+	return gateroot.Join(e.dataHome(), "gate")
 }
 
 // cmdHelp prints a command's help from its options.
@@ -57,9 +60,12 @@ func (e *Env) gateDisarm(args []string) error {
 	if p.help {
 		return e.cmdHelp("gate disarm", "", "Kill switch: the gate allows everything until re-armed.", opts)
 	}
-	marker, followed, err := gateroot.Disarm(e.root(p))
-	e.noteFile(marker, followed)
+	marker, err := gateroot.Disarm(e.root(p))
 	if err != nil {
+		if wr := writeRefused(err); wr != nil {
+			e.errf("gate NOT disarmed: %s\n", wr.Text)
+			return exit(1)
+		}
 		return e.fail("gate disarm", err)
 	}
 	e.out("gate DISARMED (marker: %s) — `daisugi gate arm` to re-enable\n", marker)
@@ -76,6 +82,10 @@ func (e *Env) gateArm(args []string) error {
 		return e.cmdHelp("gate arm", "", "Remove the disarm marker; the gate resumes evaluating calls.", opts)
 	}
 	if err := gateroot.Arm(e.root(p)); err != nil {
+		if wr := writeRefused(err); wr != nil {
+			e.errf("gate NOT armed: %s\n", wr.Text)
+			return exit(1)
+		}
 		return e.fail("gate arm", err)
 	}
 	e.out("gate armed\n")
@@ -136,13 +146,26 @@ func (e *Env) gateStatus(args []string) error {
 			gone = append(gone, config.StaleModeWarning(f))
 		}
 	}
+	// An old config.yaml may name a verifier client this box lacks (a
+	// restored Python-era config). The gate still decides; say so once.
+	if cfg, cerr := config.Load(gateroot.Join(gateroot.Parent(root), "config.yaml")); cerr == nil {
+		if msg := gate.ClientProblem(cfg.VerifierClient, e.env); msg != "" {
+			gone = append(gone, msg)
+		}
+	}
 	dialect, err := gateDialectStatus(root)
 	if err != nil {
 		return e.refuse("gate status", err)
 	}
+	// Each path the gate refuses to read, with the fix (GR-R-8); the key and
+	// the lines appear only when there is one.
+	refused := statefile.RefusedPaths(root)
 	if p.flag("--json") {
 		o := pyjson.NewObject().Set("armed", armed).Set("mode", mode).Set("mode_source", source).
 			Set("envelopes", strsAny(envs)).Set("dialect", dialect)
+		if len(refused) > 0 {
+			o.Set("refused", strsAny(refused))
+		}
 		e.out("%s\n", pyjson.Dumps(o, true))
 		for _, g := range gone {
 			e.errf("%s\n", g)
@@ -164,6 +187,9 @@ func (e *Env) gateStatus(args []string) error {
 	}
 	for _, name := range envs {
 		e.out("  envelope: %s\n", name)
+	}
+	for _, line := range refused {
+		e.out("refused: %s\n", line)
 	}
 	e.out("%s\n", gateDialectLine(dialect))
 	for _, g := range gone {
@@ -348,9 +374,12 @@ func (e *Env) gateInit(args []string) error {
 	if err != nil {
 		return e.fail("gate init", err)
 	}
-	path, followed, err := gateroot.Register(env, session, root)
-	e.noteFile(path, followed)
+	path, err := gateroot.Register(env, session, root)
 	if err != nil {
+		if wr := writeRefused(err); wr != nil {
+			e.errf("not registered: %s\n", wr.Text)
+			return exit(1)
+		}
 		return e.fail("gate init", err)
 	}
 	e.out("registered a starter envelope for %s → %s\n", ws, path)
@@ -370,6 +399,8 @@ func (e *Env) gateRegister(args []string) error {
 		{names: []string{"--session"}, value: true, metavar: "TEXT",
 			help: "Bind to one session id; omit to register the default envelope."},
 		rootOpt,
+		{names: []string{"--parent"}, value: true, metavar: "TEXT",
+			help: "Register a child of this session: the edge to it is proved first, and a refused edge registers nothing."},
 	}
 	p, err := parseArgs(args, opts, 1)
 	if err != nil {
@@ -392,6 +423,11 @@ func (e *Env) gateRegister(args []string) error {
 	// yaml.safe_load reads the file, JSON included, as YAML 1.1: to it
 	// 1e-09 is a string, not a number.
 	y, err := config.ParseYAML(text)
+	var yerr *config.YAMLError
+	if errors.As(err, &yerr) {
+		// safe_load raises: the oracle's traceback names the exception.
+		return e.fail("gate register", yerr)
+	}
 	if err != nil {
 		return e.refuse("gate register", errors.New("the envelope uses YAML this binary does not read yet"))
 	}
@@ -412,9 +448,18 @@ func (e *Env) gateRegister(args []string) error {
 		return e.refuse("gate register", err)
 	}
 	session := p.str("--session", "")
-	path, followed, err := gateroot.Register(env, session, e.root(p))
-	e.noteFile(path, followed)
+	if p.has("--parent") {
+		env, err = e.provedChild(env, session, p.str("--parent", ""), e.root(p))
+		if err != nil {
+			return err
+		}
+	}
+	path, err := gateroot.Register(env, session, e.root(p))
 	if err != nil {
+		if wr := writeRefused(err); wr != nil {
+			e.errf("not registered: %s\n", wr.Text)
+			return exit(1)
+		}
 		return e.fail("gate register", err)
 	}
 	which := "default"
@@ -512,6 +557,8 @@ func yamlToJSON(v config.Value) (any, error) {
 		return pyjson.Float(f), nil
 	case config.Str:
 		return v.Text, nil
+	case config.Other:
+		return nil, errors.New("the envelope holds a date")
 	case config.Seq:
 		out := make([]any, len(v.Items))
 		for i, it := range v.Items {
@@ -535,6 +582,16 @@ func yamlToJSON(v config.Value) (any, error) {
 		o.Set(k, c)
 	}
 	return o, nil
+}
+
+// writeRefused is the *statefile.WriteRefused in err, or nil: a writer was
+// refused a path the gate would refuse to read (GR-R-9).
+func writeRefused(err error) *statefile.WriteRefused {
+	var wr *statefile.WriteRefused
+	if errors.As(err, &wr) {
+		return wr
+	}
+	return nil
 }
 
 // noteFile says when a write went through a symlink to another file.
@@ -567,4 +624,31 @@ func pyStr(v any) (string, bool) {
 		return x, true
 	}
 	return "", false
+}
+
+// provedChild is cli._proved_child: the child as it registers once the
+// edge from parent is proved, or a one-line refusal and exit 1.
+func (e *Env) provedChild(env *pyjson.Object, session, parent, root string) (*pyjson.Object, error) {
+	refuse := func(why string) (*pyjson.Object, error) {
+		e.errf("not registered: %s\n", why)
+		return nil, exit(1)
+	}
+	if parent == "" {
+		return refuse("--parent needs a session id")
+	}
+	if session == "" {
+		return refuse("--parent needs --session; the starter names the child's session")
+	}
+	if !tree.ValidSession(session) {
+		return refuse("the child's session id " + tree.Q(session) + " is not one the tree takes")
+	}
+	if st, err := os.Stat(gateroot.Join(gateroot.EnvelopesDir(root), gateroot.SafeSessionID(session)+".json")); err == nil && st != nil {
+		return refuse("session " + session + " is registered already")
+	}
+	penv := tree.LoadRegistered(parent, root)
+	res := tree.EdgeOK(penv, env, tree.DefaultTimeoutMs)
+	if !res.Holds {
+		return refuse("the edge from " + parent + " to " + session + " is refused: " + strings.Join(res.Reasons, "; "))
+	}
+	return tree.WithKey(res.Child, "parent_envelope", penv.Value("id")), nil
 }

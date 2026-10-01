@@ -44,7 +44,7 @@ func result(t *testing.T, r proto.Response) map[string]any {
 func TestPaneCreateMakesAWorkspaceAndTabWhenNoneExist(t *testing.T) {
 	s := newPaneServer(t)
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+t.TempDir()+`","cmd_argv":["sh","-c","sleep 2"],"kind":"pty","label":"first"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+t.TempDir()+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","label":"first"}`)
 	m := result(t, got[0])
 	if m["pane"] != "w1:p1" || m["workspace"] != "w1" || m["tab"] != "w1:t1" {
 		t.Fatalf("pane.create result = %v, want w1 / w1:t1 / w1:p1", m)
@@ -126,7 +126,7 @@ func TestClosedPaneRejectsInputWithNoSuchPane(t *testing.T) {
 	s := newPaneServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 2"],"kind":"pty"}`,
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`,
 		`{"id":"2","cmd":"pane.close","pane":"w1:p1"}`,
 		`{"id":"3","cmd":"pane.send_text","pane":"w1:p1","text":"hi"}`)
 	if !got[1].OK {
@@ -236,7 +236,7 @@ func TestPaneListReportsKindAndState(t *testing.T) {
 	s := newPaneServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 2"],"kind":"pty","label":"one"}`,
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty","label":"one"}`,
 		`{"id":"2","cmd":"pane.list"}`)
 	m := result(t, got[1])
 	panes, _ := m["panes"].([]any)
@@ -360,7 +360,7 @@ func TestReadAfterCloseIsNoSuchPaneAtOnce(t *testing.T) {
 	s := newPaneServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 2"],"kind":"pty"}`,
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`,
 		`{"id":"2","cmd":"pane.close","pane":"w1:p1"}`)
 	if !got[1].OK {
 		t.Fatalf("pane.close failed: %+v", got[1].Error)
@@ -417,7 +417,7 @@ func TestPaneListShowsAnExpiredAskAsWorking(t *testing.T) {
 	s := newPaneServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 2"],"kind":"pty"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`)
 	if !got[0].OK {
 		t.Fatalf("pane.create failed: %+v", got[0].Error)
 	}
@@ -452,7 +452,7 @@ func TestPaneListCarriesTsAndSessionIDFromTheStoredEvent(t *testing.T) {
 	s := newPaneServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 2"],"kind":"pty"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`)
 	if !got[0].OK {
 		t.Fatalf("pane.create failed: %+v", got[0].Error)
 	}
@@ -494,7 +494,7 @@ func TestWaitOutputForWorkingReturnsAtOnceWhenAnAskHasExpired(t *testing.T) {
 	s := newPaneServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 2"],"kind":"pty"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`)
 	if !got[0].OK {
 		t.Fatalf("pane.create failed: %+v", got[0].Error)
 	}
@@ -519,13 +519,16 @@ func TestWaitOutputForWorkingReturnsAtOnceWhenAnAskHasExpired(t *testing.T) {
 }
 
 // watchExit must not write after Server.Close() has released the
-// start lock. The child sleeps briefly so it is still running when Close()
-// happens, and exits into watchExit's post-drain code shortly after.
+// start lock. The child never exits on its own, so it is surely running
+// when Close() happens; Close's teardown ends it, and it exits into
+// watchExit's post-drain code then. A child that slept 0.3 s exited before
+// Close() under load, and its own close wrote layout.json after the test
+// took its mtime, which read as a write after Close().
 func TestWatchExitDoesNotWriteAfterServerClose(t *testing.T) {
 	s := newPaneServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 0.3; exit 0"],"kind":"pty"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`)
 	if !got[0].OK {
 		t.Fatalf("pane.create failed: %+v", got[0].Error)
 	}
@@ -1271,11 +1274,16 @@ func TestPumpAdapterGivesUpDrainingAnIdleAdapterAfterItsBound(t *testing.T) {
 	start := time.Now()
 	proc.send(pane.Event{Kind: pane.EvEnd, Detail: "turn complete"})
 
-	waitFor(t, 3*time.Second, func() bool {
+	// The bound is the drain wait plus the terminal close, which saves the
+	// layout to disk. A busy disk made that save take a second or more, so
+	// the budget is the drain wait plus a fixed allowance for the save, not a
+	// bare 3 s.
+	const bound = stopDrainWait + 5*time.Second
+	waitFor(t, bound, func() bool {
 		ev, ok := s.States().Current(id)
 		return ok && ev.State == proto.StateDone
 	})
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
+	if elapsed := time.Since(start); elapsed > bound {
 		t.Fatalf("pumpAdapter took %v to give up on a stubborn adapter, want it bounded near its own drain wait", elapsed)
 	}
 }
@@ -1289,10 +1297,8 @@ func TestPumpAdapterGivesUpDrainingAnIdleAdapterAfterItsBound(t *testing.T) {
 // hoisting the deadline above the loop (one timer, selected on every
 // iteration) fixes it.
 //
-// waitFor's own bound below is deliberately short (stopDrainWait + 2s): the
-// point is not to prove no upper bound exists, it is to prove THIS one does,
-// and to fail fast (not hang the test run) if the per-iteration reset
-// regresses.
+// waitFor's own bound below proves a bound exists at all, and fails the
+// test (rather than hanging it) if the per-iteration reset regresses.
 func TestPumpAdapterHasOneTotalDrainDeadlineNotOnePerEvent(t *testing.T) {
 	s := newPaneServer(t)
 	proc := newChattyStubbornProc()
@@ -1312,14 +1318,17 @@ func TestPumpAdapterHasOneTotalDrainDeadlineNotOnePerEvent(t *testing.T) {
 	// 100ms - faster than stopDrainWait (1s) - and Stop() does nothing.
 	// pumpAdapter's drain has to give up on its own schedule regardless.
 
-	waitFor(t, stopDrainWait+2*time.Second, func() bool {
+	// The fault this guards never ends: a deadline that resets on each
+	// event holds the drain open for as long as the adapter talks, and it
+	// talks until the test stops it. So any bound proves the one deadline.
+	// The old bound, stopDrainWait plus 1 s, measured the scheduler too and
+	// failed under load with a correct drain; the drain's own time still
+	// shows in the message.
+	waitFor(t, stopDrainWait+10*time.Second, func() bool {
 		ev, ok := s.States().Current(id)
 		return ok && ev.State == proto.StateDone
 	})
-	if elapsed := time.Since(start); elapsed > stopDrainWait+time.Second {
-		t.Fatalf("pumpAdapter took %v to give up on a chatty adapter, want it bounded near stopDrainWait (%v)",
-			elapsed, stopDrainWait)
-	}
+	t.Logf("the drain gave up after %v (stopDrainWait %v)", time.Since(start), stopDrainWait)
 
 	ev, _ := s.States().Current(id)
 	if ev.Source != proto.SrcHeadless {

@@ -240,7 +240,7 @@ impl Env {
         // matcher this binary does not carry is refused before Journal()
         // makes anything; an error Python raises comes after it, as in
         // Python.
-        let cfg = super::config::load(&super::gateroot::join(&self.home, ".opendaisugi/config.yaml"));
+        let cfg = super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml"));
         if let Err(e @ super::config::ConfigErr::Unsupported) = &cfg {
             return Err(self.config_load_err(CMD, &super::config::RowsErr::Config(e.clone())));
         }

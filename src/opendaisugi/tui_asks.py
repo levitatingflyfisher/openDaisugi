@@ -125,22 +125,22 @@ class AskActionsMixin:
         ):
             # The writer checks the ask file again: the tier there decides,
             # not the row read at arm time.
-            refusal = ask.check_allow(
-                self.app.data_dir / "gate",
-                tool_use_id=self._armed,
-                name=row.session_id,
-                confirm=None,
-            )
+            try:
+                refusal, _ = ask.answer_allow(
+                    self.app.data_dir / "gate",
+                    tool_use_id=self._armed,
+                    name=row.session_id,
+                    confirm=None,
+                    tier=row.pending_ask.get("tier"),
+                    reason=f"operator allowed from the {self._ask_origin}",
+                )
+            except OSError as exc:
+                self.app.set_status(str(exc))
+                return True
             if refusal is not None:
                 self.app.set_status(refusal)
                 self._armed = None
                 return True
-            ask.answer(
-                self.app.data_dir / "gate",
-                tool_use_id=self._armed,
-                decision="allow",
-                reason=f"operator allowed from the {self._ask_origin}",
-            )
             self.app.set_status(f"allowed {self._armed}")
             self._armed = None
             self.reload()
@@ -155,12 +155,16 @@ class AskActionsMixin:
         from opendaisugi import ask
 
         _, tid = p
-        ask.answer(
-            self.app.data_dir / "gate",
-            tool_use_id=tid,
-            decision="deny",
-            reason=f"operator denied from the {self._ask_origin}",
-        )
+        try:
+            ask.answer(
+                self.app.data_dir / "gate",
+                tool_use_id=tid,
+                decision="deny",
+                reason=f"operator denied from the {self._ask_origin}",
+            )
+        except OSError as exc:
+            self.app.set_status(str(exc))
+            return
         self.app.set_status(f"denied {tid}")
         self.reload()
 
@@ -178,18 +182,21 @@ class AskActionsMixin:
         ):
             self.app.set_status(f"allow cancelled — token did not match '{token}'")
             return True
-        refusal = ask.check_allow(
-            self.app.data_dir / "gate", tool_use_id=tid, name=token, confirm=value
-        )
+        try:
+            refusal, _ = ask.answer_allow(
+                self.app.data_dir / "gate",
+                tool_use_id=tid,
+                name=token,
+                confirm=value,
+                tier=row.pending_ask.get("tier"),
+                reason="operator allowed a destructive action (typed-token confirm)",
+            )
+        except OSError as exc:
+            self.app.set_status(str(exc))
+            return True
         if refusal is not None:
             self.app.set_status(refusal)
             return True
-        ask.answer(
-            self.app.data_dir / "gate",
-            tool_use_id=tid,
-            decision="allow",
-            reason="operator allowed a destructive action (typed-token confirm)",
-        )
         self.app.set_status(f"allowed {tid} (destructive · token confirmed)")
         self.reload()
         return True

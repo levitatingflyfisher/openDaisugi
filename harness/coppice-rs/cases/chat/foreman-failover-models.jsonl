@@ -1,0 +1,19 @@
+# A chain whose accounts serve two models is refused at the turn, with a note
+# that names both models, before any account is tried (FM-R-54). The open-time
+# check of the same chain posts its own note first; the case waits for it, so
+# the order of the log does not depend on which check runs first (FM-R-114).
+#!config [foreman]
+#!config mode = "chat"
+#!config turn_profiles = ["desk", "work"]
+#!config turn_model = "m1"
+#!env COPPICE_SPRIG_BIN={FIXTURES}/chat/fake-turn-sprig.py
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_BUNDLE_JSON={"desk":{"wire":"anthropic","base_url":null,"model":"m1","key":"sk-desk-0001"},"work":{"wire":"anthropic","base_url":null,"model":"m2","key":"sk-work-0001"}}
+#!retry 20000
+{"id":"0","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"source":"log","more":false,"messages":[{"id":"log/0","role":"note","text":"The foreman's turn chain serves two models: turn_model is \"m1\" and an account serves \"m2\". The foreman never moves to another model; a turn chain holds only accounts of one model. Fix [foreman] in the config, then start coppice again."}]}}
+{"id":"1","cmd":"floor.talk","text":"one"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/1","queued":1,"label":"foreman"}}
+#!retry 20000
+{"id":"2","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"source":"log","more":false,"messages":[{"id":"log/0","role":"note","text":"The foreman's turn chain serves two models: turn_model is \"m1\" and an account serves \"m2\". The foreman never moves to another model; a turn chain holds only accounts of one model. Fix [foreman] in the config, then start coppice again."},{"id":"log/1","role":"owner","text":"one","read":true},{"id":"log/2","role":"note","text":"The foreman's turn failed: the turn chain serves two models: turn_model is \"m1\" and an account serves \"m2\". The foreman never moves to another model; a turn chain holds only accounts of one model. Say it again to try again."}]}}

@@ -54,6 +54,11 @@ type Grid struct {
 	// firstWrite is the unix nanosecond clock of the first Write that fed
 	// bytes, or zero when none has.
 	firstWrite atomic.Int64
+	// burstStart is the clock of the first write after a gap of BurstGap or
+	// more (or the first write ever): the start of the current burst of
+	// output. It is set by the writes, so it does not depend on when
+	// anything looked at the grid.
+	burstStart atomic.Int64
 
 	// paste is true while the program in the pane has bracketed paste
 	// on: the last mode sequence it wrote was CSI ?2004h, not CSI ?2004l.
@@ -88,9 +93,7 @@ func (g *Grid) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	if len(p) > 0 {
-		now := time.Now().UnixNano()
-		g.lastWrite.Store(now)
-		g.firstWrite.CompareAndSwap(0, now)
+		g.stampWrite(time.Now().UnixNano())
 	}
 	if on, off := strings.LastIndex(string(p), pasteOn), strings.LastIndex(string(p), pasteOff); on != off {
 		g.paste.Store(on > off)
@@ -106,6 +109,36 @@ func (g *Grid) FirstWrite() (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return time.Unix(0, ns), true
+}
+
+// BurstGap is the quiet a gap between writes needs to end a burst. It
+// equals the process source's quiet window.
+const BurstGap = 5 * time.Second
+
+// stampWrite records a write at clock now (unix ns).
+func (g *Grid) stampWrite(now int64) {
+	prev := g.lastWrite.Load()
+	if prev == 0 || now-prev >= int64(BurstGap) {
+		g.burstStart.Store(now)
+	}
+	g.lastWrite.Store(now)
+	g.firstWrite.CompareAndSwap(0, now)
+}
+
+// BurstStart reports when the current burst of output began, and false
+// when the grid never took bytes.
+func (g *Grid) BurstStart() (time.Time, bool) {
+	ns := g.burstStart.Load()
+	if ns == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(0, ns), true
+}
+
+// StampWriteForTest records a write at t without feeding bytes. Tests use
+// it to put writes at times a real clock would take seconds to reach.
+func (g *Grid) StampWriteForTest(t time.Time) {
+	g.stampWrite(t.UnixNano())
 }
 
 // PasteMode reports whether the program in the pane has bracketed paste

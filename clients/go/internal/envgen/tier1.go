@@ -101,12 +101,24 @@ func LoadConfiguredTier1(dataDir string) (*Tier1, error) {
 // Generate is HTTPTier1Provider.generate_envelope: the envelope, or nil
 // when the provider declines.
 func (t *Tier1) Generate(c *llm.Client, task string, context *string) *pyjson.Object {
+	out, _ := t.GenerateErr(c, task, context)
+	return out
+}
+
+// GenerateErr is Generate with the reason: the envelope, or nil and the
+// error that made the provider decline. A caller that must tell a model
+// that answered badly from a call that failed (the qualification) reads
+// the error; the router reads only Generate's nil.
+func (t *Tier1) GenerateErr(c *llm.Client, task string, context *string) (*pyjson.Object, error) {
 	user := "Task: " + task
 	if context != nil && *context != "" {
 		user += "\n\nContext:\n" + *context
 	}
-	if c.Preflight(t.Model) != nil || t.badBase {
-		return nil
+	if e := c.Preflight(t.Model); e != nil {
+		return nil, e
+	}
+	if t.badBase {
+		return nil, &llm.Error{Msg: "the Tier-1 base_url is not a string"}
 	}
 	call := llm.Call{Model: t.Model, System: Tier1Prompt, User: user,
 		Response: llm.Schema{Name: "Envelope", Model: pmodel.Envelope}, MaxRetries: 1,
@@ -117,9 +129,56 @@ func (t *Tier1) Generate(c *llm.Client, task string, context *string) *pyjson.Ob
 	if t.APIKey != nil {
 		call.APIKey = *t.APIKey
 	}
-	out, err := c.Structured(call)
-	if err != nil {
-		return nil
+	return c.Structured(call)
+}
+
+// QualifyTimeout is the deadline of one qualification probe, re-ask
+// included. A local model that thinks before it answers took about 20 s
+// per probe on the owner's GPU box (3.7k prompt tokens, 1.3k generated),
+// and a re-ask doubles that. 300 s is 7x the two-call case, so a loaded
+// box or a CPU-only run still fits, and it stays under the 600 s the HTTP
+// client allows one request. The router keeps Tier-1's 30 s: a slow
+// envelope there should fall through to Tier-2.
+const QualifyTimeout = 300 * time.Second
+
+// Outcomes of one qualification probe.
+const (
+	OutcomeValid    = "valid"
+	OutcomeDeclined = "declined"
+	OutcomeError    = "error"
+	OutcomeTimeout  = "timeout"
+)
+
+// maxReason is the longest reason kept, in characters.
+const maxReason = 200
+
+// Classify names the outcome of a failed probe and a one-line reason.
+// declined is a model that answered, but not with a valid envelope; error
+// is a call that failed (a server, a key, a wire); timeout is a probe
+// that ran past its deadline.
+func Classify(err error) (outcome, reason string) {
+	if err == nil {
+		return OutcomeDeclined, "the provider returned no envelope"
 	}
-	return out
+	msg := err.Error()
+	switch {
+	case msg == "TimeoutError":
+		return OutcomeTimeout, "the probe ran past its deadline"
+	case strings.Contains(msg, "timed out"):
+		return OutcomeTimeout, cleanReason(msg)
+	case strings.HasPrefix(msg, "ValidationError"):
+		return OutcomeDeclined, cleanReason(msg)
+	case strings.HasPrefix(msg, "The output is incomplete due to a max_tokens"):
+		return OutcomeDeclined, cleanReason(msg + " A model that thinks first may have spent the token budget on thinking; raise max_tokens.")
+	}
+	return OutcomeError, cleanReason(msg)
+}
+
+// cleanReason puts a message on one line, at most maxReason characters.
+func cleanReason(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > maxReason {
+		s = string(r[:maxReason-3]) + "..."
+	}
+	return s
 }

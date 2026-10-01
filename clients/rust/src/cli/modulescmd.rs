@@ -10,7 +10,7 @@ use super::config::{self, ConfigErr, RowsErr};
 use super::configcmd::JSON_OPT;
 use super::gateroot::{join, parent, path_str};
 use super::statuscmd::{matcher_threshold, DATA_DIR_OPT};
-use super::{parse_args, Env, Res, Stop};
+use super::{parse_args, Env, Opt, Res, Stop};
 use crate::gate::py::text::{len as py_len, repr, strip};
 use crate::gate::pyjson::{dumps_indent, loads, LoadError, Object, Value};
 use crate::pathways::store::{Col, Store};
@@ -224,6 +224,15 @@ fn url_netloc(u: &str) -> String {
     }
 }
 
+/// `modules._knn_module`: the knn row of the router stage.
+fn knn_module(router: &str) -> Module {
+    if router == "knn" {
+        m("knn", ACTIVE, "selected; routes by past outcomes. See `daisugi router status`")
+    } else {
+        m("knn", AVAILABLE, "learns from outcomes: daisugi install --gateway --router knn")
+    }
+}
+
 /// `modules._switchyard_module`.
 fn switchyard_module(router: &str, present: bool) -> Module {
     let install = crate::switchyard::INSTALL_CMD;
@@ -301,7 +310,7 @@ impl Env {
     fn coppice_socket_present(&self) -> bool {
         let base = match self.env.get("XDG_RUNTIME_DIR") {
             Some(rt) if !rt.is_empty() => join(&path_str(rt), "coppice"),
-            _ => join(&self.home, ".opendaisugi/coppice"),
+            _ => join(&self.data_home(), "coppice"),
         };
         match std::fs::symlink_metadata(format!("{base}/server.sock")) {
             // SAFETY: getuid has no preconditions.
@@ -316,7 +325,7 @@ impl Env {
         // gather_status first asks the matcher's threshold, which loads the
         // config in the default data directory.
         let home = self.home.clone();
-        let hcfg = match load_config(&join(&home, ".opendaisugi/config.yaml"), &home) {
+        let hcfg = match load_config(&join(&self.data_home(), "config.yaml"), &home) {
             Ok(c) => c,
             Err(e) => return Err(self.config_load_err(cmd, &e)),
         };
@@ -495,8 +504,54 @@ impl Env {
                 "recorded. Export the env lines from `tiers setup --remote` to use it",
             ));
         }
+        // The engine the config means (engines.resolve_engine): with the
+        // voice settings at their defaults, the engine the hardware picks
+        // among those installed (VO-17); faster-whisper never imports here.
+        use crate::voice::engine::{DEFAULT_ENGINE, DEFAULT_MODEL};
+        let (whisper_cli, moon_cli, para_cli) = (which("whisper-cli"), which("moonshine-cli"), which("parakeet-cli"));
+        let (voice_sel, voice_model) = if cfg.voice_engine == DEFAULT_ENGINE && cfg.voice_model == DEFAULT_MODEL {
+            let hw = crate::voice::hardware::parse_hardware_env(
+                self.env.get(crate::voice::hardware::HARDWARE_ENV).map(|s| s.as_str()).unwrap_or(""),
+            )
+            .unwrap_or_else(|| self.voice_hardware());
+            let mut installed = vec![];
+            if moon_cli {
+                installed.push("moonshine");
+            }
+            if para_cli {
+                installed.push("parakeet");
+            }
+            let (e, m, _) = crate::voice::hardware::choose_engine(
+                &hw,
+                &installed,
+                false,
+                crate::voice::parakeet::parakeet_usable(
+                    crate::voice::parakeet::PARAKEET_DEFAULT_MODEL,
+                    &crate::voice::moonshine::ModelEnv {
+                        vars: self.env.clone(),
+                        home: self.home.clone(),
+                        hardware: None,
+                        timeouts: Default::default(),
+                    },
+                    std::env::consts::ARCH,
+                ),
+            );
+            (e.to_string(), m.to_string())
+        } else {
+            (cfg.voice_engine.clone(), cfg.voice_model.clone())
+        };
+        let moon_model =
+            if voice_sel == "moonshine" && voice_model != DEFAULT_MODEL { voice_model.clone() } else { "small".to_string() };
+        let para_note = "model NVIDIA Parakeet-TDT-0.6B v2, CC-BY-4.0";
+        let moon_note = if !moon_cli {
+            "needs moonshine-cli on PATH (scripts/install.sh --voice)".to_string()
+        } else if ["tiny", "small", "medium"].contains(&moon_model.as_str()) {
+            format!("moonshine-cli on PATH; {moon_model}, fetched on first use")
+        } else {
+            "moonshine-cli on PATH".to_string()
+        };
         let voice_state = |key: &str, installed: bool| {
-            if cfg.voice_engine == key && installed {
+            if voice_sel == key && installed {
                 ACTIVE
             } else if installed {
                 AVAILABLE
@@ -687,6 +742,7 @@ impl Env {
                         cond(gateway_on, "base_url wired", "daisugi install --gateway"),
                     ),
                     switchyard_row,
+                    knn_module(&cfg.gateway_router),
                     m(
                         "off (direct)",
                         AVAILABLE,
@@ -782,7 +838,21 @@ impl Env {
                         voice_state("faster-whisper", false),
                         "needs opendaisugi[voice]",
                     ),
-                    m("parakeet", POSSIBLE, "needs opendaisugi[voice-parakeet]"),
+                    m("moonshine", voice_state("moonshine", moon_cli), moon_note),
+                    m(
+                        "parakeet",
+                        voice_state("parakeet", para_cli),
+                        if para_cli {
+                            format!("parakeet-cli on PATH; {para_note}")
+                        } else {
+                            format!("needs parakeet-cli on PATH (scripts/install.sh --voice); {para_note}")
+                        },
+                    ),
+                    m(
+                        "whisper.cpp",
+                        voice_state("whisper.cpp", whisper_cli),
+                        cond(whisper_cli, "whisper-cli on PATH", "needs whisper-cli on PATH"),
+                    ),
                 ],
             ),
         ])
@@ -790,7 +860,7 @@ impl Env {
 
     pub(super) fn modules_cmd(&mut self, args: &[String]) -> Res {
         const CMD: &str = "modules";
-        let opts = [DATA_DIR_OPT, JSON_OPT];
+        let opts = [DATA_DIR_OPT, JSON_OPT, PIECES_OPT];
         let p = parse_args(args, &opts, 0).map_err(|m| self.usage_stop(CMD, m))?;
         if p.help {
             return self.cmd_help(
@@ -801,6 +871,16 @@ impl Env {
             );
         }
         let data_dir = self.data_dir_of(&p);
+        if p.flag("--pieces") {
+            let ps = self.detect_pieces(CMD, &data_dir)?;
+            let text = if p.flag("--json") {
+                pieces_json(&ps)
+            } else {
+                render_pieces(&data_dir, &ps)
+            };
+            self.out(&format!("{text}\n"));
+            return Ok(());
+        }
         let stages = self.detect_stages(CMD, &data_dir)?;
         if p.flag("--json") {
             let text = wiring_json(&stages);
@@ -946,6 +1026,191 @@ pub(super) fn stage_object(st: &Stage) -> Object {
 /// `modules.wiring_json`.
 fn wiring_json(stages: &[Stage]) -> String {
     let out: Vec<Value> = stages.iter().map(|s| Value::Obj(stage_object(s))).collect();
+    dumps_indent(&Value::List(out), 2, true)
+}
+
+const PIECES_OPT: Opt = Opt::flag(
+    &["--pieces"],
+    "Show the six pieces: on or off here, and the command for each.",
+);
+
+/// `modules.Piece`.
+struct Piece {
+    key: &'static str,
+    title: &'static str,
+    state: String,
+    detail: String,
+    turn_on: &'static str,
+    turn_off: &'static str,
+}
+
+fn on_off(on: bool) -> &'static str {
+    if on {
+        "on"
+    } else {
+        "off"
+    }
+}
+
+fn pick(on: bool, yes: &str, no: &str) -> String {
+    (if on { yes } else { no }).to_string()
+}
+
+impl Env {
+    /// `modules._mcp_registered`: the opendaisugi server is among the
+    /// mcpServers of ~/.claude.json.
+    fn mcp_registered(&self) -> bool {
+        let Ok(raw) = std::fs::read(join(&self.home, ".claude.json")) else {
+            return false;
+        };
+        let Ok(text) = String::from_utf8(raw) else {
+            return false;
+        };
+        let Ok(Value::Obj(o)) = loads(&text) else {
+            return false;
+        };
+        matches!(o.get("mcpServers"), Some(Value::Obj(s)) if s.get("opendaisugi").is_some())
+    }
+
+    /// `modules.detect_pieces`.
+    fn detect_pieces(&mut self, cmd: &str, data_dir: &str) -> Result<Vec<Piece>, Stop> {
+        let home = self.home.clone();
+        let cfg = match load_config(&join(data_dir, "config.yaml"), &home) {
+            Ok(c) => c,
+            Err(e) => return Err(self.config_load_err(cmd, &e)),
+        };
+        let hooks = match read_hook_settings(&join(&home, ".claude/settings.json")) {
+            Ok(h) => h,
+            Err(()) => return Err(self.refuse(cmd, HOOK_SHAPE).unwrap_err()),
+        };
+        let env = self.env.clone();
+        let which = |name: &str| super::install::look_path(&env, name).is_some();
+        let mut gate_for: Vec<&str> = Vec::new();
+        if hooks.installed("daisugi hook", "PreToolUse") {
+            gate_for.push("claude-code");
+        }
+        if exists(&join(&home, ".pi/agent/extensions/daisugi-gate/index.ts")) {
+            gate_for.push("pi");
+        }
+        if exists(&self.opencode_plugin_path()) {
+            gate_for.push("opencode");
+        }
+        let gateway_on = self
+            .env
+            .get("OPENDAISUGI_GATEWAY_BASE_URL")
+            .is_some_and(|v| !v.is_empty())
+            || hooks.installed("gateway", "PreToolUse");
+        let router = cfg.gateway_router.clone();
+        let mut router_detail = format!("gateway_router: {router}");
+        let router_state = if gateway_on {
+            router.clone()
+        } else {
+            router_detail.push_str("; it runs only when the gateway is on");
+            "off".to_string()
+        };
+        let mcp = self.mcp_registered();
+        let floor = self.coppice_socket_present();
+        let sprig = which("sprig");
+        let gate_on = !gate_for.is_empty();
+        Ok(vec![
+            Piece {
+                key: "gate",
+                title: "gate",
+                state: on_off(gate_on).to_string(),
+                detail: pick(
+                    gate_on,
+                    &format!("hook installed for {}", gate_for.join(", ")),
+                    "no gate hook found",
+                ),
+                turn_on: "daisugi install --gate",
+                turn_off: "daisugi install --uninstall (removes gate, gateway and memory together)",
+            },
+            Piece {
+                key: "gateway",
+                title: "gateway",
+                state: on_off(gateway_on).to_string(),
+                detail: pick(
+                    gateway_on,
+                    "the harness base_url points at it",
+                    "no harness points at it",
+                ),
+                turn_on: "daisugi install --gateway",
+                turn_off: "daisugi install --uninstall (removes gate, gateway and memory together)",
+            },
+            Piece {
+                key: "router",
+                title: "router",
+                state: router_state,
+                detail: router_detail,
+                turn_on: "daisugi install --gateway --router rules|switchyard|knn|model",
+                turn_off: "daisugi install --gateway --router off",
+            },
+            Piece {
+                key: "memory",
+                title: "memory and pathways",
+                state: on_off(mcp).to_string(),
+                detail: pick(mcp, "MCP server registered", "MCP server not registered"),
+                turn_on: "daisugi install",
+                turn_off: "daisugi install --uninstall (removes gate, gateway and memory together)",
+            },
+            Piece {
+                key: "floor",
+                title: "floor (coppice)",
+                state: on_off(floor).to_string(),
+                detail: pick(floor, "server answers", "no server answers"),
+                turn_on: "coppice server start",
+                turn_off: "coppice server stop",
+            },
+            Piece {
+                key: "loop",
+                title: "loop (sprig)",
+                state: on_off(sprig).to_string(),
+                detail: pick(sprig, "sprig is on PATH", "sprig is not on PATH"),
+                turn_on: "scripts/install.sh",
+                turn_off: "not managed by daisugi: uninstall sprig yourself",
+            },
+        ])
+    }
+}
+
+/// `modules.render_pieces`.
+fn render_pieces(data_dir: &str, ps: &[Piece]) -> String {
+    let mut out = vec![
+        format!("openDaisugi: pieces   (data dir: {data_dir})"),
+        String::new(),
+    ];
+    let pad = " ".repeat(22);
+    for p in ps {
+        out.push(format!(
+            "{}{}  {}",
+            py_ljust(p.title, 22),
+            py_ljust(&p.state, 4),
+            p.detail
+        ));
+        out.push(format!("{pad}on:   {}", p.turn_on));
+        out.push(format!("{pad}off:  {}", p.turn_off));
+    }
+    out.push(String::new());
+    out.push("No piece needs another. Turn on only the ones you want.".to_string());
+    out.join("\n")
+}
+
+/// `modules.pieces_json`.
+fn pieces_json(ps: &[Piece]) -> String {
+    let out: Vec<Value> = ps
+        .iter()
+        .map(|p| {
+            Value::Obj(
+                Object::new()
+                    .with("key", p.key)
+                    .with("title", p.title)
+                    .with("state", p.state.as_str())
+                    .with("detail", p.detail.as_str())
+                    .with("turn_on", p.turn_on)
+                    .with("turn_off", p.turn_off),
+            )
+        })
+        .collect();
     dumps_indent(&Value::List(out), 2, true)
 }
 

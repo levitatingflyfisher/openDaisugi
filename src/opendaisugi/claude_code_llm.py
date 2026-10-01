@@ -18,6 +18,7 @@ import os
 import shlex
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -171,11 +172,13 @@ def call_claude_p_sync(
     binary: str = "claude",
     extra_args: tuple[str, ...] = (),
     cwd: str | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> str:
     """Synchronous variant of :func:`call_claude_p_async`.
 
     Runs in a neutral working directory by default so project context never
-    leaks into the LLM call; pass an explicit ``cwd`` to override.
+    leaks into the LLM call; pass an explicit ``cwd`` to override. ``env``
+    is the child's whole environment; None inherits this process's.
     """
     args = _build_claude_args(binary, model, extra_args)
 
@@ -188,6 +191,7 @@ def call_claude_p_sync(
             check=False,
             input=prompt,
             cwd=cwd if cwd is not None else _neutral_cwd(),
+            env=dict(env) if env is not None else None,
         )
     except FileNotFoundError as exc:
         raise EnvelopeGenerationError(f"claude binary not found: {binary!r}") from exc

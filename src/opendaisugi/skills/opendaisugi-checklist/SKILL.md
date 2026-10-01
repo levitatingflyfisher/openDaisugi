@@ -1,13 +1,13 @@
 ---
 name: opendaisugi-checklist
-description: Use when a task's failure mode is silent omission (agent forgets a step) rather than wrong action — invent a problem-specific DSL of Pydantic step types, author a DAG plan in it, verify against a Z3-backed envelope, execute with per-step receipts and a run-end integrity check. Domain-agnostic: applies to shell, email, robotic motion, file ops. Core opendaisugi workflow for multi-step runs whose completeness matters.
+description: Use when a task's failure mode is silent omission (agent forgets a step) rather than wrong action — invent a problem-specific DSL of typed step definitions, author a DAG plan in it, verify against a Z3-backed envelope, execute with per-step receipts and a run-end integrity check. Domain-agnostic: applies to shell, email, robotic motion, file ops. Core opendaisugi workflow for multi-step runs whose completeness matters.
 ---
 
 # opendaisugi-checklist
 
 **When to use this skill:** The task has ≥3 steps; success requires *every* step to actually happen; a silent skip would matter. Common triggers: orchestrating sub-agents, automating a recurring workflow, running an approval-sensitive sequence, composing a robotic motion. If the work is one shell command, skip this.
 
-**What it does:** Teaches you to invent a problem-specific DSL of Pydantic step types, author a plan in it, verify the plan against an envelope (with optional Z3 invariants for contracts between agents), execute each step with a Receipt of evidence, and enforce a run-end integrity check that makes silent step-skipping impossible.
+**What it does:** Teaches you to invent a problem-specific DSL of typed step definitions, author a plan in it, verify the plan against an envelope (with optional Z3 invariants for contracts between agents), execute each step with a Receipt of evidence, and enforce a run-end integrity check that makes silent step-skipping impossible.
 
 **Rooted in opendaisugi framing #3:** *reproduction substrate for skills.* Successful runs journal cleanly and feed distillation; the Gardener's selection signal only works because receipts + integrity make it trustworthy.
 
@@ -65,7 +65,7 @@ description: Use when a task's failure mode is silent omission (agent forgets a 
 - [Postconditions](references/postconditions.md) — per-step verify() shapes, evidence content
 - [Contract orchestration](references/contract-orchestration.md) — Z3-backed contracts between sub-agents
 - [Cheap-model delegation](references/delegation.md) — `preferred_model`, `llm_check`, model_id selection signal (v0.19+)
-- [When to delegate a read](references/when-to-delegate.md) — the `delegate` MCP tool: a worker reads a large file and returns checked quotes
+- [When to delegate a read or a draft](references/when-to-delegate.md): the `delegate` MCP tool: a worker reads a large file and returns checked quotes, or drafts boilerplate for you to review and write
 - [Using openDaisugi via MCP](references/mcp-usage.md) — calling the same machinery as MCP tools (v0.20+)
 - [Passive capture](references/passive-capture.md) — the hook for fueling distillation from external agent runtimes (v0.21+)
 - [Git-backed shared registry](references/git-registry.md) — multiple opendaisugi instances share pathways through a git repo (v0.25+)

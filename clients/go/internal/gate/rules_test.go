@@ -32,6 +32,9 @@ var coppiceSecrets = []string{
 	"web/ca/leaf.key",
 	"web/tls/tailscale.key",
 	"voice/token",
+	// Private, not keys: the chat with the foreman and the gate's journal.
+	"chat/2026-10-09.jsonl",
+	"journal/verdicts.jsonl",
 }
 
 // coppicePublicFiles sit beside the secrets above: a cert nobody needs to
@@ -45,6 +48,26 @@ var coppicePublicFiles = []string{
 }
 
 const testDataDir = "/home/user/.opendaisugi/coppice"
+
+// A chat or journal path outside a coppice data directory is no secret.
+func TestWebDoorLeavesAChatOrJournalElsewhere(t *testing.T) {
+	for _, text := range []string{
+		"cat /work/src/chat/notes.md", "cat chat/readme.md", "cat harness/coppice/chat.go",
+		"cat /work/journal/2026.md", "ls /work/coppice/chat",
+	} {
+		if webDoor(text) {
+			t.Errorf("webDoor wrongly caught %q", text)
+		}
+	}
+	for _, text := range []string{
+		"rg x ~/.opendaisugi/coppice/chat", "cat ~/.opendaisugi/coppice/journal/*",
+		"ls /home/user/.local/share/opendaisugi/coppice/chat/",
+	} {
+		if !webDoor(text) {
+			t.Errorf("webDoor missed %q", text)
+		}
+	}
+}
 
 func TestWebDoorCoversEveryCoppiceSecret(t *testing.T) {
 	for _, s := range coppiceSecrets {

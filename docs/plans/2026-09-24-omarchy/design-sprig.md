@@ -71,4 +71,13 @@ delegation edges, GEPA tuning, recall. sprig owns only what needs the loop.
   and replace output; branching inside pi's loop is not possible from an extension).
 - The branching signal: which uncertainty signals are reliable enough to spend tokens on.
 - Whether the sprig loop speaks pi's RPC, or its own.
-- Gate on by default in sprig (owner: yes, once it runs smoothly).
+- Gate on by default in sprig (owner: yes, once it runs smoothly). daisugi's agentic executor always passes `--gate`, with the gate pinned to its own root and session (SX-R-2).
+
+## Built since: mixed-provider trees (2026-10-10)
+
+sprig now speaks the Anthropic and OpenAI chat wires (`--wire`, `--base-url`), takes its key on
+a descriptor (`--key-fd`), gives every process it starts a scrubbed environment and no inherited
+descriptor, redacts the key from provider errors, stops at a token cap (`--max-tokens`), reports
+`model_turns`, and has a `spawn` tool that starts a child through `daisugi tree run`
+(`--tree-cmd`, `--spawn-keys-fd`). Rulings MX-R-1 to MX-R-11; `harness/sprig/README.md` has the
+flags.

@@ -296,7 +296,7 @@ func (e *Env) gardenerWatch(args []string) error {
 	if err != nil {
 		return e.usage(cmd, err)
 	}
-	dir := p.str("--data-dir", filepath.Join(e.home, ".opendaisugi"))
+	dir := p.str("--data-dir", e.dataHome())
 	stamp := filepath.Join(dir, ".gardener-last-run")
 	now := nowSeconds()
 	last, err := readStamp(stamp)

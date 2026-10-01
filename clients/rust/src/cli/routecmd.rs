@@ -42,9 +42,13 @@ impl Env {
             Opt::val(&["--frontier-model"], "TEXT", "Model recommended for hard tasks."),
             Opt::val(&["--threshold"], "FLOAT", "Pathway-match threshold (0-1); default: active backend's."),
             Opt::val(&["--harness"], "TEXT", "Host harness: claude-code, codex, ollama/local, hermes, openclaw."),
+            Opt::flag(
+                &["--knn"],
+                "Also show the knn router's choice and its nearest past turns (reads <data-dir>/gateway/routing.db).",
+            ),
             Opt::flag(&["--json"], "Machine-readable JSON output."),
         ];
-        let p = parse_args(args, &opts, 1).map_err(|m| self.usage_stop(CMD, m))?;
+        let p = parse_args(args, &opts, 1 << 20).map_err(|m| self.usage_stop(CMD, m))?;
         if p.help {
             return self.cmd_help(CMD, " TASK", "Recommend the cheapest viable model/tier for a task.", &opts);
         }
@@ -52,16 +56,23 @@ impl Env {
             return self.usage(CMD, "Missing argument 'task'.".into());
         }
         let task = p.args[0].clone();
+        if task == "feedback" {
+            let dd = p.str("--data-dir", &self.data_home());
+            return self.route_feedback(CMD, &p.args[1..], &dd, p.flag("--json"));
+        }
+        if p.args.len() > 1 {
+            return self.usage(CMD, format!("Invalid value: unexpected extra argument {}", repr(&p.args[1])));
+        }
         let has_threshold = p.has("--threshold");
         let mut threshold = self.click_float(CMD, &p, "--threshold", 0.0)?;
-        let data_dir = path_str(&p.str("--data-dir", &format!("{}/.opendaisugi", self.home)));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let cheap = p.str("--cheap-model", DEFAULT_CHEAP_MODEL);
         let frontier = p.str("--frontier-model", DEFAULT_FRONTIER_MODEL);
         let harness = lower(strip(&p.str("--harness", "claude-code")));
         let advisor_tool = matches!(harness.as_str(), "claude-code" | "claude" | "anthropic");
         let db = format!("{data_dir}/pathways.db");
         let has_store = std::fs::metadata(&db).is_ok();
-        let cfg = match super::config::load(&format!("{}/.opendaisugi/config.yaml", self.home)) {
+        let cfg = match super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
             Ok(c) => c,
             Err(e) => return self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")),
         };
@@ -75,6 +86,7 @@ impl Env {
             }
         }
         let d = estimate_difficulty(&task);
+        let (cheap_knn, frontier_knn) = (cheap.clone(), frontier.clone());
         let mut advice: Option<Advice> = None;
         if has_store {
             let notes = Rc::new(RefCell::new(String::new()));
@@ -98,6 +110,22 @@ impl Env {
                 // the store.
                 Err(_) => {}
                 Ok(r) => {
+                    // The stale-embeddings UserWarning find prints, as
+                    // Python's warnings module prints it under
+                    // PYTHONWARNINGS; a filter not modelled is refused.
+                    if !r.warning.is_empty() {
+                        let pyw = self.env.get("PYTHONWARNINGS").cloned().unwrap_or_default();
+                        match super::pywarn::user_warning_shown(&pyw, &r.warning) {
+                            None => {
+                                return self.refuse(
+                                    CMD,
+                                    &format!("the pathway store warns of stale embeddings under PYTHONWARNINGS={}, a filter this binary does not read the oracle's way", crate::gate::py::text::repr(&pyw)),
+                                )
+                            }
+                            Some(true) => self.errf(&format!("UserWarning: {}\n", r.warning)),
+                            Some(false) => {}
+                        }
+                    }
                     if let Some((pw, sim)) = r.matched {
                         let id = pw.id().to_string();
                         advice = Some(Advice {
@@ -146,6 +174,14 @@ impl Env {
                 }
             }
         });
+        let view = if p.flag("--knn") {
+            match self.knn_view(&task, &data_dir, &frontier_knn, &cheap_knn) {
+                Ok(v) => Some(v),
+                Err(why) => return self.refuse(CMD, &why),
+            }
+        } else {
+            None
+        };
         if p.flag("--json") {
             let mut o = Object::new();
             o.set("tier", a.tier);
@@ -154,6 +190,9 @@ impl Env {
             o.set("difficulty", d);
             o.set("pathway_id", if a.pathway.is_empty() { Value::Null } else { Value::Str(a.pathway.clone()) });
             o.set("advisor_pairing", a.pairing);
+            if let Some(v) = &view {
+                o.set("knn", Value::Obj(super::routeknn::view_object(v)));
+            }
             self.out(&format!("{}\n", pyjson::dumps_indent(&Value::Obj(o), 2, true)));
             return Ok(());
         }
@@ -167,6 +206,11 @@ impl Env {
             self.out(&format!("  pathway:    {}\n", a.pathway));
         }
         self.out(&format!("  why:        {}\n", a.reason));
+        if let Some(v) = &view {
+            for ln in crate::gateway::knn::view_lines(v) {
+                self.out(&format!("{ln}\n"));
+            }
+        }
         Ok(())
     }
 }

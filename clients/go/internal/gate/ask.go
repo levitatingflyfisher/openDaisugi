@@ -5,9 +5,7 @@ import (
 	"errors"
 	"math"
 	"math/big"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +15,7 @@ import (
 	"daisugi-verify/internal/lazyre"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/statefile"
 )
 
 // maybeAsk is gate._maybe_ask: a would-deny is handed to a present
@@ -27,13 +26,18 @@ func (r *runner) maybeAsk(p *pyjson.Object, d *decision, sessionID any) *decisio
 	if !pyjson.Truthy(tidV) || !r.operatorPresent() {
 		return d
 	}
+	// GR-R-10: an asks/ or answers/ the gate refuses (a link, another user's,
+	// writable by others) takes no ask, so the deny stands.
+	if !r.channelOK() {
+		return d
+	}
 	if math.IsNaN(r.askTimeoutS) || math.Abs(r.askTimeoutS) >= 9e18 {
 		// int(timeout_s) raises on NaN and the infinities after the wait.
 		unported("an --ask-timeout the port does not wait out")
 	}
 	tid := pyStrOf(tidV)
 	deadline := pyTime(time.Now()) + r.askTimeoutS
-	r.postAsk(tid, pyjson.NewObject().
+	if refused := r.postAsk(tid, pyjson.NewObject().
 		Set("sessionId", p.Value("session_id")).
 		Set("toolName", d.ToolName).
 		Set("detail", d.Detail).
@@ -41,7 +45,9 @@ func (r *runner) maybeAsk(p *pyjson.Object, d *decision, sessionID any) *decisio
 		Set("clause", d.clause()).
 		Set("counterexample", d.counterexample()).
 		Set("toolInput", p.Value("tool_input")).
-		Set("tier", d.Tier), deadline)
+		Set("tier", d.Tier), deadline); refused {
+		return d
+	}
 	_ = catch(func() { r.reportBlocked(p, d, sessionID, tid, deadline) })
 	remaining := math.Max(0, deadline-pyTime(time.Now()))
 	reply := r.waitAnswer(tid, remaining)
@@ -130,20 +136,6 @@ func askSafe(raw any) string {
 	return out
 }
 
-// askMkdir is ask._mkdir.
-func askMkdir(dir string) {
-	enc := fsEnc(dir)
-	if err := os.MkdirAll(filepath.Dir(enc), 0o777); err != nil {
-		panic(osError(err, dir))
-	}
-	if err := os.Mkdir(enc, 0o700); err != nil {
-		if st, serr := os.Stat(enc); serr != nil || !st.IsDir() {
-			panic(osError(err, dir))
-		}
-	}
-	_ = os.Chmod(enc, 0o700)
-}
-
 func fsEnc(p string) string {
 	b, err := pystr.FSEncode(p)
 	if err != nil {
@@ -152,56 +144,115 @@ func fsEnc(p string) string {
 	return string(b)
 }
 
-// askWriteJSON is ask._write_json: a temp file beside the target, then a
-// rename, so a reader never sees half a file.
-func askWriteJSON(path string, body *pyjson.Object) {
-	askMkdir(pathParent(path))
-	name := path[strings.LastIndex(path, "/")+1:]
-	stem := name
-	if i := strings.LastIndex(name, "."); i > 0 {
-		stem = name[:i]
-	}
-	tmp := pathJoin(pathParent(path), stem+".tmp")
-	if err := os.WriteFile(fsEnc(tmp), []byte(pyjson.Dumps(body, true)), 0o666); err != nil {
-		panic(osError(err, tmp))
-	}
-	_ = os.Chmod(fsEnc(tmp), 0o600)
-	if err := os.Rename(fsEnc(tmp), fsEnc(path)); err != nil {
-		panic(osError(err, tmp))
-	}
-}
+// askRoot is the gate root as the statefile routines spell it.
+func (r *runner) askRoot() string { return pathStr(r.root) }
 
-// unlinkMissingOK is Path.unlink with FileNotFoundError caught: any other
-// error raises.
-func unlinkMissingOK(p string) {
-	if err := syscall.Unlink(fsEnc(p)); err != nil && err != syscall.ENOENT {
-		panic(osError(err, p))
-	}
-}
-
-// globJSON is Path(dir).glob("*.json"): every entry whose name ends in
-// .json, hidden ones included, in directory order.
-func globJSON(dir string) []string {
-	ents, err := os.ReadDir(fsEnc(dir))
+// askLoad is ask._load: the JSON object in an open file and its mtime, both
+// from the fd, which it closes. A file that is not readable JSON, or not an
+// object, is nil.
+func askLoad(fd int) (*pyjson.Object, float64) {
+	var st syscall.Stat_t
+	_ = syscall.Fstat(fd, &st)
+	mtime := float64(st.Mtim.Sec) + float64(st.Mtim.Nsec)/1e9
+	raw, err := statefile.ReadAll(fd)
+	syscall.Close(fd)
 	if err != nil {
-		return nil
+		return nil, mtime
 	}
-	var out []string
-	for _, e := range ents {
-		if n := pystr.FSDecode([]byte(e.Name())); strings.HasSuffix(n, ".json") {
-			out = append(out, n)
+	text, derr := pystr.DecodeStrict(raw)
+	if derr != nil {
+		return nil, mtime
+	}
+	v, jerr := pyjson.Loads(text)
+	if jerr != nil {
+		return nil, mtime
+	}
+	o, _ := v.(*pyjson.Object)
+	return o, mtime
+}
+
+// askRead is ask._read: the body and mtime of <root>/<dirs>/<name> through
+// the checked open. have is false for a file that is missing or refused (a
+// refusal leaves the gate's note).
+func (r *runner) askRead(dirs []string, name string) (body *pyjson.Object, mtime float64, have bool) {
+	fd, _ := statefile.Probe(r.askRoot(), dirs, name, -1)
+	if fd < 0 {
+		return nil, 0, false
+	}
+	body, mtime = askLoad(fd)
+	return body, mtime, true
+}
+
+// askWrite is ask._write: the body written through the directory fd, a link
+// at the name replaced. The error is a *statefile.WriteRefused for a path
+// the gate refuses.
+func (r *runner) askWrite(sub, name string, body *pyjson.Object) error {
+	_, err := statefile.WriteFile(r.askRoot(), []string{sub}, name, pyjson.Dumps(body, true), true)
+	return err
+}
+
+// channelOK is ask.channel_ok: false when asks/ or answers/ exists and the
+// gate refuses it. Missing is fine: the first ask makes them.
+func (r *runner) channelOK() bool {
+	for _, sub := range []string{"asks", "answers"} {
+		fds, why := statefile.ProbeDirs(r.askRoot(), sub)
+		statefile.Close(fds)
+		if fds == nil && why != "" {
+			return false
 		}
 	}
-	return out
+	return true
+}
+
+// askDrop is ask._drop: <root>/<sub>/<name> removed through the directory
+// fd. A directory the gate refuses is left alone; any other failure raises.
+func (r *runner) askDrop(sub, name string) {
+	if _, err := statefile.UnlinkFile(r.askRoot(), []string{sub}, name); err != nil && writeRefusedErr(err) == nil {
+		panic(osError(err, pathJoin(pathJoin(r.root, sub), name)))
+	}
+}
+
+func writeRefusedErr(err error) *statefile.WriteRefused {
+	var wr *statefile.WriteRefused
+	if errors.As(err, &wr) {
+		return wr
+	}
+	return nil
+}
+
+// unlinkAtMissingOK is os.unlink(name, dir_fd=fd) with FileNotFoundError
+// caught: any other error raises.
+func unlinkAtMissingOK(dfd int, name, shown string) {
+	if err := syscall.Unlinkat(dfd, name); err != nil && err != syscall.ENOENT {
+		panic(osError(err, shown))
+	}
+}
+
+// entryExists is true when name is an entry in the directory dfd, a
+// dangling link included.
+func entryExists(dfd int, name string) bool {
+	fd, err := syscall.Openat(dfd, name, 0x200000|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return false
+	}
+	syscall.Close(fd)
+	return true
 }
 
 // sweepExpired is ask._sweep_expired.
 func (r *runner) sweepExpired(now float64) {
-	asks, answers := pathJoin(r.root, "asks"), pathJoin(r.root, "answers")
-	if exists(asks) {
-		for _, name := range globJSON(asks) {
-			p := pathJoin(asks, name)
-			body := readJSONObject(p)
+	root := r.askRoot()
+	afds, _ := statefile.ProbeDirs(root, "asks")
+	asksFD := -1
+	if afds != nil {
+		asksFD = afds[len(afds)-1]
+		defer statefile.Close(afds)
+		noteDir := statefile.NoteDir(root, "asks")
+		for _, name := range statefile.ListJSON(asksFD) {
+			var body *pyjson.Object
+			if fd, _ := statefile.ProbeFileIn(asksFD, noteDir, name, -1); fd >= 0 {
+				body, _ = askLoad(fd)
+			}
 			deadline := 0.0
 			if body != nil {
 				if v, ok := body.Get("deadline"); ok {
@@ -211,15 +262,17 @@ func (r *runner) sweepExpired(now float64) {
 				}
 			}
 			if body == nil || deadline <= now {
-				unlinkMissingOK(p)
-				unlinkMissingOK(pathJoin(answers, name))
+				unlinkAtMissingOK(asksFD, name, pathJoin(pathJoin(r.root, "asks"), name))
+				r.askDrop("answers", name)
 			}
 		}
 	}
-	if exists(answers) {
-		for _, name := range globJSON(answers) {
-			if !exists(pathJoin(asks, name)) {
-				unlinkMissingOK(pathJoin(answers, name))
+	if wfds, _ := statefile.ProbeDirs(root, "answers"); wfds != nil {
+		defer statefile.Close(wfds)
+		wfd := wfds[len(wfds)-1]
+		for _, name := range statefile.ListJSON(wfd) {
+			if asksFD < 0 || !entryExists(asksFD, name) {
+				unlinkAtMissingOK(wfd, name, pathJoin(pathJoin(r.root, "answers"), name))
 			}
 		}
 	}
@@ -256,8 +309,9 @@ func pyFloatOf(v any) (float64, bool) {
 	return 0, false
 }
 
-// postAsk is ask.post_ask.
-func (r *runner) postAsk(tid string, question *pyjson.Object, deadline float64) {
+// postAsk is ask.post_ask. refused is true when the gate refuses asks/ (the
+// deny stands).
+func (r *runner) postAsk(tid string, question *pyjson.Object, deadline float64) (refused bool) {
 	r.sweepExpired(pyTime(time.Now()))
 	body := pyjson.NewObject().
 		Set("toolUseId", tid).
@@ -267,7 +321,14 @@ func (r *runner) postAsk(tid string, question *pyjson.Object, deadline float64) 
 	for _, k := range question.Keys() {
 		body.Set(k, question.Value(k))
 	}
-	askWriteJSON(pathJoin(pathJoin(r.root, "asks"), askSafe(tid)+".json"), body)
+	name := askSafe(tid) + ".json"
+	if err := r.askWrite("asks", name, body); err != nil {
+		if writeRefusedErr(err) != nil {
+			return true
+		}
+		panic(osError(err, pathJoin(pathJoin(r.root, "asks"), name)))
+	}
+	return false
 }
 
 var (
@@ -301,39 +362,34 @@ func whoOf(by, whoFrom any) (string, string) {
 // consumeAsk is ask._consume.
 func (r *runner) consumeAsk(tid string) {
 	name := askSafe(tid) + ".json"
-	unlinkMissingOK(pathJoin(pathJoin(r.root, "asks"), name))
-	unlinkMissingOK(pathJoin(pathJoin(r.root, "answers"), name))
-}
-
-func mtime(p string) (float64, bool) {
-	st, err := os.Stat(fsEnc(p))
-	if err != nil {
-		return 0, false
-	}
-	return float64(st.ModTime().UnixNano()) / 1e9, true
+	r.askDrop("asks", name)
+	r.askDrop("answers", name)
 }
 
 // waitAnswer is ask.wait_answer: an answer is honored only when it names
-// allow or deny, echoes the ask's nonce and is no older than the ask.
+// allow or deny, echoes the ask's nonce and is no older than the ask. An
+// answer file that is there but refused, or a refused answers/, is not an
+// answer: the wait ends with none.
 func (r *runner) waitAnswer(tid string, timeoutS float64) *pyjson.Object {
 	name := askSafe(tid) + ".json"
-	askPath := pathJoin(pathJoin(r.root, "asks"), name)
-	answerPath := pathJoin(pathJoin(r.root, "answers"), name)
-	askBody := readJSONObject(askPath)
+	askBody, askM, askOK := r.askRead([]string{"asks"}, name)
 	var nonce any
 	if askBody != nil {
 		nonce = askBody.Value("nonce")
 	}
-	askM, askOK := mtime(askPath)
 	end := time.Now().Add(time.Duration(timeoutS * float64(time.Second)))
 	for {
-		if exists(answerPath) {
-			body := readJSONObject(answerPath)
-			ansM, ansOK := mtime(answerPath)
+		fd, refusal := statefile.Probe(r.askRoot(), []string{"answers"}, name, -1)
+		if fd >= 0 || refusal != "" {
+			var body *pyjson.Object
+			var ansM float64
+			if fd >= 0 {
+				body, ansM = askLoad(fd)
+			}
 			valid := body != nil &&
 				(pyEq(body.Value("decision"), "allow") || pyEq(body.Value("decision"), "deny")) &&
 				nonce != nil && pyEq(body.Value("nonce"), nonce) &&
-				askOK && ansOK && ansM >= askM
+				askOK && fd >= 0 && ansM >= askM
 			r.consumeAsk(tid)
 			if !valid {
 				return nil
@@ -359,7 +415,7 @@ func (r *runner) proposeForTask(p *pyjson.Object, d *decision, tid string) {
 	_ = catch(func() {
 		id := randomHex(4)
 		now := pyTime(time.Now())
-		askWriteJSON(pathJoin(pathJoin(r.root, "proposals"), id+".json"), pyjson.NewObject().
+		if err := r.askWrite("proposals", id+".json", pyjson.NewObject().
 			Set("id", id).
 			Set("kind", "allow-pattern").
 			Set("scope", "task").
@@ -369,47 +425,20 @@ func (r *runner) proposeForTask(p *pyjson.Object, d *decision, tid string) {
 			Set("toolUseId", tid).
 			Set("toolInput", p.Value("tool_input")).
 			Set("clause", d.clause()).
-			Set("tier", d.Tier))
+			Set("tier", d.Tier)); err != nil {
+			panic(osError(err, pathJoin(pathJoin(r.root, "proposals"), id+".json")))
+		}
 	})
 }
 
-// readJSONObject is ask._read_json: the file's JSON object, or nil for a
-// file that cannot be read, is not JSON, or is not an object.
-func readJSONObject(p string) *pyjson.Object {
-	enc, eerr := pystr.FSEncode(p)
-	if eerr != nil {
-		panic(eerr)
-	}
-	raw, err := os.ReadFile(string(enc))
-	if err != nil {
-		return nil
-	}
-	text, derr := pystr.DecodeStrict(raw)
-	if derr != nil {
-		return nil
-	}
-	v, jerr := pyjson.Loads(text)
-	if jerr != nil {
-		return nil
-	}
-	o, _ := v.(*pyjson.Object)
-	return o
-}
-
 // operatorPresent is ask.operator_present: a heartbeat file under 15 s old
-// naming a live pid.
+// naming a live pid, read through the checked open (GR-R-10).
 func (r *runner) operatorPresent() bool {
-	p := pathJoin(r.root, "operator.json")
-	body := readJSONObject(p)
-	if body == nil || body.Len() == 0 {
+	body, mtime, have := r.askRead(nil, "operator.json")
+	if body == nil || body.Len() == 0 || !have {
 		return false
 	}
-	enc, _ := pystr.FSEncode(p)
-	st, err := os.Stat(string(enc))
-	if err != nil {
-		return false
-	}
-	age := float64(time.Now().UnixNano())/1e9 - float64(st.ModTime().UnixNano())/1e9
+	age := float64(time.Now().UnixNano())/1e9 - mtime
 	if age > 15 {
 		return false
 	}
@@ -429,7 +458,7 @@ func (r *runner) operatorPresent() bool {
 	default:
 		return false
 	}
-	err = syscall.Kill(int(pid), 0)
+	err := syscall.Kill(int(pid), 0)
 	switch {
 	case err == nil, errors.Is(err, syscall.EPERM):
 		return true

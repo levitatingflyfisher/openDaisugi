@@ -19,6 +19,14 @@ reused. The nonce correlates an answer to one specific ask instance — it is
 not an authentication check; the real trust boundary is filesystem write
 access to this private (0700) directory tree, same as everywhere else in the
 gate's state.
+
+GR-R-10: the channel is read and written through no link. ``operator.json``,
+``asks/`` and ``answers/`` are opened as the gate opens the rest of its state
+(``_state_files``): the root and each directory with ``O_NOFOLLOW``, each
+file by its fd with the owner, link-count and mode checks, the mtime from
+the same fd. A file is written under a temp name and renamed inside its
+directory, so a link planted at a name is replaced, never written through. A
+refused ``asks/`` or ``answers/`` takes no ask and honors no answer.
 """
 
 from __future__ import annotations
@@ -32,6 +40,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from opendaisugi._state_files import (
+    StateWriteRefused,
+    probe_file_in,
+    probe_state_dirs,
+    probe_state_file,
+    unlink_state_file,
+    write_state_file,
+)
+
 PRESENCE = "operator.json"
 ASKS = "asks"
 ANSWERS = "answers"
@@ -42,48 +59,59 @@ def _safe(raw: object) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", str(raw or "")).strip(".")[:128] or "none"
 
 
-def _mkdir(p: Path) -> None:
-    p.mkdir(parents=True, exist_ok=True, mode=0o700)
+def _load(fd: int) -> tuple[dict[str, Any] | None, float]:
+    """The JSON object in an open file and its mtime, both from the fd. A
+    file that is not readable JSON, or not an object, is (None, mtime)."""
+    mtime = os.fstat(fd).st_mtime
     try:
-        os.chmod(p, 0o700)
-    except OSError:
-        pass
-
-
-def _write_json(path: Path, body: dict[str, Any]) -> Path:
-    _mkdir(path.parent)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(body), encoding="utf-8")
-    try:
-        os.chmod(tmp, 0o600)
-    except OSError:
-        pass
-    os.replace(tmp, path)  # readers never see a half-written file
-    return path
-
-
-def _read_json(path: Path) -> dict[str, Any] | None:
-    try:
-        body = json.loads(path.read_text(encoding="utf-8"))
+        with os.fdopen(fd, "r", encoding="utf-8") as f:
+            body = json.loads(f.read())
     except (OSError, ValueError):
-        return None
-    return body if isinstance(body, dict) else None
+        return None, mtime
+    return (body if isinstance(body, dict) else None), mtime
+
+
+def _read(
+    root: Path, dirs: tuple[str, ...], name: str
+) -> tuple[dict[str, Any] | None, float | None, bool]:
+    """(body, mtime, refused) for ``<root>/<dirs>/<name>``, read through the
+    checked open. Missing is (None, None, False); a refusal is (None, None,
+    True) and leaves the gate's note."""
+    fd, refusal = probe_state_file(root, dirs, name)
+    if fd is None:
+        return None, None, refusal is not None
+    body, mtime = _load(fd)
+    return body, mtime, False
+
+
+def _write(root: Path, dirs: tuple[str, ...], name: str, body: dict[str, Any]) -> Path:
+    # Readers never see a half-written file; a link at the name is replaced.
+    return write_state_file(root, dirs, name, json.dumps(body), replace_link=True)
+
+
+def channel_ok(root: Path) -> bool:
+    """False when ``asks/`` or ``answers/`` exists and the gate refuses it
+    (a link, another user's, writable by others). Missing is fine: the
+    first ask makes them. The refusal leaves the gate's note."""
+    for sub in (ASKS, ANSWERS):
+        fds, why = probe_state_dirs(root, (sub,))
+        for f in fds or []:
+            os.close(f)
+        if fds is None and why is not None:
+            return False
+    return True
 
 
 # --- presence -------------------------------------------------------------
 def write_presence(
     root: Path, *, pid: int | None = None, clock: Callable[[], float] = time.time
 ) -> Path:
-    return _write_json(
-        root / PRESENCE, {"pid": pid if pid is not None else os.getpid(), "at": clock()}
-    )
+    _write(root, (), PRESENCE, {"pid": pid if pid is not None else os.getpid(), "at": clock()})
+    return root / PRESENCE
 
 
 def clear_presence(root: Path) -> None:
-    try:
-        (root / PRESENCE).unlink()
-    except FileNotFoundError:
-        pass
+    unlink_state_file(root, (), PRESENCE)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -97,13 +125,10 @@ def _pid_alive(pid: int) -> bool:
 
 
 def operator_present(root: Path, *, now: float | None = None, max_age_s: float = 15.0) -> bool:
-    body = _read_json(root / PRESENCE)
-    if not body:
+    body, mtime, _ = _read(root, (), PRESENCE)
+    if not body or mtime is None:
         return False
-    try:
-        age = (time.time() if now is None else now) - (root / PRESENCE).stat().st_mtime
-    except OSError:
-        return False
+    age = (time.time() if now is None else now) - mtime
     if age > max_age_s:
         return False
     pid = body.get("pid")
@@ -126,32 +151,65 @@ def _sweep_expired(root: Path, *, now: float) -> None:
     invalid (wrong nonce), and give up immediately instead of waiting for a
     genuine operator reply.
     """
-    asks_dir = root / ASKS
-    if asks_dir.exists():
-        for p in list(asks_dir.glob("*.json")):
-            body = _read_json(p)
+    base = str(Path(root))
+    afds, _ = probe_state_dirs(root, (ASKS,))
+    asks_fd = afds[-1] if afds else None
+    try:
+        if asks_fd is not None:
+            note_dir = os.path.join(base, ASKS)
+            for name in _json_names(asks_fd):
+                fd, _ = probe_file_in(asks_fd, note_dir, name)
+                body = _load(fd)[0] if fd is not None else None
+                try:
+                    deadline = float(body.get("deadline", 0)) if body else 0.0
+                except (TypeError, ValueError):
+                    deadline = 0.0
+                if body is None or deadline <= now:
+                    try:
+                        os.unlink(name, dir_fd=asks_fd)
+                    except FileNotFoundError:
+                        pass
+                    _drop(root, ANSWERS, name)
+        wfds, _ = probe_state_dirs(root, (ANSWERS,))
+        if wfds is not None:
             try:
-                deadline = float(body.get("deadline", 0)) if body else 0.0
-            except (TypeError, ValueError):
-                deadline = 0.0
-            if body is None or deadline <= now:
-                try:
-                    p.unlink()
-                except FileNotFoundError:
-                    pass
-                try:
-                    (root / ANSWERS / p.name).unlink()
-                except FileNotFoundError:
-                    pass
+                for name in _json_names(wfds[-1]):
+                    if asks_fd is None or not _entry_exists(asks_fd, name):
+                        try:
+                            os.unlink(name, dir_fd=wfds[-1])
+                        except FileNotFoundError:
+                            pass
+            finally:
+                for f in wfds:
+                    os.close(f)
+    finally:
+        for f in afds or []:
+            os.close(f)
 
-    answers_dir = root / ANSWERS
-    if answers_dir.exists():
-        for p in list(answers_dir.glob("*.json")):
-            if not (asks_dir / p.name).exists():
-                try:
-                    p.unlink()
-                except FileNotFoundError:
-                    pass
+
+def _json_names(dir_fd: int) -> list[str]:
+    """Path.glob("*.json") in one directory: dotfiles and directories too."""
+    try:
+        return sorted(n for n in os.listdir(dir_fd) if n.endswith(".json"))
+    except OSError:
+        return []
+
+
+def _entry_exists(dir_fd: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    return True
+
+
+def _drop(root: Path, sub: str, name: str) -> None:
+    """Remove ``<root>/<sub>/<name>`` through the directory fd. A directory
+    the gate refuses is left alone: nothing is removed through a link."""
+    try:
+        unlink_state_file(root, (sub,), name)
+    except StateWriteRefused:
+        pass
 
 
 def post_ask(
@@ -174,7 +232,7 @@ def post_ask(
         "deadline": deadline,
         **question,
     }
-    return _write_json(root / ASKS / f"{_safe(tool_use_id)}.json", body)
+    return _write(root, (ASKS,), f"{_safe(tool_use_id)}.json", body)
 
 
 # A name is one word of ASCII letters, digits, dash and underscore, up to
@@ -224,7 +282,20 @@ def answer(
     cycle can't be replayed against a new one; it does not authenticate the
     answerer (write access to this private directory is that boundary).
     """
-    ask_body = _read_json(root / ASKS / f"{_safe(tool_use_id)}.json")
+    ask_body, _, _ = _read(root, (ASKS,), f"{_safe(tool_use_id)}.json")
+    return _write_answer(root, ask_body, tool_use_id, decision, reason, updated_input, by, who_from)
+
+
+def _write_answer(
+    root: Path,
+    ask_body: dict[str, Any] | None,
+    tool_use_id: str,
+    decision: str,
+    reason: str,
+    updated_input: dict[str, Any] | None,
+    by: str,
+    who_from: str,
+) -> Path:
     nonce = ask_body.get("nonce") if ask_body else None
     body = {
         "toolUseId": tool_use_id,
@@ -234,22 +305,45 @@ def answer(
         "nonce": nonce,
     }
     body["by"], body["whoFrom"] = who_of(by, who_from)
-    return _write_json(root / ANSWERS / f"{_safe(tool_use_id)}.json", body)
+    return _write(root, (ANSWERS,), f"{_safe(tool_use_id)}.json", body)
 
 
-def check_allow(root: Path, *, tool_use_id: str, name: str, confirm: str | None) -> str | None:
+_UNSET: Any = object()
+
+
+def check_allow(
+    root: Path,
+    *,
+    tool_use_id: str,
+    name: str,
+    confirm: str | None,
+    tier: Any = _UNSET,
+) -> str | None:
     """The permanent rule for an allow, read from the ask file itself.
 
     Returns None when the allow may be written, else the sentence that
-    refuses it. An ask is undoable only when its file says ``undoable``.
-    Any other ask needs ``confirm`` equal to ``name``, and an empty name
-    never matches. It is the same rule coppice-server holds, with the
-    session id as the name the operator types.
+    refuses it. An ask is undoable only when its file says ``undoable``;
+    when the caller also reports the tier it holds for the ask (``tier``,
+    None for none), the ask is undoable only when BOTH say so: the worse of
+    the two decides, as coppice's web/ask.go does, so a file rewritten after
+    the operator armed the allow cannot lower it. Any other ask needs
+    ``confirm`` equal to ``name``, and an empty name never matches. The file
+    is read through the checked open (GR-R-10): a linked or shared file reads
+    as gone.
     """
-    body = _read_json(root / ASKS / f"{_safe(tool_use_id)}.json")
+    body, _, _ = _read(root, (ASKS,), f"{_safe(tool_use_id)}.json")
+    return _allow_refusal(body, name=name, confirm=confirm, tier=tier)
+
+
+def _allow_refusal(
+    body: dict[str, Any] | None, *, name: str, confirm: str | None, tier: Any
+) -> str | None:
     if body is None:
         return "that ask is gone"
-    if body.get("tier") == "undoable":
+    undoable = body.get("tier") == "undoable"
+    if tier is not _UNSET:
+        undoable = undoable and tier == "undoable"
+    if undoable:
         return None
     typed = (confirm or "").strip()
     if not name or typed != name:
@@ -257,15 +351,35 @@ def check_allow(root: Path, *, tool_use_id: str, name: str, confirm: str | None)
     return None
 
 
+def answer_allow(
+    root: Path,
+    *,
+    tool_use_id: str,
+    name: str,
+    confirm: str | None,
+    tier: Any = _UNSET,
+    reason: str = "",
+    by: str = "",
+    who_from: str = "none",
+) -> tuple[str | None, Path | None]:
+    """``check_allow`` and ``answer`` on ONE read of the ask file (GR r1 M5):
+    the tier that the check passed and the nonce the answer carries belong to
+    the same ask, so a retired ask replaced under the same id cannot take an
+    allow that was checked against the old one. (refusal, None) when the
+    allow may not be written; (None, path) once it is."""
+    body, _, _ = _read(root, (ASKS,), f"{_safe(tool_use_id)}.json")
+    refusal = _allow_refusal(body, name=name, confirm=confirm, tier=tier)
+    if refusal is not None:
+        return refusal, None
+    return None, _write_answer(root, body, tool_use_id, "allow", reason, None, by, who_from)
+
+
 def _consume(root: Path, tool_use_id: str) -> None:
     """Remove both the ask and its answer, once an answer has been inspected
     (valid or not) — nothing here is ever left to be honored twice."""
     tid = _safe(tool_use_id)
     for sub in (ASKS, ANSWERS):
-        try:
-            (root / sub / f"{tid}.json").unlink()
-        except FileNotFoundError:
-            pass
+        _drop(root, sub, f"{tid}.json")
 
 
 def wait_answer(
@@ -288,25 +402,18 @@ def wait_answer(
     the ask too, so nothing here grows unbounded or lingers to be honored
     by a later, unrelated ask reusing the same ``tool_use_id``.
     """
-    tid = _safe(tool_use_id)
-    ask_path = root / ASKS / f"{tid}.json"
-    answer_path = root / ANSWERS / f"{tid}.json"
+    name = f"{_safe(tool_use_id)}.json"
 
-    ask_body = _read_json(ask_path)
+    ask_body, ask_mtime, _ = _read(root, (ASKS,), name)
     expected_nonce = ask_body.get("nonce") if ask_body else None
-    try:
-        ask_mtime = ask_path.stat().st_mtime
-    except OSError:
-        ask_mtime = None
 
     t_end = clock() + timeout_s
     while True:
-        if answer_path.exists():
-            body = _read_json(answer_path)
-            try:
-                answer_mtime = answer_path.stat().st_mtime
-            except OSError:
-                answer_mtime = None
+        fd, refusal = probe_state_file(root, (ANSWERS,), name)
+        if fd is not None or refusal is not None:
+            # An answer file that is there but refused, or a refused answers/,
+            # is not an answer: the wait ends with no honored answer.
+            body, answer_mtime = _load(fd) if fd is not None else (None, None)
             valid = (
                 body is not None
                 and body.get("decision") in ("allow", "deny")
@@ -329,14 +436,20 @@ def wait_answer(
 def pending_asks(root: Path, *, now: float | None = None) -> list[dict[str, Any]]:
     now = time.time() if now is None else now
     _sweep_expired(root, now=now)
-    d = root / ASKS
-    if not d.exists():
+    fds, _ = probe_state_dirs(root, (ASKS,))
+    if fds is None:
         return []
     out = []
-    for p in sorted(d.glob("*.json")):
-        body = _read_json(p)
-        if body and float(body.get("deadline", 0)) > now:
-            out.append(body)
+    try:
+        note_dir = os.path.join(str(Path(root)), ASKS)
+        for name in _json_names(fds[-1]):
+            fd, _ = probe_file_in(fds[-1], note_dir, name)
+            body = _load(fd)[0] if fd is not None else None
+            if body and float(body.get("deadline", 0)) > now:
+                out.append(body)
+    finally:
+        for f in fds:
+            os.close(f)
     return out
 
 
@@ -354,8 +467,10 @@ def propose(
     from opendaisugi.session_tree import new_id
 
     pid = new_id()
-    return _write_json(
-        root / PROPOSALS / f"{pid}.json",
+    return _write(
+        root,
+        (PROPOSALS,),
+        f"{pid}.json",
         {
             "id": pid,
             "kind": kind,

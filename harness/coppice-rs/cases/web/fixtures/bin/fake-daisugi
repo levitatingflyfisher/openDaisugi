@@ -1,0 +1,22 @@
+#!/bin/sh
+# A fake daisugi for the cases that read the operator's agent profiles:
+#   daisugi agent-profiles list --json
+# writes the file FAKE_PROFILES_FILE names to stdout, as the real one writes
+# its rows (name, wire, base_url, model, key_set; never a key). The working
+# directory is written to FAKE_PWD_FILE when that is set, so a case can see
+# that coppice runs it in a directory of its own. Anything else exits 2.
+if [ "$1 $2" = "agent-profiles list" ]; then
+  [ -n "$FAKE_PWD_FILE" ] && pwd > "$FAKE_PWD_FILE"
+  if [ -n "$FAKE_PROFILES_SLEEP" ]; then sleep "$FAKE_PROFILES_SLEEP"; fi
+  cat "$FAKE_PROFILES_FILE"
+  exit 0
+fi
+# daisugi agent-profiles bundle --fd 3 writes the table in FAKE_BUNDLE_FILE
+# to descriptor 3, as the real one writes its keys.
+if [ "$1 $2 $3 $4" = "agent-profiles bundle --fd 3" ]; then
+  if [ -n "$FAKE_BUNDLE_FAIL" ]; then echo "$FAKE_BUNDLE_FAIL" >&2; exit 3; fi
+  cat "$FAKE_BUNDLE_FILE" >&3
+  exit 0
+fi
+echo "fake daisugi: unknown command $*" >&2
+exit 2

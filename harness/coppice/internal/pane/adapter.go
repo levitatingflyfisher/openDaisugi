@@ -54,6 +54,20 @@ type StartOpts struct {
 	PaneID string
 	// DataDir is the server's data directory. It becomes COPPICE_DATA_DIR.
 	DataDir string
+	// Wrap, when set, is a command prefix the harness runs behind (the
+	// fence): the adapter starts Wrap[0] with Wrap[1:], then its own
+	// command and arguments.
+	Wrap []string
+}
+
+// Wrapped is the command and arguments to start: name and args behind the
+// wrap prefix, or name and args as they are when the prefix is empty.
+func Wrapped(wrap []string, name string, args []string) (string, []string) {
+	if len(wrap) == 0 {
+		return name, args
+	}
+	out := append(append([]string(nil), wrap[1:]...), name)
+	return wrap[0], append(out, args...)
 }
 
 // PidKeep caps how many root pids a Pider keeps for one pane.
@@ -138,6 +152,13 @@ type Forker interface {
 // that may run agent.allow, so a pane or a plugin is never the operator.
 type Prompter interface {
 	PromptFrom(text string, operator bool) error
+}
+
+// ModelSetter is a Proc that runs each turn as its own process, so the
+// model of the turns after a call can change. SetModel names it; an empty
+// name takes the swap back. A turn already running keeps its model.
+type ModelSetter interface {
+	SetModel(name string)
 }
 
 // Answerer is a Proc whose harness holds asks of its own, such as

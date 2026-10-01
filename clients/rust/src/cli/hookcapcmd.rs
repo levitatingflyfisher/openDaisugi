@@ -33,7 +33,7 @@ impl Env {
         if p.has("--captures-root") {
             return path_str(&p.str("--captures-root", ""));
         }
-        join(&self.home, ".opendaisugi/captures")
+        join(&self.data_home(), "captures")
     }
 
     /// An exception Python does not catch ends the command: the class

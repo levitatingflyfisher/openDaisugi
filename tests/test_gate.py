@@ -324,7 +324,7 @@ def test_outer_exception_enforce_denies_audit_allows(tmp_path, monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("io layer exploded")
 
-    monkeypatch.setattr("opendaisugi.gate.load_envelope", _boom)
+    monkeypatch.setattr("opendaisugi.gate.load_envelope_checked", _boom)
     out = gate_and_contract(
         _payload_bytes("/allowed/x"), root=tmp_path, fmt="claude", mode="enforce"
     )

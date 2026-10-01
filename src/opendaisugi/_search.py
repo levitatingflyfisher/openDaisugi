@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 
 
 _MODEL_NAME = "all-MiniLM-L6-v2"
+# The Hugging Face commit of sentence-transformers/all-MiniLM-L6-v2 every
+# MiniLM download is pinned to (main on 2026-10-08). A commit fixes every
+# file of the repo; the int8 files' sha256 below were checked against it.
+_MINILM_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
 
 # The torch-free alternative (ADR-0018). model2vec inference needs only numpy +
 # tokenizers, so it runs where sentence-transformers' torch slice can't. Default
@@ -31,6 +35,9 @@ _MODEL_NAME = "all-MiniLM-L6-v2"
 # smaller. Override the concrete model — a HF id, or a local dir for air-gapped
 # use with HF_HUB_OFFLINE=1 — via OPENDAISUGI_POTION_MODEL.
 _POTION_DEFAULT = "minishlab/potion-base-8M"
+# The commit the default is fetched at: the one the Go and Rust ports pin
+# (potion pinnedRevision), main on 2026-10-08.
+_POTION_REVISION = "bf8b056651a2c21b8d2565580b8569da283cab23"
 
 # Per-backend reuse threshold. potion's is FPR-matched to MiniLM@0.55 on the real
 # journal corpus (both hit ~2.6% false-match on random task pairs); see ADR-0018.
@@ -62,7 +69,9 @@ _LEXICAL_TOKEN_RE = re.compile(r"[a-z0-9_]+")
 # its sha256 comes from the downloaded file itself. Three of the four onnx
 # builds, vnni, avx512, and arm64, share one sha256. The CPU dispatch still
 # names all four, because the upstream files can diverge later.
-_INT8_BASE_URL = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/"
+_INT8_BASE_URL = (
+    f"https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/{_MINILM_REVISION}/"
+)
 _INT8_IDENTITY = "all-MiniLM-L6-v2-int8"
 _INT8_DIM = 384
 # Per-backend reuse threshold. See ADR-0021. Derived the same way ADR-0018
@@ -162,7 +171,9 @@ def _int8_cache_dir() -> Path:
     override = os.environ.get("OPENDAISUGI_INT8_MODEL")
     if override:
         return Path(override)
-    return Path.home() / ".cache" / "opendaisugi" / "models" / "minilm-int8"
+    # $XDG_CACHE_HOME, else ~/.cache, as the Go and Rust model caches do.
+    cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(cache) / "opendaisugi" / "models" / "minilm-int8"
 
 
 class _Int8Embedder:
@@ -499,10 +510,31 @@ class _STEmbedder:
         from sentence_transformers import SentenceTransformer
 
         with _quiet_model_load():
-            self._m = SentenceTransformer(_MODEL_NAME, device=_embedder_device())
+            self._m = SentenceTransformer(
+                _MODEL_NAME, device=_embedder_device(), revision=_MINILM_REVISION
+            )
 
     def encode(self, texts, convert_to_numpy=True):
         return _l2(self._m.encode(list(texts), convert_to_numpy=True))
+
+
+def _potion_source(model_id: str) -> str:
+    """What model2vec loads: the default fetched at its pinned commit
+    (model2vec's own loader takes no revision), else the id or local dir
+    the operator named, as it is."""
+    if model_id != _POTION_DEFAULT:
+        return model_id
+    from huggingface_hub import snapshot_download
+    from tqdm.auto import tqdm
+
+    class _NoBar(tqdm):
+        # The "Fetching N files" bar would print on every load, even a
+        # cached one; model2vec's own loader printed none.
+        def __init__(self, *args, **kwargs):
+            kwargs["disable"] = True
+            super().__init__(*args, **kwargs)
+
+    return snapshot_download(model_id, revision=_POTION_REVISION, tqdm_class=_NoBar)
 
 
 class _PotionEmbedder:
@@ -525,7 +557,7 @@ class _PotionEmbedder:
             ) from exc
 
         try:
-            self._m = StaticModel.from_pretrained(model_id)
+            self._m = StaticModel.from_pretrained(_potion_source(model_id))
         except Exception as exc:
             from opendaisugi.exceptions import MatcherNotAvailable
 

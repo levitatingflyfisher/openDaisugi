@@ -50,13 +50,44 @@ func main() {
 	cli := &sprig.CLI{
 		Version: buildVersion(),
 		// Default backend: claude -p (subscription, no API key — respects the
-		// exposure freeze). SPRIG_BACKEND=api opts into the direct Messages API
-		// (Design E): a minimal prompt, but it needs ANTHROPIC_API_KEY.
-		NewModel: func() (sprig.Model, error) {
-			if os.Getenv("SPRIG_BACKEND") == "api" {
-				return sprig.NewAPIModel()
+		// exposure freeze). --wire anthropic (or SPRIG_BACKEND=api) opts into
+		// the direct Messages API (Design E), and --wire openai into chat
+		// completions: a minimal prompt, and a key from --key-fd unless
+		// --base-url names a server that needs none. --model overrides the
+		// backend's default model (and SPRIG_MODEL on the API); --tools sets
+		// the tools the backend offers.
+		NewModel: func(o sprig.ModelOptions) (sprig.Model, error) {
+			switch o.Wire {
+			case "anthropic":
+				m, err := sprig.NewAPIModelFor(o.Key, o.KeySet, o.BaseURL)
+				if err != nil {
+					return nil, err
+				}
+				if o.Model != "" {
+					m.Model = o.Model
+				}
+				m.Tools = o.Tools
+				m.NoTools, m.System, m.SystemSet = o.NoTools, o.System, o.SystemSet
+				m.Extra = o.Extra
+				return m, nil
+			case "openai":
+				m, err := sprig.NewOpenAIModel(o.Key, o.KeySet, o.BaseURL, o.Model)
+				if err != nil {
+					return nil, err
+				}
+				m.Tools = o.Tools
+				m.NoTools, m.System, m.SystemSet = o.NoTools, o.System, o.SystemSet
+				m.Extra = o.Extra
+				return m, nil
 			}
-			return sprig.NewClaudeCodeModel(), nil
+			m := sprig.NewClaudeCodeModel()
+			if o.Model != "" {
+				m.Model = o.Model
+			}
+			m.Tools = o.Tools
+			m.NoTools, m.System, m.SystemSet = o.NoTools, o.System, o.SystemSet
+			m.MCPConfig, m.MCPServers = o.MCPConfig, o.MCPServers
+			return m, nil
 		},
 	}
 	os.Exit(cli.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))

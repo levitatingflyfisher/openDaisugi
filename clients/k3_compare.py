@@ -45,6 +45,13 @@ from garden_compare import NOT_YET, before_tree, compare, guard  # noqa: E402
 from k3_cases import FIXTURE_DIR, SCRATCH, cmd_for  # noqa: E402
 from pathway_compare import STDERR_CLASSES, diff  # noqa: E402
 
+# The binary reports its own version as the MCP server's (F12, 2026-10-24);
+# the oracle reports the MCP SDK's. The compare reads the binary's as the
+# oracle's, as the fixture holds it. So k3 cannot see a Go/Rust difference in
+# this one field; the port unit tests (mcpwire, mcpcmd) cover it.
+_SERVER_VERSION = re.compile(r'"serverInfo":\{"name":"opendaisugi","version":"[^"]*"\}')
+_ORACLE_SERVER_INFO = '"serverInfo":{"name":"opendaisugi","version":"1.30.0"}'
+
 _REPLY_ID = re.compile(r'^\{"jsonrpc":"2\.0","id":(.*?),"(?:result|error)":')
 
 
@@ -105,12 +112,16 @@ def main() -> int:
         work = SCRATCH / "cmp" / f"{i:04d}"
         before = before_tree(case, SCRATCH / "cmp" / f"{i:04d}b")
         got = run_case(case, cmd_for(case, binary), work)
+        got["stdout"] = _SERVER_VERSION.sub(_ORACLE_SERVER_INFO, got["stdout"])
         verdict = mcp_refused(case, got, before) if case.get("kind") == "mcp" else None
         if verdict is not None:
             cls, problems = verdict
         else:
             cls, problems = compare(case, got, before)
-        if cls == "agree" and got["tree"] != before:
+        # A case may opt out of the guard when its own journal is broken on
+        # purpose (`lora export` reads one that holds a trace with no YAML),
+        # so Python cannot read it back whatever the binary does.
+        if cls == "agree" and got["tree"] != before and case.get("guard", True):
             guarded += 1
             problems = guard(binary, work)
             if problems:

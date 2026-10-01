@@ -1,0 +1,19 @@
+# A model chosen for a sprig agent stays in its pane record, so a restart of
+# the floor runs the agent's turns on it again. The fake sprig appends each
+# turn's argv to sprig-argv.txt; a pane that prints the file shows it.
+#!env COPPICE_SPRIG_BIN={FIXTURES}/adapters/fake-sprig.sh
+{"id":"1","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{WORK}","label":"sp","cmd_argv":["--session-dir","{WORK}/sessions","--session","s1"],"env":{"COPPICE_SPRIG_ECHO_ARGV":"{WORK}/sprig-argv.txt"}}
+{"id":"$id","ok":true,"result":{"pane":"$sp"}}
+{"id":"2","cmd":"agent.prompt","pane":"$sp","text":"first task","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$sp","state":"idle","source":"headless"}}
+{"id":"3","cmd":"agent.set_model","pane":"$sp","model":"opus-x"}
+{"id":"$id","ok":true,"result":{"pane":"$sp","model":"opus-x","when":"next turn"}}
+#!restart
+#!retry 8000
+# A restored agent reads unknown until its first event, so this prompt does not wait for idle.
+{"id":"4","cmd":"agent.prompt","pane":"$sp","text":"second task"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"5","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sh","-c","cat sprig-argv.txt; echo shown; exec sleep 600"],"label":"show","cols":200}
+{"id":"$id","ok":true,"result":{"pane":"$show"}}
+{"id":"6","cmd":"pane.wait_output","pane":"$show","contains":"--model opus-x -- second task","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}

@@ -1582,3 +1582,17 @@ def test_list_tasks_is_empty_when_the_server_refuses_the_verb(tmp_path, monkeypa
 
     monkeypatch.setattr(backend, "_call", refuse)
     assert backend.list_tasks() == []
+
+
+def test_default_socket_follows_coppice_data_rule_with_xdg_and_no_runtime_dir(
+    tmp_path, monkeypatch
+):
+    """I-1: XDG_DATA_HOME set, XDG_RUNTIME_DIR unset, ~/.opendaisugi present.
+    coppice listens under XDG_DATA_HOME; daisugi must dial the same place."""
+    home = tmp_path / "h"
+    (home / ".opendaisugi").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    xdg = tmp_path / "x"
+    env = {"XDG_DATA_HOME": str(xdg)}
+    assert default_socket_path(env) == xdg / "opendaisugi" / "coppice" / "server.sock"
+    assert default_data_dir(env) == xdg / "opendaisugi" / "coppice"

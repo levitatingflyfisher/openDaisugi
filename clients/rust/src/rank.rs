@@ -1039,7 +1039,7 @@ pub fn rankings_dir(data_dir: &str) -> String {
 
 /// `rank._read_rows`: the JSON object rows of a JSONL file, and how many
 /// lines did not read.
-fn read_rows(path: &str) -> (Vec<Object>, usize) {
+pub(crate) fn read_rows(path: &str) -> (Vec<Object>, usize) {
     let Ok(raw) = std::fs::read(path) else { return (vec![], 0) };
     let text = decode_utf8_replace(&raw).replace("\r\n", "\n").replace('\r', "\n");
     let mut rows = vec![];
@@ -1086,6 +1086,9 @@ pub struct Card {
     pub opened: Object,
     pub close: Option<Object>,
     pub answer: Option<Object>,
+    /// The runs that resumed the plan while the choice was open, each once,
+    /// in file order.
+    pub resumed: Vec<String>,
 }
 
 impl Card {
@@ -1141,11 +1144,19 @@ pub fn read_cards(data_dir: &str) -> Vec<Card> {
         if row.value("event").as_str() == Some("opened") {
             if !at.contains_key(&cid) && valid_open(&row) {
                 at.insert(cid, cards.len());
-                cards.push(Card { opened: row, close: None, answer: None });
+                cards.push(Card { opened: row, close: None, answer: None, resumed: vec![] });
             }
             continue;
         }
         let Some(&k) = at.get(&cid) else { continue };
+        if ev == "resumed" {
+            if let Some(run) = row.value("run_id").as_str() {
+                if !cards[k].resumed.iter().any(|r| r == run) {
+                    cards[k].resumed.push(run.to_string());
+                }
+            }
+            continue;
+        }
         if !["confirmed", "overridden", "ignored"].contains(&ev.as_str()) {
             continue;
         }
@@ -1284,7 +1295,12 @@ pub fn switch_cost(card: &Card, data_dir: &str, to: Option<&str>) -> Switch {
         if !run.is_empty() {
             if let (Some(rid), Value::List(down)) = (run.value("run_id").as_str(), run.value("downstream")) {
                 let set: BTreeSet<&str> = down.iter().filter_map(|d| d.as_str()).collect();
-                later = receipts(data_dir, rid).into_iter().filter(|r| set.contains(r.0.as_str())).collect();
+                let mut runs = vec![rid.to_string()];
+                runs.extend(card.resumed.iter().filter(|r| r.as_str() != rid).cloned());
+                for run in &runs {
+                    later.extend(receipts(data_dir, run).into_iter().filter(|r| set.contains(r.0.as_str())));
+                }
+                later.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
             }
         }
     }
@@ -1601,5 +1617,39 @@ mod tests {
     fn a_duplicate_id_is_refused() {
         let v = crate::gate::pyjson::loads(r#"{"ranking_id": "r", "attempts": [{"id": "a", "content_hash": "x"}, {"id": "a", "content_hash": "y"}]}"#).unwrap();
         assert_eq!(parse(&v).err().as_deref(), Some("attempt id a is used twice"));
+    }
+
+    #[test]
+    fn switch_cost_counts_the_runs_that_resumed_the_card() {
+        let dir = std::env::temp_dir().join(format!("rank-resumed-{}", std::process::id()));
+        let dd = dir.to_string_lossy().to_string();
+        std::fs::create_dir_all(dir.join("journal/rankings")).unwrap();
+        let con = rusqlite::Connection::open(dir.join("journal/index.db")).unwrap();
+        con.execute_batch(
+            "CREATE TABLE receipts (run_id TEXT, step_id TEXT, reversibility TEXT, timestamp REAL);
+             INSERT INTO receipts VALUES ('run_b', 'w', 'reversible', 10.0);
+             INSERT INTO receipts VALUES ('run_c', 'x', 'irreversible', 20.0);",
+        )
+        .unwrap();
+        drop(con);
+        let opened = r#"{"choice_id": "ch_000000000002", "ranking_id": "r0", "event": "opened", "options": {"survivors": [{"id": "a", "content_hash": "h-a"}, {"id": "b", "content_hash": "h-b"}], "eliminated": []}, "chosen": "a", "status": "provisional", "facts": {"run": {"run_id": "run_a", "step": "t", "downstream": ["w", "x"]}}, "ts": 1e12}"#;
+        let resumed = |run: &str| format!(r#"{{"choice_id": "ch_000000000002", "ranking_id": "r0", "event": "resumed", "run_id": {run}, "ts": 1.0}}"#);
+        let write = |rows: Vec<String>| {
+            std::fs::write(dir.join("journal/rankings/choices.jsonl"), rows.join("\n") + "\n").unwrap();
+            let mut cards = read_cards(&dd);
+            assert_eq!(cards.len(), 1);
+            cards.remove(0)
+        };
+        let c = write(vec![opened.into()]);
+        assert!(c.resumed.is_empty());
+        assert_eq!(switch_cost(&c, &dd, None).cost, CHEAP);
+        let c = write(vec![opened.into(), resumed("\"run_b\"")]);
+        let sc = switch_cost(&c, &dd, None);
+        assert_eq!((sc.cost, sc.undo_steps), (COSTLY, 1));
+        let c = write(vec![opened.into(), resumed("\"run_b\""), resumed("\"run_b\""), resumed("7"), resumed("\"run_c\"")]);
+        assert_eq!(c.resumed, vec!["run_b".to_string(), "run_c".to_string()]);
+        let sc = switch_cost(&c, &dd, None);
+        assert_eq!((sc.cost, sc.fired_at), (FOLLOW_UP, Some(20.0)));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

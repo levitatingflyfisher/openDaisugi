@@ -360,7 +360,12 @@ test('the roster ticker runs on the roster screen and stops on a route away', as
 
   assert.equal(liveIntervals().length, 1, 'the roster ticker did not start while showing the roster');
 
+  // Settings is a panel over the floor, so the floor and its ticker stay.
   global.location.hash = '#/settings';
+  global.window.dispatchEvent(new global.CustomEvent('coppice:route'));
+  assert.equal(liveIntervals().length, 1, 'the roster ticker stopped under the Settings panel');
+
+  global.location.hash = '#/pane/a';
   global.window.dispatchEvent(new global.CustomEvent('coppice:route'));
 
   assert.equal(liveIntervals().length, 0, 'the roster ticker kept running after a route away');
@@ -394,6 +399,7 @@ test('the floor attaches its tiles, paints frames, and hands a tile over to the 
   assert.deepEqual(attaches.map((m) => m.pane), ['w1:p2', 'w1:p1'], 'the blocked pane and the next one fill the two tiles');
   assert.equal('cols' in attaches[0], false, 'a tile attach carries a size');
   assert.equal('rows' in attaches[0], false, 'a tile attach carries a size');
+  await ack(ws, sent);
 
   ws.fire('message', { data: JSON.stringify({
     event: 'frame', pane: 'w1:p2', seq: 1, cols: 2, rows: 1, cursor: [0, 0],
@@ -413,9 +419,10 @@ test('the floor attaches its tiles, paints frames, and hands a tile over to the 
   await new Promise((r) => setImmediate(r));
   const tail = sent.slice(-2).map((m) => [m.cmd, m.pane]);
   assert.deepEqual(tail, [['pane.detach', 'w1:p2'], ['pane.attach', 'w1:p1']]);
-  assert.equal(element('screen-roster').hidden, true);
+  assert.equal(element('screen-roster').hidden, false, 'the floor stays drawn under the pane screen');
   assert.equal(element('grid-text').textContent, 'go', 'the pane screen did not start from the tile\'s grid');
 
+  await ack(ws, sent);
   global.location.hash = '#/roster';
   global.window.dispatchEvent(new global.CustomEvent('coppice:route'));
   await new Promise((r) => setImmediate(r));
@@ -425,6 +432,22 @@ test('the floor attaches its tiles, paints frames, and hands a tile over to the 
   const tileAgain = element('screen-roster').querySelector('[data-tile="w1:p1"]');
   assert.ok(tileAgain, 'the handed-back pane lost its tile');
 });
+
+// ack answers every pane.attach and pane.detach the page sent that nobody
+// answered yet. The page sends a pane's detach only after that pane's attach
+// is answered, so a test that goes on from an attach acks it first.
+const ackedBy = new WeakMap();
+async function ack(ws, sent) {
+  if (!ackedBy.has(ws)) ackedBy.set(ws, new Set());
+  const acked = ackedBy.get(ws);
+  for (const m of sent) {
+    if ((m.cmd === 'pane.attach' || m.cmd === 'pane.detach') && !acked.has(m.id)) {
+      acked.add(m.id);
+      ws.fire('message', { data: JSON.stringify({ id: m.id, ok: true, result: {} }) });
+    }
+  }
+  await new Promise((r) => setImmediate(r));
+}
 
 // firstList opens the socket, answers the first pane.list with panes, and
 // returns the recorder. Every hand-over test below starts from this.
@@ -454,13 +477,20 @@ const go = async (hash) => {
 test('leaving the floor for a tile pane never sends pane.detach for it', async () => {
   const x = { id: 'w7:x', label: 'x', state: 'working', harness: 'claude', cwd: '/w/x', ts: 1 };
   const y = { id: 'w7:y', label: 'y', state: 'working', harness: 'claude', cwd: '/w/y', ts: 1 };
-  const { sent } = await floorWith([x, y]);
+  const { ws, sent } = await floorWith([x, y]);
   assert.deepEqual(sent.filter((m) => m.cmd === 'pane.attach').map((m) => m.pane), ['w7:x', 'w7:y']);
+  await ack(ws, sent);
   await go('#/pane/w7:x');
   assert.equal(sent.filter((m) => m.cmd === 'pane.detach' && m.pane === 'w7:x').length, 0);
   assert.deepEqual(sent.filter((m) => m.cmd === 'pane.detach').map((m) => m.pane), ['w7:y']);
   assert.equal(sent.filter((m) => m.cmd === 'pane.attach' && m.pane === 'w7:x').length, 2, 'the pane screen did not send its own attach');
-  await go('#/settings');
+  // The sheet's detach waits for its attach to be answered, so a detach
+  // never overtakes it on the server.
+  await go('#/pane/w7:y');
+  assert.deepEqual(sent.filter((m) => m.cmd === 'pane.detach').map((m) => m.pane), ['w7:y'], 'the detach went before the attach was answered');
+  const own = sent.filter((m) => m.cmd === 'pane.attach' && m.pane === 'w7:x').pop();
+  ws.fire('message', { data: JSON.stringify({ id: own.id, ok: true, result: { attached: true } }) });
+  await new Promise((r) => setImmediate(r));
   assert.deepEqual(sent.filter((m) => m.cmd === 'pane.detach').map((m) => m.pane), ['w7:y', 'w7:x'], 'leaving the pane screen for Settings did not detach');
 });
 
@@ -470,12 +500,14 @@ test('returning to the floor from a pane never sends pane.detach for it', async 
   const x = { id: 'w8:x', label: 'x', state: 'working', harness: 'claude', cwd: '/w/x', ts: 1 };
   const y = { id: 'w8:y', label: 'y', state: 'working', harness: 'claude', cwd: '/w/y', ts: 1 };
   const { ws, sent } = await floorWith([x, y]);
+  await ack(ws, sent);
   await go('#/pane/w8:x');
   ws.fire('message', { data: JSON.stringify({
     event: 'frame', pane: 'w8:x', seq: 1, cols: 2, rows: 1, cursor: [0, 0],
     rows_changed: { 0: [['h', '', '', 0], ['i', '', '', 0]] },
   }) });
   assert.equal(element('grid-text').textContent, 'hi');
+  await ack(ws, sent);
   const before = sent.length;
   await go('#/roster');
   assert.equal(sent.filter((m) => m.cmd === 'pane.detach' && m.pane === 'w8:x').length, 0);
@@ -599,4 +631,35 @@ test('the pane screen answers a harness-held ask over the operator connection', 
   await new Promise((r) => setImmediate(r));
   assert.equal(posts.length, 0, 'a held ask posted to the gate channel');
   assert.deepEqual(rpcs, [{ cmd: 'agent.deny', pane: 'w1:p2', ask: 'per_1', reason: 'denied from the phone' }]);
+});
+
+// A sheet handed to the floor while its attach is unanswered: the answer
+// lands later, and nothing detaches what the floor window now holds.
+test('a desk release inside one round trip keeps the floor window attached when the answer lands', async () => {
+  const x = { id: 'w9:x', label: 'x', state: 'working', harness: 'claude', cwd: '/w/x', ts: 1 };
+  const y = { id: 'w9:y', label: 'y', state: 'working', harness: 'claude', cwd: '/w/y', ts: 1 };
+  const { ws, sent } = await floorWith([x, y]);
+  await go('#/pane/w9:x');
+  await go('#/roster');
+  const own = sent.filter((m) => m.cmd === 'pane.attach' && m.pane === 'w9:x').pop();
+  ws.fire('message', { data: JSON.stringify({ id: own.id, ok: true, result: { attached: true } }) });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(sent.filter((m) => m.cmd === 'pane.detach' && m.pane === 'w9:x').length, 0, 'the late answer detached the floor window');
+});
+
+// Settings is a panel over the floor: a route to it keeps every window
+// attached, and sends no detach.
+test('a route to Settings keeps the floor attaches and sends no detach', async () => {
+  const x = { id: 'w9:x', label: 'x', state: 'working', harness: 'claude', cwd: '/w/x', ts: 1 };
+  const y = { id: 'w9:y', label: 'y', state: 'working', harness: 'claude', cwd: '/w/y', ts: 1 };
+  const { ws, sent } = await floorWith([x, y]);
+  await ack(ws, sent);
+  const attaches = sent.filter((m) => m.cmd === 'pane.attach').length;
+  await go('#/settings');
+  await go('#/new');
+  await go('#/roster');
+  assert.equal(sent.filter((m) => m.cmd === 'pane.detach').length, 0, 'a panel detached a window');
+  assert.equal(sent.filter((m) => m.cmd === 'pane.attach').length, attaches, 'a panel attached a window again');
+  assert.equal(element('screen-roster').hidden, false);
 });

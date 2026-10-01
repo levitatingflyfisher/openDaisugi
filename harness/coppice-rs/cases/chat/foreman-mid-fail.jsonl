@@ -1,0 +1,27 @@
+# A message that reached a running turn is heard (FM-R-110). When the turn
+# then fails, the message does not run again as a turn of its own: one line
+# says it reached the turn, the failure note comes first, and no second turn
+# runs. floor.chat still marks the line "delivered mid-turn".
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env FAKE_TURN_DIR={WORK}/turns
+#!env FAKE_MID_GO={WORK}/go-mid
+{"id":"1","cmd":"floor.talk","text":"midfail"}
+{"id":"$id","ok":true,"result":{"message":"log/0","queued":1}}
+#!retry 20000
+{"id":"2","file":"{WORK}/turns/turn-0.json","count":"midfail"}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"3","cmd":"floor.talk","text":"second words","act":"a-2"}
+{"id":"$id","ok":true,"result":{"message":"log/1","queued":1}}
+{"id":"w1","write":"{WORK}/go-mid","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"5","file":"{DATA}/foreman/turns.jsonl","count":"\"status\":\"failed\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"6","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/0","role":"owner","read":true},{"id":"log/1","role":"owner","read":true,"delivery":"delivered mid-turn"},{"id":"log/2","tool":"status"},{"id":"log/3","role":"note","text":"The foreman's turn failed: claude ended with an error: the turn failed. Say it again to try again."},{"id":"log/4","role":"note","text":"Your message reached the turn before it failed."}]}}
+{"id":"7","file":"{DATA}/foreman/turns.jsonl","count":"\"mid\":[1]"}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"9","file":"{WORK}/turns/turn-1.json"}
+{"id":"$id","ok":true,"result":{"missing":true}}

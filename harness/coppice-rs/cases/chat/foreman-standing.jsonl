@@ -1,0 +1,27 @@
+# Bring your own foreman (pane mode). A pane foreman whose harness command
+# is claude gets the four tools: the floor opens the standing socket
+# tools.sock in the log dir (mode 0600) and adds --mcp-config with the relay
+# coppice foreman tools --sock to its argv. The fake claude
+# (cases/chat/fixtures/pane/claude) records its argv and, as a process of
+# the pane foreman's own tree, calls status, zoom and date through the relay:
+# status lists no workers, and zoom and date say the foreman keeps its own
+# memory. A process outside that tree (a CLI run of coppice foreman tools
+# --standing) is refused.
+#!config default = "claude"
+#!config [harness.claude]
+#!config command = "{FIXTURES}/chat/pane/claude"
+#!env FAKE_PANE_DIR={WORK}/pane
+{"id":"1","cmd":"floor.talk","text":"hello"}
+{"id":"$id","ok":true,"result":{"pane":"$f","label":"foreman","started":true,"queued":1}}
+{"id":"2","cmd":"pane.wait_output","pane":"$f","contains":"hello","timeout_ms":40000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"3","file":"{WORK}/pane/argv.json"}
+{"id":"$id","ok":true,"result":{"text":"[\n \"--mcp-config\",\n \"{\\\"mcpServers\\\":{\\\"foreman\\\":{\\\"args\\\":[\\\"foreman\\\",\\\"tools\\\",\\\"--sock\\\",\\\"{DATA}/foreman/tools.sock\\\"],\\\"command\\\":\\\"{BIN}\\\"}}}\"\n]"}}
+{"id":"4","file":"{WORK}/pane/tools.json"}
+{"id":"$id","ok":true,"result":{"text":"{\n \"False 0\": \"no workers\",\n \"False 1\": \"This foreman keeps its own memory. The floor keeps no log of its chat, so there is nothing here to open.\",\n \"False 2\": \"This foreman keeps its own memory. The floor keeps no log of its chat, so there is nothing here to open.\"\n}"}}
+{"id":"5","cli":["foreman","tools","--standing"],"stdin":"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"status\",\"arguments\":{}}}\n"}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"{\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"text\":\"refused: this socket serves the tools of one turn, to that turn's own process only.\",\"type\":\"text\"}],\"isError\":true}}\n","stderr":""}}
+{"id":"6","ls":"{DATA}/foreman"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"8","cmd":"pane.close","pane":"$f"}
+{"id":"$id","ok":true,"result":{"pane":"$f","closed":true}}

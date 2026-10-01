@@ -1,0 +1,143 @@
+# CP-R-35: the time the event ring holds events from follows the clock.
+#!mask from
+# The guarded routes: the token guard and the ban, the lists, the event
+# ring, the views, push and voice when they are off, and the ask answer
+# over the gate's files.
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "alpha"}
+{"id": "$id", "ok": true, "result": {"pane": "$a"}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g0", "http": "GET", "url": "http://{ADDR}/", "wait_ms": 8000, "same_as": "{FIXTURES}/web/static/index.html"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "k1", "http": "GET", "url": "http://{ADDR}/api/token/check"}
+{"id": "$id", "ok": true, "result": {"status": 401}}
+{"id": "k2", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "k3", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Authorization": "Bearer pinned-web-token-0001", "Origin": "null"}}
+{"id": "$id", "ok": true, "result": {"status": 403}}
+{"id": "k4", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Authorization": "bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 401}}
+{"id": "k5", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Sec-WebSocket-Protocol": "daisugi.v1, daisugi.bearer.pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "k6", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Authorization": "Bearer   pinned-web-token-0001  "}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+# A named token carries its name.
+{"id": "n1", "write": "{DATA}/web/token-names.json", "text": "{\"tokens\":[{\"name\":\"kid\",\"token\":\"kid-token-0001\"},{\"name\":\"bad name\",\"token\":\"bad-token-0001\"},{\"name\":\"empty\",\"token\":\"\"}]}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "n2", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Authorization": "Bearer kid-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "n3", "http": "GET", "url": "http://{ADDR}/api/token/check", "headers": {"Authorization": "Bearer bad-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 401}}
+# The lists.
+{"id": "l1", "http": "GET", "url": "http://{ADDR}/api/panes", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "l2", "http": "GET", "url": "http://{ADDR}/api/tasks", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "l3", "http": "GET", "url": "http://{ADDR}/api/views", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "l4", "http": "POST", "url": "http://{ADDR}/api/push/test", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 409}}
+{"id": "l5", "http": "GET", "url": "http://{ADDR}/api/voice/status", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "l6", "http": "POST", "url": "http://{ADDR}/api/voice/retry", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "l7", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe", "headers": {"Authorization": "Bearer pinned-web-token-0001", "Content-Type": "audio/wav"}, "body": "RIFF"}
+{"id": "$id", "ok": true, "result": {"status": 503}}
+# The event ring: live once its subscription is answered.
+#!retry 5000
+{"id": "e1", "http": "GET", "url": "http://{ADDR}/api/events", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "mask_headers": ["Content-Length"]}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "s1", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 4102444800.5, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "gate", "ask": {"id": "toolu_w1", "tool": "Bash", "summary": "git push origin main", "deadline": 4102444800, "tier": "undoable"}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": {"pane": "$a", "state": "blocked", "source": "gate"}}
+#!retry 5000
+{"id": "e2", "http": "GET", "url": "http://{ADDR}/api/events?since=0", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "mask_headers": ["Content-Length"]}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "*"}}
+{"id": "e3", "http": "GET", "url": "http://{ADDR}/api/events?since=-1", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "e4", "http": "GET", "url": "http://{ADDR}/api/events?since=NaN", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "e5", "http": "GET", "url": "http://{ADDR}/api/events?since=99999999999", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "mask_headers": ["Content-Length"]}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "e6", "http": "GET", "url": "http://{ADDR}/api/events?since=1e400", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+# The ask answer, over the gate's own files.
+{"id": "a1", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "not json"}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "a2", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w1\",\"decision\":\"maybe\"}"}
+{"id": "$id", "ok": true, "result": {"status": "*"}}
+{"id": "a3", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w1\",\"decision\":\"deny\"}"}
+{"id": "$id", "ok": true, "result": {"status": 409}}
+{"id": "a4", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_gone\",\"decision\":\"allow\"}"}
+{"id": "$id", "ok": true, "result": {"status": 409}}
+{"id": "f1", "write": "{WORK}/gate/asks/toolu_w1.json", "text": "{\"nonce\": \"n-1\", \"tier\": \"undoable\"}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "a5", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w1\",\"decision\":\"allow\",\"scope\":\"forever\"}"}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "a6", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer kid-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w1\",\"decision\":\"allow\",\"scope\":\"task\"}"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "a7", "file": "{WORK}/gate/answers/toolu_w1.json"}
+{"id": "$id", "ok": true, "result": {"mode": "0o600"}}
+{"id": "a8", "ls": "{WORK}/gate"}
+{"id": "$id", "ok": true, "result": "*"}
+# A permanent ask needs the pane's name.
+{"id": "s2", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 2, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "gate", "ask": {"id": "toolu_w2", "tool": "Bash", "summary": "rm -rf /", "deadline": 4102444800, "tier": "permanent"}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": {"pane": "$a", "state": "blocked", "source": "gate"}}
+{"id": "f2", "write": "{WORK}/gate/asks/toolu_w2.json", "text": "{\"nonce\": \"n-2\", \"tier\": \"undoable\"}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "a9", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w2\",\"decision\":\"allow\"}"}
+{"id": "$id", "ok": true, "result": {"status": 403}}
+{"id": "a10", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w2\",\"decision\":\"allow\",\"scope\":\"task\",\"confirm\":\"alpha\"}"}
+{"id": "$id", "ok": true, "result": {"status": 403}}
+{"id": "a11", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w2\",\"decision\":\"allow\",\"confirm\":\" alpha \",\"reason\":\"ok <then>\"}"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "a12", "file": "{WORK}/gate/answers/toolu_w2.json"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "f3", "write": "{WORK}/gate/asks/toolu_w3.json", "text": "{\"tier\": \"undoable\"}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "a13", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w3\",\"decision\":\"deny\",\"reason\":\"no\"}"}
+{"id": "$id", "ok": true, "result": {"status": 409}}
+{"id": "f4", "write": "{WORK}/gate/asks/odd_id_.json", "text": "{\"nonce\": \"n-4\"}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "a14", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"..odd/id?\",\"decision\":\"deny\",\"scope\":\"weird\"}"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "a15", "file": "{WORK}/gate/answers/odd_id_.json"}
+{"id": "$id", "ok": true, "result": "*"}
+# A list longer than 2048 bytes goes out chunked, as Go frames it.
+{"id": "pp2", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "pane number 2"}
+{"id": "$id", "ok": true, "result": {"pane": "*"}}
+{"id": "pp3", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "pane number 3"}
+{"id": "$id", "ok": true, "result": {"pane": "*"}}
+{"id": "pp4", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "pane number 4"}
+{"id": "$id", "ok": true, "result": {"pane": "*"}}
+{"id": "pp5", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "pane number 5"}
+{"id": "$id", "ok": true, "result": {"pane": "*"}}
+{"id": "pp6", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "pane number 6"}
+{"id": "$id", "ok": true, "result": {"pane": "*"}}
+{"id": "pp7", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "pane number 7"}
+{"id": "$id", "ok": true, "result": {"pane": "*"}}
+{"id": "l8", "http": "GET", "url": "http://{ADDR}/api/panes", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200, "chunked": true}}
+{"id": "l9", "http": "HEAD", "url": "http://{ADDR}/api/panes", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "l10", "http": "HEAD", "url": "http://{ADDR}/api/views", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+# The ban: three bad tokens in a minute (n3 was the first), and even a
+# good one waits.
+{"id": "b1", "http": "GET", "url": "http://{ADDR}/api/panes", "headers": {"Authorization": "Bearer wrong-1"}}
+{"id": "$id", "ok": true, "result": {"status": 401}}
+{"id": "b2", "http": "GET", "url": "http://{ADDR}/api/panes", "headers": {"Authorization": "Bearer wrong-2"}}
+{"id": "$id", "ok": true, "result": {"status": 401}}
+{"id": "b3", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer wrong-3"}, "body": "{}"}
+{"id": "$id", "ok": true, "result": {"status": 429}}
+{"id": "b4", "http": "GET", "url": "http://{ADDR}/api/panes", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 429}}
+{"id": "b5", "http": "GET", "url": "http://{ADDR}/", "same_as": "{FIXTURES}/web/static/index.html"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "b6", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{}"}
+{"id": "$id", "ok": true, "result": {"status": 429}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "lg", "log": "web:"}
+{"id": "$id", "ok": true, "result": "*"}

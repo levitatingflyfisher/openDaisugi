@@ -1,0 +1,30 @@
+pkgbase = daisugi-py
+	pkgdesc = The Python daisugi CLI, the tool-call gate the Go and Rust ports are checked against
+	pkgver = 0.43.0
+	pkgrel = 1
+	url = https://github.com/levitatingflyfisher/openDaisugi
+	arch = any
+	license = MIT
+	makedepends = git
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-hatchling
+	depends = python
+	depends = python-pydantic
+	depends = python-z3-solver
+	depends = python-networkx
+	depends = python-yaml
+	depends = python-typer
+	depends = python-click
+	depends = python-numpy
+	depends = python-tree-sitter
+	depends = python-tree-sitter-bash
+	optdepends = python-httpx: model calls over HTTP (envelope generation, orchestrate, tend on the API backend)
+	optdepends = python-mcp: daisugi-py mcp serve
+	optdepends = python-cryptography: signed pathway bundles and releases
+	optdepends = python-sounddevice: push-to-talk (daisugi-py voice ptt), in the AUR
+	optdepends = opendaisugi: the Go daisugi and daisugi-rs, to check this one against
+	source = openDaisugi::git+https://github.com/levitatingflyfisher/openDaisugi.git#commit=
+	sha256sums = SKIP
+
+pkgname = daisugi-py

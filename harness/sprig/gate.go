@@ -133,3 +133,9 @@ func (e *Executor) ToolNames() []string {
 	sort.Strings(names)
 	return names
 }
+
+// Has reports whether the executor has a tool of that name.
+func (e *Executor) Has(name string) bool {
+	_, ok := e.tools[name]
+	return ok
+}

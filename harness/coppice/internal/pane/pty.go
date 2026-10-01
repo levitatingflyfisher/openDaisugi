@@ -25,6 +25,8 @@ type SpawnOpts struct {
 	PaneID string
 	// DataDir is the server's data directory. It becomes COPPICE_DATA_DIR.
 	DataDir string
+	// Wrap is a command prefix the process runs behind (the fence).
+	Wrap []string
 }
 
 // sessionMarker is true for a variable that names the session a process
@@ -157,7 +159,8 @@ func StartPTY(o SpawnOpts, g *Grid) (*PTY, error) {
 	if o.Rows <= 0 {
 		o.Rows = 40
 	}
-	cmd := exec.Command(o.Argv[0], o.Argv[1:]...)
+	name, args := Wrapped(o.Wrap, o.Argv[0], o.Argv[1:])
+	cmd := exec.Command(name, args...)
 	cmd.Dir = o.Cwd
 	cmd.Env = BuildEnv(os.Environ(), o.Env, o.Sock, o.PaneID, o.DataDir)
 

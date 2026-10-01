@@ -116,3 +116,22 @@ def test_subprocess_output_is_bounded_against_flood():
     assert len(r.stdout.encode()) <= 4096 + len("\n... [truncated]")
     assert "[truncated]" in r.stdout
     assert elapsed < 8  # bounded + killed promptly, nowhere near the 10s timeout
+
+
+def test_output_a_background_writer_sends_after_the_exit_is_read_to_eof():
+    """The shell exits at once; a background child writes three seconds
+    later. The reader keeps reading to EOF within the step's time."""
+    ex = SubprocessExecutor()
+    result = ex.run(_step("(sleep 3; echo late) & echo early"), timeout_s=10, max_output_bytes=1024)
+    assert result.rc == 0
+    assert result.stdout == "early\nlate\n"
+    assert result.timed_out is False
+
+
+def test_a_writer_that_outlives_the_step_time_keeps_the_output_read_so_far():
+    ex = SubprocessExecutor()
+    start = time.monotonic()
+    result = ex.run(_step("sleep 30 & echo early"), timeout_s=3, max_output_bytes=1024)
+    assert result.rc == 0
+    assert result.stdout == "early\n"
+    assert time.monotonic() - start < 8.0

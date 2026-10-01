@@ -99,3 +99,13 @@ def test_write_then_load_tier1_config(tmp_path):
 
 def test_load_tier1_config_absent_returns_none(tmp_path):
     assert load_configured_tier1(tmp_path) is None
+
+
+def test_a_raised_error_reason_holds_no_key():
+    class Raises:
+        async def generate_envelope(self, task, *, context=None):
+            raise RuntimeError("call failed at http://u:pw@h/v1 with sk-ABCDMIDDLEPART1234WXYZ")
+
+    res = asyncio.run(qualify_local_model(Raises(), probe_tasks=["a"], threshold=0.8))
+    assert res.outcomes == [("a", "error")]
+    assert "MIDDLE" not in res.reasons[0] and "pw@" not in res.reasons[0]

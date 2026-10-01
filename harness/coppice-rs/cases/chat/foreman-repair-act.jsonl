@@ -1,0 +1,32 @@
+# A tree repair keeps the act ids and the call log (FM-R-68, FM-R-65, FM-R-66).
+# A spawn start line with no end and a bad tree line are written by hand, the
+# way a crash and a bad edit leave them, and the server restarts. The chat
+# opens (it is not moved aside), repairs the tree, notes the spawn once, does
+# not run it again, and still knows the act id of the first sentence.
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env COPPICE_SPRIG_BIN={FIXTURES}/chat/fake-turn-sprig.py
+#!env FAKE_TURN_DIR={WORK}/turns
+{"id": "1", "cmd": "floor.talk", "text": "build the thing", "act": "act-1"}
+{"id": "$id", "ok": true, "result": {"mode": "chat", "message": "log/0", "queued": 1, "label": "foreman"}}
+#!retry 30000
+{"id": "2", "file": "{DATA}/foreman/turns.jsonl", "count": "\"status\":\"ok\""}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+{"id": "3", "write": "{DATA}/foreman/calls.jsonl", "text": "{\"call\":\"c9.1\",\"phase\":\"start\",\"tool\":\"spawn\",\"args\":\"{\\\"project\\\":\\\"x\\\",\\\"brief\\\":\\\"y\\\"}\",\"at\":\"2026-10-13T10:00:03Z\"}\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "4", "write": "{DATA}/foreman/tree/2026-10-13.jsonl", "text": "garbage {\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+{"id": "5", "cmd": "floor.chat", "since": "log/2"}
+{"id": "$id", "ok": true, "result": {"messages": [{"id": "log/3", "role": "note", "text": "spawn({\"project\":\"x\",\"brief\":\"y\"}) started at 2026-10-13T10:00:03Z, outcome unknown. It is not run again. Check the workers before you ask for it again."}]}}
+{"id": "6", "file": "{DATA}/foreman/calls.jsonl", "count": "\"outcome\":\"unknown\""}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+{"id": "7", "file": "{DATA}/foreman/calls.jsonl", "count": "\"phase\":\"start\""}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+{"id": "8", "file": "{DATA}/foreman/tree/2026-10-13.jsonl", "count": "garbage"}
+{"id": "$id", "ok": true, "result": {"count": 0}}
+{"id": "9", "cmd": "floor.talk", "text": "build the thing", "act": "act-1"}
+{"id": "$id", "ok": true, "result": {"mode": "chat", "message": "log/0", "queued": 0, "label": "foreman", "already": true}}
+{"id": "10", "cli": ["foreman", "view"]}
+{"id": "$id", "ok": true, "result": "*"}

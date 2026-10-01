@@ -449,3 +449,78 @@ func TestTheFooterNamesTheTalkKeyWhenThereIsRoom(t *testing.T) {
 		t.Fatalf("typing footer %q", got)
 	}
 }
+
+func TestFetchLineSaysHowFarTheModelIsInMegabytes(t *testing.T) {
+	got := fetchLine(map[string]any{"fetch": map[string]any{"done": 41000000.0, "total": 160000000.0}})
+	if got != "Getting the speech model, 41 of 160 MB." {
+		t.Fatalf("%q", got)
+	}
+	if got := fetchLine(map[string]any{"fetch": map[string]any{"done": 499999.0, "total": 1500000.0}}); got != "Getting the speech model, 0 of 2 MB." {
+		t.Fatalf("rounding: %q", got)
+	}
+	if got := fetchLine(map[string]any{"state": "starting"}); got != "" {
+		t.Fatalf("no fetch: %q", got)
+	}
+}
+
+// The failure this names: the first start was a silent minute. The talk key
+// says how far the model is, follows it, and ends with Voice is ready.
+func TestTheTalkKeyFollowsTheModelDownloadThenSaysVoiceIsReady(t *testing.T) {
+	fakeRecorder(t)
+	_, url := newFakeVoice(t, "vtok", "later")
+	s := newVoiceTestServer(t, url, tokenFile(t, "vtok"))
+	createShellPane(t, s.Socket(), "sh", "-c", "echo ready; cat")
+	wasAsk, wasPoll, wasEvery := askVoice, pollVoice, voicePoll
+	askVoice = func(string) (*voiceTarget, string) { return nil, "Getting the speech model, 41 of 160 MB." }
+	steps := []voiceLine{{"Getting the speech model, 100 of 160 MB.", false}, {"Voice is ready.", true}}
+	var mu sync.Mutex
+	pollVoice = func(string) (string, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		l := steps[0]
+		if len(steps) > 1 {
+			steps = steps[1:]
+		}
+		return l.text, l.done
+	}
+	voicePoll = 20 * time.Millisecond
+	t.Cleanup(func() { askVoice, pollVoice, voicePoll = wasAsk, wasPoll, wasEvery })
+	pw, out, _, done := voiceFloor(t, s, 80)
+	io.WriteString(pw, "\x1c")
+	// The poll reaches "ready" within a few ticks, so look for the fetch
+	// line in every frame drawn, not only the last one.
+	if !waitFor(t, 5*time.Second, func() bool {
+		return strings.Contains(flat(out.text()), "Getting the speech model, 41 of 160 MB.")
+	}) {
+		t.Fatalf("no fetch line: %q", flat(lastFrame(out.text())))
+	}
+	if !waitFor(t, 5*time.Second, func() bool { return strings.Contains(flat(lastFrame(out.text())), "Voice is ready.") }) {
+		t.Fatalf("no ready line: %q", flat(lastFrame(out.text())))
+	}
+	pw.Close()
+	<-done
+}
+
+// A voice that is starting with no model to fetch is followed too, not left
+// for a second press.
+func TestTheTalkKeyFollowsAStartingVoiceWithNoFetch(t *testing.T) {
+	fakeRecorder(t)
+	_, url := newFakeVoice(t, "vtok", "later")
+	s := newVoiceTestServer(t, url, tokenFile(t, "vtok"))
+	createShellPane(t, s.Socket(), "sh", "-c", "echo ready; cat")
+	wasAsk, wasPoll, wasEvery := askVoice, pollVoice, voicePoll
+	askVoice = func(string) (*voiceTarget, string) { return nil, startingLine }
+	pollVoice = func(string) (string, bool) { return "Voice is ready.", true }
+	voicePoll = 20 * time.Millisecond
+	t.Cleanup(func() { askVoice, pollVoice, voicePoll = wasAsk, wasPoll, wasEvery })
+	pw, out, _, done := voiceFloor(t, s, 80)
+	io.WriteString(pw, "\x1c")
+	if !waitFor(t, 5*time.Second, func() bool { return strings.Contains(flat(lastFrame(out.text())), "Voice is ready.") }) {
+		t.Fatalf("a starting voice was not followed: %q", flat(lastFrame(out.text())))
+	}
+	if strings.Contains(flat(lastFrame(out.text())), "then press") {
+		t.Fatalf("asked for a second press: %q", flat(lastFrame(out.text())))
+	}
+	pw.Close()
+	<-done
+}

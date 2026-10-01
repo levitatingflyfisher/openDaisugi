@@ -48,14 +48,31 @@ pub struct Decision {
     pub reason: String,
 }
 
+/// `_strip_reminders`: cut every `<system-reminder>...</system-reminder>`
+/// block. An unclosed tag stays.
+fn strip_reminders(text: &str) -> String {
+    const OPEN: &str = "<system-reminder>";
+    const CLOSE: &str = "</system-reminder>";
+    let mut out = String::new();
+    let mut pos = 0;
+    while let Some(start) = text[pos..].find(OPEN) {
+        let start = pos + start;
+        let Some(end) = text[start..].find(CLOSE) else { break };
+        out.push_str(&text[pos..start]);
+        pos = start + end + CLOSE.len();
+    }
+    out.push_str(&text[pos..]);
+    out
+}
+
 /// `_message_text`: a str content, or the text of its text blocks joined
-/// with spaces.
+/// with spaces, with reminder blocks cut.
 pub fn message_text(content: Option<&Value>) -> PyR<String> {
     match content {
         None => Ok(String::new()),
-        Some(Value::Str(s)) => Ok(s.clone()),
+        Some(Value::Str(s)) => Ok(strip_reminders(s)),
         Some(Value::List(l)) => {
-            let mut out: Vec<&str> = vec![];
+            let mut out: Vec<String> = vec![];
             for b in l {
                 let Value::Obj(o) = b else { continue };
                 if !eq_str(o.get("type"), "text") {
@@ -64,7 +81,12 @@ pub fn message_text(content: Option<&Value>) -> PyR<String> {
                 match o.get("text") {
                     None => {}
                     Some(p) if !p.truthy() => {}
-                    Some(Value::Str(s)) => out.push(s),
+                    Some(Value::Str(s)) => {
+                        let s = strip_reminders(s);
+                        if !s.is_empty() {
+                            out.push(s);
+                        }
+                    }
                     Some(_) => return Err(Raise::Raise),
                 }
             }

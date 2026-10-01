@@ -1,0 +1,32 @@
+# A message sent while a turn runs reaches that turn at its next tool call
+# (FM-R-101). The fake claude waits for a go file, then calls the status tool.
+# The second message was queued meanwhile: the tool result ends with it in a
+# message-now block, the reply carries it, no second turn runs, and floor.chat
+# says "queued" before and "delivered mid-turn" after.
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env FAKE_TURN_DIR={WORK}/turns
+#!env FAKE_MID_GO={WORK}/go-mid
+{"id":"1","cmd":"floor.talk","text":"mid"}
+{"id":"$id","ok":true,"result":{"message":"log/0","queued":1}}
+#!retry 20000
+{"id":"2","file":"{WORK}/turns/turn-0.json","count":"mid"}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"3","cmd":"floor.talk","text":"second words","act":"a-2"}
+{"id":"$id","ok":true,"result":{"message":"log/1","queued":1}}
+{"id":"4","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/0","role":"owner","read":true},{"id":"log/1","role":"owner","read":false,"delivery":"queued"}]}}
+{"id":"w1","write":"{WORK}/go-mid","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"5","cmd":"floor.chat","since":"log/1"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/2","tool":"status"},{"id":"log/3","role":"agent","text":"tools zoom,date,spawn,status; status gave error=False: no workers\n<message-now id=\"NONCE\">\nsecond words\n</message-now>"}]}}
+{"id":"6","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/0","role":"owner","read":true},{"id":"log/1","role":"owner","read":true,"delivery":"delivered mid-turn"},{"id":"log/2"},{"id":"log/3"}]}}
+{"id":"7","cmd":"floor.talk","text":"second words","act":"a-2"}
+{"id":"$id","ok":true,"result":{"message":"log/1","already":true}}
+{"id":"8","file":"{DATA}/foreman/turns.jsonl","count":"\"status\":\"ok\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"9","file":"{WORK}/turns/turn-1.json"}
+{"id":"$id","ok":true,"result":{"missing":true}}

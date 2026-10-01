@@ -226,7 +226,7 @@ from opendaisugi.install import InstallStep, Layer
 def test_install_step_carries_layer_and_target(tmp_path):
     step = InstallStep(
         layer=Layer.SKILL,
-        description="Symlink opendaisugi-checklist skill",
+        description="Copy opendaisugi-checklist skill",
         target=tmp_path / "skills",
     )
     assert step.layer is Layer.SKILL

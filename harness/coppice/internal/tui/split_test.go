@@ -20,7 +20,7 @@ import (
 )
 
 func TestWindowCountFitsReadableWindowsBesideTheRail(t *testing.T) {
-	for cols, want := range map[int]int{80: 0, 118: 0, 120: 1, 199: 1, 200: 2, 280: 2, 290: 3, 400: 4} {
+	for cols, want := range map[int]int{80: 0, 87: 0, 88: 1, 118: 1, 120: 1, 199: 1, 200: 2, 280: 2, 290: 3, 400: 4} {
 		if got := windowCount(cols); got != want {
 			t.Fatalf("windowCount(%d) = %d, want %d", cols, got, want)
 		}

@@ -423,3 +423,28 @@ async def test_mcp_recall_answer_tool_falls_open_when_search_extra_missing(tmp_p
         "answer": None,
         "provenance": None,
     }
+
+
+def test_concurrent_appends_keep_the_ring_whole(tmp_path) -> None:
+    """finish() runs on worker threads: eviction must not lose or tear entries."""
+    import threading
+
+    from opendaisugi.gateway_answers import AnswerEntry, AnswerStore
+
+    store = AnswerStore(path=tmp_path / "answers.jsonl", max_entries=10)
+    errors: list[Exception] = []
+
+    def work(n: int) -> None:
+        for i in range(30):
+            try:
+                store.append(AnswerEntry(f"s{n}-{i}", "t", "a", float(i)))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+    threads = [threading.Thread(target=work, args=(n,)) for n in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert len(store.load()) == 10

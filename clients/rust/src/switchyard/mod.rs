@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use crate::gate::paths::strerror;
 use crate::gate::py::text::{self, repr};
 use crate::gate::pyjson::{self, loads_py, Object, Value};
-use toml::{parse, NotRead, Table, Tv};
+use toml::{parse, Table, TomlDecodeError, Tv};
 
 pub const BINARY_NAME: &str = "switchyard-server";
 pub const PINNED_TAG: &str = "v0.3.0";
@@ -261,19 +261,24 @@ pub fn py_os_error(e: &std::io::Error, path: &str) -> String {
 /// Why a route could not be metered.
 #[derive(Debug)]
 pub enum RouteErr {
-    /// SwitchyardConfigError: the file does not name a meterable route.
+    /// SwitchyardConfigError: the file cannot be read, or does not name a
+    /// meterable route.
     Meter(String),
-    /// A file outside this binary's TOML reader (GW-9).
-    NotRead(NotRead),
+    /// int()'s ValueError past Python's 4300-digit limit, which
+    /// route_targets_from_toml does not catch: a traceback.
+    ValueError(String),
 }
 
 const TIER_KEYS: [[&str; 2]; 2] = [["capable_target", "efficient_target"], ["strong_target", "weak_target"]];
 
-fn read_toml(path: &str) -> Result<Result<Table, NotRead>, std::io::Error> {
+/// `tomllib.loads(Path(path).read_text(encoding="utf-8"))`: the text
+/// decoded as UTF-8 (a UnicodeDecodeError otherwise) with universal
+/// newlines, then parsed.
+fn read_toml(path: &str) -> Result<Result<Table, TomlDecodeError>, std::io::Error> {
     let raw = std::fs::read(path)?;
     match String::from_utf8(raw) {
-        Ok(t) => Ok(parse(&t)),
-        Err(_) => Ok(Err(NotRead("the file is not UTF-8".into()))),
+        Ok(t) => Ok(parse(&t.replace("\r\n", "\n").replace('\r', "\n"))),
+        Err(_) => Ok(Err(TomlDecodeError("'utf-8' codec can't decode the file".into(), false))),
     }
 }
 
@@ -297,7 +302,8 @@ fn tier_pair(route: &Table) -> Option<[&'static str; 2]> {
 pub fn route_targets(path: &str, route_id: &str) -> Result<(String, String), RouteErr> {
     let doc = match read_toml(path) {
         Err(e) => return Err(RouteErr::Meter(format!("cannot read {path}: {}", py_os_error(&e, path)))),
-        Ok(Err(nr)) => return Err(RouteErr::NotRead(nr)),
+        Ok(Err(e)) if e.is_value_error() => return Err(RouteErr::ValueError(e.0)),
+        Ok(Err(e)) => return Err(RouteErr::Meter(format!("cannot read {path}: {e}"))),
         Ok(Ok(d)) => d,
     };
     let no_route = || RouteErr::Meter(format!("{path} has no route with id {}", repr(route_id)));
@@ -351,6 +357,10 @@ fn tv_repr(v: &Tv, none: bool) -> String {
         Tv::Bool(true) => "True".into(),
         Tv::Bool(false) => "False".into(),
         Tv::Int(n) => n.to_string(),
+        Tv::BigInt(s) => s.clone(),
+        Tv::DateTime(d) => d.repr(),
+        Tv::Float(f) if f.is_nan() => "nan".into(),
+        Tv::Float(f) if f.is_infinite() => if *f > 0.0 { "inf" } else { "-inf" }.into(),
         Tv::Float(f) => pyjson::py_float_repr(*f),
         Tv::Arr(a) => format!("[{}]", a.iter().map(|x| tv_repr(x, false)).collect::<Vec<_>>().join(", ")),
         Tv::Table(t) => format!(
@@ -365,6 +375,7 @@ fn tv_truthy(v: &Tv) -> bool {
         Tv::Str(s) => !s.is_empty(),
         Tv::Bool(b) => *b,
         Tv::Int(n) => *n != 0,
+        Tv::BigInt(_) | Tv::DateTime(_) => true,
         Tv::Float(f) => *f != 0.0,
         Tv::Arr(a) => !a.is_empty(),
         Tv::Table(t) => !t.keys.is_empty(),
@@ -374,6 +385,7 @@ fn tv_truthy(v: &Tv) -> bool {
 fn tv_str(v: &Tv) -> String {
     match v {
         Tv::Str(s) => s.clone(),
+        Tv::DateTime(d) => d.str(),
         _ => tv_repr(v, false),
     }
 }
@@ -403,11 +415,16 @@ pub fn auth_from_toml(path: &str, route_id: &str) -> Option<Auth> {
     for key in pair {
         let Some(Tv::Str(name)) = route.get(key) else { return None };
         let Some(Tv::Table(target)) = targets.get(name) else { return None };
-        let Some(Tv::Str(cname)) = target.get("llm_client") else { return None };
-        let client = match clients.get(cname) {
-            None => &empty,
-            Some(Tv::Table(c)) => c,
-            Some(_) => return None,
+        // clients.get(name, {}): a name of another hashable type is no
+        // client; a list or a table raises TypeError (None here).
+        let client = match target.get("llm_client") {
+            None | Some(Tv::Arr(_) | Tv::Table(_)) => return None,
+            Some(Tv::Str(cname)) => match clients.get(cname) {
+                None => &empty,
+                Some(Tv::Table(c)) => c,
+                Some(_) => return None,
+            },
+            Some(_) => &empty,
         };
         let mode = match client.get("api_key_env") {
             Some(env) if tv_truthy(env) => key_mode(&tv_str(env)),

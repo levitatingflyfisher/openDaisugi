@@ -1,0 +1,24 @@
+# Voice the coppice server manages, on the fake daisugi: the web server
+# asks voice.status, and sends a clip to the URL it names.
+#!env PATH={FIXTURES}/cli/voicebin:/usr/bin:/bin
+# CP-R-30: the voice server's URL names a port the kernel picked.
+#!mask url
+#!config [voice]
+#!config args = ["--extra", "1"]
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!retry 8000
+{"id": "r", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "ready"}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "s1", "http": "GET", "url": "http://{ADDR}/api/voice/status", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t1", "http": "POST", "url": "http://{ADDR}/api/voice/transcribe", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "a clip"}
+{"id": "$id", "ok": true, "result": {"status": 501}}
+{"id": "m1", "write": "{HOME}/fake-voice-mode", "text": "die\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "s2", "http": "POST", "url": "http://{ADDR}/api/voice/retry", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}

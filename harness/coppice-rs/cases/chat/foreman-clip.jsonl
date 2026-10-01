@@ -1,0 +1,31 @@
+# A compaction that gives no line clips its source and never blocks the tree
+# (FM-R-64). The compactor runs the fake sprig (fixtures/fake-turn-sprig.py)
+# with no tools. A message with REFUSE-ME gets an empty answer and the stop
+# reason refusal; one with BALK-ME gets a non-zero exit and a complaint that
+# is no outage: the first failure only delays the node, and the next ask that fails the same way clips it (FM-R-64). The fake claude echoes the text, so its reply node fails and clips the same way. Each node waits the chat's 30 s between its two asks, so the view check waits up to 90 s. Each node is the marker [clipped] and the start of the
+# text, one line, and a short message after them is built as usual, so the
+# view covers all of them. The fake claude echoes each message, so its long
+# replies are clipped the same way.
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env COPPICE_SPRIG_BIN={FIXTURES}/chat/fake-turn-sprig.py
+#!env FAKE_TURN_DIR={WORK}/turns
+{"id":"1","cmd":"floor.talk","text":"REFUSE-ME word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word "}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/0","queued":1,"label":"foreman"}}
+#!retry 30000
+{"id":"2","file":"{DATA}/foreman/turns.jsonl","count":"\"status\":\"ok\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"3","cmd":"floor.talk","text":"BALK-ME term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term "}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/2","queued":1,"label":"foreman"}}
+#!retry 30000
+{"id":"4","file":"{DATA}/foreman/turns.jsonl","count":"\"status\":\"ok\""}
+{"id":"$id","ok":true,"result":{"count":2}}
+{"id":"5","cmd":"floor.talk","text":"a short word after them"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/4","queued":1,"label":"foreman"}}
+#!retry 30000
+{"id":"6","file":"{DATA}/foreman/turns.jsonl","count":"\"status\":\"ok\""}
+{"id":"$id","ok":true,"result":{"count":3}}
+#!retry 90000
+{"id":"7","cli":["foreman","view"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"<chat>\n0+1|[clipped] REFUSE-ME word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word wo\n1+1|[clipped] heard: REFUSE-ME word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word \n2+1|[clipped] BALK-ME term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term\n3+1|[clipped] heard: BALK-ME term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term term te\n4+1|a short word after them\n5+1|heard: a short word after them\n</chat>\n","stderr":""}}

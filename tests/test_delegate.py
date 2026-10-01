@@ -226,7 +226,7 @@ def test_run_delegate_ok_and_journal(tmp_path, monkeypatch):
         ("rel.py", "q", "bulk_read", "absolute path"),
         (None, "q", "bulk_read", "absolute path"),
         ("/x", "", "bulk_read", "question is empty"),
-        ("/x", "q", "code_write", "is not built"),
+        ("/x", "q", "edit", "is not built"),
         ("/nonexistent/x", "q", "bulk_read", "cannot be opened"),
     ],
 )

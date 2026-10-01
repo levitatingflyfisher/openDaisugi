@@ -28,8 +28,8 @@ from opendaisugi import (
 from opendaisugi.subagent import DelegationDenied
 
 # A local model as the subagent's brain (cheap/free tokens). Uncomment to wire:
-# from opendaisugi.tier1 import LiteLLMTier1Provider
-# LOCAL = LiteLLMTier1Provider("qwen2.5-1.5b", base_url="http://localhost:8080/v1")
+# from opendaisugi.tier1 import HTTPTier1Provider
+# LOCAL = HTTPTier1Provider(model="local", base_url="http://localhost:8080/v1")
 LOCAL = None
 
 

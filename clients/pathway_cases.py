@@ -356,7 +356,7 @@ CREATE TABLE pathways (
 def lay_out_db(path: Path, spec: dict[str, Any], home: str = "") -> None:
     """Write a database with Python's sqlite3: the current schema (or the
     legacy one) and the rows given, column by column. {HOME} in a text
-    value is the scratch HOME."""
+    value is the scratch HOME; {"blob": hex} is a BLOB."""
     from opendaisugi.pathway_store import _SCHEMA
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -364,7 +364,14 @@ def lay_out_db(path: Path, spec: dict[str, Any], home: str = "") -> None:
     con.executescript(LEGACY_SCHEMA if spec.get("schema") == "legacy" else _SCHEMA)
     for row in spec.get("rows", []):
         cols = list(row)
-        vals = [unsparse(row[c]) if c == "task_embedding_json" else row[c] for c in cols]
+        vals = [
+            bytes.fromhex(row[c]["blob"])
+            if isinstance(row[c], dict) and "blob" in row[c]
+            else unsparse(row[c])
+            if c == "task_embedding_json"
+            else row[c]
+            for c in cols
+        ]
         vals = [v.replace("{HOME}", home) if isinstance(v, str) and home else v for v in vals]
         con.execute(
             f"INSERT INTO pathways ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals
@@ -374,7 +381,8 @@ def lay_out_db(path: Path, spec: dict[str, Any], home: str = "") -> None:
 
 
 def dump_db(path: Path) -> dict[str, Any]:
-    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    # The path as a URI, escaped: a "?", "#" or "%" in it is part of the name.
+    con = sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro", uri=True)
     try:
         schema = [r[0] for r in con.execute("SELECT sql FROM sqlite_master ORDER BY name")]
         cur = con.execute("SELECT * FROM pathways ORDER BY rowid")
@@ -387,6 +395,8 @@ def dump_db(path: Path) -> dict[str, Any]:
                     v = sparse(v)
                 elif isinstance(v, float):
                     v = {"float": repr(v)}
+                elif isinstance(v, bytes):
+                    v = {"blob": v.hex()}
                 row[c] = v
             rows.append(row)
     finally:
@@ -712,6 +722,131 @@ def build_cli_cases() -> list[dict[str, Any]]:
             )
         ),
     )
+
+    # PW-6: a plan step given as a string is decoded as coerce_step decodes
+    # it: JSON, else a Python literal.
+    def string_steps(*steps: str) -> str:
+        return json.dumps({"id": "p", "source": "s", "task": "t", "steps": list(steps)})
+
+    json_step = json.dumps({"id": "s1", "type": "shell", "command": "echo hi"})
+    lit_step = (
+        r"""{'id': 's2', 'type': 'file_read', 'path': '/w/a' ".txt", 'depends_on': ('s1',), """
+        r"""'metadata': {'n': 0x10, 'big': 123456789012345678901234567890, 'ok': True, """
+        r"""'no': None, 'esc': '\t\u00e9\x41\101', 'raw': r'\d+', 'l': [1, -2.5, (3,)]}}"""
+    )
+    for name, steps in [
+        (
+            "show plan string step triple quotes",
+            ("{'id': 's', 'type': 'shell', 'command': '''a\nb'''}",),
+        ),
+        ("show plan string step not a step", ("echo hi",)),
+        ("show plan string step unknown type", ("{'id': 's', 'type': 'nope'}",)),
+        ("show plan string step invalid", ("{'id': 's', 'type': 'shell'}",)),
+        ("show plan string step bad literal", ("{'id': 's', 'type': 'shell', 'command': x}",)),
+        (
+            "show plan string step float inf",
+            ("{'id': 's', 'type': 'shell', 'command': 'c', 'metadata': {'f': 1e400}}",),
+        ),
+    ]:
+        add(
+            name,
+            ["pathways", "show", "pw_0001", "--json"],
+            before=db(dict(r1, plan_template_json=string_steps(*steps))),
+        )
+    add(
+        "show plan string steps",
+        ["pathways", "show", "pw_0001", "--json"],
+        before=db(dict(r1, plan_template_json=string_steps(json_step, lit_step))),
+    )
+    # PW-6: numbers past 64 bits in a stored plan and envelope.
+    big = "123456789012345678901234567890"
+    big_env = (
+        r1["envelope_json"]
+        .replace('"max_output_size_mb":10', '"max_output_size_mb":' + big)
+        .replace(
+            '"postconditions":[]',
+            '"postconditions":[{"type":"exit_code","expected":-'
+            + big
+            + '},{"type":"file_size_range","path":"/work/a","min":0,"max":'
+            + big
+            + "}]",
+        )
+    )
+    big_plan = (
+        '{"id":"p","source":"s","task":"t","steps":[{"id":"s1","type":"shell",'
+        '"command":"make","metadata":{"n":' + big + ',"l":[-' + big + ",1]}},"
+        '{"id":"s2","type":"sim_reset","seed":' + big + "}]}"
+    )
+    add(
+        "show big ints",
+        ["pathways", "show", "pw_0001", "--json"],
+        before=db(dict(r1, envelope_json=big_env, plan_template_json=big_plan)),
+    )
+    add(
+        "show big ints text",
+        ["pathways", "show", "pw_0001"],
+        before=db(dict(r1, envelope_json=big_env, plan_template_json=big_plan)),
+    )
+    for name, step in [
+        ("show plan string step warns", r"{'id': 's', 'type': 'shell', 'command': 'grep \d'}"),
+        (
+            "show plan string step set",
+            "{'id': 's', 'type': 'shell', 'command': 'c', 'metadata': {'s': {1, 2}}}",
+        ),
+    ]:
+        add(
+            name,
+            ["pathways", "show", "pw_0001", "--json"],
+            before=db(dict(r1, plan_template_json=string_steps(step))),
+            go_refuses=True,
+        )
+
+    # PW-6: BLOB columns, read as Python's sqlite3 gives them (bytes).
+    def blob(v: Any) -> dict[str, str]:
+        return {"blob": (v if isinstance(v, bytes) else str(v).encode("utf-8")).hex()}
+
+    def blob_db(**cols: Any) -> dict[str, Any]:
+        spec = row_spec(r1)
+        spec.update(cols)
+        return {DB: {"db": {"schema": "current", "rows": [spec]}}}
+
+    every = {c: blob(r1[c]) for c in r1 if c not in ("structure_signature",) and r1[c] is not None}
+    every["structure_signature"] = blob("shell→file_read")
+    for name, cols in [
+        ("every column", every),
+        (
+            "utf-16 json",
+            {
+                "task_embedding_json": blob(
+                    b"\xff\xfe" + r1["task_embedding_json"].encode("utf-16-le")
+                ),
+                "source_trace_ids_json": blob(r1["source_trace_ids_json"].encode("utf-32-be")),
+                "parameters_json": blob(b"\xef\xbb\xbf[]"),
+            },
+        ),
+        ("empty parameters", {"parameters_json": blob(b"")}),
+        ("id not utf-8", {"id": blob(b"pw_\xff")}),
+        ("int not utf-8", {"hit_count": blob(b"\xff")}),
+        ("json not decodable", {"source_trace_ids_json": blob(b"\xff\xfe[")}),
+        ("envelope not utf-8", {"envelope_json": blob(b"\xff" + r1["envelope_json"].encode())}),
+    ]:
+        add(f"list blob {name}", ["pathways", "list", "--json"], before=blob_db(**cols))
+    add(
+        "show blob every column", ["pathways", "show", "pw_0001", "--json"], before=blob_db(**every)
+    )
+    # PW-6: a data directory that holds '?', or starts "file:": a plain
+    # file name to Python's sqlite3.
+    for name, d in [
+        ("question mark", "a?b"),
+        ("file prefix", "file:c"),
+        ("percent and hash", "d%41#e"),
+    ]:
+        add(
+            f"list data dir {name}",
+            ["pathways", "list", "--json", "--data-dir", d],
+            before={d + "/pathways.db": {"db": {"schema": "current", "rows": [row_spec(r1)]}}},
+        )
+        add(f"list data dir {name} new", ["pathways", "list", "--data-dir", d])
     add(
         "list data dir is file",
         ["pathways", "list", "--data-dir", "f"],
@@ -851,6 +986,26 @@ def build_cli_cases() -> list[dict[str, Any]]:
     good = pathway(6, "import me ✓", [0.25, 0.5], hit_count=2)
     good_b = export(good, "json")
     add("import json", ["pathways", "import", "b.json"], before={"b.json": {"text": good_b}})
+    # PW-6: steps given as Python literals (repr of each step's dict).
+    good_s = json.loads(good_b)
+    tmpl = good_s["pathway"]["plan_template"]
+    tmpl["steps"] = [repr(st) for st in tmpl["steps"]]
+    # PW-6: numbers past 64 bits in the bundle's plan and envelope.
+    good_big = json.loads(good_b)
+    gp = good_big["pathway"]
+    gp["plan_template"]["steps"][0]["metadata"] = {"n": 2**100, "l": [-(2**70), 1]}
+    gp["envelope"]["permissions"]["max_output_size_mb"] = 2**90
+    gp["envelope"]["postconditions"] = [{"type": "exit_code", "expected": 2**80}]
+    add(
+        "import big ints",
+        ["pathways", "import", "b.json"],
+        before={"b.json": {"text": json.dumps(good_big, indent=2)}},
+    )
+    add(
+        "import string steps",
+        ["pathways", "import", "b.json"],
+        before={"b.json": {"text": json.dumps(good_s, indent=2)}},
+    )
     add(
         "import json into rows",
         ["pathways", "import", "b.json"],
@@ -881,6 +1036,27 @@ def build_cli_cases() -> list[dict[str, Any]]:
         "import verify fails",
         ["pathways", "import", "d.json"],
         before={"d.json": {"text": export(deny, "json")}},
+    )
+    # An llm_check asks a model at import. No key and no `claude` on PATH:
+    # the HTTP backend fails closed with no request; the old backend name
+    # fails before any call.
+    judged = pathway(8, "judged", [1.0])
+    judged.envelope.invariants = [
+        Invariant(type="judge", description="d", expr={"op": "llm_check", "rule": "kind"})
+    ]
+    judged_b = {"j.json": {"text": export(judged, "json")}}
+    add("import llm_check no key", ["pathways", "import", "j.json"], before=judged_b)
+    add(
+        "import llm_check renamed backend",
+        ["pathways", "import", "j.json"],
+        before=judged_b,
+        env={"OPENDAISUGI_LLM_BACKEND": "litellm", "ANTHROPIC_API_KEY": "sk-test"},
+    )
+    add(
+        "import llm_check refused",
+        ["pathways", "import", "j.json"],
+        before=judged_b,
+        env={"ANTHROPIC_API_KEY": "sk-test", "ANTHROPIC_API_BASE": "http://127.0.0.1:1"},
     )
     add(
         "import newer schema",
@@ -1461,6 +1637,30 @@ def build_find_cases(real: Path | None) -> list[dict[str, Any]]:
             "matcher": "bogus",
             "rows": lex_rows(texts[:3]),
             "queries": qs(queries[:2]),
+        }
+    )
+
+    # PW-6: BLOB columns in find. Bytes never equal the current model's
+    # name (stale), an empty BLOB is a legacy wildcard, and an embedding
+    # BLOB is read by json.loads in the encoding it detects.
+    def blob_rows():
+        rows = lex_rows(texts)
+        hexed = lambda b: {"blob": b.hex()}  # noqa: E731 - local helper
+        rows[0]["embedding_model"] = hexed(b"lexical-hash-v1")
+        rows[1]["embedding_model"] = hexed(b"")
+        rows[1]["embedding_model_version"] = hexed(b"")
+        rows[2]["task_embedding_json"] = hexed(unsparse(rows[2]["task_embedding_json"]).encode())
+        rows[3]["task_embedding_json"] = hexed(
+            b"\xff\xfe" + unsparse(rows[3]["task_embedding_json"]).encode("utf-16-le")
+        )
+        return rows
+
+    C.append(
+        {
+            "name": "lexical blob columns",
+            "matcher": "lexical",
+            "rows": blob_rows(),
+            "queries": qs(queries[:6]),
         }
     )
     stale = lex_rows(texts[:8]) + lex_rows(texts[8:], model="all-MiniLM-L6-v2", start=8)

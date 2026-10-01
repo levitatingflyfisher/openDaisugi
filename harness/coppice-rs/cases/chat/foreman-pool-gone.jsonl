@@ -1,0 +1,53 @@
+# A paused job whose entry is removed from pools.toml goes on (FM-R-108). It
+# is not left stopped for good: the foreman says so in one line and the job
+# runs to its end.
+#!config projects = ["{WORK}/proj"]
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_TURN_DIR={WORK}/turns
+#!env FAKE_TREE_LOG={WORK}/tree.log
+#!env FAKE_TREE_START={WORK}/start.log
+#!env FAKE_TREE_GO={WORK}/go
+#!env FAKE_BUNDLE_FILE={WORK}/bundle.json
+#!env FAKE_TREE_GRANDCHILD=1
+#!env COPPICE_TEST_HOOKS=1
+#!env COPPICE_IMPORT_POLL_MS=100
+{"id":"w1","write":"{WORK}/proj/README","text":"a project\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w2","write":"{HOME}/.config/coppice/envelopes/proj.json","text":"{\"envelope\": {\"tools\": [\"read\"], \"paths\": [\"<repo>\"]}, \"tokens\": 5000, \"turns\": 3}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w3","write":"{WORK}/bundle.json","text":"{\"bgp\":{\"wire\":\"openai\",\"base_url\":\"http://127.0.0.1:1/v1\",\"model\":\"m3\",\"key_env\":null,\"key\":null}}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w4","write":"{HOME}/.config/coppice/pools.toml","text":"idle_after = \"1s\"\n[pool.bgp]\nmodel = \"m3\"\n[[pool.bgp.entries]]\nname = \"z\"\nbase_url = \"http://127.0.0.1:31/v1\"\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cli":["foreman","queue","add","--project","proj","--brief","ran-bg","--profile","bgp"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"added: the server takes it as a background job within a few seconds\n","stderr":""}}
+#!retry 20000
+{"id":"2","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/0","role":"work","text":"[queue add] started proj-1 on z"}]}}
+#!retry 20000
+{"id":"3","file":"{WORK}/start.log","count":"started ran-bg http://127.0.0.1:31/v1"}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"4","cli":["foreman","queue"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"queue:\n  proj-1 | proj | bgp | background | running | z\nentries:\n  bgp/z | 1 of 1 slots | busy\n","stderr":""}}
+{"id":"5","cmd":"floor.talk","text":"spawn proj profile=bgp ran-fg"}
+{"id":"$id","ok":true,"result":{"message":"log/1"}}
+#!retry 20000
+{"id":"6","cmd":"floor.chat","since":"log/1"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/2","role":"work","text":"[proj-1] paused on z to make room for foreground work; it resumes when the entry has been idle for 1s"},{"id":"log/3","tool":"spawn"},{"id":"log/4","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-2 on z"}]}}
+{"id":"7","cli":["foreman","queue"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"queue:\n  proj-1 | proj | bgp | background | paused | z\n  proj-2 | proj | bgp | foreground | running | z\nentries:\n  bgp/z | 1 of 1 slots | busy\n","stderr":""}}
+{"id":"w5","write":"{HOME}/.config/coppice/pools.toml","text":"idle_after = \"1s\"\n[pool.bgp]\nmodel = \"m3\"\n[[pool.bgp.entries]]\nname = \"y\"\nbase_url = \"http://127.0.0.1:32/v1\"\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"8","cmd":"floor.chat","since":"log/4"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/5","role":"work","text":"[proj-1] resumed on z: it is no longer in pools.toml, so it runs on and is not paused again"}]}}
+{"id":"w6","write":"{WORK}/go/ran-fg","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w7","write":"{WORK}/go/ran-bg","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"9","cli":["foreman","queue"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"queue: empty\nentries:\n  bgp/y | 0 of 1 slots | free\n","stderr":""}}

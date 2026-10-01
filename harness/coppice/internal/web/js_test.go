@@ -75,11 +75,14 @@ func TestJSUnitTestsPass(t *testing.T) {
 			t.Fatalf("%s declares no test( calls at the start of a line", f)
 		}
 
-		out, err := exec.Command("node", "--test", f).CombinedOutput()
+		out, err := exec.Command("node", "--test", "--test-reporter=tap", f).CombinedOutput()
 		if err != nil {
 			t.Fatalf("node --test %s failed:\n%s", f, out)
 		}
 
+		// TAP is asked for by name: newer node versions print the "spec"
+		// summary by default, which has no "# fail 0" line (node 26 does).
+		//
 		// A file whose tests were accidentally commented out, or whose
 		// import throws, still exits 0 as long as nothing ran red, so the
 		// exit code alone is not proof the suite ran. Require an explicit

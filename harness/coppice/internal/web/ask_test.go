@@ -284,3 +284,70 @@ func TestAnswerDenyIgnoresScope(t *testing.T) {
 		t.Fatalf("answer %v", body)
 	}
 }
+
+// GR-R-10: the answer writer checks answers/ with no link followed before
+// it writes, and reads the ask as the gate does. Each test plants one link
+// and needs the refusal; before this change each of them wrote through it.
+
+func TestAnswerWritesNothingThroughASymlinkedAnswersDir(t *testing.T) {
+	root := t.TempDir()
+	writeAsk(t, root, "toolu_01", "n1")
+	elsewhere := t.TempDir()
+	if err := os.Symlink(elsewhere, filepath.Join(root, "answers")); err != nil {
+		t.Fatal(err)
+	}
+	err := AskChannel{Root: root}.Answer(Reply{ToolUseID: "toolu_01", Decision: "deny"})
+	if err == nil {
+		t.Fatal("an answer was written through a symlinked answers/")
+	}
+	if ents, _ := os.ReadDir(elsewhere); len(ents) != 0 {
+		t.Fatalf("wrote through the link: %v", ents)
+	}
+}
+
+func TestAnswerReplacesALinkAtTheAnswerNameAndWritesNothingThroughIt(t *testing.T) {
+	root := t.TempDir()
+	writeAsk(t, root, "toolu_01", "n1")
+	if err := os.Mkdir(filepath.Join(root, "answers"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(root, "answers", "toolu_01.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := (AskChannel{Root: root}).Answer(Reply{ToolUseID: "toolu_01", Decision: "deny"}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "keep" {
+		t.Fatalf("written through the link: %q", b)
+	}
+	if fi, err := os.Lstat(filepath.Join(root, "answers", "toolu_01.json")); err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("the link was not replaced: %v %v", fi, err)
+	}
+}
+
+func TestAnswerReadsNoAskThatIsLinkedSharedOrHardLinked(t *testing.T) {
+	for name, plant := range map[string]func(p string){
+		"symlink": func(p string) {
+			real := filepath.Join(t.TempDir(), "real.json")
+			os.Rename(p, real)
+			os.Symlink(real, p)
+		},
+		"group writable": func(p string) { os.Chmod(p, 0o620) },
+		"hard link":      func(p string) { os.Link(p, p+".second") },
+	} {
+		root := t.TempDir()
+		writeAsk(t, root, "toolu_01", "n1")
+		plant(filepath.Join(root, "asks", "toolu_01.json"))
+		err := AskChannel{Root: root}.Answer(Reply{ToolUseID: "toolu_01", Decision: "deny"})
+		if !errors.Is(err, ErrNoAsk) {
+			t.Fatalf("%s: err = %v, want ErrNoAsk", name, err)
+		}
+		if _, serr := os.Stat(filepath.Join(root, "answers")); serr == nil {
+			t.Fatalf("%s: an answer directory was made for an ask the gate would not read", name)
+		}
+	}
+}

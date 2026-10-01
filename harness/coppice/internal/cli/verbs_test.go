@@ -283,3 +283,26 @@ func TestAgentAllowTakesAPaneAnAskAndAReason(t *testing.T) {
 		t.Fatal("wire verb")
 	}
 }
+
+// agent forget, resume and list --ended are the pane verbs under the screen word.
+func TestAgentEndedVerbsSendAsPane(t *testing.T) {
+	for _, c := range []struct {
+		verb string
+		args []string
+		want bool
+	}{
+		{"forget", []string{"w1:p1"}, true},
+		{"forget", []string{"--ended"}, true},
+		{"resume", []string{"w1:p1"}, true},
+		{"list", []string{"--ended"}, true},
+		{"list", nil, false},
+	} {
+		params, _, errMsg := parseVerbArgs("agent", c.verb, c.args)
+		if errMsg != "" {
+			t.Fatalf("agent %s %v: %s", c.verb, c.args, errMsg)
+		}
+		if got := agentAsPane("agent", c.verb, params); got != c.want {
+			t.Fatalf("agent %s %v as pane = %v, want %v", c.verb, c.args, got, c.want)
+		}
+	}
+}

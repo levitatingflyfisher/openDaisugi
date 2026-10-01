@@ -191,6 +191,11 @@ daisugi gate status     # armed state + registered envelopes
 over-denying gate has an agent locked up, the operator's way out does not
 itself pass through the gate.
 
+These verbs are the operator's. The gate denies an agent's shell line that
+runs `gate disarm`, `gate arm`, `gate serve`, `install` or `graft
+install|remove`, in every mode, before the envelope. Run them in your own
+terminal.
+
 ## Latency, measured
 
 The hook command emitted by `gate settings` is `python -m opendaisugi.gate`

@@ -35,11 +35,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from opendaisugi.datahome import data_home
 from opendaisugi.models import ActionPlan, Envelope, VerificationResult, Violation
 
 _log = logging.getLogger("opendaisugi.verifier_dispatch")
 
-DEFAULT_GATE_ROOT = Path.home() / ".opendaisugi" / "gate"
+DEFAULT_GATE_ROOT = data_home() / "gate"
 LAST_DISPATCH_NAME = "last_dispatch.json"
 
 

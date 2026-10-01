@@ -63,12 +63,35 @@ type Decision struct {
 	Reason         string
 }
 
+// stripReminders is _strip_reminders: cut every <system-reminder>...</system-reminder>
+// block. An unclosed tag stays.
+func stripReminders(text string) string {
+	const open, closeTag = "<system-reminder>", "</system-reminder>"
+	var out strings.Builder
+	pos := 0
+	for {
+		start := strings.Index(text[pos:], open)
+		if start < 0 {
+			break
+		}
+		start += pos
+		end := strings.Index(text[start:], closeTag)
+		if end < 0 {
+			break
+		}
+		out.WriteString(text[pos:start])
+		pos = start + end + len(closeTag)
+	}
+	out.WriteString(text[pos:])
+	return out.String()
+}
+
 // messageText is _message_text: a str content, or the text of its text
-// blocks joined with spaces.
+// blocks joined with spaces, with reminder blocks cut.
 func messageText(content any) (string, error) {
 	switch c := content.(type) {
 	case string:
-		return c, nil
+		return stripReminders(c), nil
 	case []any:
 		var parts []any
 		for _, b := range c {
@@ -86,6 +109,9 @@ func messageText(content any) (string, error) {
 			s, ok := p.(string)
 			if !ok {
 				return "", errRaise
+			}
+			if s = stripReminders(s); s == "" {
+				continue
 			}
 			out = append(out, s)
 		}

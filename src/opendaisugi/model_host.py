@@ -195,11 +195,30 @@ def _probe_ollama(
 # Extension keys some OpenAI compatible servers attach to a /v1/models
 # entry. No published standard covers this, so this is best effort only.
 # See tests/fixtures/model_host/SOURCES.txt.
-_OPENAI_CONTEXT_KEYS = ("context_length", "context_window", "max_model_len", "n_ctx_train")
+#
+# ``n_ctx_train`` is not here on purpose. llama-server reports it, but it is the
+# length the model was trained on, not the window the server serves.
+# llama-server's served window is ``meta.n_ctx`` on the entry, read below, and
+# ``default_generation_settings.n_ctx`` on GET /props.
+_OPENAI_CONTEXT_KEYS = ("context_length", "context_window", "max_model_len")
+
+
+def _props_context(cl: "httpx.Client", base: str, timeout_s: float, reach: _Reach) -> "int | None":
+    """llama-server's served window, from GET /props, else None."""
+    resp = _send(cl, reach, "GET", f"{base}/props", timeout=timeout_s)
+    if resp is None or resp.status_code != 200:
+        return None
+    try:
+        data = resp.json()
+    except Exception:
+        return None
+    settings = data.get("default_generation_settings") if isinstance(data, dict) else None
+    value = settings.get("n_ctx") if isinstance(settings, dict) else None
+    return value if isinstance(value, int) else None
 
 
 def _probe_openai(
-    cl: "httpx.Client", base: str, timeout_s: float, reach: _Reach
+    cl: "httpx.Client", base: str, timeout_s: float, reach: _Reach, prefer: "str | None" = None
 ) -> "_Probed | None":
     resp = _send(cl, reach, "GET", f"{base}/v1/models", timeout=timeout_s)
     if resp is None or resp.status_code != 200:
@@ -215,6 +234,11 @@ def _probe_openai(
         return None
     models = [e["id"] for e in entries if isinstance(e, dict) and e.get("id")]
     chosen = models[0] if models else None
+    if prefer and models:
+        # The caller names a model: use its entry when the server lists it. A
+        # provider prefix such as ``openai/`` is ignored.
+        bare = prefer.partition("/")[2]
+        chosen = next((m for m in models if m == prefer or (bare and m == bare)), chosen)
     context_window = None
     for e in entries:
         if isinstance(e, dict) and e.get("id") == chosen:
@@ -223,7 +247,14 @@ def _probe_openai(
                 if isinstance(value, int):
                     context_window = value
                     break
+            meta = e.get("meta")
+            if context_window is None and isinstance(meta, dict):
+                value = meta.get("n_ctx")
+                if isinstance(value, int):
+                    context_window = value
             break
+    if context_window is None and chosen is not None:
+        context_window = _props_context(cl, base, timeout_s, reach)
     return _Probed(models=models, chosen=chosen, context_window=context_window)
 
 
@@ -257,6 +288,26 @@ def _probe_anthropic(
 
 
 _PROBERS = {"ollama": _probe_ollama, "openai": _probe_openai, "anthropic": _probe_anthropic}
+
+
+def endpoint_context(
+    endpoint: str, model: "str | None" = None, *, timeout_s: float = 3.0
+) -> "int | None":
+    """The window an OpenAI compatible ``/v1`` endpoint serves, else None.
+
+    One best-effort read of ``/v1/models`` (then ``/props``) at the server root
+    of ``endpoint``. Any failure is None: the number is a report, not a gate.
+    """
+    try:
+        import httpx
+
+        base = endpoint.rstrip("/")
+        base = base.removesuffix("/v1")
+        with httpx.Client() as cl:
+            result = _probe_openai(cl, base, timeout_s, _Reach(), model)
+    except Exception:  # noqa: BLE001 - a probe that fails reports nothing
+        return None
+    return result.context_window if result is not None else None
 
 
 def probe(

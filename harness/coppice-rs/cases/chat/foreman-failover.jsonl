@@ -1,0 +1,32 @@
+# Failover across accounts of one model ([foreman] turn_profiles, FM-R-45 to
+# FM-R-54). The chain is desk then work, both serving m1. The fake sprig
+# answers HTTP 429 for a key that starts sk-out, so desk is out: the turn
+# runs on work, and the chat gets one note (its text holds a clock time, so
+# the case does not read it; the unit tests do). The next turn skips desk while it cools, with
+# no second note. failover.json holds the chain: desk cooling with the
+# reason, work ready, and the last turn on work.
+#!config [foreman]
+#!config mode = "chat"
+#!config turn_profiles = ["desk", "work"]
+#!config turn_model = "m1"
+#!env COPPICE_SPRIG_BIN={FIXTURES}/chat/fake-turn-sprig.py
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_BUNDLE_FILE={WORK}/bundle.json
+{"id":"w1","write":"{WORK}/bundle.json","text":"{\"desk\":{\"wire\":\"anthropic\",\"base_url\":null,\"model\":\"m1\",\"key\":\"sk-out-0001\"},\"work\":{\"wire\":\"anthropic\",\"base_url\":null,\"model\":\"m1\",\"key\":\"sk-work-0001\"}}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"floor.talk","text":"one"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/0","queued":1,"label":"foreman"}}
+#!retry 20000
+{"id":"2","file":"{DATA}/foreman/turns.jsonl","count":"\"status\":\"ok\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"3","cmd":"floor.talk","text":"two"}
+{"id":"$id","ok":true,"result":{"message":"log/3"}}
+#!retry 20000
+{"id":"4","cmd":"floor.chat","since":"log/3"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/4","role":"agent","text":"sprig heard: two"}]}}
+{"id":"5","file":"{DATA}/foreman/failover.json","count":"\"state\":\"cooling\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"6","file":"{DATA}/foreman/failover.json","count":"\"reason\":\"HTTP 429\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"7","file":"{DATA}/foreman/failover.json","count":"\"last_ran\":\"work\""}
+{"id":"$id","ok":true,"result":{"count":1}}

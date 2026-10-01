@@ -1,0 +1,63 @@
+# Asks held for a foreman. A task names a foreman pane. An undoable ask of
+# a pane in that task is held: the foreman hears it first, and may deny it.
+# A permanent ask is not held, but the foreman still hears of it. The
+# operator steps come first, since a connection that says hello as a pane
+# stays a pane. Pane ids: w1:p1 boss, w1:p2 kid, w1:p3 kid2.
+#!watch state,note
+#!settle 600
+{"id":"1","cmd":"task.create","label":"build","cwd":"{FIXTURES}"}
+{"id":"$id","ok":true,"result":{"task":"$build","worktree":""}}
+{"id":"2","cmd":"task.create","label":"ship","cwd":"{FIXTURES}"}
+{"id":"$id","ok":true,"result":{"task":"$ship","worktree":""}}
+{"id":"3","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"],"label":"boss"}
+{"id":"$id","ok":true,"result":{"pane":"$boss"}}
+{"id":"4","cmd":"pane.create","task":"$build","cmd_argv":["/bin/sleep","600"],"label":"kid"}
+{"id":"$id","ok":true,"result":{"pane":"$kid"}}
+{"id":"5","cmd":"pane.create","task":"$ship","cmd_argv":["/bin/sleep","600"],"label":"kid2"}
+{"id":"$id","ok":true,"result":{"pane":"$kid2"}}
+{"id":"6","cmd":"task.set_foreman","task":"$build","pane":"$boss"}
+{"id":"$id","ok":true,"result":{"task":"$build","foreman":"$boss"}}
+{"id":"7","cmd":"task.set_foreman","task":"$ship","pane":"$boss"}
+{"id":"$id","ok":true,"result":{"task":"$ship","foreman":"$boss"}}
+{"id":"8","cmd":"task.set_foreman","task":"$ship","pane":"w9:p9"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"w9:p9\". Run: coppice pane list"}}
+{"id":"9","cmd":"pane.report_state","pane":"$kid","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$kid","state":"blocked","source":"gate","ask":{"id":"toolu_02","tool":"Write","summary":"src/main.py","deadline":4102444800,"tier":"undoable"},"detail":"verdict=ask"}}
+{"id":"$id","ok":true,"result":{"pane":"$kid","state":"blocked","source":"gate"}}
+{"id":"10","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$boss"},{"id":"$kid","state":"blocked","held":{"hold":"h1","by":"w1:p1","foreman_label":"boss","task":"$build","task_label":"build","ask":"toolu_02"}},{"id":"$kid2"}],"path":"*"}}
+# A task whose blocked pane's ask a foreman holds folds as working: it
+# waits on its foreman, not on the operator.
+{"id":"10t","cmd":"task.list","scope":"$build"}
+{"id":"$id","ok":true,"result":{"tasks":[{"id":"$build","state":"working","panes":["$kid"]}],"path":["floor","build"]}}
+{"id":"11","cmd":"pane.report_state","pane":"$kid2","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$kid2","state":"blocked","source":"gate","ask":{"id":"toolu_03","tool":"Bash","summary":"rm -rf build/","deadline":4102444800},"detail":"verdict=ask"}}
+{"id":"$id","ok":true,"result":{"pane":"$kid2","state":"blocked","source":"gate"}}
+{"id":"12","cmd":"pane.report_state","pane":"$kid2","event":{"v":1,"ts":2,"session_id":"s","harness":"claude-code","pane":"$kid2","state":"blocked","source":"gate","ask":{"id":"toolu_04","tool":"Write","summary":"a.txt","deadline":4102444800,"tier":"undoable"},"detail":"verdict=ask"}}
+{"id":"$id","ok":true,"result":{"pane":"$kid2","state":"blocked","source":"gate"}}
+{"id":"13","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":{"working":2,"needing_you":0}}
+{"id":"14","cmd":"task.set_foreman","task":"$ship","pane":""}
+{"id":"$id","ok":true,"result":{"task":"$ship","foreman":""}}
+{"id":"15","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":{"working":1,"needing_you":1}}
+{"id":"16","cmd":"agent.get","pane":"$kid"}
+{"id":"$id","ok":true,"result":{"pane":"$kid","state":"blocked","ask":{"id":"toolu_02"}}}
+{"id":"17","cmd":"pane.report_state","pane":"$boss","event":{"v":1,"ts":3,"session_id":"s","harness":"claude-code","pane":"$boss","state":"idle","source":"gate","detail":"Stop"}}
+{"id":"$id","ok":true,"result":{"pane":"$boss","state":"idle","source":"gate"}}
+{"id":"18","cmd":"pane.wait_output","pane":"$boss","contains":"coppice: hold h1: pane w1:p2","timeout_ms":5000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"19","cmd":"hello","role":"pane","pane":"$boss"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$boss"}}
+{"id":"20","cmd":"agent.allow","pane":"$kid","ask":"h1"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"a pane can propose. It cannot allow."}}
+{"id":"21","cmd":"agent.deny","pane":"$kid2","ask":"toolu_03"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"a pane can propose. It cannot allow."}}
+{"id":"22","cmd":"agent.deny","pane":"$kid","ask":"h1"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"no pending ask \"toolu_02\". The gate timed out, or someone answered it."}}
+{"id":"23","cmd":"agent.deny","pane":"$kid","ask":"toolu_02"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"no pending ask \"toolu_02\". The gate timed out, or someone answered it."}}
+{"id":"24","cmd":"floor.notes"}
+{"id":"$id","ok":true,"result":{"notes":"*"}}
+{"id":"25","cmd":"pane.close","pane":"$boss"}
+{"id":"$id","ok":true,"result":{"pane":"$boss","closed":true}}
+{"id":"26","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$kid","state":"blocked"},{"id":"$kid2","state":"blocked"}],"path":"*"}}

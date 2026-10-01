@@ -214,8 +214,9 @@ def test_probe_explicit_kind_skips_the_cascade():
         return httpx.Response(200, json=_load("openai_models.json"))
 
     probe("box", 8080, kind="openai", client=_mock_client(handler))
-    # The probe never touched /api/tags.
-    assert calls == ["/v1/models"]
+    # The probe never touched /api/tags. The fixture names no window, so the
+    # one fallback is llama-server's GET /props.
+    assert calls == ["/v1/models", "/props"]
 
 
 def test_probe_rejects_an_unsupported_kind():

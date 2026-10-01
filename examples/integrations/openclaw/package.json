@@ -8,7 +8,7 @@
     "demo": "node demo_scenario.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "1.30.1"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -24,7 +24,7 @@ func newAgentServer(t *testing.T) *Server {
 	return s
 }
 
-const paneCreate = `{"id":"1","cmd":"pane.create","cwd":"%s","cmd_argv":["sh","-c","sleep 5"],` +
+const paneCreate = `{"id":"1","cmd":"pane.create","cwd":"%s","cmd_argv":["sh","-c","exec sleep 600"],` +
 	`"kind":"pty","label":"auth fix","cols":40,"rows":10}`
 
 func gateBlockedLine(pane string) string {
@@ -176,15 +176,12 @@ func TestAgentPromptWithWaitReturnsTheResolvedState(t *testing.T) {
 	// exit before agent.prompt's own livePane() check ever runs - watchExit
 	// then wins the race, the tree already shows the pane closed, and
 	// agent.prompt fails with pane_closed before it ever reaches the wait.
-	// Confirmed by running the package suite under load (go test -race
-	// -count=1, repeated): flaked roughly one run in three, always with that
-	// exact pane_closed message, never a different failure. The sleep below
-	// keeps the process alive well past the moment agent.prompt writes to
-	// it, then lets it exit into the done event the wait is for; 0.3s is a
-	// deliberately generous margin over the box's observed timing, not the
-	// minimum that happened to pass here.
+	// A fixed `sleep 0.3` before the exit lost the same race under load
+	// (4 of 7 runs on real disk). The shell now exits only once it has
+	// read the prompt's line, so it is alive when agent.prompt writes to it
+	// and its exit is the done the wait is for, at any speed.
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 0.3; exit 0"],"kind":"pty"}`,
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","read line; exit 0"],"kind":"pty"}`,
 		`{"id":"2","cmd":"agent.prompt","pane":"w1:p1","text":"hello","wait":true,"until":"done","timeout_ms":5000}`)
 	if !got[1].OK {
 		t.Fatalf("agent.prompt --wait failed: %+v", got[1].Error)
@@ -202,8 +199,10 @@ func TestAgentPromptWithWaitReturnsTheResolvedState(t *testing.T) {
 func TestAgentPromptAndAgentWaitOmitAskWhenThereIsNone(t *testing.T) {
 	s := newAgentServer(t)
 	cwd := t.TempDir()
+	// The shell exits only once it has read the prompt's line, so the
+	// prompt never meets a pane that already closed.
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 0.3; exit 0"],"kind":"pty"}`,
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","read line; exit 0"],"kind":"pty"}`,
 		`{"id":"2","cmd":"agent.prompt","pane":"w1:p1","text":"hello","wait":true,"until":"done","timeout_ms":5000}`)
 	if !got[1].OK {
 		t.Fatalf("agent.prompt --wait failed: %+v", got[1].Error)
@@ -371,7 +370,7 @@ func TestAgentGetShowsAnExpiredAskAsWorking(t *testing.T) {
 	s := newAgentServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 2"],"kind":"pty"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`)
 	if !got[0].OK {
 		t.Fatalf("pane.create failed: %+v", got[0].Error)
 	}
@@ -402,7 +401,7 @@ func TestAgentWaitForWorkingReturnsAtOnceWhenAnAskHasExpired(t *testing.T) {
 	s := newAgentServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 2"],"kind":"pty"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`)
 	if !got[0].OK {
 		t.Fatalf("pane.create failed: %+v", got[0].Error)
 	}
@@ -435,7 +434,7 @@ func TestAgentWaitReturnsPromptlyWhenTheClientDisconnects(t *testing.T) {
 	s := newAgentServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 5"],"kind":"pty"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`)
 	if !got[0].OK {
 		t.Fatalf("pane.create failed: %+v", got[0].Error)
 	}
@@ -491,7 +490,7 @@ func TestRefreshLiveInfoNeverPublishesASnapshotFromBeforeAConcurrentClose(t *tes
 	s := newAgentServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 5"],"kind":"pty"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`)
 	if !got[0].OK {
 		t.Fatalf("pane.create failed: %+v", got[0].Error)
 	}
@@ -540,7 +539,7 @@ func TestTwoConcurrentWaitersOnTheSamePaneEachGetTheirOwnOutcome(t *testing.T) {
 	s := newAgentServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 5"],"kind":"pty"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`)
 	if !got[0].OK {
 		t.Fatalf("pane.create failed: %+v", got[0].Error)
 	}
@@ -726,7 +725,7 @@ func TestAgentReadAfterCloseIsNoSuchPane(t *testing.T) {
 	s := newAgentServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 5"],"kind":"pty"}`,
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`,
 		`{"id":"2","cmd":"pane.close","pane":"w1:p1"}`,
 		`{"id":"3","cmd":"agent.read","pane":"w1:p1"}`)
 	if !got[1].OK {
@@ -901,7 +900,7 @@ func TestReportStateAnswersFastEvenWithAWedgedSubscriber(t *testing.T) {
 	s := newAgentServer(t)
 	cwd := t.TempDir()
 	got := roundTrip(t, s,
-		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","sleep 5"],"kind":"pty"}`)
+		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c","exec sleep 600"],"kind":"pty"}`)
 	if !got[0].OK {
 		t.Fatalf("pane.create failed: %+v", got[0].Error)
 	}

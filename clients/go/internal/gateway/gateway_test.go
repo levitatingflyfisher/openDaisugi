@@ -141,3 +141,24 @@ func TestServerStreamsAndJournalsAfterDisconnect(t *testing.T) {
 	}
 	t.Fatal("the turn was not journaled after the client left")
 }
+
+func TestSplitPanePath(t *testing.T) {
+	const floor = "0123456789abcdef"
+	for _, c := range []struct{ in, floor, pane, rest string }{
+		{"/pane/" + floor + "/w1:p2/v1/messages", floor, "w1:p2", "/v1/messages"},
+		{"/pane/" + floor + "/w12:p345/v1/chat/completions", floor, "w12:p345", "/v1/chat/completions"},
+		{"/pane/" + floor + "/w1:p2", floor, "w1:p2", "/"},
+		{"/v1/messages", "", "", "/v1/messages"},
+		{"/pane/0123456789ABCDEF/w1:p2/v1/messages", "", "", "/pane/0123456789ABCDEF/w1:p2/v1/messages"},
+		{"/pane/0123456789abcde/w1:p2/v1/messages", "", "", "/pane/0123456789abcde/w1:p2/v1/messages"},
+		{"/pane/" + floor + "/w1:p2x/v1/messages", "", "", "/pane/" + floor + "/w1:p2x/v1/messages"},
+		{"/pane/" + floor + "/w1:p/v1/messages", "", "", "/pane/" + floor + "/w1:p/v1/messages"},
+		{"/pane/" + floor + "/w1234567890:p1/v1/messages", "", "", "/pane/" + floor + "/w1234567890:p1/v1/messages"},
+		{"/x/pane/" + floor + "/w1:p2/v1/messages", "", "", "/x/pane/" + floor + "/w1:p2/v1/messages"},
+	} {
+		f, p, r := SplitPanePath(c.in)
+		if f != c.floor || p != c.pane || r != c.rest {
+			t.Errorf("SplitPanePath(%q) = %q %q %q, want %q %q %q", c.in, f, p, r, c.floor, c.pane, c.rest)
+		}
+	}
+}

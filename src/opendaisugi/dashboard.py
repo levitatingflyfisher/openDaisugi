@@ -30,6 +30,15 @@ from typing import Callable, TextIO
 from opendaisugi.modules import _STATE_KEY, detect_stages
 
 
+def _parakeet_ok() -> bool:
+    """Whether the Parakeet model is usable. voice is imported here, not at
+    the top: exporter, a daisugi module, imports this file, and no daisugi
+    module may import voice (tests/test_layer_boundary.py)."""
+    from opendaisugi.voice.models import parakeet_usable
+
+    return parakeet_usable()
+
+
 @dataclass
 class Gauge:
     """One live reading for a stage. ``value`` is pre-formatted for display."""
@@ -199,7 +208,7 @@ def render_dashboard(
     g = console.glyphs() if plain is None else (console.ASCII_BOX if plain else console.BOX)
     flow = g["flow"]
     if stages is None:
-        stages = detect_stages(data_dir)
+        stages = detect_stages(data_dir, parakeet_ok=_parakeet_ok())
     if metrics is None:
         metrics = collect_metrics(data_dir)
 
@@ -249,7 +258,7 @@ def dashboard_json(data_dir: Path) -> str:
     A strict superset of :func:`opendaisugi.modules.wiring_json` — one contract
     for a future Prometheus/OTel exporter to read, not a parallel schema.
     """
-    stages = detect_stages(data_dir)
+    stages = detect_stages(data_dir, parakeet_ok=_parakeet_ok())
     metrics = collect_metrics(data_dir)
     out = []
     for st in stages:
@@ -283,7 +292,9 @@ def run_live(
         stream.write(render_dashboard(data_dir) + "\n")
         return
 
-    stages = detect_stages(data_dir)  # resolve the map once (advisor: not per tick)
+    stages = detect_stages(
+        data_dir, parakeet_ok=_parakeet_ok()
+    )  # resolve the map once (advisor: not per tick)
     i = 0
     while iterations is None or i < iterations:
         frame = render_dashboard(

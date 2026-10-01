@@ -200,6 +200,12 @@ type Record struct {
 	CacheCreation  *big.Int
 	// Elapsed is elapsed_ms: the turn's time in the proxy, or nil.
 	Elapsed *float64
+	// Pane and Floor are the coppice pane and floor the turn came from.
+	// The journal line has these two keys only when they are set.
+	Pane, Floor string
+	// TurnID and Reason are the knn router's row id and one-line reason.
+	// The journal line has these keys only for a turn routed in knn mode.
+	TurnID, Reason string
 }
 
 // recordTurn is record_turn with created_at stamped now (UTC seconds).
@@ -235,7 +241,52 @@ func (r Record) JSON() string {
 	} else {
 		o.Set("elapsed_ms", nil)
 	}
+	if r.Pane != "" {
+		o.Set("pane", r.Pane).Set("floor", r.Floor)
+	}
+	if r.TurnID != "" {
+		o.Set("turn_id", r.TurnID)
+	}
+	if r.Reason != "" {
+		o.Set("reason", r.Reason)
+	}
 	return pyjson.Dumps(o, true)
 }
 
 func bigInt(n *big.Int) pyjson.Int { return pyjson.Int{Text: n.String()} }
+
+// PriceMessage is router_report's price of one transcript message: the
+// four buckets at the model's list price, or at the fallback price with
+// known false when the table does not name the model.
+func PriceMessage(model string, in, out, cr, cc int64) (dollars float64, known bool) {
+	pr, known := DefaultPrices()[model]
+	if !known {
+		pr = fallbackPrice
+	}
+	a := float64(float64(in) * pr.In)
+	b := float64(float64(float64(cr)*pr.In) * cacheReadMult)
+	c := float64(float64(float64(cc)*pr.In) * cacheWriteMult)
+	d := float64(float64(out) * pr.Out)
+	return float64(float64(float64(a+b)+c)+d) / 1_000_000, known
+}
+
+// LocalTurnLine is the journal line voice/cleanup.py's _journal_cleanup
+// writes for one fixed local-model call: tier1-local, never a downgrade,
+// priced at zero dollars for its own model, with the text as the task and
+// the ask.
+func LocalTurnLine(model, text, reason string, in, out *big.Int, now time.Time) (string, error) {
+	d := Decision{Tier: "tier1-local", Model: model, RequestedModel: model,
+		Difficulty: EstimateDifficulty(text), Reason: reason}
+	usage := pyjson.NewObject()
+	usage.Set("input_tokens", pyjson.Int{Text: in.String()})
+	usage.Set("output_tokens", pyjson.Int{Text: out.String()})
+	s, err := Prices{model: {0.0, 0.0}}.measure(d, usage)
+	if err != nil {
+		return "", err
+	}
+	r, err := recordTurn(d, s, text, text, now)
+	if err != nil {
+		return "", err
+	}
+	return r.JSON(), nil
+}

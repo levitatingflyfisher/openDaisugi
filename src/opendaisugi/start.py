@@ -225,7 +225,21 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
                 sock.unlink()
             except OSError:
                 pass
-        opts.spawn([sys.executable, "-m", "opendaisugi.cli", "gate", "serve", "--root", str(root)])
+        # The first server wins, so start fixes the same captures root the
+        # fence gives its server, <gate root>/captures (FN-R-32, FN-R-35).
+        opts.spawn(
+            [
+                sys.executable,
+                "-m",
+                "opendaisugi.cli",
+                "gate",
+                "serve",
+                "--root",
+                str(root),
+                "--captures-root",
+                str(root / "captures"),
+            ]
+        )
         t0 = time.monotonic()
         while not sock.exists() and time.monotonic() - t0 < opts.server_wait_s:
             time.sleep(0.05)

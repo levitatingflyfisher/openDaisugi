@@ -14,7 +14,7 @@ func TestBuildMessagesPairsToolUseWithResult(t *testing.T) {
 		{Role: "assistant", Calls: []ToolCall{{Name: "read", Input: map[string]any{"path": "x.go"}}}},
 		{Role: "tool", Text: "file contents"},
 	}
-	msgs := buildMessages(history)
+	msgs := buildMessages(history, false)
 	if len(msgs) != 3 {
 		t.Fatalf("want 3 api messages, got %d", len(msgs))
 	}
@@ -200,7 +200,7 @@ func TestNewAPIModelHonorsModelOverride(t *testing.T) {
 // next prompt follows it. Two user turns in a row go out as one message,
 // since the Messages API wants the roles to alternate.
 func TestBuildMessagesJoinsPromptsInARow(t *testing.T) {
-	msgs := buildMessages([]Message{{Role: "user", Text: "one"}, {Role: "user", Text: "two"}})
+	msgs := buildMessages([]Message{{Role: "user", Text: "one"}, {Role: "user", Text: "two"}}, false)
 	if len(msgs) != 1 || len(msgs[0].Content) != 2 {
 		t.Fatalf("want one user message with two text blocks, got %+v", msgs)
 	}
