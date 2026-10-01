@@ -1,0 +1,5 @@
+# A voice url on another machine needs a token file of its own.
+#!config [voice]
+#!config url = "http://10.0.0.1:9"
+{"id": "s", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "off"}}

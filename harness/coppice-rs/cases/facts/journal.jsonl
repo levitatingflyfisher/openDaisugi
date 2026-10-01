@@ -1,0 +1,38 @@
+# The verdict journal. floor.journal lists the gate verdicts the server was
+# told, newest first, at most 500. They stay across a restart, in
+# journal/verdicts.jsonl under the data dir, mode 0600. The times are
+# masked as every clock value is, so the cases name order and fields. A
+# gateway turn file with no turn from today gives floor.facts no saving.
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"]}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"2","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[]}}
+{"id":"3","cmd":"pane.report_state","pane":"$c","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$c","state":"working","source":"gate","detail":"verdict=allow","mode":"enforcing","verdict":{"decision":"allow","tool":"Read","clause":""}}}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"4","cmd":"pane.report_state","pane":"$c","event":{"v":1,"ts":2,"session_id":"s","harness":"claude-code","pane":"$c","state":"working","source":"gate","detail":"verdict=deny","mode":"enforcing","verdict":{"decision":"deny","tool":"Bash","clause":"shell: curl is not allowed"}}}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"5","cmd":"pane.report_state","pane":"$c","event":{"v":1,"ts":3,"session_id":"s","harness":"claude-code","pane":"$c","state":"working","source":"gate","detail":"verdict=allow","verdict":{"decision":"ask","tool":"Write","clause":""}}}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"6","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"$c","decision":"ask","tool":"Write","clause":""},{"at":"*","pane":"$c","decision":"deny","tool":"Bash","clause":"shell: curl is not allowed","mode":"enforcing"},{"at":"*","pane":"$c","decision":"allow","tool":"Read","clause":"","mode":"enforcing"}]}}
+{"id":"7","cmd":"floor.journal","pane":"$c","limit":1}
+{"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"$c","decision":"ask","tool":"Write","clause":""}]}}
+{"id":"8","cmd":"floor.journal","pane":"w9:p9"}
+{"id":"$id","ok":true,"result":{"entries":[]}}
+{"id":"9","cmd":"floor.journal","since":99999999999}
+{"id":"$id","ok":true,"result":{"entries":[]}}
+{"id":"10","cmd":"floor.journal","since":"soon"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"floor.journal since is a unix time in seconds."}}
+{"id":"11","ls":"{DATA}/journal"}
+{"id":"$id","ok":true,"result":{"tree":[["verdicts.jsonl","file","0o600"]]}}
+{"id":"12","file":"{DATA}/journal/verdicts.jsonl","count":"\n"}
+{"id":"$id","ok":true,"result":{"count":3}}
+{"id":"13","write":"{WORK}/gateway/turns.jsonl","text":"{\"created_at\":\"2020-01-01T00:00:00.000000+00:00\",\"frontier_tokens_saved\":900}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"14","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":{"working":"*"}}
+#!restart
+{"id":"15","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"*","decision":"ask","tool":"Write","clause":""},{"at":"*","pane":"*","decision":"deny","tool":"Bash","clause":"shell: curl is not allowed","mode":"enforcing"},{"at":"*","pane":"*","decision":"allow","tool":"Read","clause":"","mode":"enforcing"}]}}
+{"id":"16","ls":"{DATA}/journal"}
+{"id":"$id","ok":true,"result":{"tree":[["verdicts.jsonl","file","0o600"]]}}

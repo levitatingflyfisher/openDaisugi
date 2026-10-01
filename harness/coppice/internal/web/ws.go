@@ -40,7 +40,9 @@ func bearerFrom(r *http.Request) string {
 // handleWS gives one browser one socket connection and copies JSONL lines
 // through untouched in both directions. Nothing here parses a request: the
 // browser speaks the same protocol a terminal speaks, so parity is the
-// shape of the code rather than a claim about it.
+// shape of the code rather than a claim about it. One reply is changed on
+// the way back: a speech.say answer becomes a binary audio frame. See
+// speech.go.
 //
 // Subprotocols lists only WSSubprotocol, so the handshake response never
 // echoes the token back. Accept refuses a cross-origin upgrade by default,
@@ -106,12 +108,18 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 
+	// say holds the ids of the speech.say requests this socket sent.
+	var say speechIDs
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for line := range sess.Lines() {
-			if err := c.Write(ctx, websocket.MessageText, line); err != nil {
+			typ, out := websocket.MessageText, line
+			if frame, ok := speechFrame(line, &say); ok {
+				typ, out = websocket.MessageBinary, frame
+			}
+			if err := c.Write(ctx, typ, out); err != nil {
 				return
 			}
 		}
@@ -138,6 +146,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		if typ != websocket.MessageText {
 			continue
 		}
+		say.note(data)
 		if err := sess.Send(data); err != nil {
 			s.opts.Log.Warn("web: could not forward a line to coppice-server", "err", err)
 			return

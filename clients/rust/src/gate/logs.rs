@@ -63,7 +63,8 @@ pub(crate) fn mkdir_private(d: &str) -> Result<(), PyErr> {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && p.is_dir() => {}
         Err(e) => return Err(io(e, d)),
     }
-    let _ = fs::set_permissions(&p, fs::Permissions::from_mode(0o700));
+    // On the directory's own fd, never through a link (GR-R-9).
+    super::statewrite::chmod_private(&p.to_string_lossy());
     Ok(())
 }
 
@@ -238,11 +239,11 @@ fn string_session(p: &Object) -> Value {
 }
 
 impl Runner {
-    /// `gate._log_audit`: best-effort.
-    pub fn log_audit(&self, session_id: &Value, d: &Decision, payload_session: &Value, join: Option<&Object>) -> R<()> {
+    /// `gate._log_audit`: best-effort; true when the line landed. Only an
+    /// enforce-mode allow reads the answer (FN-R-17).
+    pub fn log_audit(&self, session_id: &Value, d: &Decision, payload_session: &Value, join: Option<&Object>) -> R<bool> {
         let sid = safe_session_value(session_id)?;
-        let _ = catch(self.log_audit_body(&sid, d, payload_session, join))?;
-        Ok(())
+        Ok(catch(self.log_audit_body(&sid, d, payload_session, join))?.is_ok())
     }
 
     fn log_audit_body(&self, sid: &str, d: &Decision, payload_session: &Value, join: Option<&Object>) -> R<()> {

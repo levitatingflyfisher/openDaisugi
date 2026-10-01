@@ -70,6 +70,8 @@ func (e *Env) startSwitchyardForGateway(dataDir, own string, hasOwn bool, port i
 				"the gateway copies your Switchyard config before it starts the child.",
 				"check the path you gave to --switchyard-config.", 1)
 		}
+		// read_text reads with universal newlines.
+		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 		if configPath, err = switchyard.WriteConfig(filepath.Dir(files.Config), text, filepath.Base(files.Config)); err != nil {
 			return nil, "", nil, e.fail("gateway", err)
 		}
@@ -97,6 +99,10 @@ func (e *Env) startSwitchyardForGateway(dataDir, own string, hasOwn bool, port i
 	}
 	capable, efficient, err := switchyard.RouteTargets(configPath, cfg.SwitchyardRouteID)
 	if err != nil {
+		var ve *switchyard.TOMLValueError
+		if errors.As(err, &ve) {
+			return nil, "", nil, e.pyTraceback("ValueError", ve.Msg)
+		}
 		var me *switchyard.MeterError
 		if errors.As(err, &me) {
 			return nil, "", nil, e.fail3("cannot meter this Switchyard config: "+me.Msg,
@@ -131,6 +137,7 @@ const routerHelp = `Usage: daisugi router [OPTIONS] COMMAND [ARGS]...
   or the built-in rules router.
 
 Commands:
+  label   Record whether a session's task succeeded: the outcome a graft trial counts.
   status  Show the router choice, the Switchyard binary, each running child, and recent turns.
   stop    Stop every switchyard-server that a gateway started and left running.
 `
@@ -146,6 +153,8 @@ func (e *Env) router(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "label":
+		return e.routerLabel(args[1:])
 	case "status":
 		return e.routerStatus(args[1:])
 	case "stop":
@@ -179,7 +188,7 @@ func (e *Env) routerStatus(args []string) error {
 	if p.help {
 		return e.cmdHelp(cmd, "", "Show the router choice, the Switchyard binary, each running child, and recent turns.", opts)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	cfg, err := e.loadCfg(cmd, filepath.Join(dataDir, "config.yaml"))
 	if err != nil {
 		return err
@@ -248,8 +257,24 @@ func (e *Env) routerStatus(args []string) error {
 	if err != nil {
 		return e.refuse(cmd, err)
 	}
+	tr, err := trialState(dataDir)
+	if err != nil {
+		return e.refuse(cmd, err)
+	}
+	var knn *knnState
+	if cfg.GatewayRouter == "knn" || cfg.GatewayRouter == "model" {
+		ks, err := knnSummary(filepath.Join(dataDir, "gateway", "routing.db"))
+		if err != nil {
+			return e.fail(cmd, err)
+		}
+		knn = ks
+	}
 	if p.flag("--json") {
-		o := pyjson.NewObject().Set("router", cfg.GatewayRouter)
+		o := pyjson.NewObject()
+		if knn != nil {
+			o.Set("knn", knn.object())
+		}
+		o.Set("router", cfg.GatewayRouter)
 		if binary != "" {
 			o.Set("binary", binary)
 		} else {
@@ -292,6 +317,11 @@ func (e *Env) routerStatus(args []string) error {
 			ws[i] = w.object()
 		}
 		o.Set("weeks", ws).Set("escalation_built", false).Set("delegate", dstate)
+		if tr != nil {
+			o.Set("trial", tr.object())
+		} else {
+			o.Set("trial", nil)
+		}
 		e.out("%s\n", pyjson.Dumps(o, true))
 		return nil
 	}
@@ -370,6 +400,15 @@ func (e *Env) routerStatus(args []string) error {
 		}
 		e.out("    %s  %s  %s\n", gateway.PadRepr(label, 62), r.Model.(string), saved)
 	}
+	if knn != nil {
+		e.out("knn outcomes: %d booked (good %d, bad %d, unknown %d) in %s\n", knn.booked, knn.good, knn.bad,
+			knn.unknown, knn.path)
+		e.out("  recent knn turns, last %d:\n", len(knn.recent))
+		for _, t := range knn.recent {
+			e.out("    %s  %s  %s\n", t.turnID, t.model, t.outcome)
+		}
+		e.out("  set an outcome by hand with: daisugi route feedback <turn-id> good|bad\n")
+	}
 	e.out("by week (UTC), newest first; escalation is not built yet:\n")
 	if len(weeks) == 0 {
 		e.out("  no turns and no delegations recorded\n")
@@ -379,6 +418,11 @@ func (e *Env) routerStatus(args []string) error {
 	}
 	for _, ln := range dlines {
 		e.out("%s\n", ln)
+	}
+	if tr != nil {
+		for _, ln := range trialLines(tr) {
+			e.out("%s\n", ln)
+		}
 	}
 	return nil
 }
@@ -450,7 +494,7 @@ func (e *Env) routerStop(args []string) error {
 	if p.help {
 		return e.cmdHelp(cmd, "", "Stop every switchyard-server that a gateway started and left running.", opts)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	states := switchyard.ListStates(dataDir)
 	if len(states) == 0 {
 		e.out("no switchyard-server state file; nothing to stop\n")
@@ -473,7 +517,7 @@ func (e *Env) gatewayReport(args []string) error {
 	if p.help {
 		return e.cmdHelp(cmd, "", "Calibrate the gateway on a real recorded day: realized routing + potential reuse.", opts)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	records, err := e.loadJournal(cmd, dataDir)
 	if err != nil {
 		return err

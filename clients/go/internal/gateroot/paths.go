@@ -238,16 +238,6 @@ func exists(p string) bool {
 	return err == nil
 }
 
-// mkdirPrivate is gate._mkdir_private: parents with the default mode,
-// the directory itself 0700 whether it was made now or not.
-func mkdirPrivate(d string) error {
-	if err := mkdirParents(d, 0o700); err != nil {
-		return err
-	}
-	_ = os.Chmod(d, 0o700)
-	return nil
-}
-
 // mkdirParents is Path.mkdir(parents=True, exist_ok=True, mode=mode):
 // missing parents get 0777 less the umask, the leaf gets mode.
 func mkdirParents(d string, mode os.FileMode) error {

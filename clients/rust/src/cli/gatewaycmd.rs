@@ -12,10 +12,11 @@ use super::gateroot::path_str;
 use super::{exit, parse_args, Env, Opt, Res};
 use crate::gate::paths::strerror;
 use crate::gate::py::text::repr;
-use crate::gateway::pipeline::{External, Gateway, Settings, MODE_EXTERNAL, MODE_OFF, MODE_RULES};
+use crate::gateway::pipeline::{External, Gateway, Settings, MODE_EXTERNAL, MODE_KNN, MODE_MODEL, MODE_OFF, MODE_RULES};
+use crate::gateway::model;
 use crate::gateway::server::{handle, Life, Reloader, Server, Shared};
 
-pub const ROUTERS: &[&str] = &["rules", "switchyard", "off"];
+pub const ROUTERS: &[&str] = &["rules", "switchyard", "knn", "model", "off"];
 const UPSTREAM_KINDS: &[&str] = &["anthropic", "ollama", "openai-compatible", "anthropic-compatible"];
 
 /// `model_host._KIND_TO_BACKEND`.
@@ -46,7 +47,7 @@ const GATEWAY_OPTS: &[Opt] = &[
         "Model an easy OpenAI-wire turn is routed onto; empty disables routing on that wire.",
     ),
     Opt::val(&["--upstream-kind"], "TEXT", "The wire --upstream speaks: anthropic, ollama, openai-compatible, anthropic-compatible."),
-    Opt::val(&["--router"], "TEXT", "Who picks the model: rules, switchyard or off."),
+    Opt::val(&["--router"], "TEXT", "Who picks the model: rules, switchyard, knn, model or off."),
     Opt::val(&["--switchyard-config"], "PATH", "Your own Switchyard TOML file."),
     Opt::val(&["--switchyard-port"], "INTEGER", "The loopback port of the managed switchyard-server."),
 ];
@@ -105,7 +106,7 @@ impl Env {
         let host = p.str("--host", "127.0.0.1");
         let mut upstream = p.str("--upstream", "https://api.anthropic.com");
         let cheap = p.str("--cheap-model", "claude-haiku-4-5");
-        let data_dir = path_str(&p.str("--data-dir", &format!("{}/.opendaisugi", self.home)));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let capture = p.flag("--capture-answers");
         let local_flag = p.str("--local-model", "");
         let openai_up = p.str("--openai-upstream", "https://api.openai.com");
@@ -114,7 +115,7 @@ impl Env {
         let router = if p.has("--router") { p.str("--router", "") } else { self.load_cfg(CMD, &cfg_path)?.gateway_router };
         if !ROUTERS.contains(&router.as_str()) {
             self.errf(&format!(
-                "unknown --router {}.\nthe gateway knows three choosers.\nchoose one of: {}\n",
+                "unknown --router {}.\nthe gateway knows five choosers.\nchoose one of: {}\n",
                 repr(&router),
                 ROUTERS.join(", ")
             ));
@@ -137,7 +138,7 @@ impl Env {
         }
         if !p.has("--upstream-kind") {
             // The recorded kind counts only when --upstream names that host.
-            let home_cfg = self.load_cfg(CMD, &format!("{}/.opendaisugi/config.yaml", self.home))?;
+            let home_cfg = self.load_cfg(CMD, &super::gateroot::join(&self.data_home(), "config.yaml"))?;
             kind = "anthropic".into();
             if let (Some(base), Some(k)) = (&home_cfg.llm_base_url, &home_cfg.llm_host_kind) {
                 if !base.is_empty() && !k.is_empty() && upstream.trim_end_matches('/') == base.trim_end_matches('/') {
@@ -147,6 +148,8 @@ impl Env {
         }
         let mode = match router.as_str() {
             "switchyard" => MODE_EXTERNAL,
+            "knn" => MODE_KNN,
+            "model" => MODE_MODEL,
             "off" => MODE_OFF,
             _ => MODE_RULES,
         };
@@ -166,6 +169,18 @@ impl Env {
         if !shown_local.is_empty() && router == "rules" {
             self.out(&format!("  local rung: easy turns go to {shown_local}\n"));
         }
+        if router == "knn" {
+            self.out(&format!("  knn outcomes: {data_dir}/gateway/routing.db\n"));
+        }
+        let cfg_now = self.load_cfg(CMD, &cfg_path)?;
+        if router == "model" {
+            let rm = cfg_now.gateway_router_model.clone().unwrap_or_else(|| "not set".into());
+            self.out(&format!("  router model: {rm}\n"));
+            self.out(&format!("  outcomes: {data_dir}/gateway/routing.db\n"));
+        }
+        if !model::off(cfg_now.gateway_grader.as_deref()).is_empty() {
+            self.out(&format!("  grader: {}\n", cfg_now.gateway_grader.clone().unwrap_or_default()));
+        }
         self.out(&format!("  listening on http://{host}:{port_n}  (journal: {data_dir}/gateway/turns.jsonl)\n"));
         self.out(&format!(
             "  config reload: on change to {data_dir}/config.yaml, on SIGHUP, or POST http://{host}:{port_n}/_reload from this machine\n"
@@ -181,14 +196,18 @@ impl Env {
         self.flush();
         let journal = format!("{data_dir}/gateway/turns.jsonl");
         let answers = if capture { format!("{data_dir}/gateway/answers.jsonl") } else { String::new() };
+        let knn = if router == "knn" || router == "model" { Some(self.knn_router(&data_dir)) } else { None };
         let build = {
-            let (journal, answers) = (journal.clone(), answers.clone());
-            move |local: &str, cheap: &str, mode: &str, ext: Option<External>| -> Result<Gateway, String> {
+            let (journal, answers, knn) = (journal.clone(), answers.clone(), knn.clone());
+            move |local: &str, cheap: &str, mode: &str, ext: Option<External>, router_model: &str, grader: &str| -> Result<Gateway, String> {
                 Gateway::new(Settings {
                     cheap_model: cheap.into(),
                     local_model: local.into(),
                     router_mode: mode.into(),
                     external: ext,
+                    knn: if mode == MODE_KNN || mode == MODE_MODEL { knn.clone() } else { None },
+                    router_model: if mode == MODE_MODEL { router_model.into() } else { String::new() },
+                    grader_model: if mode == MODE_KNN || mode == MODE_MODEL { grader.into() } else { String::new() },
                     journal_path: journal.clone(),
                     answers_path: answers.clone(),
                     capture_answers: capture,
@@ -208,13 +227,13 @@ impl Env {
                     Err(_) => return None,
                 };
                 let local = if local_flag.is_empty() { cfg.gateway_local_model.unwrap_or_default() } else { local_flag.clone() };
-                build(&local, &cheap, mode, ext.clone()).ok()
+                build(&local, &cheap, mode, ext.clone(), &model::off(cfg.gateway_router_model.as_deref()), &model::off(cfg.gateway_grader.as_deref())).ok()
             }
         };
         let reloader = Arc::new(Reloader::new(cfg_path.clone(), Box::new(rebuild), Duration::from_secs(2)));
         let anthropic: Shared = match reloader.current() {
             Some(g) => g,
-            None => match build(&local_flag, &cheap, mode, ext.clone()) {
+            None => match build(&local_flag, &cheap, mode, ext.clone(), &model::off(cfg_now.gateway_router_model.as_deref()), &model::off(cfg_now.gateway_grader.as_deref())) {
                 Ok(g) => Arc::new(std::sync::Mutex::new(g)),
                 Err(why) => return self.fail(CMD, &why),
             },
@@ -222,7 +241,7 @@ impl Env {
         let openai = if openai_cheap.is_empty() {
             None
         } else {
-            match build(&local_flag, &openai_cheap, MODE_RULES, None) {
+            match build(&local_flag, &openai_cheap, MODE_RULES, None, "", "") {
                 Ok(g) => Some(Arc::new(std::sync::Mutex::new(g))),
                 Err(why) => return self.fail(CMD, &why),
             }

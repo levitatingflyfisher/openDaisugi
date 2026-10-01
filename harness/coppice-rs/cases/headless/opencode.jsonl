@@ -1,0 +1,70 @@
+# A headless opencode pane on a fake `opencode serve` (stdlib Python). The
+# pane starts idle on a new session. A prompt's events come from the event
+# stream. OpenCode's own permission prompt blocks the pane with an ask its
+# harness holds: a prompt does not answer it, agent.allow needs the pane
+# name for a permanent ask, and then answers it through OpenCode. The
+# operator's prompt answers a question, and agent.deny rejects one. A
+# refused prompt names OpenCode's status. The captured stream of a real
+# session plays through the same translator. Over a restart the pane asks
+# for its session again; the new server does not know it, so the pane
+# says so and starts a new one. An ask's deadline is a clock value
+# (CP-R-25).
+#!env COPPICE_OPENCODE_BIN={FIXTURES}/adapters/fake-opencode.py
+#!mask deadline
+#!watch state,note
+#!settle 300
+{"id":"1","cmd":"pane.create","kind":"headless","harness":"opencode","cwd":"{WORK}","label":"oc","env":{"COPPICE_OPENCODE_ECHO":"{WORK}/oc-echo.txt"}}
+{"id":"$id","ok":true,"result":{"pane":"$oc"}}
+#!retry 5000
+{"id":"2","cmd":"agent.get","pane":"$oc"}
+{"id":"$id","ok":true,"result":{"pane":"$oc","state":"idle","harness_session_id":"ses_fake1"}}
+{"id":"3","cmd":"agent.prompt","pane":"$oc","text":"hi"}
+{"id":"$id","ok":true,"result":{"pane":"$oc","sent":2}}
+#!retry 10000
+{"id":"4","cmd":"pane.read","pane":"$oc"}
+{"id":"$id","ok":true,"result":{"source":"visible","text":"[idle]\n[working]\nyou said: hi\nbash call_1 {\"command\":\"ls\",\"z\":1}\n[idle]"}}
+{"id":"5","cmd":"agent.prompt","pane":"$oc","text":"perm","wait":true,"until":"blocked","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$oc","state":"blocked","source":"headless","ask":{"id":"per_1","tool":"bash","summary":"rm -rf build, ls","holder":"harness"}}}
+{"id":"6","cmd":"agent.prompt","pane":"$oc","text":"go on"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"opencode waits on its permission prompt per_1. A prompt does not answer it. Run: coppice agent allow w1:p1 per_1, or: coppice agent deny w1:p1 per_1"}}
+{"id":"7","cmd":"agent.allow","pane":"$oc","ask":"per_1"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"*"}}
+{"id":"8","cmd":"agent.allow","pane":"$oc","ask":"per_1","confirm":"oc"}
+{"id":"$id","ok":true,"result":{"pane":"$oc","ask":"per_1","decision":"allow"}}
+{"id":"9","cmd":"agent.wait","pane":"$oc","until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$oc","state":"idle","source":"headless"}}
+{"id":"10","cmd":"agent.prompt","pane":"$oc","text":"question","wait":true,"until":"blocked","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$oc","state":"blocked","ask":{"id":"que_1","tool":"question","summary":"Which branch?","holder":"harness"}}}
+{"id":"11","cmd":"agent.prompt","pane":"$oc","text":"main","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$oc","state":"idle","source":"headless"}}
+{"id":"12","cmd":"agent.prompt","pane":"$oc","text":"question","wait":true,"until":"blocked","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$oc","state":"blocked"}}
+{"id":"13","cmd":"agent.allow","pane":"$oc","ask":"que_1","confirm":"oc"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"ask que_1 is a question. Type the answer into the pane"}}
+{"id":"14","cmd":"agent.deny","pane":"$oc","ask":"que_1","reason":"not now"}
+{"id":"$id","ok":true,"result":{"pane":"$oc","ask":"que_1","decision":"deny"}}
+{"id":"15","cmd":"agent.wait","pane":"$oc","until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$oc","state":"idle"}}
+{"id":"16","cmd":"agent.prompt","pane":"$oc","text":"fail"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"opencode: send a prompt: 500 Internal Server Error: boom"}}
+{"id":"17","cmd":"pane.send_text","pane":"$oc","text":"x"}
+{"id":"$id","ok":false,"error":{"code":"internal","message":"opencode: this harness does not support that. Send a prompt instead."}}
+{"id":"18","cmd":"agent.prompt","pane":"$oc","text":"replay"}
+{"id":"$id","ok":true,"result":{"pane":"$oc","sent":6}}
+#!retry 10000
+{"id":"19","cmd":"pane.read","pane":"$oc","source":"recent"}
+{"id":"$id","ok":true,"result":{"source":"recent","text":"[idle]\n[working]\nyou said: hi\nbash call_1 {\"command\":\"ls\",\"z\":1}\n[idle]\n[working]\n[blocked] rm -rf build, ls bash: rm -rf build, ls\n[working]\npermission granted\n[idle]\n[working]\n[blocked] Which branch? question: Which branch?\n[working]\nanswer: main\n[idle]\n[working]\n[blocked] Which branch? question: Which branch?\n[working]\n[idle]\n[working]\n[working]\nHi!\n[working]\n[idle]\n[idle]\n[working]\nbash call_1 {\"command\":\"rm -rf build\"}\n[blocked] rm -rf build bash: rm -rf build\n[working]\n[blocked] Which branch? question: Which branch?\n[working]\n[unknown] session error UnknownError: Model not found\n[idle]"}}
+#!tree
+#!restart
+#!retry 10000
+{"id":"20","cmd":"pane.read","pane":"$oc"}
+{"id":"$id","ok":true,"result":{"source":"visible","text":"[error] opencode has no session ses_fake1. This pane starts a new one.\n[idle]"}}
+{"id":"21","cmd":"server.status"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"22","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sh","-c","cat oc-echo.txt; echo shown; exec sleep 600"],"label":"show","cols":200,"rows":40}
+{"id":"$id","ok":true,"result":{"pane":"$show"}}
+{"id":"23","cmd":"pane.wait_output","pane":"$show","contains":"shown","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"24","cmd":"pane.read","pane":"$show"}
+{"id":"$id","ok":true,"result":"*"}
+#!tree

@@ -1,0 +1,17 @@
+# A short burst of output on a pane whose gate last said idle is no work
+# (CP-R-56). The gate says idle, then the case writes the go file (so the
+# order never depends on how fast the box is), the pane draws once, and redraws a
+# few bytes 7 s later, as a clock or a status line does. The state stays idle
+# from the gate, as it was: it read working from the process source for 5 s
+# after each such burst before. Output that goes on for a second or more is
+# work, and the process fact applies; the unit tests in each port cover that.
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sh","-c","while [ ! -e {WORK}/go ]; do sleep 0.05; done; echo turn; sleep 7; echo 12:01; exec sleep 600"],"label":"clock"}
+{"id":"$id","ok":true,"result":{"pane":"$p"}}
+{"id":"2","cmd":"pane.report_state","pane":"$p","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$p","state":"idle","source":"gate","detail":"Stop"}}
+{"id":"$id","ok":true,"result":{"pane":"$p","state":"idle","source":"gate"}}
+{"id":"2b","write":"{WORK}/go","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"3","cmd":"pane.wait_output","pane":"$p","contains":"12:01","timeout_ms":20000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"4","cmd":"agent.get","pane":"$p"}
+{"id":"$id","ok":true,"result":{"pane":"$p","state":"idle","source":"gate","detail":"Stop"}}

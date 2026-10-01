@@ -13,9 +13,12 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
+
+from opendaisugi.datahome import data_home
 
 
 class FloorConfig(BaseModel):
@@ -43,7 +46,7 @@ class Config(BaseModel):
     model: str = "anthropic/claude-sonnet-4-20250514"
     max_task_chars: int = 4000
     z3_timeout_ms: int = 500
-    data_dir: Path = Field(default_factory=lambda: Path.home() / ".opendaisugi")
+    data_dir: Path = Field(default_factory=data_home)
     # Background distillation consent (Phase A). None = never asked (distinct
     # from an explicit no); True = distil repeated tasks in the background;
     # False = declined. Distillation only ever affects *efficiency* (the guard
@@ -61,7 +64,12 @@ class Config(BaseModel):
     # child on loopback. "off" forwards every turn unchanged and only meters
     # it. `daisugi gateway` reads this field once when it starts. A change
     # here needs a restart of the gateway, unlike gateway_local_model.
-    gateway_router: str = "rules"  # rules | switchyard | off
+    gateway_router: str = "rules"  # rules | switchyard | knn | model | off
+    # The model that picks for gateway_router: model, from the allowed names.
+    gateway_router_model: str | None = None
+    # A model that grades each finished turn good or bad ("off" or unset: none).
+    # The grade is written to the outcome table, above the automatic labels.
+    gateway_grader: str | None = None
     # The route id the gateway sends as `model` to select the Switchyard
     # route. Switchyard wants the route id, never a real model name.
     switchyard_route_id: str = "daisugi"
@@ -184,8 +192,8 @@ class Config(BaseModel):
     # reports a visible device. A Pascal GPU (sm_61) has crashed other torch-based
     # inference under CUDA before, see ADR-0019. CUDA is opt-in and verified,
     # never auto-detected.
-    voice_engine: str = "faster-whisper"  # faster-whisper | parakeet
-    voice_model: str = "tiny.en"  # a faster-whisper model id, or for parakeet a local model dir
+    voice_engine: str = "faster-whisper"  # faster-whisper | moonshine | parakeet | whisper.cpp
+    voice_model: str = "tiny.en"  # faster-whisper id, ggml file, Moonshine or Parakeet model
     voice_device: str = "cpu"  # cpu | cuda
     voice_compute_type: str = "int8"
     # The optional cleanup pass is off by default. It never uses a paid model
@@ -194,6 +202,10 @@ class Config(BaseModel):
     voice_cleanup_model: str | None = None
     voice_cleanup_base_url: str | None = None
     voice_server_url: str = "http://127.0.0.1:7477"
+    # The operator's agent profiles (opendaisugi.agent_profiles): name to
+    # {wire, base_url, model, key_env}. A plan step names one; no field
+    # holds a key. Read raw here; agent_profiles.resolve checks each entry.
+    agent_profiles: Any = Field(default=None, exclude_if=lambda v: v is None)
 
 
 def default_config() -> Config:
@@ -209,7 +221,7 @@ def load_config(path: Path | None = None) -> Config:
     newer version of opendaisugi still loads on an older version.
     """
     if path is None:
-        path = Path.home() / ".opendaisugi" / "config.yaml"
+        path = data_home() / "config.yaml"
     if not path.exists():
         return default_config()
 
@@ -226,7 +238,7 @@ def save_config(config: Config, path: Path | None = None) -> None:
     config.yaml is user-editable and written rarely.
     """
     if path is None:
-        path = Path.home() / ".opendaisugi" / "config.yaml"
+        path = data_home() / "config.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     data = config.model_dump(mode="json")
     # Pydantic serializes Path to str in mode="json"; yaml.safe_dump is fine with it.
@@ -812,7 +824,7 @@ def resolved_config(
             # cwd-hook check is a no-op) rather than crash `daisugi config`.
             cwd = home
     env = os.environ if env is None else env
-    path = path or home / ".opendaisugi" / "config.yaml"
+    path = path or data_home(home=home) / "config.yaml"
     cfg = load_config(path)
     raw = _read_raw(path)
     out: list[ResolvedField] = []
@@ -835,6 +847,14 @@ def resolved_config(
             continue
         if key == "llm_backend" and value is None:
             value = "auto"
+        if key == "agent_profiles":
+            # Shown only when the file has a table, and then the names only:
+            # a key_env or a URL is not shown here.
+            if source == "default":
+                continue
+            from opendaisugi.agent_profiles import config_text
+
+            value = config_text(value)
         out.append(ResolvedField(key, str(value), source))
     backend_env = env.get("OPENDAISUGI_LLM_BACKEND")
     backend_file = configured_backend(path)

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, element, liveTimers } from './browser-stub.mjs';
-import { tileCount, prefsFrom, mountFloor, keyBytes, titleFor, NO_AGENTS, ENDED_CLEAR_MS } from '../floor.js';
+import { tileCount, stripFits, stripFitsArea, stripReserve, prefsFrom, mountFloor, keyBytes, titleFor, NO_AGENTS, ENDED_CLEAR_MS } from '../floor.js';
 import { mountViews } from '../views.js';
 import { render, paneRows } from '../roster.js';
 import { gridToText } from '../grid.js';
@@ -1250,7 +1250,7 @@ test('a window header shows the stack bar and the gate mark, and a segment opens
   const box = doc.querySelector('[data-tile="a"] .stack-details');
   assert.ok(box, 'the model details did not open');
   assert.ok(box.textContent.includes('cache read'));
-  assert.ok(box.textContent.includes('Swap is not built yet.'));
+  assert.ok(box.textContent.includes('The change goes in at the next idle prompt.'));
   assert.ok(doc.querySelector('[data-tile="a"] .seg-model').className.includes('open'));
   doc.querySelector('[data-tile="a"] .gate').dispatchEvent({ type: 'click' });
   const daisugi = doc.querySelector('[data-tile="a"] .stack-details');
@@ -1258,6 +1258,22 @@ test('a window header shows the stack bar and the gate mark, and a segment opens
   assert.ok(daisugi.textContent.includes('shell: curl'));
   daisugi.querySelectorAll('button').find((b) => b.textContent === 'Journal').dispatchEvent({ type: 'click' });
   assert.deepEqual(opened, ['a']);
+});
+
+test('the daisugi details lower one agent to watching after one question, and the status line says when', async () => {
+  const row = { ...p('a', 'idle'), label: 'auth fix', stack: { loop: 'claude', daisugi: { mode: 'enforcing', armed: true } } };
+  const { doc, state, calls } = stub({ panes: [row], width: 800 });
+  mountFloor(doc.body, state);
+  doc.querySelector('[data-tile="a"] .seg-daisugi').dispatchEvent({ type: 'click' });
+  const buttons = () => doc.querySelector('[data-tile="a"] .stack-details').querySelectorAll('button');
+  buttons().find((b) => b.textContent === 'Watch only').dispatchEvent({ type: 'click' });
+  assert.deepEqual(calls.filter((c) => c.cmd === 'agent.set_mode'), [], 'it set the mode before it asked');
+  assert.ok(doc.querySelector('[data-tile="a"] .stack-details').textContent.includes('Watch only? The gate will log the calls of auth fix and stop none. While it watches, it can also change the gate for other agents.'));
+  assert.ok(!buttons().some((b) => /\boff\b/i.test(b.textContent)), 'off is offered');
+  buttons().find((b) => b.textContent === 'Watch only').dispatchEvent({ type: 'click' });
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+  assert.deepEqual(calls.filter((c) => c.cmd === 'agent.set_mode'), [{ cmd: 'agent.set_mode', pane: 'a', mode: 'watching' }]);
+  assert.equal(element('status').textContent, 'auth fix watches from its next tool call. The gate logs its calls and stops none.');
 });
 
 test('a window whose agent has no stack shows its harness word and no bar', async () => {
@@ -1288,4 +1304,196 @@ test('a window with a headless agent sends no keys, and its own line sends whole
   assert.deepEqual(calls.filter((c) => c.cmd === 'agent.prompt').map((c) => [c.pane, c.text]), [['h', 'tidy the docs']]);
   assert.equal(input.value, '');
   assert.equal(doc.querySelector('[data-tile="a"] .prompt-input'), null, 'a pty window grew a message line');
+});
+
+// foremanStub starts a floor whose facts name pane f as the foreman and
+// whose floor.chat answers with msgs.
+function foremanStub(panes, msgs, width = 1500) {
+  const s = stub({ panes, width });
+  s.state.facts = () => ({ foreman: { pane: 'f', label: 'foreman' } });
+  s.state.rpc = async (cmd, fields) => {
+    s.calls.push({ cmd, ...fields });
+    if (cmd === 'floor.chat') return { messages: msgs, source: 'transcript', more: false };
+    if (cmd === 'floor.talk') return { pane: 'f', queued: 1 };
+    return {};
+  };
+  return s;
+}
+
+const REPLY = [
+  { id: 'c1', at: 10, role: 'owner', text: 'start the import', pane: 'f', read: true },
+  { id: 'c2', at: 20, role: 'agent', text: 'Started the import.', pane: 'f' },
+];
+
+test('the foreman window draws the chat with its own line, and Enter there sends floor.talk', async () => {
+  const fm = { ...p('f', 'idle'), label: 'foreman' };
+  const { doc, state, calls } = foremanStub([fm, p('a', 'working')], REPLY);
+  mountFloor(doc.body, state);
+  for (let i = 0; i < 5; i++) await settle();
+  const tile = doc.querySelector('[data-tile="f"]');
+  assert.match(tile.className, /chat-window/);
+  assert.ok(tile.querySelector('.chat-list .msg-agent'), 'no reply in the chat window');
+  assert.match(tile.textContent, /Started the import\./);
+  const input = tile.querySelector('.prompt-input');
+  assert.ok(input, 'the chat window has no line of its own');
+  assert.equal(input.placeholder, 'Tell the foreman. Enter sends.');
+  assert.equal(tile.querySelector('.headless-note'), null);
+  input.value = 'check trellis';
+  input.dispatchEvent({ type: 'keydown', key: 'Enter', target: input, preventDefault() {}, stopPropagation() {} });
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.cmd === 'floor.talk').map((c) => c.text), ['check trellis']);
+  assert.equal(calls.filter((c) => c.cmd === 'agent.prompt').length, 0, 'the line went to the terminal');
+  assert.equal(input.value, '');
+  assert.equal(texts(calls, 'f').length, 0, 'a raw key reached the foreman terminal');
+});
+
+test('Screen in the foreman header shows its terminal, and Chat brings the chat back', async () => {
+  const fm = { ...p('f', 'idle'), label: 'foreman' };
+  const { doc, state } = foremanStub([fm, p('a', 'working')], REPLY);
+  mountFloor(doc.body, state);
+  for (let i = 0; i < 5; i++) await settle();
+  const btn = () => doc.querySelector('[data-tile="f"] .screen-toggle');
+  assert.equal(btn().textContent, 'Screen');
+  assert.equal(doc.querySelector('[data-tile="a"] .screen-toggle'), null, 'an agent window grew a Screen button');
+  btn().dispatchEvent({ type: 'click' });
+  const tile = doc.querySelector('[data-tile="f"]');
+  assert.equal(tile.querySelector('.chat-list'), null, 'the chat stayed over the terminal');
+  assert.ok(tile.querySelector('canvas'), 'no terminal after Screen');
+  assert.equal(tile.querySelector('.prompt-input'), null, 'the terminal has a message line');
+  assert.equal(btn().textContent, 'Chat');
+  btn().dispatchEvent({ type: 'click' });
+  assert.ok(doc.querySelector('[data-tile="f"] .chat-list'), 'Chat did not bring the chat back');
+});
+
+test('a foreman reply with no free window marks its row and moves nothing', async () => {
+  const fm = { ...p('f', 'idle'), label: 'foreman' };
+  // Two windows, held by an agent that needs you and a working one.
+  const ps = [p('a', 'blocked', { id: 't1', summary: 'ls' }), p('b', 'working'), fm];
+  const { doc, state } = foremanStub(ps, REPLY, 1000);
+  const floor = mountFloor(doc.body, state);
+  for (let i = 0; i < 8; i++) await settle();
+  assert.deepEqual(floor.tiles.slots, ['a', 'b'], 'the chat took a filled window');
+  assert.equal(floor.replyWaiting('f'), true, 'the foreman row does not show the reply');
+  floor.chatEvent({ event: 'messages', chat: true });
+  for (let i = 0; i < 5; i++) await settle();
+  assert.deepEqual(floor.tiles.slots, ['a', 'b'], 'a reply moved the windows');
+});
+
+test('a locked layout and a single window keep their agents when a reply comes', async () => {
+  const fm = { ...p('f', 'idle'), label: 'foreman' };
+  const one = foremanStub([p('a', 'blocked', { id: 't1', summary: 'ls' }), fm], REPLY, 800);
+  const f1 = mountFloor(one.doc.body, one.state);
+  for (let i = 0; i < 8; i++) await settle();
+  assert.deepEqual(f1.tiles.slots, ['a']);
+  assert.equal(f1.replyWaiting('f'), true);
+  const two = foremanStub([p('a', 'working'), p('b', 'working'), fm], REPLY, 1000);
+  const f2 = mountFloor(two.doc.body, two.state);
+  for (let i = 0; i < 8; i++) await settle();
+  f2.tiles.locked = true;
+  f2.tiles.slots = ['a', 'b'];
+  f2.chatEvent({ event: 'messages', chat: true });
+  for (let i = 0; i < 5; i++) await settle();
+  assert.deepEqual(f2.tiles.slots, ['a', 'b'], 'a locked layout moved');
+});
+
+test('a free window shows the chat, and a window that shows it has seen the reply', async () => {
+  const fm = { ...p('f', 'idle'), label: 'foreman' };
+  const { doc, state } = foremanStub([p('a', 'working'), fm], REPLY, 1500);
+  const floor = mountFloor(doc.body, state);
+  for (let i = 0; i < 8; i++) await settle();
+  assert.ok(floor.tiles.slots.includes('f'));
+  assert.ok(doc.querySelector('[data-tile="f"] .msg-agent'));
+  assert.equal(floor.replyWaiting('f'), false);
+});
+
+test('a probe asked while one runs runs once more', async () => {
+  const fm = { ...p('f', 'idle'), label: 'foreman' };
+  const { doc, state, calls } = foremanStub([fm], REPLY, 1500);
+  const floor = mountFloor(doc.body, state);
+  for (let i = 0; i < 8; i++) await settle();
+  const before = calls.filter((c) => c.cmd === 'floor.chat').length;
+  floor.chatEvent({ event: 'messages', chat: true });
+  floor.chatEvent({ event: 'messages', chat: true });
+  for (let i = 0; i < 8; i++) await settle();
+  const reads = calls.filter((c) => c.cmd === 'floor.chat').length - before;
+  assert.ok(reads >= 2, 'the second event was dropped: ' + reads + ' reads');
+});
+
+test('the pinned colony strip never removes a window at 1440 by 900', () => {
+  const without = tileCount(1440, 900);
+  assert.ok(without >= 2, 'the page holds ' + without + ' windows');
+  assert.equal(tileCount(1440, 900, undefined, stripReserve(1440, 900)), without, 'the strip took a window');
+});
+
+test('the strip never removes a window at any page size; it falls back to dots', () => {
+  let dots = 0;
+  for (const w of [900, 1100, 1440, 1920, 2560]) {
+    for (let h = 400; h <= 1600; h += 7) {
+      const without = tileCount(w, h);
+      assert.equal(tileCount(w, h, undefined, stripReserve(w, h)), without, w + 'x' + h);
+      if (!stripFits(w, h)) dots++;
+    }
+  }
+  assert.ok(dots > 0, 'no size made the strip fall back to dots');
+  assert.equal(stripFits(390, 844), true, 'a phone has no windows to lose');
+});
+
+// bodyClasses gives the page body a class list for one test, and returns the
+// set to edit and a function that puts the body back.
+function bodyClasses() {
+  const had = global.document.body;
+  const set = new Set();
+  global.document.body = { classList: { contains: (c) => set.has(c), toggle: (c, on) => (on ? set.add(c) : set.delete(c)) } };
+  return { set, restore: () => { global.document.body = had; } };
+}
+
+test('a pane screen that covers the floor takes the keys from its windows', async () => {
+  const { doc, state, calls } = stub({ panes: [p('a', 'working')], width: 1500 });
+  const floor = mountFloor(doc.body, state);
+  click(doc, '[data-tile="a"] .tile-body');
+  assert.equal(floor.typing(), 'a');
+  const body = bodyClasses();
+  try {
+    body.set.add('pane-page');
+    const evt = key('Enter', { target: { tagName: 'BUTTON' } });
+    for (let i = 0; i < 5; i++) await settle();
+    assert.ok(!evt.prevented, 'a covered floor took the key');
+    assert.deepEqual(texts(calls, 'a'), [], 'a key reached an agent under the pane screen');
+    assert.equal(floor.keys(), 'rail', 'the covered floor kept the keys');
+  } finally {
+    body.restore();
+  }
+});
+
+test('while a panel is open the floor ignores keys outside the rail', async () => {
+  const { doc, state, calls } = stub({ panes: [p('a', 'working'), p('b', 'working')], width: 1500 });
+  const floor = mountFloor(doc.body, state);
+  floor.leave();
+  const body = bodyClasses();
+  try {
+    body.set.add('panel-open');
+    const before = floor.railSelected();
+    for (const k of ['j', 'k', '1', '2', 'x', 'n']) key(k);
+    for (let i = 0; i < 5; i++) await settle();
+    assert.equal(calls.filter((c) => c.cmd && c.cmd !== 'pane.attach' && c.cmd !== 'pane.detach').length, 0, 'a rail key acted under a panel');
+    assert.equal(floor.railSelected(), before, 'a rail key moved the selection under a panel');
+    assert.equal(floor.keys(), 'rail');
+  } finally {
+    body.restore();
+  }
+});
+
+test('a measured area decides whether the strip fits', () => {
+  // Find a height where one strip row costs a window, and one just above where it does not.
+  let costly = null;
+  let cheap = null;
+  for (let h = 300; h <= 1500; h += 1) {
+    const fits = stripFitsArea({ w: 1200, h });
+    if (!fits && costly === null) costly = h;
+    if (fits && h > 700 && cheap === null) cheap = h;
+  }
+  assert.ok(costly !== null && cheap !== null);
+  assert.equal(stripFitsArea({ w: 1200, h: costly }), false);
+  assert.equal(stripFitsArea({ w: 1200, h: cheap }), true);
+  assert.equal(stripFitsArea(null), true, 'no area means one window, nothing to lose');
 });

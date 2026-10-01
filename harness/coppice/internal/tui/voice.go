@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -205,6 +206,60 @@ type voiceTarget struct {
 	url, token string
 }
 
+// fetchingPrefix starts the line voice shows while it gets its speech model.
+const fetchingPrefix = "Getting the speech model"
+
+// startingLine is the line for a voice that is starting and has no model to
+// fetch. Like fetchingPrefix, it marks a line the talk key waits on.
+const startingLine = "Voice is starting. The first start can take a minute."
+
+// waiting reports whether a voice line says voice is on its way: the floor
+// then follows it instead of asking for a second press.
+func waiting(why string) bool {
+	return strings.HasPrefix(why, fetchingPrefix) || why == startingLine
+}
+
+// fetchLine is the line for a voice that is getting its speech model, from
+// the fetch voice.status carries, or "" when there is none. Sizes are in
+// megabytes (10**6, rounded half up).
+func fetchLine(res map[string]any) string {
+	f, ok := res["fetch"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	done, _ := f["done"].(float64)
+	total, _ := f["total"].(float64)
+	if total <= 0 {
+		return ""
+	}
+	mb := func(n float64) int64 { return int64(math.Floor((n + 500000) / 1000000)) }
+	return fmt.Sprintf("%s, %d of %d MB.", fetchingPrefix, mb(done), mb(total))
+}
+
+// voiceProgress is one look at a voice that is starting: the line to show,
+// and whether the watch is over (voice is ready, or cannot be).
+func voiceProgress(socket string) (string, bool) {
+	res, err := callWithin(socket, "voice.status", nil, 5*time.Second)
+	if err != nil {
+		return fmt.Sprintf("Voice status is not known: %v.", strings.TrimSuffix(err.Error(), ".")), true
+	}
+	if ready, _ := res["ready"].(bool); ready {
+		return "Voice is ready.", true
+	}
+	if st, _ := res["state"].(string); st == "starting" {
+		if l := fetchLine(res); l != "" {
+			return l, false
+		}
+		return startingLine, false
+	}
+	reason, _ := res["reason"].(string)
+	fix, _ := res["fix"].(string)
+	if fix == "" {
+		return reason, true
+	}
+	return reason + " " + fix + ".", true
+}
+
 // voiceReady asks the coppice server whether voice can run. When it
 // cannot, it asks the server to start voice, and returns the line that
 // says why and what fixes it, without the words that say how to try
@@ -219,6 +274,12 @@ func voiceReady(socket string) (*voiceTarget, string) {
 			if again, err := callWithin(socket, "voice.start", nil, 5*time.Second); err == nil {
 				res = again
 			}
+		}
+		if st, _ := res["state"].(string); st == "starting" {
+			if l := fetchLine(res); l != "" {
+				return nil, l
+			}
+			return nil, startingLine
 		}
 		reason, _ := res["reason"].(string)
 		fix, _ := res["fix"].(string)

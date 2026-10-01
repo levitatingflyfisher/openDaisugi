@@ -1,0 +1,72 @@
+# The owner's words are act-once (FM-R-65 and FM-R-66). A floor.talk with an
+# act id logs the words once: a repeat of the id answers with the first
+# message and already true, queues no turn and adds no message. A bad act is
+# refused. A spawn writes its start line, fsynced, before it runs and its end
+# line after (calls.jsonl); the fake claude's spawn has no envelope, so it ends
+# in error. A start line with no end, written here by hand as a crash leaves
+# it, becomes one note when the chat opens again, is not run again, and shows
+# once as a line of the next turn's state. The old act id is still known after
+# the restart.
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env COPPICE_SPRIG_BIN={FIXTURES}/chat/fake-turn-sprig.py
+#!env FAKE_TURN_DIR={WORK}/turns
+{"id":"1","cmd":"floor.talk","text":"build the thing","act":"act-1"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/0","queued":1,"label":"foreman"}}
+#!retry 30000
+{"id":"2","file":"{DATA}/foreman/turns.jsonl","count":"\"status\":\"ok\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"3","cmd":"floor.talk","text":"build the thing","act":"act-1"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/0","queued":0,"label":"foreman","already":true}}
+{"id":"3b","cmd":"floor.talk","text":"other words","act":"act-1"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"act act-1 was used for other words. Send a new id for a new sentence."}}
+{"id":"3c","cmd":"floor.talk","text":"x","act":5}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"act must be 1 to 64 letters, digits, dots, colons, dashes or underscores: an id the sender makes for this sentence."}}
+{"id":"4","cmd":"floor.talk","text":"x","act":"has space"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"act must be 1 to 64 letters, digits, dots, colons, dashes or underscores: an id the sender makes for this sentence."}}
+{"id":"5","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"source":"log","more":false,"messages":[{"id":"log/0","role":"owner","read":true},{"id":"log/1","role":"agent","text":"heard: build the thing"}]}}
+{"id":"6","cmd":"floor.talk","text":"spawn demo go","act":"act-2"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/2","queued":1,"label":"foreman"}}
+#!retry 30000
+{"id":"7","file":"{DATA}/foreman/turns.jsonl","count":"\"status\":\"ok\""}
+{"id":"$id","ok":true,"result":{"count":2}}
+{"id":"c0","file":"{DATA}/foreman/calls.jsonl","count":"\"phase\":\"start\",\"turn\":2,\"tool\":\"spawn\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"c1","file":"{DATA}/foreman/calls.jsonl","count":"\"phase\":\"end\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"c2","file":"{DATA}/foreman/calls.jsonl","count":"\"outcome\":\"error\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"w1","write":"{DATA}/foreman/calls.jsonl","text":"{\"call\":\"c9.1\",\"phase\":\"start\",\"tool\":\"spawn\",\"args\":\"{\\\"project\\\":\\\"x\\\",\\\"brief\\\":\\\"y\\\"}\",\"at\":\"2026-10-13T10:00:03Z\"}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"11","cmd":"floor.chat","since":"log/4"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/5","role":"note","text":"spawn({\"project\":\"x\",\"brief\":\"y\"}) started at 2026-10-13T10:00:03Z, outcome unknown. It is not run again. Check the workers before you ask for it again."}]}}
+{"id":"12","file":"{DATA}/foreman/calls.jsonl","count":"\"outcome\":\"unknown\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"13","cmd":"floor.talk","text":"build the thing","act":"act-1"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/0","queued":0,"label":"foreman","already":true}}
+{"id":"14","cmd":"floor.talk","text":"and now","act":"act-3"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/6","queued":1,"label":"foreman"}}
+#!retry 30000
+{"id":"15","file":"{DATA}/foreman/turns.jsonl","count":"\"status\":\"ok\""}
+{"id":"$id","ok":true,"result":{"count":3}}
+{"id":"16","file":"{WORK}/turns/turn-2.json","count":"tool outcome unknown: spawn("}
+{"id":"$id","ok":true,"result":{"count":1}}
+# A turn that a crash left unanswered, with a spawn of its own that has no end
+# line, is not told to "Say it again" (FM-R-66): its note says the outcome is
+# unknown and to check the workers. The message and the start line are written
+# by hand, the way a crash leaves them, and a torn half line is left at the
+# end of calls.jsonl; the next open cuts it back (FM-R-67).
+{"id":"d1","write":"{DATA}/foreman/main/2026-10-13.jsonl","text":"{\"i\":8,\"kind\":\"user\",\"text\":\"spawn again\",\"size\":11,\"date\":\"2026-10-13T11:00:00Z\"}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"d2","write":"{DATA}/foreman/turns.jsonl","text":"{\"msg\":8,\"started\":\"2026-10-13T11:00:00Z\",\"status\":\"running\"}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"d3","write":"{DATA}/foreman/calls.jsonl","text":"{\"call\":\"c8.1\",\"phase\":\"start\",\"turn\":8,\"tool\":\"spawn\",\"args\":\"{\\\"project\\\":\\\"z\\\",\\\"brief\\\":\\\"w\\\"}\",\"at\":\"2026-10-13T11:00:01Z\"}\n{\"call\":\"c9.9\",\"phase\":\"sta"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!restart
+{"id":"d4","cmd":"floor.chat","since":"log/8"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/9","role":"note","text":"spawn({\"project\":\"z\",\"brief\":\"w\"}) started at 2026-10-13T11:00:01Z, outcome unknown. It is not run again. Check the workers before you ask for it again."},{"id":"log/10","role":"note","text":"The foreman did not finish log/8: coppice stopped first, while a tool call ran. Its outcome is unknown, so it is not run again. Check the workers first."}]}}
+{"id":"d5","file":"{DATA}/foreman/calls.jsonl","count":"c9.9"}
+{"id":"$id","ok":true,"result":{"count":0}}

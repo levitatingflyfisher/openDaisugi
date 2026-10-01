@@ -17,10 +17,18 @@ type Facts struct {
 	// NotInstalled is true when the server says no harness settings in
 	// the home hold a daisugi gate hook.
 	NotInstalled bool
+	// HookRoot is the gate root the installed hook names when it is not
+	// the server's, or "": then m sets nothing (F11-R-15).
+	HookRoot string
 	// Gateway is the gateway's URL, or "" when none is set. Answers is
 	// "yes", "no", or "" when the server did not check.
 	Gateway, Answers string
 	Tokens           float64
+	// Saved is the frontier tokens the gateway says it saved today, and
+	// HasSaved is true only when the server sent that figure. With no
+	// figure the header names no saving.
+	Saved    float64
+	HasSaved bool
 }
 
 // factsMinCols is the narrowest screen that shows the header row. A
@@ -60,6 +68,7 @@ func decodeFacts(res map[string]any) *Facts {
 	if installed, ok := d["installed"].(bool); ok && !installed {
 		f.NotInstalled = true
 	}
+	f.HookRoot = str(d, "hook_root")
 	if gw, ok := res["gateway"].(map[string]any); ok {
 		f.Gateway = str(gw, "url")
 		if a, ok := gw["answers"].(bool); ok {
@@ -71,6 +80,11 @@ func decodeFacts(res map[string]any) *Facts {
 			if v, ok := num(t, k); ok && v > 0 {
 				f.Tokens += v
 			}
+		}
+	}
+	if s, ok := res["saved_today"].(map[string]any); ok {
+		if v, ok := num(s, "tokens"); ok && v >= 0 {
+			f.Saved, f.HasSaved = v, true
 		}
 	}
 	return f
@@ -89,6 +103,12 @@ func (f *floor) readFacts() {
 	}
 	if fa := decodeFacts(res); fa != nil {
 		f.m.Facts = fa
+	}
+	// The tracked foreman's window draws the chat. A foreman that left
+	// takes its chat and its Screen choice with it.
+	fm, _ := res["foreman"].(map[string]any)
+	if id := str(fm, "pane"); id != f.m.ForemanID {
+		f.setForeman(id)
 	}
 }
 
@@ -133,5 +153,8 @@ func factsLine(m *Model) string {
 		need = "1 needs you"
 	}
 	parts := []string{daisugi, gateway, fmt.Sprintf("%d working", working), need, "tokens today " + countText(fa.Tokens)}
+	if fa.HasSaved {
+		parts = append(parts, "saved "+countText(fa.Saved))
+	}
 	return textwidth.Printable(strings.Join(parts, "   "), 0)
 }

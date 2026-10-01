@@ -5,7 +5,7 @@
 //! client's `install` package is the reference.
 
 use super::gateroot::{self, join, mkdir_all, parent, path_str};
-use super::words::{gate_hook_kind, is_gate_hook, is_record_hook, GATE_HOOK_MARKER, KIND_NONE, KIND_UNKNOWN};
+use super::words::{gate_hook_kind, GATE_HOOK_MARKER, KIND_NONE, KIND_UNKNOWN};
 use crate::gate::pyjson::{dumps, dumps_indent, float_repr, loads, LoadError, Object, Value};
 use crate::interpreter_parse::shlex_quote;
 use std::collections::HashMap;
@@ -150,6 +150,11 @@ pub struct Edit {
     pub warning: String,
     /// Said before the write, which still happens.
     pub pre_warning: String,
+    /// "" for a file written; else an edit of `layers.rs` ("skill",
+    /// "plugin", "md", "remove", "md-unpatch").
+    pub kind: String,
+    /// Reported among the files written even when it changes nothing.
+    pub listed: bool,
 }
 
 /// What applying the gate layer to one runtime does.
@@ -181,6 +186,9 @@ pub struct HookOptions {
     pub mode: String,
     pub root: String,
     pub format: String,
+    /// `captures_root`: where the gate mirrors each call as a passive
+    /// capture, or None.
+    pub captures_root: Option<String>,
     pub session: Option<String>,
     pub ask: bool,
 }
@@ -200,6 +208,9 @@ pub fn hook_entry(self_path: &str, o: &HookOptions) -> Object {
         q(&o.format),
         float_repr(inner)
     );
+    if let Some(c) = &o.captures_root {
+        cmd.push_str(&format!(" --captures-root {}", q(c)));
+    }
     if let Some(s) = &o.session {
         cmd.push_str(&format!(" --session {}", q(s)));
     }
@@ -295,7 +306,7 @@ pub(super) fn read_json(p: &str) -> R<(Value, ReadState)> {
     }
 }
 
-fn kind(v: &Value) -> &'static str {
+pub(super) fn kind(v: &Value) -> &'static str {
     match v {
         Value::Obj(_) => "mapping",
         Value::List(_) => "list",
@@ -317,7 +328,7 @@ fn iter_items(v: &Value) -> R<Vec<Value>> {
 }
 
 /// Every hook of type "command" under entries, in order.
-fn command_hooks(entries: &[Value]) -> R<Vec<Object>> {
+pub(super) fn command_hooks(entries: &[Value]) -> R<Vec<Object>> {
     let mut out = vec![];
     for e in entries {
         let entry = match e {
@@ -394,8 +405,13 @@ fn hook_command(entry: &Object) -> String {
 /// exact hook is already installed, a warning when another gate hook is,
 /// else the new settings.json.
 pub fn plan_claude_gate(settings_path: &str, entry: &Object) -> R<Option<Edit>> {
+    plan_claude_gate_on(settings_path, entry, None)
+}
+
+/// `plan_claude_gate` on the content an earlier edit of this run left.
+pub fn plan_claude_gate_on(settings_path: &str, entry: &Object, prior: Option<&Edit>) -> R<Option<Edit>> {
     let gate_command = hook_command(entry);
-    let (mut v, st) = read_json(settings_path)?;
+    let (mut v, st) = super::installgw::json_of(settings_path, prior)?;
     let existed = st != ReadState::Missing;
     if st == ReadState::Bad {
         return Ok(Some(Edit {
@@ -407,6 +423,7 @@ pub fn plan_claude_gate(settings_path: &str, entry: &Object) -> R<Option<Edit>> 
                  Claude Code settings (permissions/env). Fix the file and re-run `daisugi install`."
             ),
             pre_warning: String::new(),
+            ..Edit::default()
         }));
     }
     if st == ReadState::Missing {
@@ -435,14 +452,16 @@ pub fn plan_claude_gate(settings_path: &str, entry: &Object) -> R<Option<Edit>> 
             content: String::new(),
             warning: format!(
                 "a gate hook is already installed in {settings_path} with a different mode/config; run \
-                 `daisugi install --uninstall` first if you want to change it (idempotent by presence, not content)."
+                 `daisugi install --uninstall` first if you want to change it (idempotent by presence, not content).{}",
+                not_isolated_note(&existing)
             ),
             pre_warning: String::new(),
+            ..Edit::default()
         }));
     }
     pre.push(Value::Obj(entry.clone()));
     set_pre(&mut v, pre);
-    Ok(Some(Edit { path: settings_path.into(), existed, content: dump_settings(&v), warning: String::new(), pre_warning: String::new() }))
+    Ok(Some(Edit { path: settings_path.into(), existed, content: dump_settings(&v), warning: String::new(), pre_warning: String::new(), ..Edit::default() }))
 }
 
 /// `_patch_codex_gate`: the gate entry with matcher ".*", added unless any
@@ -461,6 +480,7 @@ pub fn plan_codex_gate(hooks_path: &str, entry: &Object) -> R<Option<Edit>> {
                 "{hooks_path} is not valid JSON; skipping gate hook installation. Fix the file and re-run `daisugi install`."
             ),
             pre_warning: String::new(),
+            ..Edit::default()
         }));
     }
     if st == ReadState::Missing {
@@ -479,7 +499,7 @@ pub fn plan_codex_gate(hooks_path: &str, entry: &Object) -> R<Option<Edit>> {
     }
     pre.push(Value::Obj(entry));
     set_pre(&mut v, pre);
-    Ok(Some(Edit { path: hooks_path.into(), existed, content: dump_settings(&v), warning: String::new(), pre_warning: String::new() }))
+    Ok(Some(Edit { path: hooks_path.into(), existed, content: dump_settings(&v), warning: String::new(), pre_warning: String::new(), ..Edit::default() }))
 }
 
 /// `_pop_json_hook`: every hook whose command `matches` accepts removed
@@ -600,59 +620,14 @@ pub fn plan_pop_hook(
         content: dump_settings(&Value::Obj(s)),
         warning: String::new(),
         pre_warning: String::new(),
+        ..Edit::default()
     }))
-}
-
-pub(super) fn is_dir(p: &str) -> bool {
-    gateroot::is_dir(p)
-}
-
-/// `Runtime.apply(home, {GATE}, ...)` decided without writing.
-pub fn plan_apply(rt: &Runtime, home: &str, self_path: &str, root: &str, enforce: bool, ask: bool) -> R<Change> {
-    let mut ch = Change::new(rt);
-    let mode = if enforce { "enforce" } else { "audit" };
-    let opts = |ask: bool| HookOptions { mode: mode.into(), root: root.into(), format: "claude".into(), session: None, ask };
-    let res = match rt.key {
-        "claude" => plan_claude_gate(&join(home, ".claude/settings.json"), &hook_entry(self_path, &opts(ask))),
-        "codex" => {
-            ch.mkdirs = vec![join(home, ".codex")];
-            plan_codex_gate(&join(home, ".codex/hooks.json"), &hook_entry(self_path, &opts(false)))
-        }
-        "hermes" => {
-            ch.mkdirs = vec![join(home, ".hermes")];
-            Ok(None)
-        }
-        _ => {
-            ch.mkdirs = vec![join(home, ".openclaw/workspace")];
-            Ok(None)
-        }
-    };
-    let e = match res {
-        Err(InstErr::Fail(why)) => {
-            ch.failed = true;
-            ch.why = why;
-            return Ok(ch);
-        }
-        Err(e) => return Err(e),
-        Ok(e) => e,
-    };
-    if let Some(e) = e {
-        let is_write = e.warning.is_empty();
-        ch.edits.push(e);
-        if rt.key == "claude" && is_write && !is_dir(&join(home, ".claude")) {
-            // Claude's apply does not make ~/.claude: the write raises.
-            ch.failed = true;
-            ch.why = format!("{} does not exist", join(home, ".claude"));
-            ch.edits.clear();
-        }
-    }
-    Ok(ch)
 }
 
 /// `install._refuse_unknown_gate_hooks`: why a reverse must not touch a
 /// settings file holding a PreToolUse hook with the gate module in a form
 /// not read, or `None`.
-fn unknown_gate_hook(settings_path: &str) -> Option<String> {
+pub(super) fn unknown_gate_hook(settings_path: &str) -> Option<String> {
     let (v, st) = read_json(settings_path).ok()?;
     if st != ReadState::Ok {
         return None;
@@ -681,48 +656,6 @@ fn unknown_gate_hook(settings_path: &str) -> Option<String> {
     None
 }
 
-/// The gate part of `Runtime.reverse`: the gate hook, and on Claude Code
-/// the floor-report hooks, removed.
-pub fn plan_reverse(rt: &Runtime, home: &str) -> R<Change> {
-    let mut ch = Change::new(rt);
-    let any_record = |c: &Value| is_record_hook(c, "");
-    let gate = |c: &Value| is_gate_hook(c);
-    let steps: Vec<(String, &dyn Fn(&Value) -> bool, Vec<&str>)> = match rt.key {
-        "claude" => {
-            let p = join(home, ".claude/settings.json");
-            vec![
-                (p.clone(), &gate, vec!["PreToolUse"]),
-                (p, &any_record, vec!["Stop", "Notification", "SubagentStart", "SubagentStop"]),
-            ]
-        }
-        "codex" => vec![(join(home, ".codex/hooks.json"), &gate, vec!["PreToolUse"])],
-        _ => vec![],
-    };
-    if let Some(first) = steps.first() {
-        if let Some(why) = unknown_gate_hook(&first.0) {
-            // reverse() raises before it touches anything: the runtime is
-            // left as it is and reported as failed, naming the hook.
-            ch.failed = true;
-            ch.why = why;
-            return Ok(ch);
-        }
-    }
-    let mut prior: Option<Edit> = None;
-    for (path, m, events) in &steps {
-        match plan_pop_hook(path, *m, events, prior.as_ref()) {
-            // reverse() would raise, and uninstall would print the
-            // exception's text, which this binary cannot reproduce.
-            Err(InstErr::Fail(_)) => return Err(InstErr::Unsupported),
-            Err(e) => return Err(e),
-            Ok(Some(e)) => {
-                ch.edits.push(e.clone());
-                prior = Some(e);
-            }
-            Ok(None) => {}
-        }
-    }
-    Ok(ch)
-}
 
 /// `install._backup`: a copy with the mode and times kept, named
 /// `<name>.bak<ns>`, never over an existing backup.
@@ -766,6 +699,9 @@ pub fn backup(p: &str) -> std::io::Result<()> {
 pub fn apply(e: &Edit) -> std::io::Result<Option<String>> {
     if !e.warning.is_empty() {
         return Ok(None);
+    }
+    if !e.kind.is_empty() {
+        return super::layers::apply_layer_edit(e);
     }
     if e.existed {
         backup(&e.path).map_err(|err| std::io::Error::other(format!("backup {}: {err}", e.path)))?;
@@ -1046,4 +982,25 @@ pub fn mise_which(env: &HashMap<String, String>, tool: &str) -> Option<String> {
 /// The one line install prints when the hook keeps a versioned mise path.
 pub fn versioned_note(path: &str) -> String {
     format!("note: {path} is a versioned mise install. Run daisugi install --gate again after mise upgrades daisugi.")
+}
+
+/// `install._NOT_ISOLATED_NOTE`: added to the "different mode/config"
+/// warning when a gate hook there runs the Python module without -I
+/// (SX-R-9).
+pub const NOT_ISOLATED_NOTE: &str = " That hook also runs Python without -I, so it can import a module from the \
+agent's working directory: run `daisugi install --uninstall` and then `daisugi install --gate` to replace it.";
+
+/// `install._not_isolated_note`: a plain text test, as the oracle's.
+fn not_isolated_note(existing: &[Value]) -> &'static str {
+    for c in existing {
+        if let Value::Str(s) = c {
+            if gate_hook_kind(c) != KIND_NONE
+                && (s.contains("-m opendaisugi.gate") || s.contains("-mopendaisugi.gate"))
+                && !s.contains(" -I -m ")
+            {
+                return NOT_ISOLATED_NOTE;
+            }
+        }
+    }
+    ""
 }

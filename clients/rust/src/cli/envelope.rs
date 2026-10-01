@@ -4,7 +4,7 @@
 //! value it may read another way is refused (`Bad::Unsure`) and nothing is
 //! written. The Go client's `gateroot/envelope.go` is the reference.
 
-use super::gateroot::{envelopes_dir, join, mkdir_private, safe_session_id, write_file_mode};
+use super::gateroot::{envelopes_dir, join, safe_session_id};
 use crate::gate::pyjson::{dumps_indent_with, float_repr, Object, Value};
 use regex::Regex;
 use std::sync::OnceLock;
@@ -88,22 +88,21 @@ pub fn starter(ws: &str, decompose: bool) -> R<Object> {
 }
 
 /// `gate.register_envelope`: the dump written to
-/// `envelopes/<safe session or default>.json`, the directory 0700 and the
-/// file 0600 from the moment it exists. Returns the path and, when that
-/// path was a symlink, the file written.
-pub fn register(env: &Object, session: &str, root: &str) -> (String, Option<String>, std::io::Result<()>) {
+/// `envelopes/<safe session or default>.json` through the root's directory
+/// fds (GR-R-9), the directories 0700 and the file 0600 from the moment it
+/// exists, then read back with the gate's reader. A link at the file's name
+/// or a directory is refused, as is a file the gate would not load (see
+/// `statewrite::write_refused`).
+pub fn register(env: &Object, session: &str, root: &str) -> (String, std::io::Result<()>) {
+    use crate::gate::statewrite::{verify_written, write_file};
     let d = envelopes_dir(root);
     let name = if session.is_empty() { "default".to_string() } else { safe_session_id(session) };
-    let p = join(&d, &format!("{name}.json"));
-    if let Err(e) = mkdir_private(&d) {
-        return (p, None, Err(e));
-    }
+    let file = format!("{name}.json");
+    let p = join(&d, &file);
     // pydantic's model_dump_json keeps non-ASCII text as is.
     let text = dumps_indent_with(&Value::Obj(env.clone()), 2, false, &float_json);
-    match write_file_mode(&p, &text, 0o600) {
-        Ok(f) => (p, f, Ok(())),
-        Err(e) => (p, None, Err(e)),
-    }
+    let res = write_file(root, &["envelopes"], &file, &text, false).and_then(|_| verify_written(root, &["envelopes"], &file));
+    (p, res)
 }
 
 /// `Envelope(**in)` then `model_dump()`.
@@ -143,6 +142,11 @@ pub fn validate(input: &Object) -> R<Object> {
     out.set("cache_key", opt_str(input, "cache_key", true)?);
     out.set("stakes", literal(input, "stakes", "low", &["low", "medium", "high", "physical"])?);
     out.set("shell_interpreter_policy", literal(input, "shell_interpreter_policy", "surface", &["surface", "strict", "allow"])?);
+    // The deadline is left out when absent or null, as the oracle dumps it.
+    let deadline = opt_float(input, "deadline")?;
+    if !matches!(deadline, Value::Null) {
+        out.set("deadline", deadline);
+    }
     Ok(out)
 }
 

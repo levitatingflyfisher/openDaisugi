@@ -2,9 +2,13 @@ package verify
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
+
+	"daisugi-verify/internal/pyjson"
 )
 
 // translatePyRegex bridges the escapes where Python's `re` and Go's RE2
@@ -92,11 +96,6 @@ func jsonLen(v interface{}) (int, bool) {
 	return 0, false
 }
 
-func asFloat(v interface{}) (float64, bool) {
-	f, ok := v.(float64)
-	return f, ok
-}
-
 // evalScalar ports predicate_z3._eval_scalar: the per-step ground-truth
 // evaluator. LLMCheck and AliasRef are not evaluable here — matches the
 // oracle raising ValueError, surfaced as an error the caller turns into a
@@ -170,9 +169,30 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 		}
 		return !re.MatchString(s), nil
 	case NumericRange:
+		// min <= float(v) <= max: an int (a bool too) is rounded to a
+		// float first, and one past the float range raises.
 		v, present := resolvePath(scope, e.Path)
-		f, ok := asFloat(v)
-		if !present || !ok {
+		if !present {
+			return false, nil
+		}
+		var f float64
+		switch x := v.(type) {
+		case bool:
+			if x {
+				f = 1
+			}
+		case float64:
+			f = x
+		case json.Number:
+			g, ok := pyFloat(x)
+			if !ok {
+				return false, nil
+			}
+			if math.IsInf(g, 0) && !strings.ContainsAny(string(x), ".eE") {
+				return false, fmt.Errorf("int too large to convert to float")
+			}
+			f = g
+		default:
 			return false, nil
 		}
 		return e.Min <= f && f <= e.Max, nil
@@ -238,10 +258,56 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 	case LLMCheck:
 		return false, fmt.Errorf("LLMCheck must be evaluated via evaluate_llm_check, not _eval_scalar")
 	case AliasRef:
-		return false, fmt.Errorf("unresolved alias reference %q; resolve aliases before evaluation", e.Name)
+		return false, fmt.Errorf("unresolved alias reference '%s'; resolve aliases before evaluation", e.Name)
 	default:
 		return false, fmt.Errorf("unknown predicate op: %v", expr.Op())
 	}
+}
+
+// LLMVerdict is llm_check.LLMCheckResult, and Unported names a call the
+// binary does not make the oracle's way ("" when it made it).
+type LLMVerdict struct {
+	Satisfied bool
+	Reason    string
+	Errored   bool
+	Unported  string
+}
+
+// LLM is llm_check.run_llm_check(rule, payload), payload being
+// json.dumps(payload, default=str). A command that verifies sets it once,
+// before its first verify, as the oracle's evaluator calls the one module
+// function. Nil leaves every llm_check an evaluation error.
+var LLM func(rule, payload string) LLMVerdict
+
+// WordedEvalError reports an evaluation error the binary words as the
+// oracle does at every caller: an llm_check that failed or was blocked,
+// and an alias left unresolved. A caller that words no other evaluation
+// error refuses the rest.
+func WordedEvalError(err error) bool {
+	m := err.Error()
+	if strings.HasSuffix(m, " is not in this binary yet") {
+		return false
+	}
+	return strings.HasPrefix(m, "error: llm_check call failed: ") ||
+		strings.HasPrefix(m, "llm_check blocked for physical stakes") ||
+		strings.HasPrefix(m, "unresolved alias reference '")
+}
+
+// llmPayload is json.dumps({"task": plan.task, "steps": step_dicts}),
+// each step as it was read. False when a step was not read from JSON.
+func llmPayload(plan ActionPlan) (string, bool) {
+	steps := make([]any, len(plan.Steps))
+	for i, s := range plan.Steps {
+		if len(s.JSON) == 0 {
+			return "", false
+		}
+		v, err := pyjson.LoadsPy(string(s.JSON), 1<<20)
+		if err != nil {
+			return "", false
+		}
+		steps[i] = v
+	}
+	return pyjson.Dumps(pyjson.NewObject().Set("task", plan.Task).Set("steps", steps), true), true
 }
 
 // EvaluatePredicate ports predicate_z3.evaluate_predicate: the plan-level
@@ -257,22 +323,19 @@ func EvaluatePredicate(expr Expression, plan ActionPlan, env Envelope) (bool, er
 }
 
 // pyEqual is Python's == over decoded JSON values: True == 1 == 1.0 and
-// False == 0, lists and dicts compare item by item, and a pyTuple equals
-// only a pyTuple. A number past the float64 range stays a json.Number and
-// equals only the same number.
+// False == 0, an int compares with an int or a float exactly (never by
+// rounding both to float64), lists and dicts compare item by item, and a
+// pyTuple equals only a pyTuple.
 func pyEqual(a, b interface{}) bool {
-	if x, ok := pyNumber(a); ok {
-		y, ok := pyNumber(b)
-		return ok && x == y
+	if x, ok := pyNumberOf(a); ok {
+		y, ok := pyNumberOf(b)
+		return ok && pyNumEq(x, y)
 	}
 	switch x := a.(type) {
 	case nil:
 		return b == nil
 	case string:
 		y, ok := b.(string)
-		return ok && x == y
-	case json.Number:
-		y, ok := b.(json.Number)
 		return ok && x == y
 	case []interface{}:
 		y, ok := b.([]interface{})
@@ -308,20 +371,6 @@ func pyEqualItems(x, y []interface{}) bool {
 	return true
 }
 
-// pyNumber is a bool or a float64 as the number Python compares it as.
-func pyNumber(v interface{}) (float64, bool) {
-	switch x := v.(type) {
-	case float64:
-		return x, true
-	case bool:
-		if x {
-			return 1, true
-		}
-		return 0, true
-	}
-	return 0, false
-}
-
 // pyTuple is a list value that model_dump() keeps as a Python tuple. A
 // tuple equals no list, so reflect.DeepEqual against a decoded JSON value
 // (always a []interface{}) is false, as `==` is in Python. Its length is
@@ -334,18 +383,32 @@ var tupleFields = map[string][]string{
 	"vla":            {"target_pose"},
 }
 
+// floatFields are the step fields each step type declares as float (or
+// a tuple or dict of floats): pydantic turns an int there into a float.
+var floatFields = map[string][]string{
+	"joint_move":     {"joint_targets", "duration_s", "velocity_scale"},
+	"cartesian_move": {"target_position", "target_orientation", "duration_s", "velocity_scale"},
+	"gripper":        {"hold_s"},
+	"vla":            {"target_pose", "timeout_s"},
+}
+
 // dumpedStep is the step dict the oracle's evaluator reads: the step's
-// fields, with each tuple-typed field held as a pyTuple. The step's own
-// map is not changed, since the robotics stage reads those fields as
-// lists.
+// fields, with each tuple-typed field held as a pyTuple and each
+// float-typed field's numbers as floats. The step's own map is not
+// changed, since the robotics stage reads those fields as lists.
 func dumpedStep(s Step) map[string]interface{} {
-	fields := tupleFields[s.Type]
-	if len(fields) == 0 {
+	fields, floats := tupleFields[s.Type], floatFields[s.Type]
+	if len(fields) == 0 && len(floats) == 0 {
 		return s.Raw
 	}
 	out := make(map[string]interface{}, len(s.Raw))
 	for k, v := range s.Raw {
 		out[k] = v
+	}
+	for _, f := range floats {
+		if v, ok := out[f]; ok {
+			out[f] = floatValues(v)
+		}
 	}
 	for _, f := range fields {
 		if l, ok := out[f].([]interface{}); ok {
@@ -422,7 +485,23 @@ func evalPredicateGo(e Expression, plan ActionPlan, env Envelope, stepDicts []ma
 		if env.Stakes == "physical" {
 			return false, fmt.Errorf("llm_check blocked for physical stakes — use sound primitives only")
 		}
-		return false, fmt.Errorf("llm_check is not supported by this client (no corpus case exercises it)")
+		if LLM == nil {
+			return false, fmt.Errorf("llm_check is not supported by this client (no corpus case exercises it)")
+		}
+		payload, ok := llmPayload(plan)
+		if !ok {
+			return false, fmt.Errorf("an llm_check over a step this binary did not read is not in this binary yet")
+		}
+		res := LLM(expr.Rule, payload)
+		if res.Unported != "" {
+			return false, fmt.Errorf("%s is not in this binary yet", res.Unported)
+		}
+		// Fail closed: a failed probabilistic check raises, and the caller
+		// records a violation.
+		if res.Errored {
+			return false, errors.New(res.Reason)
+		}
+		return res.Satisfied, nil
 	case And:
 		for _, c := range expr.Children {
 			ok, err := evalPredicateGo(c, plan, env, stepDicts)

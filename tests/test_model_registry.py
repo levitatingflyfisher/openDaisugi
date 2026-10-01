@@ -1,10 +1,9 @@
-"""Trustable, configurable model resolution (v0.31.1).
+"""Model resolution from the Hugging Face Hub.
 
-Answers "trustable configurable lookups for models" from the research: resolve a
-model via the HF Hub scoped to a configurable trusted-org allowlist, pin it to an
-immutable commit revision, and NEVER guess a filename (list the repo first) — so
-an automated fetch can't 404 on a hallucinated path or pull from an untrusted org.
-Download is opt-in. Tested with an injected fake Hub API — no network.
+Resolve any named repo, pin it to an immutable commit revision, and never
+guess a filename (list the repo first), so an automated fetch cannot 404
+on a made-up path. Discovery lists repos under a configurable set of
+orgs. Download is opt-in. Tested with an injected fake Hub API, no network.
 """
 
 import types
@@ -12,14 +11,12 @@ import types
 import pytest
 
 from opendaisugi.model_registry import (
-    DEFAULT_TRUSTED_ORGS,
+    DISCOVERY_ORGS,
     DownloadNotAllowed,
     ModelRef,
     NoMatchingFile,
-    UntrustedSource,
     discover_llamafiles,
     download_pinned,
-    is_trusted,
     resolve_pinned,
 )
 
@@ -40,23 +37,17 @@ class _FakeApi:
         return [types.SimpleNamespace(id=m) for m in self._model_ids]
 
 
-def test_is_trusted_uses_org_allowlist():
-    assert is_trusted("mozilla-ai/llamafile_0.10") is True
-    assert is_trusted("evil-actor/backdoor-llamafile") is False
-    assert is_trusted("mozilla-ai/x") is True
-    # configurable
-    assert is_trusted("myco/model", trusted_orgs=("myco",)) is True
-    assert is_trusted("mozilla-ai/x", trusted_orgs=("myco",)) is False
+def test_discovery_orgs_hold_the_catalog_orgs():
+    for org in ("mozilla-ai", "ibm-granite", "mistralai", "google", "meta-llama"):
+        assert org in DISCOVERY_ORGS
 
 
-def test_default_trusted_orgs_includes_mozilla_ai():
-    assert "mozilla-ai" in DEFAULT_TRUSTED_ORGS
-
-
-def test_resolve_refuses_untrusted_org():
-    api = _FakeApi(files=["model-q4.llamafile"])
-    with pytest.raises(UntrustedSource):
-        resolve_pinned("evil-actor/x", api=api)
+def test_resolve_accepts_any_named_repo():
+    api = _FakeApi(files=["model-q4.llamafile"], sha="c0ffee")
+    ref = resolve_pinned("anyone/x", api=api)
+    assert ref.repo_id == "anyone/x"
+    assert ref.filename == "model-q4.llamafile"
+    assert ref.revision == "c0ffee"
 
 
 def test_resolve_returns_real_filename_pinned_to_commit():
@@ -114,8 +105,7 @@ def test_download_pins_revision_when_allowed():
     assert captured["revision"] == "abc123"  # pinned, not "main"
 
 
-def test_discover_filters_to_trusted_orgs():
-    api = _FakeApi(model_ids=["mozilla-ai/a-llamafile", "evil/b-llamafile", "Qwen/c"])
-    found = discover_llamafiles(api=api)
-    assert "mozilla-ai/a-llamafile" in found
-    assert "evil/b-llamafile" not in found  # untrusted org dropped
+def test_discover_lists_repos_under_the_discovery_orgs():
+    api = _FakeApi(model_ids=["mozilla-ai/a-llamafile", "other/b-llamafile"])
+    assert discover_llamafiles(api=api) == ["mozilla-ai/a-llamafile"]
+    assert discover_llamafiles(orgs=("other",), api=api) == ["other/b-llamafile"]

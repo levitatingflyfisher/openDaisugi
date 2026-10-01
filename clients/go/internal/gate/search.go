@@ -534,7 +534,7 @@ func (r *runner) reachTargets() []string {
 	defer r.enter()()
 	out := []string{"/"}
 	seen := map[string]bool{"/": true}
-	for _, f := range r.secretFiles() {
+	for _, f := range append(r.secretFiles(), r.foremanDirs()...) {
 		ps := parts(f)
 		for i := 1; i <= len(ps); i++ {
 			p := "/" + strings.Join(ps[:i], "/")
@@ -563,7 +563,7 @@ func (r *runner) pathAboveSecret(raw, cwd string) bool {
 	cands := []string{normpath(p), r.resolve(p)}
 	// any(... for d in _data_dirs() for c in cands): _data_dirs runs in
 	// this frame.
-	for _, d := range r.dataDirs() {
+	for _, d := range append(r.dataDirs(), r.foremanDirs()...) {
 		for _, c := range cands {
 			if strings.HasPrefix(d, strings.TrimRight(c, "/")+"/") {
 				return true

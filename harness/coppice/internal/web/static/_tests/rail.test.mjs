@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  railEntries, railOrder, treeOrder, groupCounts, countParts, killKey, projectMenu, dropAction, recentLine, ROW_TYPE,
+  railEntries, railOrder, treeOrder, groupCounts, countParts, killKey, projectMenu, projectCounts, cleanPath, dropAction, recentLine, ROW_TYPE,
 } from '../rail.js';
 import { routeKey } from '../keys.js';
 
@@ -124,9 +124,9 @@ test('the project menu lists pinned projects first, each path once', () => {
     { path: '/p/three', name: '', pinned: true },
   ];
   assert.deepEqual(projectMenu(list), [
-    { path: '/p/two', name: 'two', pinned: true },
-    { path: '/p/three', name: 'three', pinned: true },
-    { path: '/r/one', name: 'one', pinned: false },
+    { path: '/p/two', name: 'two', pinned: true, missing: false },
+    { path: '/p/three', name: 'three', pinned: true, missing: false },
+    { path: '/r/one', name: 'one', pinned: false, missing: false },
   ]);
   assert.deepEqual(projectMenu(null), []);
   const many = Array.from({ length: 30 }, (_, i) => ({ path: '/d/' + i, name: String(i), pinned: false }));
@@ -156,4 +156,37 @@ test('on the rail Delete and ctrl-w stop the selected agent, and F2 renames it',
   // In a window those keys belong to the agent.
   assert.deepEqual(routeKey(key('w', { ctrlKey: true }), 'window'), { kind: 'send', bytes: '\x17' });
   assert.deepEqual(routeKey(key('Delete'), 'window'), { kind: 'send', bytes: '\x1b[3~' });
+});
+
+test('the project menu keeps the missing flag', () => {
+  assert.deepEqual(projectMenu([
+    { path: '/p/gone', name: 'gone', pinned: true, missing: true },
+    { path: '/p/here', name: 'here', pinned: true },
+  ]), [
+    { path: '/p/gone', name: 'gone', pinned: true, missing: true },
+    { path: '/p/here', name: 'here', pinned: true, missing: false },
+  ]);
+});
+
+test('projectCounts names the states of the live agents in one project, asks first', () => {
+  const panes = [
+    { state: 'working', cwd: '/p/a' }, { state: 'blocked', cwd: '/p/a/' }, { state: 'working', cwd: '/p/a' },
+    { state: 'idle', cwd: '/p/b' }, { state: 'done', cwd: '/p/c', closed: true },
+  ];
+  assert.equal(projectCounts(panes, '/p/a'), '1 needs · 2 working');
+  assert.equal(projectCounts(panes, '/p/b'), '1 idle');
+  assert.equal(projectCounts(panes, '/p/c'), '');
+  assert.equal(projectCounts(panes, '/p/none'), '');
+  assert.equal(projectCounts(null, '/p/a'), '');
+  // Paths are cleaned before they compare, and a subagent row is no agent
+  // of its own.
+  const messy = [
+    { id: 'a', cwd: '/p//a/./', state: 'working' },
+    { id: 'b', cwd: '/p/x/../a', state: 'idle' },
+    { id: 'c', cwd: '/p/a', state: 'working', parent: 'a' },
+    { id: 'd', cwd: '', state: 'working' },
+  ];
+  assert.equal(projectCounts(messy, '/p/a/'), '1 working · 1 idle');
+  assert.equal(cleanPath('/a//b/./c/../d/'), '/a/b/d');
+  assert.equal(cleanPath('/'), '/');
 });

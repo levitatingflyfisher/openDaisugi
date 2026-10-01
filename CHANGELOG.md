@@ -2,6 +2,669 @@
 
 ## Unreleased
 
+- **Messages to a running turn are safer (Go and Rust).** The owner's block now
+  carries a nonce that is new for each turn, and the skill tells the model to
+  trust only that block; a look-alike `message-now` tag in a worker log or a
+  file is broken before the model sees it. A message the model has already heard
+  is not run again when the turn then fails: one line says it reached the turn.
+  A message whose tool result could not be written stays queued, and a long
+  message delivers all its parts in order. The turn record keeps the heard
+  messages, so a restart does not call them unanswered. Rulings FM-R-109 to
+  FM-R-111, FM-R-113.
+
+- **A bad `pools.toml` no longer stops the foreman (Go and Rust).** A pools
+  file, a queue file or a queued request that does not read is moved to
+  `<name>.broken-<time>`, never deleted or overwritten, with one line in the
+  chat that says where it went. The foreman goes on with no pools, so a profile
+  that names no pool never fails because of it. A paused background job whose
+  pool or entry you removed goes on instead of staying stopped. Rulings
+  FM-R-108, FM-R-112.
+
+- **Small fixes to the pane foreman (Go and Rust).** A failure to open the
+  foreman's tools is noted once, not at every talk. A run of dropped worker
+  reports is one note. When the foreman ends with worker reports queued, a note
+  says how many were not typed. Tests for the `(deleted)` path strip, a late
+  dialer that fails without the fix, and lowercase worker tool names. Rulings
+  FM-R-103 to FM-R-106.
+
+- **Your message reaches a running turn (Go and Rust).** A sentence sent while
+  the foreman works is delivered at the turn's next tool call, as a block after
+  the tool result, and answered in the same turn. The floor shows `delivered
+  mid-turn` or `queued`. If the turn ends first, the message is its own turn as
+  before; if a turn that took messages fails, they are asked again. Rulings
+  FM-R-101 and FM-R-102.
+
+- **Idle machines pull background work (Go and Rust).** `coppice foreman queue
+  add --project P --brief TEXT --profile POOL` (or `spawn` with `background:
+  true`) adds a job that runs only on a pool machine that has had no foreground
+  work for `idle_after` (2 minutes by default). When foreground work needs the
+  room the background worker is paused (every process group of it stopped, sprig's
+  too, never killed) and goes on when the machine is idle again. The chat gets one line
+  for each change. No background job exists until you add one. Rulings
+  FM-R-97 to FM-R-99.
+
+- **The foreman's workers go where there is room: pools and a queue (Go and
+  Rust).** A worker profile may name a pool in `pools.toml`: several machines
+  (a `base_url` and `slots` each) that serve one model. `spawn` takes the first
+  machine with a free slot; with none, the job waits, and `coppice foreman
+  queue` (and the Machines panel) shows the waiting jobs and each machine as
+  free, busy or cooling. A machine that does not answer cools down with a
+  back-off and the job moves to another machine of the same pool; when a quota
+  is out on every machine, the job is requeued and the foreman says so in one
+  line. A worker never moves to another model, and a local pool keeps going
+  while a cloud quota is out. Waiting foreground jobs do not survive a restart.
+  Docs: "Run the foreman on any model", sections 5. Rulings FM-R-93 to
+  FM-R-96.
+
+- **The Garden, a drawn view of the floor (web).** Press `g` or the Garden button. It draws a daisugi: the foreman is a broad gnarled trunk, each agent a cedar shoot rising from a limb, nested workers from their parent. The look shows the state (sways and sparks while it works, a glowing lantern when it needs you, still when idle, an amber crown when done, a red notch after a gate deny). A click opens that agent. `Expand` covers the page. `Save picture` writes a PNG; `Hide words` leaves every name out of the view and the picture. One canvas, own art, still under reduced motion. Docs: the coppice README, "The garden".
+- **Import your old Claude Code and Codex chats into the foreman, if you choose
+  (Go and Rust).** `coppice foreman import [--from claude|codex|all] [--since
+  DATE] [--tools] [--dry-run | --pause | --resume | --status]` counts the old
+  chats with no model call, then queues them. The foreman offers it once in the
+  chat, and the floor and the phone show a bar with Import and No thanks and then
+  `done of total` with Pause; a no is remembered and the command still works. The
+  server logs the messages one at a time as kind `past`, with the date they were
+  said and an act id from the transcript, so a restart, a crash or a second
+  import never logs one twice. A separate queue: a message is logged only when no
+  live node is pending and no turn runs, so import compaction never sits in front
+  of a live message and never runs two calls at once (a live node is built before
+  any import node, and no import call starts while a turn runs). Coppice's own
+  compactor sessions are not imported, and sprig now runs `claude -p` with
+  `--no-session-persistence`. Thinking is never taken;
+  tool calls only with `--tools`. New verb `floor.import` (operator only). Docs:
+  the README, "Import your old Claude Code and Codex chats". Rulings FM-R-71 to
+  FM-R-92, CP-R-60. Codex chats that a pre-release
+  build imported are imported once more (their message ids changed).
+
+- **`daisugi fence`: a Landlock fence around any harness (Go and Rust).** The
+  gate reads command text, so `cat ~/.ssh/key`, a Python `rmtree` outside the
+  workspace, or a Python write to the gate's `DISARMED` file passed it. The
+  fence sets Landlock and `no_new_privs` in its own process, then runs the
+  harness, so every child is fenced. The harness gets the workspace, the parts
+  of its own directory it writes (its config stays read only), a private temp
+  dir on disk and the system; the rest of HOME, `/tmp`, the secret
+  directories and the gate's state are shut. Only `--allow` opens a secret.
+  Unix sockets connect only in the gate root and the coppice socket's
+  directory, and abstract sockets and signals stay inside (ABI 9 and 6;
+  `--allow-weak-ipc` below that). Inherited descriptors are closed. The gate
+  hook inside the fence asks the resident gate, which the fence starts outside
+  it and which makes every write; with no server it denies. `--print [--json]`
+  shows the rules. With no usable Landlock, the harness does not start, and
+  the message names `--no-fence`; no variable turns it off. The network is not
+  limited. The rule list is a pure Python function with 86 golden cases that
+  both clients match. Coppice starts each harness pane, and the foreman's
+  workers and turns, under the fence while the gate is on (setting `fence`,
+  per pane `--fence on|off`); only the operator turns a pane's fence off,
+  what a fenced pane starts is fenced, a fenced claude pane gets a pinned
+  `--settings`, and a change to a workspace's git hooks or Claude settings
+  shows on the rail. Docs: "Fence any harness with Landlock". Rulings FN-R-1
+  to FN-R-20.
+
+- **The resident gate takes no path from a request (Python, Go and Rust).**
+  Every fenced process may connect to `gate.sock`, and the server runs
+  outside the fence, so it no longer takes `--root` or `--captures-root`
+  from a request (`gate serve --captures-root` fixes the second at start); a
+  request that names one is denied. A resident call's session id must match
+  `[A-Za-z0-9._-]{1,128}`, and a checkpoint is taken only inside the
+  workspace of the fence run above the caller (`<gate root>/fence-runs/`).
+  The clients and the pi and OpenCode plugins send no `--root`. In the fence,
+  `~/.claude.json` and OpenCode's config, binaries and plugin packages are
+  read only, and each run gets a fresh temp leaf. Coppice watches more
+  workspace files that run code later and holds new starts in a changed
+  workspace until `coppice pane ack-changed DIR`; a foreman worker's sprig
+  runs fenced and its tree run outside, so the worker cannot write its own
+  gate root. FN-R-21 to FN-R-26.
+
+- **The fence, round 3 (Python, Go and Rust; coppice Go and Rust).** A
+  resident checkpoint snapshots the bound workspace with `GIT_DIR`,
+  `GIT_COMMON_DIR` and `GIT_WORK_TREE` set, so `core.worktree`, a gitfile or a
+  walk up cannot make the unfenced server hash files the fence denies; a
+  `.git` that leads out denies the call, and a link that leaves the workspace
+  is left out. The resident gate reads a transcript only as a regular file
+  under `~/.claude/projects`. The Python tree run honours
+  `DAISUGI_SPRIG_FENCE`, and coppice passes `tree run --sprig-fence`, so a
+  worker whose fence cannot be applied does not start. Worker tool names fold
+  to the host tools in any case. Inside the fence, OpenCode's snapshot repos
+  and the Claude memory of every other project are read only (only this
+  workspace's Claude project dir is writable). The fence starts the resident
+  gate with `--captures-root <root>/captures`. A coppice hold covers every dir
+  under the workspace and is set as soon as a start sees the change.
+  FN-R-27 to FN-R-32.
+
+- **The gate denies an allow it cannot audit (Python, Go and Rust).** In
+  enforce mode, an allow whose audit line does not land (a log made read only,
+  say) is denied: `the gate cannot write its audit log, so it denies the
+  call`. Audit mode still allows. FN-R-17.
+
+- **Coppice saves its layout on change, after a settle time (Go and Rust).**
+  The server writes `layout.json` 3 s after the last layout change (setting
+  `layout_save_settle`, `"0s"` writes at once) and on a clean exit, never on a
+  poll, so an idle server writes nothing. Every place that moves broken state
+  aside now keeps the newest 5 `.broken-<time>` copies per name (setting
+  `broken_keep`, 0 keeps all).
+
+- **A model that picks, and a model that grades (Python, Go and Rust).**
+  `gateway_router: model` with `gateway_router_model: <model>` asks that model
+  to name one of the allowed models for each turn (never above the requested
+  one); a bad answer, an error or a timeout falls back to the rules router and
+  the reason line says so. `gateway_grader: <model>` asks a model after each
+  reply whether the answer did the task, and writes good or bad to the outcome
+  table with its source. A person's `route feedback` beats the grader, and the
+  grader beats the automatic labels. Both go through the gateway's own upstream
+  and never block the turn. The grader scores only a finished answer, never a
+  tool call step, and the router model is not asked on a tool-loop step. The
+  knn scorer counts only candidate models and lets a cheaper model win only if
+  it did at least as well as the requested one (RT-R-3a). Docs: "Pick how
+  smart the router is". Rulings RT-R-9 to RT-R-13.
+
+- **A pieces view, and a router that learns (Python, Go and Rust).**
+  `daisugi modules --pieces` lists the six pieces (gate, gateway, router,
+  memory and pathways, floor, loop), says which are on here, and gives the
+  command that turns each on or off; `--json` gives the same as data. The
+  README has a "Pick your pieces" table and five recipes, and
+  `docs/explanation/modular-stack.md` gives the rule behind them. The router
+  slot has a fourth choice, `gateway_router: knn` (`daisugi gateway --router
+  knn`): the gateway books each turn (a hash of the task, its vector, the
+  model, the cost, the outcome) in `gateway/routing.db`, and routes a new turn
+  to the model that did well on its 8 nearest past turns, never above the model
+  the harness asked for. An error, a refusal or a retry marks a turn bad; the
+  next ask that moves on marks it good. Too few known outcomes means the rules
+  router decides, and the reason line says so. `daisugi route "task" --knn`
+  shows the choice and its neighbours, `daisugi route feedback <turn-id>
+  good|bad` sets an outcome, and `daisugi router status` shows the counts. In
+  knn mode each journal line carries `reason` (and `turn_id` for a booked turn).
+  Rulings RT-R-1 to RT-R-8.
+
+- **The foreman's chat repairs a bad tree or view instead of moving history
+  aside (Go and Rust).** Only the log in `main/` cannot be rebuilt, so only a
+  bad line there still moves the whole history to `.broken-<time>`. A bad tree
+  line is copied word for word to `tree/<day>.jsonl.broken-<time>`, cut out of
+  the tree file, and its nodes are built again from the log, ahead of later
+  nodes. A `view.json` that cannot be used is copied alone aside and rebuilt by
+  replay. One note says what was repaired. `coppice foreman` reads around a bad
+  line, says so on stderr, and never writes. Smaller: the compactor's "too long"
+  note sends the size and the cut point and not the whole try; `zoom` pages a
+  long node (`offset`, `size`, `--offset`, `--size`) and a bad id answers with
+  the root ids; the view's batch merge is a heap, not a rescan (same lines).
+  Rulings FM-R-68 to FM-R-70, CP-R-59.
+
+- **The foreman acts once (Go and Rust).** `floor.talk` takes a client `act`
+  id (the terminal floor and the web page send a UUID). The id is written in
+  the same line as the owner's words; a repeat, also after a restart, queues no
+  second turn and answers `already: true`. Before the gated `spawn` runs, a
+  start line is fsynced to `calls.jsonl`; a start with no end, found when the
+  chat opens, becomes one note and one line in the next turn's state ("outcome
+  unknown"), is never run again, and the dangling-turn note no longer says "Say
+  it again" for that turn. A turn whose log holds a tool start is not run on
+  another account. Rulings FM-R-65 to FM-R-67.
+  Hardened after review: an act id sent with other words, or an `act` that is
+  not a string, is an error to the sender; the act is on every part of a split
+  text; a torn tail of `calls.jsonl` is cut at open and before each append; if
+  the call log cannot be read or its end line written, the note says the
+  outcome is unknown and never "Say it again"; the unknown-outcome state lines
+  stay until a model has seen them; a failure note after a spawn ran says to
+  check the workers; a broken history moved aside hands its dangling spawns to
+  the new chat under ids no socket can make; call ids cannot repeat across
+  sockets; a failure counts as transient only by whole words in the runner's
+  own message and stderr, never the model's words; after a restart a turn
+  with any tool start is not told to say it again.
+
+- **The foreman's compactor survives a refusal (Go and Rust).** An empty
+  answer or a refusal stop no longer becomes an empty or refusal node: the
+  node is `[clipped] ` and the start of its source, so the tree keeps growing.
+  A model run that fails for the text's sake delays the node, and a repeat
+  at the next ask (after the chat's back-off) clips it; an outage (quota, cannot connect) and a
+  transient failure (a 5xx, a reset, an EOF, a timeout) only delay it and
+  never clip. A refusal that exits 0 is still written as the summary until
+  sprig reports a stop reason (sprig prints none today), so only an empty
+  answer and the repeated failure clip. Ruling FM-R-64.
+
+- **The foreman fails over across accounts of one model (Go and Rust).**
+  `[foreman] turn_profiles` is an ordered list of accounts that all serve the
+  model `turn_model` names (a mixed turn chain is an error; delegation to
+  other models is unaffected). When an account is
+  out of quota (429, 529, 503, a usage-limit text) or cannot be reached, it
+  cools down and the same turn runs on the next; when it returns, the next
+  turn moves back. When every account is out the foreman pauses until the
+  earliest reset; it never switches model. A
+  401 or 403 never moves (a bad key stays visible), and a turn that already
+  used a tool is not replayed. The chat gets one note per move, `coppice
+  foreman status [--json]` lists each profile as ready, cooling or failing,
+  and `floor.facts` names the profile of the last turn. A turn chain of
+  one account now pauses when that account is out (it failed the turn before).
+  An owner message ends a pause, every pause writes a note, a saved end time
+  more than 7 days ahead is dropped, the classifier reads the whole error, and
+  a failed model run is worded in fixed words, never as the process's own text. Rulings FM-R-45 to FM-R-63.
+
+- **The foreman's cache and recall (Go, sprig).** Both turn runners now keep
+  the chat's view where a cache can hold it: the claude runner freezes it
+  into the system prompt and sends only the new lines in the input; sprig
+  cuts its context into blocks of four lines and marks the system block, the
+  last whole context block and the end of the request. The answered message
+  is no longer shown twice. A failing compactor node waits (30 s, 2 min,
+  5 min) instead of stopping the rest, and a message that nothing shows is
+  named in the turn's state. The compactor keeps its shortest try, `Ready`
+  uses a queue, the turn page says to zoom before acting, and
+  `zoom(label)` reads a worker's own log. Rulings FM-R-22 to FM-R-28.
+
+- **A foreman turn on any model.** `[foreman] turn_profile` names an operator
+  agent profile (the Anthropic API, any OpenAI-style server including one on
+  another machine), and the turn runs there through sprig
+  with the same four tools, the same log and the same records. Empty keeps
+  Claude Code. The chat's view is the cached prefix: it sits in the system
+  file after the page, and on the Anthropic wire sprig marks the system block
+  and the end of the request. sprig also gains `--mcp-config`, a stdio
+  MCP client (Go and Rust, the same bytes): it starts each server in its own
+  process group, offers its tools as `mcp__<server>__<tool>`, and treats a
+  tool error or a dead server as a tool result. The Rust coppice port is
+  next (rulings FM-R-13 to FM-R-16; how-to `docs/how-to/foreman-any-model.md`).
+
+- **The foreman as a chat, in Go (opt-in).** `[foreman] mode = "chat"` in
+  `coppice.toml` turns the floor's foreman into one chat that never ends.
+  A compactor summarizes the log with a cheap model, up to 8 calls at once
+  and written in order, so the tree is the same bytes at any width. Each
+  owner message gets one fresh `claude -p` turn with four tools (`zoom`,
+  `date`, `spawn`, `status`, served on a socket that lives one turn and
+  checks the caller's process tree) and no built-in; only the reply is
+  logged, never a thought. `spawn` returns at once and the worker, a
+  `daisugi tree run` in the project's envelope, reports as one message.
+  `floor.chat` reads the log. New: `daisugi agent-profiles bundle --fd N`,
+  sprig `--tools none` and `--system-file`, `coppice foreman stats`. The
+  gate keeps agents out of the foreman's log and turn dirs. Pane mode is
+  the default and unchanged; the Rust coppice and a turn on a non-Claude
+  profile come next (rulings FM-R-1 to FM-R-11).
+
+- **Mixed-provider delegation trees, in Python, Go and Rust.** An agentic
+  step names an agent profile from the operator's `agent_profiles` table
+  in `config.yaml` (a wire, a base URL, a default model and the variable
+  that holds the key); its model is the step's `preferred_model`, else the
+  profile's. A step or a parent names a profile, never a URL or a key.
+  Keys reach a child only on an inherited pipe (descriptor 3, and the
+  resolved table on descriptor 4 for a child that may spawn); every child
+  gets a scrubbed environment. Every agentic step now runs as a delegation
+  tree in a private directory (`gate/` and `tree/`), with `--tokens` and
+  `--turns` on `run`, `weave` and `orchestrate` as its budget. `daisugi
+  tree run` is the one starter; the ledger charges each branch its real
+  use and `tree status` shows an overrun. sprig gains `--wire
+  claude-code|anthropic|openai`, `--base-url`, `--key-fd`, `--scrub-env`,
+  `--max-tokens`, `model_turns` in `--json`, and a `spawn` tool
+  (`--tree-cmd`, `--spawn-keys-fd`) that the gate sees as
+  `mcp__sprig__spawn` (rulings MX-R-1 to MX-R-11; how-to
+  `docs/how-to/agent-profiles.md`). Fix round 1 (MX-R-12 to MX-R-16):
+  sprig follows no redirect on either wire and caps a model response at
+  32 MiB; a kill reaches every descendant (group rows in the ledger, a
+  SIGTERM-then-SIGKILL walk deepest first, sprig's tools in groups of
+  their own); a negative usage count fails the turn and sums saturate; a
+  node with no report rolls up its children's overrun; child output and
+  tree command output are capped at 16 MiB; every child loses every
+  `*_API_KEY` and `*_TOKEN` variable.
+
+- **Security: the Python gate hook no longer imports from the agent's
+  directory.** The hook and the sprig gate command ran `python -m
+  opendaisugi.gate_client` in the agent's working directory, where an
+  agent that may write files could plant its own `opendaisugi` package
+  and allow every call; an empty or relative PYTHONPATH entry did the
+  same. They now run `python -I -m ...` (isolated mode), and a re-run of
+  `daisugi install --gate` updates an older Claude Code or Codex hook in
+  place (SX-R-9). The Go and Rust gates were not affected.
+
+- **sprig as an agentic executor, in Python, Go and Rust.** `daisugi
+  weave`, `run` and `orchestrate` take `--agent claude|sprig` (default
+  `claude`). On sprig, an agentic step keeps every guarantee of the
+  claude runtime: the child envelope is proved inside the caller's,
+  registered in a private gate root under a session daisugi picks, and
+  the tool wall comes from the child. sprig gets the gate as
+  `--gate-cmd`, pinned to that root and session, and the wall as
+  `--tools` (Read, Write, Edit and Bash; tools sprig lacks are left
+  out). `DAISUGI_SPRIG` names the binary. `run` and `orchestrate` now run
+  agentic steps at all, so a reused delegated pathway runs its agentic
+  leaves (K2-7 retired), and `run --dry-run` covers them. sprig gains
+  `--tools`, `--model`, and `model` and `usage` in `--json` (rulings
+  SX-R-1 to SX-R-10).
+
+- **ML packs: LoRA training and the SmolVLA reference from the Go and
+  Rust binaries.** `daisugi pack install train` puts a pinned CPython
+  (python-build-standalone 3.12.15, checked by sha256), a virtual
+  environment and the 57 wheels of `packs/train.lock` (CPU PyTorch,
+  transformers, peft, trl, datasets) under `~/.opendaisugi/packs/train`,
+  installed by the pack's own pip with `--require-hashes
+  --only-binary=:all:`; nothing on PATH is used and no uv runs at install
+  time. `pack bundle` makes a directory or `.tar` for a machine with no
+  network, and `pack install --offline` checks every file in it against
+  the binary's own pins. `pack list`, `status`, `remove` (the pack's
+  directory only) and `run NAME JOB` complete the group. The binaries
+  call a worker in the pack over the voice engines' framing (protocol
+  `daisugi-pack-1`, defined once in `src/opendaisugi/pack/worker.py`); a
+  worker that fails or dies is one line and exit 1, never a crash.
+  `daisugi lora train` takes the trainer's options and runs it in the
+  pack (Python runs it in place when the packages import). The SmolVLA
+  oracle is now one module that the `vla-ref` pack carries for its
+  `vla-chunk` job, and `clients/vla_cases.py --part chunk --pack` reaches
+  it. A real install and one real training step with Granite 4.0 1B on
+  this box found and fixed three trainer faults against the pinned trl
+  and transformers. The source PKGBUILD gains the split package
+  `daisugi-ml`, a system pack over the Arch PyTorch with no venv, and
+  `scripts/release.sh` writes pack bundles as separate artifacts when
+  `PACK_BUNDLES` names them. Go and Rust agree on all 24 new cases
+  (rulings PK-R-1 to PK-R-11).
+
+- **A model catalog for the garden: `daisugi models list`, `search` and
+  `use`.** One shared file (`src/opendaisugi/model_catalog.json`) lists
+  curated models with neutral fields only: id, size, license, context
+  length, a GGUF repo, the hardware each suits and a one-line note. It
+  holds IBM Granite 4.1 3B and Granite 4.0 1B, Ministral 3 3B, Gemma 4
+  E2B, and Llama 3.2 3B and 1B. `models list` shows them with the default
+  for this box, picked by the probe the voice bridge uses: Granite 4.1 3B
+  with 8 GB of RAM or a 6 GB GPU, else Granite 4.0 1B. `models search
+  QUERY` asks the Hugging Face API and filters by size and license;
+  offline it says so in one line. `models use ID` records any Hugging
+  Face id, local path or GGUF file, as given, in
+  `<data-dir>/garden_model.json`. The old resolve-and-pull is `models pin
+  REPO`, which now resolves any named repo. The LoRA trainer's
+  `--base-model` defaults to the recorded choice, else the hardware
+  default, and `tiers setup` names Granite, Ministral, Gemma and Llama as
+  candidate families. All three languages read the same file; Go and Rust
+  agree on all 68 new cases, and on the 36 `tiers setup` cases recorded
+  again (rulings MC-R-1 to MC-R-8).
+
+- **SmolVLA inference in Go and Rust, without Python.**
+  `lerobot/smolvla_base` is exported once to three pinned FP32 ONNX graphs
+  (vision, prefix to key and value cache, one denoise step;
+  `clients/vla_export.py`, rulings VL-R-1 to VL-R-4), kept in
+  `~/.cache/opendaisugi/models/smolvla-onnx/` with the tokenizer and
+  stats, and checked against their SHA-256 before they load. Each port runs
+  them through our own thin ONNX Runtime wrappers (cgo in Go, hand-written
+  FFI in Rust, one shared C layer; `clients/go/scripts/native.sh
+  --onnxruntime` installs the pinned 1.23.2 release), with a hand-written
+  byte-level BPE tokenizer that follows the oracle's pipeline (VL-R-5), the
+  image, state and action processing, the time embedding and the 10 Euler
+  steps. A SmolVLA executor renders the scene's camera and drives the arm,
+  behind the robotics build option. Against lerobot's FP32 PyTorch policy:
+  30 instructions tokenize the same; a chunk differs by 2.4e-6 at most; in
+  the pick-place closed loop the replayed runs differ by 3.7e-6 at most,
+  and Go and Rust agree bit for bit (VL-R-6, VL-R-7). A chunk takes 2.8 s
+  in Go and 3.0 s in Rust on a 4-core i5; the PyTorch oracle takes 2.6 to
+  3.2 s on the check and golden inputs and 6.7 s on the loop's dark frames.
+  The project's own `TransformersVLAExecutor` still cannot load this model.
+
+- **The robotics executors in Go and Rust.** `MuJoCoExecutor` (sim_reset,
+  joint_move, gripper and cartesian_move with its damped least-squares IK,
+  the torque and contact guards, `configure_from_envelope`),
+  `robotics_executors`, `VLAExecutorBase` and `MockVLAExecutor` are ported
+  to both, over our own thin wrappers of MuJoCo's C API: cgo in Go
+  (`internal/mujoco`), hand-written FFI in Rust (`src/mujoco`), and one
+  small C layer both share (`clients/native/mujoco`), with offscreen
+  rendering of a camera through EGL. `clients/go/scripts/native.sh
+  --mujoco` installs the pinned MuJoCo 3.12.0 release, checked against its
+  published SHA-256; its `libmujoco.so` is the same file the oracle's wheel
+  carries. All of it builds only with the `mujoco` build tag and Cargo
+  feature, so the shipped binaries do not link MuJoCo, and, as in the
+  oracle, no command builds a robot executor (RB-R-1): each port answers
+  the new robotics cases with a `robot-probe`. Go and Rust agree with the
+  oracle on all 74 cases, every float to the last bit, the IK included,
+  because the ports compute its update in the order numpy and OpenBLAS do
+  (RB-R-3); both draw the same frames for the 5 render cases (RB-R-4). The
+  verifier's robotics violations now carry the oracle's detail in both
+  ports, so a supervised run of a plan they reject is journaled instead of
+  refused (RB-R-7). A CI job installs MuJoCo and Mesa's EGL and runs all of
+  it. SmolVLA inference (`TransformersVLAExecutor`) is the next job.
+
+- **Full parity, first round: the model-asking checks, named definitions
+  and agentic steps in Go and Rust.** The port plan now holds an inventory
+  of what a Go or Rust user still needed Python for
+  (`docs/plans/2026-09-24-omarchy/plan-part2-ports.md`, "Full parity").
+  Three of its rows are closed. An `llm_check` invariant or postcondition
+  is now asked of the model wherever the oracle verifies (the gate, `run`,
+  `orchestrate`, `weave`, the MCP tools, `pathways import`, ingest and
+  tend), on the claude-code backend as well as the HTTP one, through one
+  copy of `run_llm_check` per port (PG-1). An `alias` is worded as the
+  oracle words an unresolved one at every command, since no oracle command
+  builds a registry, and the registry with its seven system aliases is
+  ported and measured on a probe (PG-2, PG-5). `daisugi weave` runs an
+  agentic step in both ports as the oracle does: the child envelope proved
+  inside the caller's, registered in a fresh gate root, and `claude -p`
+  under the binary's own gate hook (PG-3); the weave suite's fake
+  sub-agent runs its tool calls through that hook, so the cases compare
+  the inner wall (PG-4). New cases: 32 k2, 10 k3, 3 pathway, 5 gate, 11
+  weave and 23 alias; Go and Rust agree with the oracle on all of them but
+  the ones still ruled (K2-8: a dict expr that does not parse, where the
+  oracle raises). `daisugi verify` and the command-line `hook report` are
+  in both ports too (PG-6; 28 CLI cases). The rest of the inventory (the
+  other `install` layers and `install --ask`, `gate replay`, parallel
+  levels, `tiers stats`, hand-written YAML and more) is still open, so full
+  parity is not reached.
+
+- **sprig in Rust (stage J).** `harness/sprig-rs` builds the four binaries
+  the Go sprig module builds, `sprig`, `sprig-hook`, `sprig-mcp` and
+  `weave`, with no change of behavior: the same flags and usage, prompt,
+  API request bodies (https through rustls and the system CA bundle),
+  session tree and resume, hook decisions, MCP replies and workflow runs,
+  and Go's own JSON, flag and error words, down to bytes that are not
+  UTF-8. `clients/sprig_compare.py` runs 185 cases on both with fake
+  claude, fake gate and fake API, 12 of them through the real Go and Rust
+  daisugi: all agree, none refused (SP-R-1 to SP-R-6). `SPRIG_PORT=rust
+  scripts/install.sh` and `SPRIG_PORT=rust scripts/release.sh VERSION`
+  build it in place of the Go one, with its own NOTICE; Go stays the
+  default. A `sprig-rs` CI job runs both sprigs' tests and the compare.
+  Every stage of the port plan now has a built port; full parity is not
+  reached, since some parts are still Open in Go and Rust
+  (docs/feature-status.md).
+
+- **coppice: two faults fixed in both ports.** A server that has closed
+  now writes nothing more into its data dir. Close did not wait for a
+  headless pane's pump, which saves `layout.json` after it marks the
+  record closed, so a save could still run after Close returned (a CI
+  flake, "directory not empty"). Every write into the data dir now waits
+  for Close or is refused after it, and Close waits for each pane's end
+  goroutine within its deadline. And a click on a close mark now keeps the
+  stop question open: the mouse release that follows the press, and
+  motion, no longer answer it; a key or a new press does (CP-R-44
+  retired).
+
+- **The speech engine stays loaded, Parakeet v2 is back, and the engine
+  follows the hardware.** Parakeet and Moonshine now run as one resident
+  child of the voice server that loads its model once and answers clip
+  after clip over a small framed protocol (daisugi-voice-1), in Python, Go
+  and Rust alike; the server restarts a child that dies and answers 503
+  `engine_loading` while one loads. `voice_engine: parakeet` runs NVIDIA's
+  Parakeet-TDT-0.6B v2 (CC-BY-4.0; see NOTICE) on `parakeet-cli`, built by
+  `native.sh --parakeet` from five pinned CrispASR files and the ggml CPU
+  backend, and refused at build time if it carries left-out model code,
+  download code or network calls. Its model is the F16 GGUF that NVIDIA's
+  .nemo converts to byte for byte, made Q4_K on the box, both pinned. With
+  no voice setting the engine follows the hardware: Parakeet on 8 GB and 4
+  cores, else Moonshine small, else faster-whisper `tiny.en`, with one
+  line that says which and why. On this box, resident Parakeet answers a
+  5 s clip in about 1.1 s with 2.5 to 3.5 times fewer errors than
+  `tiny.en`. Resident Moonshine now runs a second of silence before each
+  clip, which keeps its voice detector from carrying one clip into the
+  next. whisper.cpp still runs once per clip (owner rulings O-1 to O-4,
+  VO-16 to VO-21). 555 voice cases agree in each port.
+
+- **coppice in Rust, slice 6b: the floor on a terminal, and the rename.**
+  The Rust coppice now carries the floor on a terminal: the rail by task
+  and project, the peek and its answer keys, the prompt line and its
+  words, live windows beside the rail, the mouse, the key table that
+  prints the footer, Recent, the picker, `floor.json`, the talk key and
+  voice clips, and the first-run question. With every command of Go's
+  command line in it, the binary is now named `coppice`, as Go's is.
+  `COPPICE_PORT=rust scripts/install.sh` and `COPPICE_PORT=rust
+  scripts/release.sh VERSION` build it in place of the Go one, with its
+  own NOTICE; Go stays the default. The compare reads each side's floor
+  as a screen through a second scratch server's libghostty-vt: all 230
+  floor-screen cases agree, and so does the whole compare, 1541 cases, 64
+  event views and 19 tree views, none refused. `e2e/run.sh tui` passes
+  against each binary, and a CI step now runs it against the Rust one.
+  Stage I is built (CP-R-41 to CP-R-45; CP-R-12 retired). Found on the
+  way, in both ports: a click on a close mark asks whether to stop the
+  agent, and the release that follows the press answers no (CP-R-44).
+
+- **coppice in Rust, slice 6a: tiles and the web floor.** `coppice-rs`
+  now carries `coppice web` and the phone server: `web serve`, `web token`
+  and `web cert init|show|tailscale`, the floor on loopback with
+  `coppice web`, and the start of the phone server from `web.json` in
+  `server start`. The server speaks HTTP/1.1 the way Go's net/http frames,
+  routes and serves files, TLS through rustls, the websocket with
+  coder/websocket's checks and close words, the token guard, the ban list
+  and the /proc/net/tcp check that keeps a pane from answering an ask,
+  the event ring, view plugins, voice and ntfy push. The local CA lays out
+  its certificates as Go does, so either port reads a CA the other made,
+  and the QR code is drawn as Go draws it. The page is the Go tree's own,
+  embedded byte for byte. The tiles model is ported with Go's tests. The
+  compare's new web suite drives each side's server on scratch loopback
+  ports: all 395 web cases agree with Go, and so do all 1311 cases, 61
+  event views and 17 tree views of the whole compare, none refused; the
+  web end-to-end check passes against each binary (CP-R-33 to CP-R-40;
+  CP-R-12 narrowed to the floor on a terminal). rustls, rustls-pki-types
+  and ring come in at the versions clients/rust locks (CP-R-36). The Rust
+  server now removes its socket file when it closes, as Go's does.
+
+- **coppice in Rust, slice 5: the command line.** `coppice-rs` now
+  carries every `coppice` command but the floor on a terminal and
+  `coppice web`: the client verbs with Go's tables and `--json` output,
+  the server commands, `task list --tree`, `project add|list|rm`, `open`,
+  `new`, `skill`, `--stdio` and `--remote`; `attach`; the tmux mirror;
+  the plugin loader, the shipped plugins and the policy runner, with a
+  policy's connection placed as its plugin; and the voice supervisor. The
+  compare runs each command against a scratch server, attach on a pseudo
+  terminal and the mirror on a scratch tmux server, and sends each key of
+  `testdata/keys.json`: all 916 cases, 48 event views and 17 tree views
+  agree with Go, none refused (CP-R-29 to CP-R-32; CP-R-1, CP-R-4 and
+  CP-R-9 retired).
+
+- **coppice in Rust, slice 4: headless harnesses.** The Rust coppice
+  now runs headless panes through the claude, codex, opencode, pi and
+  sprig adapters, ported from Go with their event texts, stop rules and
+  Go's JSON error words. It carries `pane.fork`, prompts and raw input to
+  a harness, `agent.allow` and `agent.deny` of an ask OpenCode holds
+  itself, the resume of a headless session at a restart and on
+  `pane.resume`, and a sprig pane's facts read from its session tree.
+  `clients/coppice_compare.py` runs fake harnesses (`#!env`) and replays
+  Go's adapter fixtures; all 552 cases, 35 event views and 17 tree views
+  agree with Go, none refused (CP-R-24 to CP-R-28). A task worktree made
+  from inside another task's worktree could not be removed at
+  `task.close`; both ports now remove the path the task recorded
+  (CP-R-23, a Go fix).
+
+- **coppice in Rust, slice 3: ended panes, restart, projects and task
+  worktrees.** The Rust coppice now restores `layout.json` when it
+  starts, with Go's repairs: the tree, labels, working directories, tasks
+  and id counters come back, a pty pane comes back closed and done, and
+  `server.status` carries the restore report. It carries `pane.forget`,
+  `pane.resume` (fresh, or through a harness's `resume_args`), the
+  seven-day sweep, `project.list`, and task worktrees: `task.create` with
+  `worktree`, the dirty check and removal at `task.close`, and `ahead` in
+  `task.list`. `clients/coppice_compare.py` can now restart both servers
+  on their own data dirs, compare the data dirs as file trees, and make a
+  scratch git repo per side. All 408 cases, 25 event views and 9 tree
+  views agree with Go, none refused (CP-R-19 to CP-R-23; CP-R-6 and
+  CP-R-7 retired).
+
+- **coppice in Rust, slice 2: what the floor knows about a pane.** The
+  Rust coppice reads a harness pane's screen with the same 21 Herdr
+  manifests as Go, compiled in from the Go tree, with patterns rewritten
+  to Go's regex meaning. It carries `pane.explain`, the ready-prompt
+  rules and `pane.trust`, asks held for a task's foreman and the
+  foreman's deny, `floor.talk` and `floor.foreman`, `pane.report_child`,
+  and a Claude pane's tokens and model from its transcript, with
+  `floor.facts`. `clients/coppice_compare.py` now also replays
+  hand-written cases, one pane per screen fixture and per event fixture,
+  and the events each server sent: all 307 cases and 20 event views
+  agree. Headless panes come with slice 4 (CP-R-13 to CP-R-18).
+
+- **coppice in Rust, slice 1: the server core.** `harness/coppice-rs` is a
+  Rust coppice server that links the same pinned libghostty-vt as the Go
+  one, through its C API. It speaks both framings, places a peer by
+  SO_PEERCRED, and carries the pane, attach, task, note, ask and agent
+  verbs for pty panes. `clients/coppice_compare.py` replays the protocol
+  corpus against a Go and a Rust server side by side: all 70 cases agree,
+  and CI runs it. Harness panes, worktrees, foremen and restore are
+  refused for now (CP-R-3 to CP-R-12); the map for the other five slices
+  is `docs/plans/2026-09-24-omarchy/plan-coppice-rust.md`.
+
+- **Moonshine joins the voice engines, and voice needs no setup.**
+  `voice_engine: moonshine` runs Moonshine v2 (MIT, Moonshine AI) through
+  `moonshine-cli`, a small program on Moonshine's C API that
+  `scripts/install.sh` now builds and links onto PATH. `voice_model` is
+  `tiny`, `small` (the default) or `medium`, fetched once into the user
+  cache at a pinned digest, or a model directory. A config whose voice
+  settings are unset or at their defaults runs faster-whisper where it
+  imports and Moonshine small otherwise, so the Go and Rust daisugi serve voice under coppice with no
+  config. Each model's first fetch says one line with its size. The
+  default stays faster-whisper: on this box Moonshine small was less
+  accurate and slower than `tiny.en` (docs/research/stt-2026-10.md).
+  `daisugi modules` lists faster-whisper, moonshine and whisper.cpp. 486
+  voice cases agree in each port.
+
+- **The Parakeet engine is removed.** It ran on sherpa-onnx.
+  `voice_engine: parakeet` now stops `voice serve`
+  with one line that says so; Parakeet will return on a different
+  runtime. The `[voice-parakeet]` extra is gone.
+
+- **The voice bridge in Go and Rust.** `daisugi voice serve`, `ptt`, `arm`
+  and `disarm` are in both binaries. They run whisper.cpp's `whisper-cli`
+  as the speech engine (`voice_engine: whisper.cpp`, `voice_model` naming
+  a ggml file), and the Python side gains the same engine. Text reaches a
+  pane through coppice only, and only to a pane armed for direct send.
+
+- **No agent writes the gate's own state.** With an envelope that grants
+  writes everywhere, an agent could touch the disarm marker, rewrite its
+  envelope or a graft rule, or append its own router label. The gate now
+  denies every write it can place under the gate root and the data dir's
+  `router`, `journal`, `tree`, `gateway`, `weave` and `envelope_cache.db`,
+  in every mode, with no ask that turns it. Reads stay allowed. On a shell
+  line that names the data dir, a write the gate cannot place, or a
+  command it does not know as a writer or a reader (`python`, `git`,
+  `tar`), is denied too.
+
+- **A code write opens its target without following a link**, so a link a
+  parallel call planted after the gate looked is refused, not read.
+
+- **`daisugi graft install --state trial [--seed N]`** writes a trial
+  rule; `graft status` shows its seed.
+
+- **No agent turns the gate off.** The gate denies an agent's shell line
+  that runs `daisugi gate disarm`, `gate arm`, `gate serve`, `install`,
+  `graft install|remove` or `router label`, as it denies the tree and rank
+  verbs. These verbs, and the tree and rank ones, are now read per simple
+  command as arguments of a daisugi command, so `daisugi status && npm
+  start` no longer reads as `daisugi start`.
+
+- **An envelope's deadline holds at call time.** The gate denies a call
+  after the deadline of the envelope that checks it, with a one-line
+  reason.
+
+- **The delegate drafts code.** `mode: "code_write"` on the `delegate` MCP
+  tool returns a worker's draft, a whole file or a unified diff checked
+  against the current file, fenced as untrusted data. The tool writes
+  nothing: the frontier reviews the draft and writes it through the gate.
+
+- **The promotion meter.** A graft rule in `trial` redirects only the
+  sessions in its graft arm. `daisugi router label SESSION pass|fail`
+  records an outcome, and `router status` shows billed cost per success and
+  quota tokens per arm and what promotion would do. Nothing is promoted
+  automatically.
+
+- **The delegation tree: each edge proved.** `daisugi tree check` proves a
+  child envelope fits inside its parent's, strict, at any depth, and names
+  every part that does not fit. `daisugi gate register --parent` proves
+  before it registers. `daisugi tree root|spawn|end|answer|status` keep a
+  tree ledger: a child's tokens and turns come out of its parent's
+  remaining budget and the unspent part goes back when it ends; after three
+  refused proposals a parent's next one goes to the operator. An envelope
+  may carry a `deadline`; a child's is at or before its parent's. The gate
+  denies an agent's `gate register`, `gate init`, `start` and the tree's
+  write verbs. An agentic
+  step's `child_envelope` is proved before the sub-agent starts.
+
+- **A resumed weave run counts in a card's switch cost.** A later step a
+  resumed run took on an open choice now makes the card costly, or decays
+  it when the step cannot be undone.
+
+- **A shell step's output is read to EOF**, within the step's time, in all
+  three clients: output a background child writes after the shell exits is
+  kept.
+
 - **Shadow mode is now audit mode.** `--mode audit|enforce` and
   `install --enforce/--audit`, in the Python CLI, the Go and Rust binaries
   and coppice. `--mode shadow` and `install --shadow` are refused with one

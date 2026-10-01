@@ -19,6 +19,14 @@ func TestATestServerResolvesNoPathUnderTheRealHome(t *testing.T) {
 	if h, _ := os.UserHomeDir(); testhome.UnderRealHome(h) {
 		t.Fatalf("HOME is still the real home: %s", h)
 	}
+	if v := os.Getenv("OPENDAISUGI_HOME"); v == "" || v != testhome.Canary() {
+		t.Fatalf("OPENDAISUGI_HOME is %q, want the canary %q", v, testhome.Canary())
+	}
+	for _, k := range []string{"COPPICE_DATA_DIR", "CLAUDE_CONFIG_DIR"} {
+		if v, set := os.LookupEnv(k); set {
+			t.Fatalf("%s is still set: %q", k, v)
+		}
+	}
 	s := newTestServer(t)
 	paths := map[string]string{
 		"socket": s.cfg.SocketPath, "data": s.cfg.DataDir, "gate root": s.cfg.GateRoot,

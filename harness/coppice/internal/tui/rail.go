@@ -18,7 +18,8 @@ const railHint = "That key does nothing on the rail. ctrl-t types a line."
 // handle applies one keystroke while no window has the keys. quit is true
 // when the floor should close. ctrl-c quits. A question takes the key
 // first, then the picker, the rename field, the prompt line and the tree,
-// whichever is open. Then the rail keys in Table act through Bind, arrows
+// whichever is open. A mouse release or motion never answers a question.
+// Then the rail keys in Table act through Bind, arrows
 // move, and a click lands. Other keys only say how to type a line.
 func (f *floor) handle(k key) (quit bool, err error) {
 	m := f.m
@@ -27,15 +28,25 @@ func (f *floor) handle(k key) (quit bool, err error) {
 	}
 	switch {
 	case m.Confirm != "" || m.ClearAll:
+		// A terminal sends a release after the press that asked, and
+		// motion is not an answer either. Only a key or a new press is.
+		if k.kind == keyMouse && (k.click.Release || k.click.Button&32 != 0) {
+			return false, nil
+		}
 		return false, f.answerConfirm(k)
 	case m.Picker != nil:
 		return false, f.pickerKey(k)
 	case m.Renaming != "":
 		return false, f.renameKey(k)
+	case m.Swapping != "":
+		return false, f.swapTypeKey(k)
 	case m.Talking:
 		return false, f.talkKey(k)
 	case m.Tree != nil:
 		f.treeKey(k)
+		return false, nil
+	case m.Journal != nil:
+		f.journalKey(k)
 		return false, nil
 	}
 	if k.kind == keyByte && m.Peek != nil && m.Peek.Trust {
@@ -72,6 +83,14 @@ func (f *floor) handle(k key) (quit bool, err error) {
 		return false, f.openPicker()
 	case Rename:
 		f.startRename()
+		return false, nil
+	case Journal:
+		f.openJournal()
+		return false, nil
+	case Mode:
+		return false, f.modeKey()
+	case Swap:
+		f.startSwap()
 		return false, nil
 	case Window:
 		return false, f.toWindow(int(k.b - '0'))
@@ -175,6 +194,69 @@ func (f *floor) renameKey(k key) error {
 	return nil
 }
 
+// startSwap is s: it opens the prompt line to swap the selected agent's
+// model or router, for an agent that has one to swap.
+func (f *floor) startSwap() {
+	m := f.m
+	r, ok := m.Selected()
+	if !ok {
+		return
+	}
+	if r.Parent != "" {
+		m.Message = ChildMessage
+		return
+	}
+	if mdl, rtr, lp := swaps(r); !mdl && !rtr && !lp {
+		m.Message = SwapNone(m.labelOf(r.ID), r.Harness)
+		return
+	}
+	m.Swapping, m.Prompt = r.ID, ""
+}
+
+// swapTypeKey applies one key while the prompt line swaps. Enter reads
+// the line: a model is sent at once, and a router asks first.
+func (f *floor) swapTypeKey(k key) error {
+	m := f.m
+	switch {
+	case k.kind == keyEsc:
+		m.Swapping, m.Prompt = "", ""
+	case k.kind == keyByte && (k.b == '\r' || k.b == '\n'):
+		id, words := m.Swapping, strings.Fields(m.Prompt)
+		m.Swapping, m.Prompt = "", ""
+		if len(words) != 2 || (words[0] != "model" && words[0] != "router" && words[0] != "loop") {
+			m.Message = SwapHint
+			return nil
+		}
+		if words[0] == "loop" {
+			// The server says what the move carries before anything
+			// starts, and the line asks once.
+			res, err := call(f.o.Socket, "agent.move", map[string]any{"pane": id, "harness": words[1], "preview": true})
+			if err != nil {
+				return f.fail(err)
+			}
+			m.Confirm, m.ConfirmLoop, m.ConfirmLine = id, words[1], MoveLine(res, words[1])
+			return nil
+		}
+		if words[0] == "router" {
+			if words[1] != "direct" && words[1] != "gateway" {
+				m.Message = SwapHint
+				return nil
+			}
+			m.Confirm, m.ConfirmRouter = id, words[1]
+			return nil
+		}
+		res, err := call(f.o.Socket, "agent.set_model", map[string]any{"pane": id, "model": words[1]})
+		if err != nil {
+			return f.fail(err)
+		}
+		m.Message = ModelDone(m.labelOf(id), words[1], str(res, "when"))
+		return f.refresh()
+	default:
+		editLine(&m.Prompt, k)
+	}
+	return nil
+}
+
 // stopKey is ctrl-w. On a live row it asks once whether to stop that
 // agent, and answerConfirm takes the next key. On an ended row it forgets
 // the record. On Clear all it asks whether to forget them all.
@@ -190,7 +272,7 @@ func (f *floor) stopKey() error {
 			m.Message = ChildMessage
 			return nil
 		}
-		m.Confirm = it.row.ID
+		m.Confirm, m.ConfirmMode = it.row.ID, false
 	case itemEnded:
 		return f.forget(it.row.ID)
 	case itemClearAll:
@@ -204,18 +286,81 @@ func (f *floor) stopKey() error {
 // forgets every ended agent the fold lists. Any other key keeps them.
 func (f *floor) answerConfirm(k key) error {
 	m := f.m
-	id, all := m.Confirm, m.ClearAll
-	m.Confirm, m.ClearAll = "", false
+	id, all, mode, router, loop := m.Confirm, m.ClearAll, m.ConfirmMode, m.ConfirmRouter, m.ConfirmLoop
+	m.Confirm, m.ClearAll, m.ConfirmMode, m.ConfirmRouter = "", false, false, ""
+	m.ConfirmLoop, m.ConfirmLine = "", ""
 	if k.kind != keyByte || (k.b != '\r' && k.b != '\n') {
 		return nil
 	}
+	if loop != "" {
+		label := m.labelOf(id)
+		res, err := call(f.o.Socket, "agent.move", map[string]any{"pane": id, "harness": loop})
+		if err != nil {
+			return f.fail(err)
+		}
+		m.Message = LoopDone(label, loop, str(res, "when"))
+		return f.refresh()
+	}
+	if router != "" {
+		label := m.labelOf(id)
+		if _, err := call(f.o.Socket, "agent.set_router", map[string]any{"pane": id, "router": router}); err != nil {
+			return f.fail(err)
+		}
+		m.Message = RouterDone(label, router)
+		return f.refresh()
+	}
 	if all {
 		return f.clearAll()
+	}
+	if mode {
+		return f.setMode(id, "watching")
 	}
 	if _, err := call(f.o.Socket, "pane.close", map[string]any{"pane": id}); err != nil {
 		return f.fail(err)
 	}
 	m.Message = m.labelOf(id) + " stopped."
+	return f.refresh()
+}
+
+// modeKey is m: the selected agent's daisugi mode. An agent the owner set
+// to watching goes back to enforcing at once. An enforcing agent asks once
+// first, and answerConfirm takes the next key. Off is never offered:
+// turning the gate off stays the command daisugi gate disarm.
+func (f *floor) modeKey() error {
+	m := f.m
+	r, ok := m.Selected()
+	if !ok {
+		return nil
+	}
+	if r.Parent != "" {
+		m.Message = ChildMessage
+		return nil
+	}
+	if r.Mode == "" || r.Mode == "off" {
+		m.Message = ModeNoGate(m.labelOf(r.ID))
+		return nil
+	}
+	if m.Facts != nil && m.Facts.HookRoot != "" {
+		m.Message = HookRootLine(m.Facts.HookRoot)
+		return nil
+	}
+	if r.Marker == "watching" {
+		return f.setMode(r.ID, "enforcing")
+	}
+	if r.Mode == "watching" {
+		m.Message = GateWatches(m.labelOf(r.ID))
+		return nil
+	}
+	m.Confirm, m.ConfirmMode = r.ID, true
+	return nil
+}
+
+// setMode sends agent.set_mode and says the new mode on the status line.
+func (f *floor) setMode(id, mode string) error {
+	if _, err := call(f.o.Socket, "agent.set_mode", map[string]any{"pane": id, "mode": mode}); err != nil {
+		return f.fail(err)
+	}
+	f.m.Message = ModeDone(f.m.labelOf(id), mode)
 	return f.refresh()
 }
 
@@ -305,15 +450,7 @@ func (f *floor) enterRecent(it item) error {
 		m.ClearAll = true
 		return nil
 	case itemResumeAll:
-		var tally batch
-		for _, r := range m.recent() {
-			_, _, err := f.resume(r)
-			if err := tally.add(err); err != nil {
-				return err
-			}
-		}
-		m.Message = tally.say("Started %d agents again.")
-		return f.refresh()
+		return f.resumeAllEnded()
 	}
 	id, resumed, err := f.resume(it.row)
 	if err != nil {
@@ -410,7 +547,7 @@ func (f *floor) newNear() error {
 	if err := f.refresh(); err != nil {
 		return err
 	}
-	f.showNew(id)
+	f.sayStarted(id, res, "")
 	return nil
 }
 
@@ -428,15 +565,18 @@ func (f *floor) openPicker() error {
 			continue
 		}
 		pinned, _ := pm["pinned"].(bool)
-		p.Projects = append(p.Projects, Project{Path: str(pm, "path"), Name: str(pm, "name"), Pinned: pinned})
+		missing, _ := pm["missing"].(bool)
+		p.Projects = append(p.Projects, Project{Path: str(pm, "path"), Name: str(pm, "name"), Pinned: pinned, Missing: missing})
 	}
 	f.m.Picker = p
 	return nil
 }
 
 // pickerKey applies one key while the picker is open. A number from 1 to
-// 9 picks that project, Enter picks the one under the cursor, the arrows
-// move, and Esc closes the picker.
+// 9 picks that project, and 0 picks the tenth. Enter picks the one under
+// the cursor, x removes a missing one from the list, the arrows move, and
+// Esc closes the picker.
+// A missing project starts nothing: its row says so.
 func (f *floor) pickerKey(k key) error {
 	m := f.m
 	p := m.Picker
@@ -453,8 +593,13 @@ func (f *floor) pickerKey(k key) error {
 			return nil
 		}
 		return f.startIn(p.Projects[p.Cursor])
-	case k.kind == keyByte && k.b >= '1' && k.b <= '9':
-		i := int(k.b - '1')
+	case k.kind == keyByte && k.b == 'x':
+		return f.removeProject()
+	case k.kind == keyByte && k.b >= '0' && k.b <= '9':
+		i := int(k.b - '1') // 1 is the first project and 0 the tenth
+		if k.b == '0' {
+			i = 9
+		}
 		if i >= len(p.Projects) {
 			m.Message = fmt.Sprintf("There is no project %d.", i+1)
 			return nil
@@ -469,33 +614,127 @@ func (f *floor) pickerKey(k key) error {
 // startIn starts the default harness in project pr, closes the picker,
 // and puts the new agent in a window.
 func (f *floor) startIn(pr Project) error {
+	if pr.Missing {
+		f.m.Message = pr.Name + " is missing. x removes it from the list."
+		return nil
+	}
 	f.m.Picker = nil
-	id, err := f.create(map[string]any{"harness": f.o.Default, "cwd": pr.Path})
+	res, err := f.createReply(map[string]any{"harness": f.o.Default, "cwd": pr.Path})
 	if err != nil {
 		return f.fail(err)
 	}
+	id, _ := res["pane"].(string)
 	if err := f.refresh(); err != nil {
 		return err
 	}
-	f.showNew(id)
+	f.sayStarted(id, res, pr.Name)
 	return nil
+}
+
+// removeProject is x in the picker: it takes the missing project under
+// the cursor out of the list. A project whose directory is there is
+// refused, since x is only for the ones that are gone.
+func (f *floor) removeProject() error {
+	p := f.m.Picker
+	if len(p.Projects) == 0 {
+		return nil
+	}
+	pr := p.Projects[p.Cursor]
+	if !pr.Missing {
+		f.m.Message = pr.Name + " is there. x removes only a missing project."
+		return nil
+	}
+	if _, err := call(f.o.Socket, "project.remove", map[string]any{"path": pr.Path}); err != nil {
+		return f.fail(err)
+	}
+	p.Projects = append(p.Projects[:p.Cursor], p.Projects[p.Cursor+1:]...)
+	p.Cursor = clamp(p.Cursor, len(p.Projects))
+	f.m.Message = "Removed " + pr.Name + " from the list."
+	return nil
+}
+
+// resumeAllEnded resumes every ended agent, as the Resume all item does,
+// and says how many started again.
+func (f *floor) resumeAllEnded() error {
+	m := f.m
+	var tally batch
+	for _, r := range m.recent() {
+		_, _, err := f.resume(r)
+		if err := tally.add(err); err != nil {
+			return err
+		}
+	}
+	m.Message = tally.say("Started %d agents again.")
+	return f.refresh()
+}
+
+// sayRestart asks the server once, at the start. When restore.resumable
+// says agents that stopped with the old server can still come back, the
+// status line says so and the footer offers R. Any key ends the line for
+// the rest of the session. It never takes the place of a line already
+// there, an error included. A server that does not answer says nothing:
+// the line is a courtesy, and Recent still lists them.
+func (f *floor) sayRestart() {
+	res, err := call(f.o.Socket, "server.status", nil)
+	if err != nil {
+		return
+	}
+	back := 0
+	if rs, ok := res["restore"].(map[string]any); ok {
+		if v, ok := rs["resumable"].(float64); ok {
+			back = int(v)
+		}
+	}
+	if back > 0 && f.m.Message == "" {
+		f.m.Restarted = back
+		f.m.Message = RestartLine(back)
+	}
 }
 
 // showNew puts a new agent where the owner sees it. When windows show,
 // it fills a window and takes the keys. Otherwise the cursor moves to its
 // row and the message says how to go in.
 func (f *floor) showNew(id string) {
-	m := f.m
 	if id == "" {
 		return
 	}
+	if !f.placeNew(id) && f.m.Message == "" {
+		f.m.Message = f.m.labelOf(id) + " started. Enter goes in."
+	}
+}
+
+// placeNew moves the cursor to the new agent's row and, when windows
+// show, puts it in a window with the keys. It reports whether it did.
+func (f *floor) placeNew(id string) bool {
+	m := f.m
 	m.Cursor = m.indexOf(id, m.Cursor)
-	if f.typeInTile(id) {
+	return f.typeInTile(id)
+}
+
+// sayStarted is the status line after a new agent: where it started and
+// why. An agent that is not in a window also says how to go in.
+func (f *floor) sayStarted(id string, res map[string]any, where string) {
+	if id == "" {
 		return
 	}
-	if m.Message == "" {
-		m.Message = m.labelOf(id) + " started. Enter goes in."
+	tail := ""
+	if !f.placeNew(id) {
+		tail = " Enter goes in."
 	}
+	line := StartedLine(res, where)
+	// A long path would push the end of the line off the screen. The
+	// directory's own name says where, and the tail still shows.
+	if cols, _ := f.o.Size(); textwidth.Width(line+tail) > cols {
+		short := make(map[string]any, len(res))
+		for k, v := range res {
+			short[k] = v
+		}
+		if dir, _ := res["cwd"].(string); dir != "" {
+			short["cwd"] = dirBase(dir)
+		}
+		line = StartedLine(short, where)
+	}
+	f.m.Message = line + tail
 }
 
 // click applies one mouse report. A release and a wheel event do nothing.
@@ -537,7 +776,14 @@ func (f *floor) click(c Click) error {
 			}
 			if id != "" && c.Y-1 == m.HeaderY && slot < len(m.TileX) && c.X-1 >= m.TileX[slot]+m.TileW[slot]-2 {
 				f.setTyping("")
-				m.Confirm = id
+				m.Confirm, m.ConfirmMode = id, false
+				return nil
+			}
+			if word := m.toggleWord(id); word != "" && c.Y-1 == m.HeaderY && slot < len(m.TileX) &&
+				c.X-1 >= m.TileX[slot]+m.TileW[slot]-3-textwidth.Width(word) && c.X-1 < m.TileX[slot]+m.TileW[slot]-2 {
+				m.Tiles.Focus = slot
+				f.toggleScreen()
+				f.setTyping(id)
 				return nil
 			}
 			m.Tiles.Focus = slot
@@ -566,7 +812,7 @@ func (f *floor) click(c Click) error {
 	if !ok {
 		return nil
 	}
-	onClose := c.X-1 >= m.RailW-2
+	onClose := !m.slim && c.X-1 >= m.RailW-2
 	if it.kind != itemRow {
 		switch {
 		case c.Button != 0:
@@ -583,7 +829,7 @@ func (f *floor) click(c Click) error {
 		return nil
 	}
 	if c.Button == 0 && onClose {
-		m.Confirm = r.ID
+		m.Confirm, m.ConfirmMode = r.ID, false
 		return nil
 	}
 	if m.Tiles == nil {

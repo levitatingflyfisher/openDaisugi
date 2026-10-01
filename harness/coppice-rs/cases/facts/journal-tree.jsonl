@@ -1,0 +1,26 @@
+# Verdicts a sprig session tree holds reach the journal once. Two verdicts
+# at one time with another clause are two entries; the same verdict twice
+# (the same pane, time, decision, tool and clause) is one; a verdict with no
+# time in the tree is skipped, since the server cannot place it. A restart
+# adds nothing twice.
+#!env COPPICE_SPRIG_BIN={FIXTURES}/adapters/fake-sprig.sh
+#!watch state,note
+#!settle 300
+{"id":"1","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sh","-c","printf '%s\\n' '{\"type\":\"tool_call\",\"toolUseId\":\"t1\",\"name\":\"bash\",\"detail\":\"rm -rf /\"}' '{\"type\":\"verdict\",\"ts\":1757300001.5,\"toolUseId\":\"t1\",\"decision\":\"deny\",\"mode\":\"enforce\",\"clause\":\"no-rm\"}' '{\"type\":\"verdict\",\"ts\":1757300001.5,\"toolUseId\":\"t1\",\"decision\":\"deny\",\"mode\":\"enforce\",\"clause\":\"no-rm\"}' '{\"type\":\"verdict\",\"ts\":1757300001.5,\"toolUseId\":\"t1\",\"decision\":\"deny\",\"mode\":\"enforce\",\"clause\":\"no-curl\"}' '{\"type\":\"verdict\",\"toolUseId\":\"t1\",\"decision\":\"allow\",\"mode\":\"enforce\",\"clause\":\"no-time\"}' > rows.jsonl; echo ready; exec sleep 600"],"label":"rows"}
+{"id":"$id","ok":true,"result":{"pane":"$rows"}}
+{"id":"2","cmd":"pane.wait_output","pane":"$rows","contains":"ready","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"3","cmd":"pane.close","pane":"$rows"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"4","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{WORK}","label":"tree","cmd_argv":["--session-dir","{WORK}/sessions","--session","s1"],"env":{"COPPICE_SPRIG_FIXTURE":"{WORK}/rows.jsonl"}}
+{"id":"$id","ok":true,"result":{"pane":"$tree"}}
+{"id":"5","cmd":"agent.prompt","pane":"$tree","text":"clean up","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$tree","state":"idle","source":"headless"}}
+{"id":"6","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":"*"}
+#!retry 5000
+{"id":"7","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"$tree","decision":"deny","tool":"bash","clause":"no-curl","mode":"enforcing"},{"at":"*","pane":"$tree","decision":"deny","tool":"bash","clause":"no-rm","mode":"enforcing"}]}}
+#!restart
+{"id":"8","cmd":"floor.journal"}
+{"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"$tree","decision":"deny","tool":"bash","clause":"no-curl","mode":"enforcing"},{"at":"*","pane":"$tree","decision":"deny","tool":"bash","clause":"no-rm","mode":"enforcing"}]}}

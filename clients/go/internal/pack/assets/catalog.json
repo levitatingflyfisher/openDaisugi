@@ -1,0 +1,42 @@
+{
+  "v": 1,
+  "protocol": "daisugi-pack-1",
+  "platform": "x86_64-linux",
+  "python": {
+    "version": "3.12.15",
+    "file": "cpython-3.12.15+20261001-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261001/cpython-3.12.15%2B20261001-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    "sha256": "7bb1659e3235077b7f63d5b6eb6ce653c6fcd6c5041e9d5f73b42ce10421464d",
+    "size": 34289539
+  },
+  "packs": [
+    {
+      "name": "train",
+      "gpu": false,
+      "summary": "LoRA training on the CPU: torch, peft, trl, transformers, datasets.",
+      "lock": "train.lock",
+      "index_url": "https://pypi.org/simple",
+      "extra_index_urls": ["https://download.pytorch.org/whl/cpu"],
+      "check": ["torch", "transformers", "peft", "trl", "datasets"]
+    },
+    {
+      "name": "train-cuda",
+      "gpu": true,
+      "summary": "LoRA training on an NVIDIA GPU. Not built in this release."
+    },
+    {
+      "name": "vla-ref",
+      "gpu": false,
+      "summary": "The SmolVLA reference policy (lerobot) on the CPU, for the VLA compare.",
+      "lock": "vla-ref.lock",
+      "index_url": "https://pypi.org/simple",
+      "extra_index_urls": ["https://download.pytorch.org/whl/cpu"],
+      "check": ["torch", "lerobot"]
+    },
+    {
+      "name": "vla-ref-cuda",
+      "gpu": true,
+      "summary": "The SmolVLA reference policy on an NVIDIA GPU. Not built in this release."
+    }
+  ]
+}

@@ -56,7 +56,7 @@ func (e *Env) hookRecord(args []string) error {
 	if p.help {
 		return e.cmdHelp(cmd, "", "Read a hook payload from stdin, record it, return the host's continue contract.", opts)
 	}
-	root := p.str("--captures-root", gateroot.Join(e.home, ".opendaisugi/captures"))
+	root := p.str("--captures-root", gateroot.Join(e.dataHome(), "captures"))
 	format := p.str("--format", "claude")
 	event := p.str("--event", "pre_tool_use")
 	if !hookEvents[event] {

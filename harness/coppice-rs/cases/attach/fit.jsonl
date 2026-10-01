@@ -1,0 +1,86 @@
+# pane.attach with fit: the agent takes a phone's size only while no other
+# client is attached, and gets its old size back when that client detaches,
+# ends, or another client attaches. The case's own connection is one client.
+# A websocket through the phone server is the other. Each websocket session
+# also waits 3.5 s for output that never comes, so the first frame of its
+# attach always reaches it before it closes, on both servers.
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "alpha", "cols": 40, "rows": 10}
+{"id": "$id", "ok": true, "result": {"pane": "$a"}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+# Alone, the fit takes the pane to the phone's size, and a second fit moves it.
+{"id": "a1", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 50, "rows": 30}}
+{"id": "$id", "ok": true, "result": {"pane": "$a", "attached": true, "fitted": true}}
+{"id": "l1", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 50, "rows": 30}]}}
+{"id": "y1", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "a2", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 44, "rows": 20}}
+{"id": "$id", "ok": true, "result": {"fitted": true}}
+{"id": "l2", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 44, "rows": 20}]}}
+{"id": "y2", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+# A second client that attaches puts the old size back first.
+{"id": "s1", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1", "daisugi.bearer.pinned-web-token-0001"], "send": ["{\"id\":\"1\",\"cmd\":\"pane.attach\",\"pane\":\"w1:p1\",\"view_only\":true}", "{\"id\":\"w\",\"cmd\":\"pane.wait_output\",\"pane\":\"w1:p1\",\"contains\":\"never-printed\",\"timeout_ms\":3500}"], "order_free": true}
+{"id": "$id", "ok": true, "result": {"status": 101, "frames": [{"id": "1", "ok": true, "result": {"attached": true}}, {"id": "w", "ok": false, "error": {"code": "timeout"}}]}}
+{"id": "y3", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "l3", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 40, "rows": 10}]}}
+# The fit ended with that attach, so detaching changes nothing.
+{"id": "d1", "cmd": "pane.detach", "pane": "$a"}
+{"id": "$id", "ok": true, "result": {"attached": false}}
+{"id": "l4", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 40, "rows": 10}]}}
+# Beside another client, a fit changes nothing and says so.
+{"id": "a3", "cmd": "pane.attach", "pane": "$a", "view_only": true}
+{"id": "$id", "ok": true, "result": {"attached": true}}
+{"id": "s2", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1", "daisugi.bearer.pinned-web-token-0001"], "send": ["{\"id\":\"2\",\"cmd\":\"pane.attach\",\"pane\":\"w1:p1\",\"fit\":{\"cols\":50,\"rows\":30}}", "{\"id\":\"w\",\"cmd\":\"pane.wait_output\",\"pane\":\"w1:p1\",\"contains\":\"never-printed\",\"timeout_ms\":3500}"], "order_free": true}
+{"id": "$id", "ok": true, "result": {"status": 101, "frames": [{"id": "2", "ok": true, "result": {"attached": true, "fitted": false}}, {"id": "w", "ok": false, "error": {"code": "timeout"}}]}}
+{"id": "l5", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 40, "rows": 10}]}}
+{"id": "d2", "cmd": "pane.detach", "pane": "$a"}
+{"id": "$id", "ok": true, "result": {"attached": false}}
+# A view never fits, and a bad fit is refused.
+{"id": "a4", "cmd": "pane.attach", "pane": "$a", "view_only": true, "fit": {"cols": 50, "rows": 30}}
+{"id": "$id", "ok": true, "result": {"attached": true, "fitted": false}}
+{"id": "l6", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 40, "rows": 10}]}}
+{"id": "d3", "cmd": "pane.detach", "pane": "$a"}
+{"id": "$id", "ok": true, "result": {"attached": false}}
+{"id": "b1", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 0, "rows": 5}}
+{"id": "$id", "ok": false, "error": {"code": "bad_request", "message": "fit needs cols from 1 to 1000 and rows from 1 to 500."}}
+{"id": "b2", "cmd": "pane.attach", "pane": "$a", "fit": "wide"}
+{"id": "$id", "ok": false, "error": {"code": "bad_request"}}
+{"id": "b3", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 5}}
+{"id": "$id", "ok": false, "error": {"code": "bad_request"}}
+{"id": "b4", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 1001, "rows": 5}}
+{"id": "$id", "ok": false, "error": {"code": "bad_request"}}
+{"id": "b5", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 5, "rows": 501}}
+{"id": "$id", "ok": false, "error": {"code": "bad_request"}}
+# A client that ends while fitted puts the old size back. The phone's
+# websocket ends with its session, and the server sees that a moment later.
+# The sleep lets the server forget the earlier websocket first.
+{"id": "z1", "sleep": 400}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "s3", "ws": "ws://{ADDR}/ws", "protocols": ["daisugi.v1", "daisugi.bearer.pinned-web-token-0001"], "send": ["{\"id\":\"3\",\"cmd\":\"pane.attach\",\"pane\":\"w1:p1\",\"fit\":{\"cols\":50,\"rows\":30}}", "{\"id\":\"w\",\"cmd\":\"pane.wait_output\",\"pane\":\"w1:p1\",\"contains\":\"never-printed\",\"timeout_ms\":3500}"], "order_free": true}
+{"id": "$id", "ok": true, "result": {"status": 101, "frames": [{"id": "3", "ok": true, "result": {"attached": true, "fitted": true}}, {"id": "w", "ok": false, "error": {"code": "timeout"}}]}}
+#!retry 8000
+{"id": "l7", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 40, "rows": 10}]}}
+# A pane.resize ends a fit: the new size stays after the fitted client leaves.
+{"id": "r1", "cmd": "pane.attach", "pane": "$a", "fit": {"cols": 50, "rows": 30}}
+{"id": "$id", "ok": true, "result": {"fitted": true}}
+{"id": "y4", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "r2", "cmd": "pane.resize", "pane": "$a", "cols": 60, "rows": 20}
+{"id": "$id", "ok": true, "result": {"cols": 60, "rows": 20}}
+{"id": "y5", "sleep": 100}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "r3", "cmd": "pane.detach", "pane": "$a"}
+{"id": "$id", "ok": true, "result": {"attached": false}}
+{"id": "r4", "cmd": "pane.list"}
+{"id": "$id", "ok": true, "result": {"panes": [{"id": "$a", "cols": 60, "rows": 20}]}}

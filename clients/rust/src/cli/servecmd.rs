@@ -14,6 +14,13 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, Condvar, Mutex};
 
 const ROOT_OPT: Opt = Opt::val(&["--root"], "PATH", "Gate state directory (envelopes, audit log, disarm marker).");
+/// The captures root, fixed when the server starts: a request never names
+/// one (FN-R-21).
+const CAPTURES_OPT: Opt = Opt::val(
+    &["--captures-root"],
+    "PATH",
+    "Mirror allowed calls into this captures root. Fixed at start: a request never names one.",
+);
 
 /// The calls decided at once. Each is a child process of this binary; a
 /// call past the bound waits for a free one.
@@ -25,7 +32,7 @@ const CONN_STACK: usize = 256 << 20;
 
 impl Env {
     pub(super) fn gate_serve(&mut self, args: &[String]) -> Res {
-        let opts = [ROOT_OPT];
+        let opts = [ROOT_OPT, CAPTURES_OPT];
         let p = match parse_args(args, &opts, 0) {
             Ok(p) => p,
             Err(m) => return self.usage("gate serve", m),
@@ -33,7 +40,8 @@ impl Env {
         if p.help {
             return self.cmd_help("gate serve", "", "Run the resident gate in the foreground (Ctrl-C to stop).", &opts);
         }
-        let root = if p.has("--root") { path_str(&p.str("--root", "")) } else { join(&self.home, ".opendaisugi/gate") };
+        let root = if p.has("--root") { path_str(&p.str("--root", "")) } else { join(&self.data_home(), "gate") };
+        let captures = if p.has("--captures-root") { Some(path_str(&p.str("--captures-root", ""))) } else { None };
         let sock = join(&root, "gate.sock");
         self.flush();
         // A live gate keeps its socket; a second server never takes it over.
@@ -68,9 +76,10 @@ impl Env {
                 }
             };
             let (home, slots) = (home.clone(), slots.clone());
+            let fixed = (root.clone(), captures.clone());
             // A connection whose thread cannot start is closed with no
             // reply, which every client reads as a deny.
-            let _ = std::thread::Builder::new().stack_size(CONN_STACK).spawn(move || serve_conn(c, &home, &slots));
+            let _ = std::thread::Builder::new().stack_size(CONN_STACK).spawn(move || serve_conn(c, &home, &slots, &fixed));
         }
         Ok(())
     }
@@ -234,7 +243,9 @@ fn on_stop_signals(sock: &str) {
 }
 
 /// Answers one connection: `_Handler.handle`.
-fn serve_conn(mut c: UnixStream, home: &str, slots: &(Mutex<usize>, Condvar)) {
+fn serve_conn(mut c: UnixStream, home: &str, slots: &(Mutex<usize>, Condvar), fixed: &(String, Option<String>)) {
+    use crate::gate::fenceruns;
+    let (root, captures) = fixed;
     let peer = peer_pid(&c);
     let line = read_request_line(&mut c);
     let mut q: Request = match resident::parse_request(&line) {
@@ -245,10 +256,30 @@ fn serve_conn(mut c: UnixStream, home: &str, slots: &(Mutex<usize>, Condvar)) {
         }
     };
     q.caller.peer_pid = peer;
-    let reply = if q.is_hook_report() {
-        let (out, err, code) = resident::hook_report(&q.argv[2..], &q.stdin, &q.caller, home);
+    let report = q.is_hook_report();
+    let words: Vec<String> = if report { q.argv[2..].to_vec() } else { q.argv.clone() };
+    let reply = if fenceruns::names_a_path(&words) {
+        // The server takes no path from a request (FN-R-21): its root and
+        // captures root were fixed when it started.
+        if report {
+            resident::reply_line("", &format!("daisugi hook report: {}", fenceruns::PATH_REFUSAL), 1)
+        } else {
+            let res = crate::gate::deny_fmt(&words, fenceruns::PATH_REFUSAL);
+            resident::reply_line(&res.out_stdout, &res.out_stderr, res.exit as i64)
+        }
+    } else if report {
+        let mut argv = vec!["--root".to_string(), root.clone()];
+        argv.extend(words);
+        let (out, err, code) = resident::hook_report(&argv, &q.stdin, &q.caller, home);
         resident::reply_line(&out, &err, code as i64)
     } else {
+        let mut argv = vec!["--root".to_string(), root.clone()];
+        if let Some(c) = captures {
+            argv.extend(["--captures-root".to_string(), c.clone()]);
+        }
+        argv.extend(words);
+        q.argv = argv;
+        q.caller.workspace = fenceruns::bound_workspace(root, peer);
         {
             let (n, cv) = slots;
             let mut n = n.lock().unwrap_or_else(|e| e.into_inner());
@@ -258,6 +289,7 @@ fn serve_conn(mut c: UnixStream, home: &str, slots: &(Mutex<usize>, Condvar)) {
             *n += 1;
         }
         let res = run_resident_child(&q);
+        crate::gate::statefile::give_notes(&res.notes);
         {
             let (n, cv) = slots;
             let mut n = n.lock().unwrap_or_else(|e| e.into_inner());

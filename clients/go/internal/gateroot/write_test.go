@@ -59,14 +59,8 @@ func TestWriteFile(t *testing.T) {
 	if raw, _ := os.ReadFile(p); string(raw) != "via link" {
 		t.Fatalf("target changed: %q", raw)
 	}
-	if _, err := WriteFileMode(filepath.Join(dir, "env.json"), "{}", 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if st, _ := os.Stat(filepath.Join(dir, "env.json")); st.Mode().Perm() != 0o600 {
-		t.Fatalf("%o", st.Mode().Perm())
-	}
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 3 {
+	if len(entries) != 2 {
 		t.Fatalf("a temporary file was left: %v", entries)
 	}
 }

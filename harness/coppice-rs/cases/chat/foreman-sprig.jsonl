@@ -1,0 +1,50 @@
+# A chat-mode turn on an operator profile ([foreman] turn_profile, FM-R-15,
+# FM-R-18, FM-R-21, FM-R-38). The fake daisugi's bundle names desk on the
+# anthropic wire with a key and no base URL. The turn runs the fake sprig
+# (cases/chat/fixtures/fake-turn-sprig.py) with --wire, the wire's default
+# --base-url, the profile's model, --key-fd 3, --tools none, the MCP relay
+# and --system-file; the key comes on descriptor 3 and is in neither argv
+# nor the environment, which is the allowlist (the key variable of the
+# server's own environment does not pass). The relay is sprig's child, so the
+# turn socket serves it. A profile that is not in the bundle fails the turn
+# with one note that names it.
+#!config [foreman]
+#!config mode = "chat"
+#!config turn_profile = "desk"
+#!env COPPICE_SPRIG_BIN={FIXTURES}/chat/fake-turn-sprig.py
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_BUNDLE_FILE={WORK}/bundle.json
+#!env ANTHROPIC_API_KEY=sk-ambient-must-not-pass
+{"id":"w1","write":"{WORK}/bundle.json","text":"{\"desk\":{\"wire\":\"anthropic\",\"base_url\":null,\"model\":\"m-desk\",\"key\":\"sk-desk-0123\"}}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"floor.talk","text":"hello sprig"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/0","queued":1,"label":"foreman"}}
+#!retry 20000
+{"id":"2","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"source":"log","more":false,"messages":[{"id":"log/0","role":"owner","text":"hello sprig","read":true},{"id":"log/1","role":"agent","text":"sprig heard: hello sprig"}]}}
+{"id":"3","file":"{HOME}/sprig/turn-0.json"}
+{"id":"$id","ok":true,"result":{"text":"*","mode":"*"}}
+{"id":"4","file":"{HOME}/sprig/turn-0.json","count":"\"key_bytes\": 12"}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"5","file":"{HOME}/sprig/turn-0.json","count":"\"key_in_argv\": false"}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"6","file":"{HOME}/sprig/turn-0.json","count":"\"key_in_env\": false"}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"7","file":"{HOME}/sprig/turn-0.json","count":"ANTHROPIC_API_KEY"}
+{"id":"$id","ok":true,"result":{"count":0}}
+{"id":"8","file":"{HOME}/sprig/turn-0.json","count":"\"https://api.anthropic.com\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"9","cmd":"floor.talk","text":"status"}
+{"id":"$id","ok":true,"result":{"message":"log/2"}}
+#!retry 20000
+{"id":"10","cmd":"floor.chat","since":"log/2"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/3","role":"agent","tool":"status"},{"id":"log/4","role":"agent","text":"sprig status: no workers"}]}}
+{"id":"w2","write":"{WORK}/bundle.json","text":"{\"other\":{\"wire\":\"openai\",\"base_url\":\"http://127.0.0.1:9/v1\",\"model\":null,\"key\":null}}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"11","cmd":"floor.talk","text":"once more"}
+{"id":"$id","ok":true,"result":{"message":"log/5"}}
+#!retry 20000
+{"id":"12","cmd":"floor.chat","since":"log/5"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/6","role":"note","text":"The foreman's turn failed: the turn profile \"desk\" is not in the operator's agent profiles (a key variable it names may be unset). Say it again to try again."}]}}
+{"id":"13","cli":["foreman","stats"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"turns: 3 (ok 2, failed 1, timeout 0)\ncache read share: 0.0% of 14 input tokens (fresh 14, cache read 0, cache write 0); output 4\n","stderr":""}}

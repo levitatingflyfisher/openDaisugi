@@ -4,6 +4,7 @@
 package layout
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,6 +69,16 @@ type Pane struct {
 	// A pane keeps it after the parent closes. It is a fact about how the
 	// pane began, not a live link.
 	ParentPane string `json:"parent_pane,omitempty"`
+	// Fence is the pane's own fence setting: "on", "off" or empty. Empty
+	// follows the config's fence setting ("off" unless the config turns it
+	// on; under "auto" the harness starts under `daisugi fence` while the
+	// gate is on). It is never wrapped into
+	// Argv: the server builds the command at start.
+	Fence string `json:"fence,omitempty"`
+	// WorkspaceChanged lists the watched workspace files (git hooks, git
+	// config, Claude's project settings) a fenced run of this pane added,
+	// removed or changed, from its start to its end. The rail shows it.
+	WorkspaceChanged []string `json:"workspace_changed,omitempty"`
 	// ForkPending is true from the fork until the adapter reports a session
 	// id that differs from the borrowed one in HarnessSessionID. While it is
 	// set, a restart repeats the fork from the parent's session instead of
@@ -76,6 +87,10 @@ type Pane struct {
 	ForkPending bool `json:"fork_pending,omitempty"`
 	// TaskID is the task this pane works for, or empty.
 	TaskID string `json:"task_id,omitempty"`
+	// Model is the model an operator chose for a per-turn harness (sprig),
+	// so a resume or a restart of the pane keeps it. Empty means the
+	// harness's own.
+	Model string `json:"model,omitempty"`
 }
 
 // Task is the unit of work above the pane. A task with Parent set is a
@@ -129,6 +144,11 @@ type Tree struct {
 	// saveMu makes saves take turns, from the marshal to the rename, so
 	// the file on disk is always the newest snapshot marshaled.
 	saveMu sync.Mutex
+	// written is the tree the last save that finished put at writtenAt,
+	// and writes counts the writes. All three are under saveMu.
+	written   []byte
+	writtenAt string
+	writes    int
 }
 
 func New() *Tree {
@@ -420,6 +440,13 @@ func (t *Tree) Save(path string) error {
 	if err != nil {
 		return err
 	}
+	// A save that waited behind another and finds the file already holds
+	// this same tree has nothing to write (CP-R-53): a burst of changes
+	// costs one write, not one each, and each save still returns only once
+	// the file holds a tree at least as new as its change.
+	if t.written != nil && t.writtenAt == path && bytes.Equal(t.written, b) {
+		return nil
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -462,7 +489,12 @@ func (t *Tree) Save(path string) error {
 		return err
 	}
 	defer dirF.Close()
-	return dirF.Sync()
+	if err := dirF.Sync(); err != nil {
+		return err
+	}
+	t.writes++
+	t.written, t.writtenAt = b, path
+	return nil
 }
 
 // maxNumericSuffix returns the highest N found across ids of the form

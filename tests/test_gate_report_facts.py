@@ -43,7 +43,7 @@ def _capture(monkeypatch):
 
 
 def _gate(tmp_path, monkeypatch, cmd, mode, **kw):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     seen = _capture(monkeypatch)
     gate_and_contract(json.dumps(_payload(tmp_path, cmd)).encode(), root=root, mode=mode, **kw)
@@ -106,7 +106,7 @@ def test_watching_reports_what_the_harness_was_told_and_what_would_deny(tmp_path
 
 
 def test_a_posted_ask_reports_decision_ask(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     ask.write_presence(root, pid=os.getpid())
     seen = _capture(monkeypatch)
@@ -131,7 +131,7 @@ def test_a_posted_ask_reports_decision_ask(tmp_path, monkeypatch):
 
 
 def test_a_transcript_path_that_is_not_a_string_is_left_out(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     seen = _capture(monkeypatch)
     gate_and_contract(
@@ -143,7 +143,7 @@ def test_a_transcript_path_that_is_not_a_string_is_left_out(tmp_path, monkeypatc
 
 
 def test_a_relative_transcript_path_is_left_out(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     seen = _capture(monkeypatch)
     gate_and_contract(

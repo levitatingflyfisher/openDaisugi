@@ -1,0 +1,30 @@
+# A voice that is getting its speech model: the page's status carries
+# fetch {done, total} so the mic can say how far it is.
+#!env PATH={FIXTURES}/cli/voicebin:/usr/bin:/bin
+# CP-R-30: the voice server's URL names a port the kernel picked.
+#!mask url
+#!config [voice]
+#!config args = ["--extra", "1"]
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "k", "write": "{HOME}/fake-voice-kind", "text": "go\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "f", "write": "{HOME}/fake-voice-fetch", "text": "41000000 160000000\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "m", "write": "{HOME}/fake-voice-mode", "text": "slow\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+#!retry 8000
+{"id": "r", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "starting", "fetch": {"done": 41000000, "total": 160000000}}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "s1", "http": "GET", "url": "http://{ADDR}/api/voice/status", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{\"ready\":false,\"state\":\"starting\",\"message\":\"Voice is starting. The first start can take a minute. Wait a moment, then press Retry.\",\"action\":\"retry\",\"fetch\":{\"done\":41000000,\"total\":160000000}}\n"}}
+{"id": "g", "write": "{HOME}/fake-voice-go", "text": "go\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!retry 8000
+{"id": "r2", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "ready"}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}

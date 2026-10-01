@@ -1,0 +1,16 @@
+# A swap to the gateway is refused, before anything stops, when nothing
+# answers at the gateway's address (here http://127.0.0.1:{PORT}, and no
+# process listens there). The agent stays live; a swap to direct needs no
+# gateway and goes through. Pane ids: cl (headless claude) and its successor.
+#!config gateway = "http://127.0.0.1:{PORT}"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/adapters/fake-claude.sh
+{"id":"1","cmd":"pane.create","kind":"headless","harness":"claude","cwd":"{WORK}","label":"cl","env":{"COPPICE_CLAUDE_FIXTURE":"{FIXTURES}/adapters/claude-stream.jsonl"}}
+{"id":"$id","ok":true,"result":{"pane":"$cl"}}
+{"id":"2","cmd":"agent.prompt","pane":"$cl","text":"list the files","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$cl","state":"idle","source":"headless"}}
+{"id":"3","cmd":"agent.set_router","pane":"$cl","router":"gateway"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"the gateway at http://127.0.0.1:{PORT} does not answer. Start it, then swap."}}
+{"id":"4","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$cl","label":"cl"}],"path":"*"}}
+{"id":"5","cmd":"agent.set_router","pane":"$cl","router":"direct"}
+{"id":"$id","ok":true,"result":{"pane":"$cl2","workspace":"*","tab":"*","resumed":true,"router":"direct"}}

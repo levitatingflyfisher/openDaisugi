@@ -1,0 +1,99 @@
+# The model and router swaps of the stack bar (F12a). agent.set_model: on a
+# claude pty pane it sends /model NAME through the ready queue, so it goes
+# only at an idle prompt; on a headless sprig pane the next turn runs with
+# --model NAME (agent.prompt can carry model too); any other harness is
+# refused with words. agent.set_router: a restart with a new base URL in the
+# env, resuming the conversation in a new pane, refused when there is no
+# conversation to resume. Only the operator runs the swaps. The gateway is
+# http://127.0.0.1:{PORT} in the config; the pane gw listens there and says it
+# takes the pane prefix (GET /_caps), so a swap to the gateway is allowed and
+# its panes are stamped. Pane ids: gw, then cl (headless claude, then its
+# resumed successors), and later ones below.
+#!config gateway = "http://127.0.0.1:{PORT}"
+#!config [harness.claude]
+#!config command = "/bin/sh"
+#!config args = ["-c", "exec sleep 600"]
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/adapters/fake-claude.sh
+#!env COPPICE_SPRIG_BIN={FIXTURES}/adapters/fake-sprig.sh
+{"id":"g0","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/usr/bin/python3","-c","import http.server as h;H=type('H',(h.BaseHTTPRequestHandler,),{'do_GET':lambda s:(s.send_response(200),s.send_header('Content-Length','21'),s.end_headers(),s.wfile.write(b'{\"pane_prefix\": true}')),'log_message':lambda *a:None});h.HTTPServer(('127.0.0.1',{PORT}),H).serve_forever()"],"label":"gw"}
+{"id":"$id","ok":true,"result":{"pane":"$gw"}}
+{"id":"1","cmd":"pane.create","kind":"headless","harness":"claude","cwd":"{WORK}","label":"cl","env":{"COPPICE_CLAUDE_FIXTURE":"{FIXTURES}/adapters/claude-stream.jsonl"}}
+{"id":"$id","ok":true,"result":{"pane":"$cl","workspace":"w1","tab":"w1:t1"}}
+{"id":"2","cmd":"agent.set_router","pane":"$cl","router":"direct"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"cl has no conversation to resume yet, so a restart would lose it. Wait for its first reply, then swap."}}
+{"id":"3","cmd":"agent.prompt","pane":"$cl","text":"list the files","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$cl","state":"idle","source":"headless"}}
+{"id":"4","cmd":"agent.set_router","pane":"$cl","router":"switchyard"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"router must be direct or gateway."}}
+{"id":"5","cmd":"agent.set_router","pane":"$cl","router":""}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"router must be direct or gateway."}}
+{"id":"6","cmd":"agent.set_router","pane":"w9:p9","router":"gateway"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"w9:p9\". Run: coppice agent list"}}
+# The gateway pane may not be listening yet: a refused swap changes nothing, so it is sent again.
+#!retry 8000
+{"id":"7","cmd":"agent.set_router","pane":"$cl","router":"gateway"}
+{"id":"$id","ok":true,"result":{"pane":"$cl2","workspace":"*","tab":"*","resumed":true,"router":"gateway"}}
+{"id":"8","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$gw"},{"id":"$cl2","label":"cl","harness":"claude","stack":{"router":"gateway"}}],"path":"*"}}
+{"id":"9","cmd":"agent.set_router","pane":"$cl","router":"direct"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"*"}}
+{"id":"10","cmd":"agent.prompt","pane":"$cl2","text":"and again","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$cl2","state":"idle","source":"headless"}}
+{"id":"11","cmd":"agent.set_router","pane":"$cl2","router":"direct"}
+{"id":"$id","ok":true,"result":{"pane":"$cl3","workspace":"*","tab":"*","resumed":true,"router":"direct"}}
+{"id":"12","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$gw"},{"id":"$cl3","stack":{"router":"direct"}}],"path":"*"}}
+{"id":"13","cmd":"agent.set_model","pane":"$cl3","model":"opus"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"Swapping the model of cl is not built for claude yet."}}
+{"id":"14","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","kind":"pty","label":"auth"}
+{"id":"$id","ok":true,"result":{"pane":"$auth"}}
+{"id":"15","cmd":"agent.set_model","pane":"$auth","model":"opus"}
+{"id":"$id","ok":true,"result":{"pane":"$auth","model":"opus","when":"queued","queued":1,"note":"queued until auth is ready"}}
+{"id":"16","cmd":"agent.set_model","pane":"$auth","model":"two words"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"model must be a plain name: letters, digits and . _ : / - [ ], up to 64 characters."}}
+{"id":"17","cmd":"agent.set_model","pane":"$auth","model":""}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"model must be a plain name: letters, digits and . _ : / - [ ], up to 64 characters."}}
+{"id":"18","cmd":"agent.set_model","pane":"w9:p9","model":"opus"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"w9:p9\". Run: coppice pane list"}}
+{"id":"19","cmd":"agent.set_router","pane":"$auth","router":"gateway"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"auth has no conversation to resume yet, so a restart would lose it. Wait for its first reply, then swap."}}
+{"id":"20","cmd":"agent.prompt","pane":"$auth","text":"x","model":"opus"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"Swapping the model of auth is not built for claude yet."}}
+{"id":"21","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{WORK}","label":"sp","cmd_argv":["--session-dir","{WORK}/sessions","--session","s1"],"env":{"COPPICE_SPRIG_ECHO_ARGV":"{WORK}/sprig-argv.txt"}}
+{"id":"$id","ok":true,"result":{"pane":"$sp"}}
+{"id":"22","cmd":"agent.prompt","pane":"$sp","text":"first task","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$sp","state":"idle","source":"headless"}}
+{"id":"23","cmd":"agent.set_model","pane":"$sp","model":"opus-x"}
+{"id":"$id","ok":true,"result":{"pane":"$sp","model":"opus-x","when":"next turn"}}
+#!retry 8000
+{"id":"24","cmd":"agent.prompt","pane":"$sp","text":"second task","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$sp","state":"idle","source":"headless"}}
+# The turn before it may still be running when its state reads idle, and a prompt then
+# is refused with nothing started, so this one is sent again until a turn takes it.
+#!retry 8000
+{"id":"25","cmd":"agent.prompt","pane":"$sp","text":"third task","model":"o3","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$sp","state":"idle","source":"headless"}}
+{"id":"26","cmd":"agent.prompt","pane":"$sp","text":"fourth task","model":"bad name","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"model must be a plain name: letters, digits and . _ : / - [ ], up to 64 characters."}}
+{"id":"27","cmd":"agent.set_router","pane":"$sp","router":"direct"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"Swapping the router of sp is not built for sprig yet."}}
+{"id":"28","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sh","-c","cat sprig-argv.txt; echo shown; exec sleep 600"],"label":"show","cols":200}
+{"id":"$id","ok":true,"result":{"pane":"$show"}}
+{"id":"29","cmd":"pane.wait_output","pane":"$show","contains":"--model opus-x -- second task","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"30","cmd":"pane.wait_output","pane":"$show","contains":"--model o3 -- third task","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"31","cmd":"pane.resume","pane":"w9:p9","router":"switchyard"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"router must be direct or gateway."}}
+{"id":"32","cmd":"pane.resume","pane":"w9:p9","router":"gateway"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"w9:p9\". Run: coppice pane list --ended"}}
+{"id":"33","cmd":"hello","role":"pane","pane":"$auth"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$auth"}}
+{"id":"34","cmd":"agent.set_model","pane":"$auth","model":"opus"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator sets an agent's model."}}
+{"id":"35","cmd":"agent.set_router","pane":"$auth","router":"direct"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator sets an agent's router."}}
+{"id":"36","cmd":"agent.prompt","pane":"$sp","text":"x","model":"opus"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator sets an agent's model."}}
+{"id":"37","cmd":"pane.resume","pane":"$sp","router":"direct"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator sets an agent's router."}}

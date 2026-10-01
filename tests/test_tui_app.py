@@ -111,3 +111,38 @@ def test_unknown_command_says_so(tmp_path):
             assert "unknown command" in app.status_text
 
     _run(scenario)
+
+
+def test_the_sessions_poll_stops_while_another_screen_shows(tmp_path, monkeypatch):
+    """A screen switched away from is suspended, not unmounted, so on_unmount
+    never stopped its 1 Hz poll. The poll then ran on a hidden screen, and a
+    tick at app exit, after the screen's widgets were gone, raised NoMatches
+    for #roster (CI, 2026-10-14). The poll runs only while the screen shows.
+    """
+    from opendaisugi import tui_sessions
+
+    hidden_polls = []
+    real_poll = tui_sessions.SessionsScreen._poll
+
+    def spy(self):
+        if not self.is_current:
+            hidden_polls.append(True)
+        return real_poll(self)
+
+    monkeypatch.setattr(tui_sessions.SessionsScreen, "_poll", spy)
+
+    async def scenario():
+        app = DaisugiApp(data_dir=tmp_path, interval=999)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            sessions = app.screen
+            app.switch_screen("wiring")
+            await pilot.pause()
+            assert sessions._poll_timer is None, "the poll still runs on a hidden screen"
+            await pilot.pause(1.5)
+            app.switch_screen("sessions")
+            await pilot.pause()
+            assert sessions._poll_timer is not None, "the poll did not come back"
+        assert hidden_polls == []
+
+    _run(scenario)

@@ -3,6 +3,7 @@ package delegate
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -77,5 +78,66 @@ func TestMeasureFile(t *testing.T) {
 	}
 	if _, why := MeasureFile("/tmp/a\x00b"); why != "the file cannot be opened" {
 		t.Fatalf("nul: %q", why)
+	}
+}
+
+func TestApplyDiffReadsLinesNotNumbers(t *testing.T) {
+	text := "def a():\n    return 1\n\n\ndef b():\n    return 2\n"
+	got := ApplyDiff("--- a/x.py\n+++ b/x.py\n@@ -90,2 +90,2 @@\n def b():\n-    return 2\n+    return 3\n", text)
+	if !got.Applies || got.Text != strings.Replace(text, "return 2", "return 3", 1) {
+		t.Fatalf("got %+v", got)
+	}
+	for diff, why := range map[string]string{
+		"":                       "the diff has no hunk",
+		"hello\n@@\n def a():\n": "line 1 before the first hunk is not a diff header",
+		"@@\n def c():\n":        "hunk 1 does not match the file",
+		"@@\n+new\n":             "hunk 1 has no context or removed lines, so it has no place in the file",
+		"@@\n-\n":                "hunk 1 matches 3 places in the file",
+		"@@\n def a():\n*bad\n":  "line 3 is not a context, removed or added line",
+	} {
+		if got := ApplyDiff(diff, text); got.Applies || got.Why != why {
+			t.Errorf("%q: got %+v", diff, got)
+		}
+	}
+}
+
+func TestFenceOutrunsTheBackticks(t *testing.T) {
+	for _, c := range [][3]string{
+		{"x\n", "", "```\nx\n```"},
+		{"x", "diff", "```diff\nx\n```"},
+		{"a ``` b\n", "", "````\na ``` b\n````"},
+	} {
+		if got := Fence(c[0], c[1]); got != c[2] {
+			t.Errorf("%q: got %q", c[0], got)
+		}
+	}
+}
+
+// GR r1 M3 (GR-R-7): a default envelope the gate refuses to read is not an
+// absence. The delegate cannot see its stakes, so it refuses.
+func TestARefusedDefaultEnvelopeRefusesTheDelegate(t *testing.T) {
+	data := t.TempDir()
+	envs := filepath.Join(data, "gate", "envelopes")
+	if err := os.MkdirAll(envs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(filepath.Join(data, "gate"), 0o700)
+	os.Chmod(envs, 0o700)
+	target := filepath.Join(data, "real-default.json")
+	body := `{"id": "env_d", "generated_by": "t", "task": "t", "stakes": "physical", "permissions": {}}`
+	if err := os.WriteFile(target, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(envs, "default.json")); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(data, "f.txt")
+	os.WriteFile(src, []byte("one\n"), 0o600)
+	res, err := Run(src, "what is in it?", "bulk_read", data, func(string) (string, bool) { return "", false }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := res.Value("reason").(string); got != "the gate's default envelope cannot be read" {
+		t.Fatalf("reason %q (%v)", got, res.Value("ok"))
 	}
 }

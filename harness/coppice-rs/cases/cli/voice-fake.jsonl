@@ -1,0 +1,70 @@
+# The managed voice server on a fake daisugi: ready, restarted once after
+# it dies, down after a second death, and each way it can fail to start.
+#!env PATH={FIXTURES}/cli/voicebin:/usr/bin:/bin
+# CP-R-30: the voice server's URL names a port the kernel picked.
+#!mask url
+#!config [voice]
+#!config args = ["--extra", "1"]
+#!retry 8000
+{"id": "r", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "ready"}}
+{"id": "w", "sleep": 2000}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "r2", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "ready"}}
+{"id": "v0", "cmd": "voice.start"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "r3", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "ready"}}
+{"id": "ls", "ls": "{DATA}/voice"}
+{"id": "$id", "ok": true, "result": "*"}
+# It dies once: the server starts it again.
+{"id": "m1", "write": "{HOME}/fake-voice-mode", "text": "exit\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!retry 8000
+{"id": "c1", "file": "{DATA}/voice/voice.log", "count": "coppice: starting"}
+{"id": "$id", "ok": true, "result": {"count": 2}}
+#!retry 8000
+{"id": "r4", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "ready"}}
+# It dies again: voice is down until voice.start.
+{"id": "m2", "write": "{HOME}/fake-voice-mode", "text": "exit\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!retry 8000
+{"id": "f2", "file": "{HOME}/fake-voice-mode"}
+{"id": "$id", "ok": true, "result": {"text": "ok"}}
+#!retry 8000
+{"id": "r5", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down", "reason": "Voice stopped twice."}}
+{"id": "m3", "write": "{HOME}/fake-voice-mode", "text": "die\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v1", "cmd": "voice.start"}
+{"id": "$id", "ok": true, "result": "*"}
+#!retry 8000
+{"id": "r6", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down", "reason": "Voice stopped as it started: boom: no model."}}
+{"id": "m4", "write": "{HOME}/fake-voice-mode", "text": "notinstalled\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v2", "cmd": "voice.start"}
+{"id": "$id", "ok": true, "result": "*"}
+#!retry 8000
+{"id": "r7", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down", "reason": "Voice needs daisugi's voice extra."}}
+{"id": "m5", "write": "{HOME}/fake-voice-mode", "text": "nohelp\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v3", "cmd": "voice.start"}
+{"id": "$id", "ok": true, "result": "*"}
+#!retry 8000
+{"id": "r8", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "down", "reason": "This daisugi cannot serve voice."}}
+{"id": "m6", "write": "{HOME}/fake-voice-mode", "text": "busy\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v4", "cmd": "voice.start"}
+{"id": "$id", "ok": true, "result": "*"}
+#!retry 8000
+{"id": "r9", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "ready"}}
+#!restart
+#!retry 8000
+{"id": "r10", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "ready"}}

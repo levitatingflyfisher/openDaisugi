@@ -90,7 +90,7 @@ impl Env {
         }
         let task = p.args[0].clone();
         let model = p.str("--model", DEFAULT_MODEL);
-        let data_dir = path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         if p.has("--llm") {
             let v = p.str("--llm", "");
             self.check_llm_flag(&v)?;

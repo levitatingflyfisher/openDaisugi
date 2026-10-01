@@ -253,6 +253,9 @@ class Daisugi:
         strict_budget: bool = False,
         synth_llm: bool = True,
         max_parallel: int = 1,
+        agent: str = "claude",
+        agent_tokens: int | None = None,
+        agent_turns: int | None = None,
     ) -> "OrchestrationResult":
         """Run ``prompt`` end to end: decompose → size → execute → synthesize.
 
@@ -264,7 +267,10 @@ class Daisugi:
         capable model under ``budget_tokens`` (None = unbudgeted; the decompose
         and synthesize calls are overhead, not drawn from it). ``synth_llm=False``
         assembles the answer deterministically — with a reused deterministic
-        pathway, a run that spends zero tokens.
+        pathway, a run that spends zero tokens. ``agent`` is the runtime of
+        agentic steps (a reused delegated pathway has them): ``claude`` or
+        ``sprig``. ``agent_tokens`` and ``agent_turns`` are the budget of
+        each agentic step's tree (None: no budget).
         """
         from opendaisugi.model_sizer import build_ladder
         from opendaisugi.orchestrator import Orchestrator
@@ -302,6 +308,9 @@ class Daisugi:
             pathway_threshold=self._pathway_threshold,
             endpoint_overrides=endpoint_overrides,
             max_parallel=max_parallel,
+            agent=agent,
+            agent_tokens=agent_tokens,
+            agent_turns=agent_turns,
         )
         return await orch.orchestrate(
             prompt,

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/base64"
 	"io"
 	"net"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"daisugi-verify/internal/fenceruns"
 )
 
 // startServer runs `daisugi gate serve --root <dir>/gate` in this process
@@ -61,7 +64,7 @@ func TestGateServeAnswersOneLinePerConnection(t *testing.T) {
 	if st, _ := os.Stat(root); st.Mode().Perm() != 0o700 {
 		t.Errorf("root mode %v", st.Mode().Perm())
 	}
-	allow := `{"v": 1, "argv": ["--format", "pi", "--root", "` + root + `"], "stdin_b64": "e30="}` + "\n"
+	allow := `{"v": 1, "argv": ["--format", "pi"], "stdin_b64": "e30="}` + "\n"
 	if got := ask(t, sock, allow, false); got != `{"v": 1, "stdout": "{\"continue\": true}", "stderr": "", "exit_code": 0}`+"\n" {
 		t.Errorf("allow: %q", got)
 	}
@@ -89,7 +92,7 @@ func TestGateServeHookReportNeverReadsItsOwnPane(t *testing.T) {
 	sock := startServer(t)
 	root := filepath.Dir(sock)
 	// {"v":1,"ts":1,"session_id":"s","harness":"pi","state":"idle","source":"gate"}
-	line := `{"argv": ["hook", "report", "--root", "` + root + `"], "stdin_b64": ` +
+	line := `{"argv": ["hook", "report"], "stdin_b64": ` +
 		`"eyJ2IjoxLCJ0cyI6MSwic2Vzc2lvbl9pZCI6InMiLCJoYXJuZXNzIjoicGkiLCJzdGF0ZSI6ImlkbGUiLCJzb3VyY2UiOiJnYXRlIn0="}` + "\n"
 	if got := ask(t, sock, line, false); got != `{"v": 1, "stdout": "", "stderr": "", "exit_code": 0}`+"\n" {
 		t.Fatalf("report: %q", got)
@@ -183,3 +186,105 @@ func TestGateServeRefusesARootALiveGateServes(t *testing.T) {
 		t.Errorf("the first server's socket changed: %v", err)
 	}
 }
+
+// FN-R-21: the resident gate takes no path from a request.
+func TestGateServeTakesNoPathFromARequest(t *testing.T) {
+	sock := startServer(t)
+	x := filepath.Join(filepath.Dir(filepath.Dir(sock)), "elsewhere")
+	for _, words := range [][]string{{"--root", x}, {"--root=" + x}, {"--ro", x}, {"--captures-root", x}, {"--cap=" + x}} {
+		argv := `"--format", "claude"`
+		for _, w := range words {
+			argv += `, "` + w + `"`
+		}
+		got := ask(t, sock, `{"v": 1, "argv": [`+argv+`], "stdin_b64": "e30="}`+"\n", false)
+		if !strings.Contains(got, `"exit_code": 2`) || !strings.Contains(got, "takes no path from a request") {
+			t.Errorf("%v: %q", words, got)
+		}
+		if _, err := os.Stat(x); err == nil {
+			t.Fatalf("%v: the server made %s", words, x)
+		}
+	}
+	got := ask(t, sock, `{"v": 1, "argv": ["hook", "report", "--root", "`+x+`"], "stdin_b64": "e30="}`+"\n", false)
+	if !strings.Contains(got, `"exit_code": 1`) || !strings.Contains(got, "takes no path") {
+		t.Errorf("report: %q", got)
+	}
+}
+
+func TestGateServeDeniesABadSessionID(t *testing.T) {
+	sock := startServer(t)
+	for _, sid := range []string{`"../x"`, `"."`, `".."`, `"a/b"`, `""`, `7`, `"` + strings.Repeat("a", 129) + `"`} {
+		pl := `{"session_id": ` + sid + `, "tool_name": "Read", "tool_input": {"file_path": "/x"}}`
+		got := ask(t, sock, `{"v": 1, "argv": ["--mode", "audit"], "stdin_b64": "`+b64(pl)+`"}`+"\n", false)
+		if !strings.Contains(got, `"exit_code": 2`) || !strings.Contains(got, "session id") {
+			t.Errorf("%s: %q", sid, got)
+		}
+	}
+	got := ask(t, sock, `{"v": 1, "argv": ["--mode", "audit", "--session", "../up"], "stdin_b64": "e30="}`+"\n", false)
+	if !strings.Contains(got, "session id") {
+		t.Errorf("pin: %q", got)
+	}
+}
+
+func TestGateServeTakesACheckpointOnlyInTheBoundWorkspace(t *testing.T) {
+	sock := startServer(t)
+	root := filepath.Dir(sock)
+	ws := filepath.Join(filepath.Dir(root), "ws")
+	out := filepath.Join(filepath.Dir(root), "out")
+	os.MkdirAll(filepath.Join(ws, "sub"), 0o700)
+	os.MkdirAll(out, 0o700)
+	os.Symlink(out, filepath.Join(ws, "link"))
+	call := func(cwd string) string {
+		pl := `{"session_id": "s1", "tool_name": "Read", "tool_input": {"file_path": "/x"}, "cwd": "` + cwd + `"}`
+		return ask(t, sock, `{"v": 1, "argv": ["--mode", "audit", "--checkpoints"], "stdin_b64": "`+b64(pl)+`"}`+"\n", false)
+	}
+	if got := call(ws); !strings.Contains(got, "no fence run") {
+		t.Errorf("unbound: %q", got)
+	}
+	// This test process is the caller: a fence run record for it binds ws.
+	if err := fenceruns.Register(root, os.Getpid(), ws); err != nil {
+		t.Fatal(err)
+	}
+	if got := call(filepath.Join(ws, "sub")); strings.Contains(got, "fence run") {
+		t.Errorf("inside: %q", got)
+	}
+	// Any fenced checkpoint call is denied first (FN-R-36).
+	for _, cwd := range []string{out, filepath.Join(ws, "link"), ws + "x", "ws"} {
+		if got := call(cwd); !strings.Contains(got, "checkpoints are off inside the fence") {
+			t.Errorf("%s: %q", cwd, got)
+		}
+	}
+}
+
+func TestGateServeFixesTheCapturesRootAtStart(t *testing.T) {
+	dir, err := os.MkdirTemp("", "gs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	root := filepath.Join(dir, "gate")
+	caps := filepath.Join(dir, "caps")
+	if err := os.MkdirAll(filepath.Join(root, "envelopes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env := `{"id": "env_t", "generated_by": "t", "task": "t", "permissions": {"file_read": ["/x/**"], ` +
+		`"file_write": [], "network": false, "shell": false, "max_execution_time_s": 60, "max_output_size_mb": 20}}`
+	if err := os.WriteFile(filepath.Join(root, "envelopes", "default.json"), []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go Main(&Env{Args: []string{"gate", "serve", "--root", root, "--captures-root", caps},
+		Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard, Environ: []string{"HOME=" + dir}})
+	sock := filepath.Join(root, "gate.sock")
+	for i := 0; i < 500 && !exists(sock); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	pl := `{"session_id": "s1", "tool_name": "Read", "tool_input": {"file_path": "/x/a"}}`
+	got := ask(t, sock, `{"v": 1, "argv": ["--mode", "enforce"], "stdin_b64": "`+b64(pl)+`"}`+"\n", false)
+	if !strings.Contains(got, `"exit_code": 0`) {
+		t.Fatalf("allow: %q", got)
+	}
+	if ents, err := os.ReadDir(caps); err != nil || len(ents) == 0 {
+		t.Fatalf("no capture in %s: %v", caps, err)
+	}
+}
+
+func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }

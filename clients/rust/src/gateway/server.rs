@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::http::{self, decoded};
-use super::pipeline::{now_ns, prepare_bytes, record, stream_flag, Gateway, Prepared, MODE_RULES};
+use super::model::{self, Choice};
+use super::pipeline::{now_ns, prepare_bytes_with, record, stream_flag, Gateway, Prepared, MODE_MODEL, MODE_RULES};
 use super::pyops::{latin1, loads_bytes, Raise};
 use super::route::estimate_prefix_tokens;
 use super::sniff::{normalize_openai_usage, Sniffer};
@@ -374,10 +375,41 @@ fn anthropic_error(msg: &str) -> Object {
     o
 }
 
+/// Takes the pane prefix off a path: the floor, the pane and the path
+/// without the prefix. A coppice pane's base URL is
+/// <gateway>/pane/<floor>/<pane>, with the floor 16 lower-case hex digits
+/// and the pane w<n>:p<n>. A path with no well-formed prefix comes back
+/// unchanged with an empty floor and pane.
+pub fn split_pane_path(path: &str) -> (String, String, String) {
+    fn digits(s: &str) -> bool {
+        (1..=9).contains(&s.len()) && s.bytes().all(|c| c.is_ascii_digit())
+    }
+    let none = || (String::new(), String::new(), path.to_string());
+    let Some(rest) = path.strip_prefix("/pane/") else { return none() };
+    let Some((floor, rest)) = rest.split_once('/') else { return none() };
+    if floor.len() != 16 || !floor.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
+        return none();
+    }
+    let (pane, tail) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, ""),
+    };
+    let ok = pane
+        .strip_prefix('w')
+        .and_then(|r| r.split_once(":p"))
+        .is_some_and(|(w, p)| digits(w) && digits(p));
+    if !ok {
+        return none();
+    }
+    let tail = if tail.is_empty() { "/" } else { tail };
+    (floor.to_string(), pane.to_string(), tail.to_string())
+}
+
 impl Server {
     /// The ASGI app for one request.
     pub fn serve(&self, r: &Request, out: &mut Out) {
-        if r.path == "/_reload" {
+        let (floor, pane, path) = split_pane_path(&r.path);
+        if path == "/_reload" {
             match &self.reloader {
                 None => send_json(out, 404, &err_obj("no reloader configured")),
                 Some(_) if !r.method.eq_ignore_ascii_case("POST") => send_json(out, 405, &err_obj("reload accepts POST")),
@@ -390,7 +422,19 @@ impl Server {
             }
             return;
         }
-        let openai = is_openai_wire(&r.path);
+        if path == "/_caps" {
+            if !r.method.eq_ignore_ascii_case("GET") {
+                send_json(out, 405, &err_obj("caps accepts GET"));
+            } else if !is_loopback(&r.peer) {
+                send_json(out, 403, &err_obj("caps is loopback only"));
+            } else {
+                let mut o = Object::new();
+                o.set("pane_prefix", true);
+                send_json(out, 200, &o);
+            }
+            return;
+        }
+        let openai = is_openai_wire(&path);
         let gw: Option<Shared> = if openai {
             self.openai.clone()
         } else {
@@ -402,35 +446,62 @@ impl Server {
             }
             g
         };
-        let count_tokens = r.path.trim_end_matches('/') == COUNT_TOKENS_PATH;
+        let count_tokens = path.trim_end_matches('/') == COUNT_TOKENS_PATH;
         if !openai && self.upstream_kind != "anthropic" && count_tokens {
             count_tokens_locally(out, &r.body);
             return;
         }
+        let base = if openai { &self.openai_base } else { &self.upstream_base };
+        let mut url = format!("{}{}", base.trim_end_matches('/'), path);
+        if !r.query.is_empty() {
+            url.push('?');
+            url.push_str(&r.query);
+        }
+        let headers = forward_headers(r);
+        let mut choice: Option<Choice> = None;
+        if let Some(g) = &gw {
+            let req = match g.lock() {
+                Ok(g) if !openai && g.router_mode == MODE_MODEL && !count_tokens => {
+                    loads_bytes(&r.body).ok().and_then(|v| g.pick_request(&v))
+                }
+                _ => None,
+            };
+            if let Some((request, cands)) = req {
+                let name = model::ask(&url, &headers, &request).map(|t| (model::parse_pick(Some(&t), &cands), true));
+                choice = Some(match name {
+                    None => Choice { name: String::new(), why: "the router model call failed".into() },
+                    Some((None, _)) => {
+                        Choice { name: String::new(), why: "the router model named a model that is not allowed".into() }
+                    }
+                    Some((Some(n), _)) => Choice { name: n, why: String::new() },
+                });
+            }
+        }
         let (outbound, prepared, stream) = match &gw {
-            Some(g) => match g.lock() {
-                Ok(mut g) => prepare_bytes(&mut g, &r.body),
+            // Prepare from a clone: the embedder and the outcome table must not hold the lock.
+            Some(g) => match g.lock().map(|g| g.clone()) {
+                Ok(g) => prepare_bytes_with(&g, &r.body, choice.as_ref()),
                 Err(_) => (r.body.clone(), None, false),
             },
             None => (r.body.clone(), None, stream_flag(&r.body)),
         };
+        let mut prepared = prepared;
+        if let Some(p) = prepared.as_mut() {
+            if !pane.is_empty() {
+                p.pane = pane.clone();
+                p.floor = floor.clone();
+            }
+        }
         let mut rec = prepared.clone();
         if let Some(g) = &gw {
             if count_tokens && g.lock().map(|g| g.router_mode != MODE_RULES).unwrap_or(true) {
                 rec = None;
             }
         }
-        let base = if openai { &self.openai_base } else { &self.upstream_base };
-        let mut url = format!("{}{}", base.trim_end_matches('/'), r.path);
-        if !r.query.is_empty() {
-            url.push('?');
-            url.push_str(&r.query);
-        }
         let mut attempts: Vec<(&[u8], bool)> = vec![(&outbound, false)];
         if prepared.as_ref().is_some_and(|p| p.decision.downgraded) {
             attempts.push((&r.body, true));
         }
-        let headers = forward_headers(r);
         let n = attempts.len();
         for (i, (body, original)) in attempts.into_iter().enumerate() {
             let last = i == n - 1;
@@ -446,15 +517,16 @@ impl Server {
                 continue;
             }
             if stream {
-                self.relay_stream(out, resp, gw.as_ref(), rec.as_ref(), original, openai);
+                self.relay_stream(out, resp, gw.as_ref(), rec.as_ref(), original, openai, &url, &headers);
             } else {
-                self.relay_buffered(out, resp, gw.as_ref(), rec.as_ref(), original, openai);
+                self.relay_buffered(out, resp, gw.as_ref(), rec.as_ref(), original, openai, &url, &headers);
             }
             return;
         }
     }
 
-    fn relay_buffered(&self, out: &mut Out, resp: http::Response, gw: Option<&Shared>, p: Option<&Prepared>, original: bool, openai: bool) {
+    #[allow(clippy::too_many_arguments)]
+    fn relay_buffered(&self, out: &mut Out, resp: http::Response, gw: Option<&Shared>, p: Option<&Prepared>, original: bool, openai: bool, url: &str, headers: &[(String, Vec<u8>)]) {
         let (status, hs, mut rd) = decoded(resp);
         let mut content = vec![];
         if rd.read_to_end(&mut content).is_err() {
@@ -465,6 +537,8 @@ impl Server {
         let mut usage = Value::Obj(Object::new());
         let mut answer = String::new();
         let mut body_model: Option<String> = None;
+        let mut refused = false;
+        let mut stop = String::new();
         match loads_bytes(&content) {
             // resp.json() raised RecursionError after the answer was sent:
             // the turn is not journaled.
@@ -473,6 +547,11 @@ impl Server {
                 if openai {
                     usage = Value::Obj(normalize_openai_usage(o.get("usage")));
                     answer = openai_text(&o);
+                    if let Some(Value::List(cs)) = o.get("choices") {
+                        if let Some(Value::Obj(c0)) = cs.first() {
+                            stop = super::sniff::openai_stop(c0.get("finish_reason"));
+                        }
+                    }
                 } else {
                     let u = o.get("usage").cloned().unwrap_or_else(|| Value::Obj(Object::new()));
                     usage = if u.truthy() { u } else { Value::Obj(Object::new()) };
@@ -480,15 +559,21 @@ impl Server {
                     if let Some(Value::Str(m)) = o.get("model") {
                         body_model = Some(m.clone());
                     }
+                    refused = super::pyops::eq_str(o.get("stop_reason"), "refusal");
+                    if let Some(Value::Str(s)) = o.get("stop_reason") {
+                        stop = s.clone();
+                    }
                 }
             }
             _ => {}
         }
         let served = served_target(&values_of(&hs, SELECTED_MODEL_HEADER), body_model.as_deref());
-        self.record(gw, p, &usage, original, &answer, served.as_deref());
+        let rec = self.record(gw, p, &usage, original, &answer, served.as_deref(), status >= 400 || refused);
+        self.grade(gw, p, rec, &answer, &stop, url, headers);
     }
 
-    fn relay_stream(&self, out: &mut Out, resp: http::Response, gw: Option<&Shared>, p: Option<&Prepared>, original: bool, openai: bool) {
+    #[allow(clippy::too_many_arguments)]
+    fn relay_stream(&self, out: &mut Out, resp: http::Response, gw: Option<&Shared>, p: Option<&Prepared>, original: bool, openai: bool, url: &str, headers: &[(String, Vec<u8>)]) {
         let mut sn = Sniffer::new(openai);
         let (status, hs, mut rd) = decoded(resp);
         out.head(status, &response_headers(&hs), None);
@@ -518,14 +603,63 @@ impl Server {
         out.end();
         let model = if openai { None } else { sn.model.clone() };
         let served = served_target(&values_of(&hs, SELECTED_MODEL_HEADER), model.as_deref());
-        self.record(gw, p, &Value::Obj(sn.usage.clone()), original, &sn.text, served.as_deref());
+        let rec = self.record(
+            gw,
+            p,
+            &Value::Obj(sn.usage.clone()),
+            original,
+            &sn.text,
+            served.as_deref(),
+            status >= 400 || sn.stop_reason == "refusal",
+        );
+        self.grade(gw, p, rec, &sn.text, &sn.stop_reason, url, headers);
     }
 
-    fn record(&self, gw: Option<&Shared>, p: Option<&Prepared>, usage: &Value, original: bool, answer: &str, served: Option<&str>) {
-        let (Some(gw), Some(p)) = (gw, p) else { return };
-        if let Ok(g) = gw.lock() {
-            record(&g, p, usage, original, answer, served, now_ns());
+    #[allow(clippy::too_many_arguments)]
+    fn record(&self, gw: Option<&Shared>, p: Option<&Prepared>, usage: &Value, original: bool, answer: &str, served: Option<&str>, failed: bool) -> Option<super::meter::Record> {
+        let (Some(gw), Some(p)) = (gw, p) else { return None };
+        let g = gw.lock().ok()?.clone();
+        record(&g, p, usage, original, answer, served, failed, now_ns())
+    }
+
+    /// After the reply is sent: ask the grader model and write its answer to
+    /// the outcome table. It never blocks the turn.
+    fn grade(&self, gw: Option<&Shared>, p: Option<&Prepared>, rec: Option<super::meter::Record>, answer: &str, stop: &str, url: &str, headers: &[(String, Vec<u8>)]) {
+        let (Some(gw), Some(p), Some(rec)) = (gw, p, rec) else { return };
+        // Only a finished answer is graded: a tool call step is not one.
+        if stop != "end_turn" {
+            return;
         }
+        let (grader, knn) = match gw.lock() {
+            Ok(g) => (g.grader_model.clone(), g.knn.clone()),
+            Err(_) => return,
+        };
+        let Some(knn) = knn else { return };
+        if grader.is_empty() || p.conversation.is_empty() || answer.is_empty() {
+            return;
+        }
+        // The governing ask is p.task. The grade goes to the row booked for it: this
+        // turn's row, or on a tool loop step the conversation's last booked row (RT-R-13a).
+        let new_ask = !crate::gate::py::text::strip(&p.ask).is_empty();
+        if rec.turn_id.is_empty() && new_ask {
+            return; // a new ask whose booking failed has no row to grade
+        }
+        let request = model::grader_body(&grader, &p.task, answer);
+        let (url, headers, turn_id, conversation) = (url.to_string(), headers.to_vec(), rec.turn_id.clone(), p.conversation.clone());
+        std::thread::spawn(move || {
+            let turn_id = if turn_id.is_empty() {
+                match knn.store.last_in_conversation(&conversation) {
+                    Ok(Some(row)) => row.turn_id,
+                    _ => return,
+                }
+            } else {
+                turn_id
+            };
+            let reply = model::ask(&url, &headers, &request);
+            if let Some(grade) = model::parse_grade(reply.as_deref()) {
+                let _ = knn.store.set_outcome(&turn_id, grade, super::knn::SOURCE_GRADER);
+            }
+        });
     }
 }
 
@@ -714,6 +848,30 @@ pub fn handle(app: &Server, mut s: TcpStream, life: &Life) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_pane_path_reads_a_well_formed_prefix_only() {
+        let floor = "0123456789abcdef";
+        let some = |p: &str, rest: &str| (floor.to_string(), p.to_string(), rest.to_string());
+        let none = |path: &str| (String::new(), String::new(), path.to_string());
+        assert_eq!(split_pane_path(&format!("/pane/{floor}/w1:p2/v1/messages")), some("w1:p2", "/v1/messages"));
+        assert_eq!(
+            split_pane_path(&format!("/pane/{floor}/w12:p345/v1/chat/completions")),
+            some("w12:p345", "/v1/chat/completions")
+        );
+        assert_eq!(split_pane_path(&format!("/pane/{floor}/w1:p2")), some("w1:p2", "/"));
+        for bad in [
+            "/v1/messages".to_string(),
+            "/pane/0123456789ABCDEF/w1:p2/v1/messages".to_string(),
+            "/pane/0123456789abcde/w1:p2/v1/messages".to_string(),
+            format!("/pane/{floor}/w1:p2x/v1/messages"),
+            format!("/pane/{floor}/w1:p/v1/messages"),
+            format!("/pane/{floor}/w1234567890:p1/v1/messages"),
+            format!("/x/pane/{floor}/w1:p2/v1/messages"),
+        ] {
+            assert_eq!(split_pane_path(&bad), none(&bad), "{bad}");
+        }
+    }
 
     #[test]
     fn answer_headers_drop_hop_by_hop_and_join_repeats() {

@@ -120,7 +120,8 @@ func (adapter) Start(ctx context.Context, o pane.StartOpts, _ *pane.Grid) (pane.
 	}
 	argv = append(argv, o.Argv...)
 
-	cmd := exec.CommandContext(ctx, binary(), argv...)
+	name, args := pane.Wrapped(o.Wrap, binary(), argv)
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = o.Cwd
 	// Rule (a): this is the only path by which the gate hook finds
 	// COPPICE_SOCK and COPPICE_PANE.

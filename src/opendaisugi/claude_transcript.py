@@ -60,11 +60,16 @@ def _content(msg: dict[str, Any]) -> tuple[str, list[dict[str, Any]], list[str]]
 
 
 def read_turns(path: Path) -> list[Turn]:
-    out: list[Turn] = []
     try:
         text = Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return out
+        return []
+    return parse_turns(text)
+
+
+def parse_turns(text: str) -> list[Turn]:
+    """The turns of a transcript already read (read_turns without the read)."""
+    out: list[Turn] = []
     for line in text.splitlines():
         if not line.strip():
             continue

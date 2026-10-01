@@ -147,8 +147,12 @@ def test_to_wav_16k_mono_decodes_webm_via_ffmpeg():
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
-def test_to_wav_16k_mono_decodes_webm_via_av_when_ffmpeg_is_absent(monkeypatch):
-    pytest.importorskip("av")
+def test_a_real_webm_with_no_ffmpeg_is_refused_and_av_is_never_imported(monkeypatch):
+    """Our code decodes compressed audio with the ffmpeg binary only. The av
+    package (pulled in by faster-whisper) is never imported here, even when
+    it is installed and ffmpeg is absent."""
+    import builtins
+
     wav_bytes = make_wav(sr=16000, n_samples=16000)
     proc = subprocess.run(
         [
@@ -168,9 +172,17 @@ def test_to_wav_16k_mono_decodes_webm_via_av_when_ffmpeg_is_absent(monkeypatch):
         timeout=15,
     )
     assert proc.returncode == 0, proc.stderr
+    real_import = builtins.__import__
+
+    def no_av(name, *args, **kwargs):
+        if name == "av" or name.startswith("av."):
+            raise AssertionError("voice/audio.py imported av")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_av)
     monkeypatch.setattr("opendaisugi.voice.audio.shutil.which", lambda name: None)
-    out = to_wav_16k_mono(proc.stdout, "audio/webm")
-    assert wav_duration_s(out) == pytest.approx(1.0, abs=0.1)
+    with pytest.raises(AudioFormatUnsupported, match="Install ffmpeg"):
+        to_wav_16k_mono(proc.stdout, "audio/webm")
 
 
 def test_to_wav_16k_mono_raises_a_teaching_error_for_webm_with_no_decoder(monkeypatch):

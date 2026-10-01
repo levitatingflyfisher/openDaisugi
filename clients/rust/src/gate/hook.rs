@@ -21,7 +21,7 @@
 //! the exit code.
 
 use super::resident::{self, RESIDENT_ENV};
-use super::{self as gate, py, pyjson, GateResult};
+use super::{self as gate, py, pyjson, statefile, GateResult};
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::os::fd::FromRawFd;
@@ -51,6 +51,11 @@ pub fn main(args: Vec<OsString>, prefix: &[&str]) -> ! {
     let fallback = gate::backstop_deny(&args, "the gate's parent process failed on this call");
     let res = std::panic::catch_unwind(|| {
         let stdin = read_stdin();
+        if super::fenced::fenced() {
+            // Inside daisugi fence the gate's state is read only: the
+            // resident gate, outside the fence, decides and writes.
+            return super::fenced::fenced_check(&args, &stdin);
+        }
         let trace = std::env::var_os("DAISUGI_GATE_TRACE").filter(|t| !t.is_empty());
         let (res, how) = run_child(&args, prefix, &stdin);
         if let Some(t) = &trace {
@@ -98,7 +103,9 @@ fn child(args: &[OsString], nonce: &str) -> ! {
     // Nothing the gate starts may hold the frame pipe open.
     unsafe { libc::fcntl(FRAME_FD, libc::F_SETFD, libc::FD_CLOEXEC) };
     let stdin = read_stdin();
-    let res = if resident {
+    // A note about a refused state file (GR-R-3) is kept for the answer.
+    statefile::collect_notes();
+    let mut res = if resident {
         // A resident server's child: stdin is the request, not a payload.
         resident_child(&stdin)
     } else {
@@ -111,7 +118,16 @@ fn child(args: &[OsString], nonce: &str) -> ! {
             }
         }
     };
+    let notes = statefile::take_notes();
+    if resident {
+        res.notes = notes;
+    } else if !notes.is_empty() {
+        let mut s = notes;
+        s.extend_from_slice(&res.stderr);
+        res.stderr = s;
+    }
     let frame = serde_json::json!({
+        "notes": hex(&res.notes),
         "stdout": hex(&res.stdout),
         "stderr": hex(&res.stderr),
         "out_stdout": hex(res.out_stdout.as_bytes()),
@@ -411,6 +427,7 @@ fn parse_frame(raw: &[u8], nonce: &str) -> Option<GateResult> {
         out_stdout: text(v.get("out_stdout"))?,
         out_stderr: text(v.get("out_stderr"))?,
         help: v.get("help").and_then(|h| h.as_bool()).unwrap_or(false),
+        notes: v.get("notes").and_then(|n| n.as_str()).and_then(unhex).unwrap_or_default(),
     })
 }
 

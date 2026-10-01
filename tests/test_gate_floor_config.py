@@ -77,6 +77,18 @@ def test_writes_under_every_floor_directory_are_denied(allow_all, homes):
         assert d.reason == REFUSAL, path
 
 
+def test_the_coppice_data_dir_under_a_moved_data_home_is_denied(allow_all, homes, monkeypatch):
+    """OPENDAISUGI_HOME and XDG_DATA_HOME can move the data home, and with
+    it coppice's data directory. Both moved places are the floor's."""
+    monkeypatch.setenv("OPENDAISUGI_HOME", str(homes / "od"))
+    for path in [
+        homes / "od" / "coppice" / "web.json",
+        homes / "share" / "opendaisugi" / "coppice" / "web.json",
+    ]:
+        d = evaluate_call(_write(str(path)), allow_all, mode="enforce")
+        assert d.reason == REFUSAL, path
+
+
 def test_a_relative_write_from_inside_the_config_is_denied(allow_all, homes):
     cwd = str(homes / "cfg" / "coppice")
     d = evaluate_call(_write("plugins/x/run.py", cwd=cwd), allow_all, mode="enforce")

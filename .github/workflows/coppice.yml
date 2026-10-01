@@ -55,27 +55,16 @@ jobs:
           path: ${{ env.COPPICE_GHOSTTY_PREFIX }}
           key: ${{ steps.pin.outputs.key }}
 
-      # toolchain.sh needs zig, cmake through uv, curl and git. It runs
-      # only on a cache miss: a hit already has the library this pin would
-      # build sitting at COPPICE_GHOSTTY_PREFIX. curl and git already ship
-      # on ubuntu-latest; only uv needs its own setup step.
+      # toolchain.sh needs curl, git and python3, all on ubuntu-latest; it
+      # fetches its own pinned zig and cmake and puts them on its own PATH.
+      # It runs only on a cache miss: a hit already has the library this
+      # pin would build sitting at COPPICE_GHOSTTY_PREFIX.
       #
       # Preflight is not a CI step. It also gates on zig and cmake being on
       # PATH, which a cache hit never installs, so it would fail a run that
       # has nothing wrong with it. The one fact that actually matters, that
       # the linker can find libghostty-vt, is what the Test steps below
       # check directly through COPPICE_REQUIRE_TOOLCHAIN.
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        if: steps.cache-vt.outputs.cache-hit != 'true'
-
-      # toolchain.sh symlinks zig into $HOME/.local/bin and then calls it by
-      # bare name. ubuntu-latest happens to carry that directory on PATH
-      # already, but this build must not depend on an unstated property of
-      # the runner image. This line makes the dependency explicit.
-      - name: Put ~/.local/bin on PATH
-        if: steps.cache-vt.outputs.cache-hit != 'true'
-        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
       - name: Build libghostty-vt
         if: steps.cache-vt.outputs.cache-hit != 'true'
         run: ./scripts/toolchain.sh

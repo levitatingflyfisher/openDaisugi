@@ -2,6 +2,7 @@ package gate
 
 import (
 	"crypto/rand"
+	"daisugi-verify/internal/statefile"
 	"encoding/hex"
 	"math/big"
 	"os"
@@ -69,15 +70,27 @@ func randomHex(n int) string {
 // never default; with no session, default. nil means none is registered.
 // A file that cannot be read or validated raises what Python raises.
 func (r *runner) loadEnvelope(sessionID any) *envelope {
+	env, _ := r.loadEnvelopeChecked(sessionID)
+	return env
+}
+
+// loadEnvelopeChecked is gate.load_envelope_checked: loadEnvelope with the
+// third answer. refusal is "" for an envelope that loads or is missing, and
+// the refusal text (`<path>: <why> (fix: ...)`) when the root, envelopes/ or
+// the file is refused (GR-R-7).
+func (r *runner) loadEnvelopeChecked(sessionID any) (env *envelope, refusal string) {
 	name := "default"
 	if pyjson.Truthy(sessionID) {
 		name = r.safeSession(sessionID)
 	}
-	p := pathJoin(pathJoin(r.root, "envelopes"), name+".json")
-	if exists(p) {
-		return loadEnvelopeFile(p)
+	raw, ok, refusal, err := statefile.ProbeRead(pathStr(r.root), []string{"envelopes"}, name+".json")
+	if err != nil {
+		panic(osError(err, pathJoin(pathJoin(r.root, "envelopes"), name+".json")))
 	}
-	return nil
+	if !ok {
+		return nil, refusal
+	}
+	return parseEnvelopeText(decodeText(raw)), ""
 }
 
 // readText is Path.read_text(encoding="utf-8"): a strict decode, and
@@ -91,6 +104,12 @@ func readText(p string) string {
 	if err != nil {
 		panic(osError(err, p))
 	}
+	return decodeText(raw)
+}
+
+// decodeText is the second half of Path.read_text(encoding="utf-8"): a
+// strict decode, and universal newlines.
+func decodeText(raw []byte) string {
 	text, derr := pystr.DecodeStrict(raw)
 	if derr != nil {
 		panic(derr)
@@ -99,7 +118,11 @@ func readText(p string) string {
 }
 
 func loadEnvelopeFile(p string) *envelope {
-	v, verr := pmodel.ValidateJSON("Envelope", pmodel.Envelope, readText(p))
+	return parseEnvelopeText(readText(p))
+}
+
+func parseEnvelopeText(text string) *envelope {
+	v, verr := pmodel.ValidateJSON("Envelope", pmodel.Envelope, text)
 	if verr != nil {
 		panic(pystr.NewException("ValidationError", verr.String()))
 	}
@@ -180,4 +203,19 @@ func (e *envelope) maxTimeIn() bool {
 		return false
 	}
 	return n.Sign() > 0 && n.Cmp(big.NewInt(3600)) <= 0
+}
+
+// deadline is Envelope.deadline: the validated float, or false when the
+// envelope has none.
+func (e *envelope) deadline() (float64, bool) {
+	if e == nil || e.Obj == nil {
+		return 0, false
+	}
+	switch f := e.Obj.Value("deadline").(type) {
+	case float64:
+		return f, true
+	case pyjson.Float:
+		return float64(f), true
+	}
+	return 0, false
 }

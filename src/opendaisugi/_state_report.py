@@ -40,13 +40,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from opendaisugi.datahome import data_home
+
 STATES = ("idle", "working", "blocked", "done", "unknown")
 SOURCES = ("operator", "gate", "headless", "process", "manifest")
 
 HERDR_PANE_ENV_CANDIDATES: tuple[str, ...] = ("HERDR_PANE_ID", "HERDR_PANE")
 
 _DETAIL_MAX = 200
-_DEFAULT_ROOT = Path.home() / ".opendaisugi" / "gate"  # mirrors opendaisugi.gate.DEFAULT_GATE_ROOT
+_DEFAULT_ROOT = data_home() / "gate"  # mirrors opendaisugi.gate.DEFAULT_GATE_ROOT
 _HERDR_STATE_MAP = {"working": "working", "blocked": "blocked", "idle": "idle", "done": "idle"}
 
 # coppice's own pane id shape (harness/coppice/internal/layout/layout.go: a
@@ -685,6 +687,7 @@ def hook_report_argv(
     herdr_pane: str | None = None,
     peer_pid: int | None = None,
     env: Mapping[str, str] | None = None,
+    resident: bool = False,
 ) -> HookReportOutcome:
     """`daisugi hook report [--pane P] [--root R]` — validate, downgrade a
     claimed gate/operator source to headless, append to the session tree,
@@ -726,6 +729,12 @@ def hook_report_argv(
         return HookReportOutcome("", f"daisugi hook report: not valid JSON: {exc}", 1)
     if not isinstance(row, dict):
         return HookReportOutcome("", "daisugi hook report: event must be a JSON object", 1)
+    if resident and "session_id" in row:
+        # The resident gate builds a path from it (FN-R-21).
+        from opendaisugi.fence_runs import SESSION_REFUSAL, session_ok
+
+        if not session_ok(row["session_id"]):
+            return HookReportOutcome("", f"daisugi hook report: {SESSION_REFUSAL}", 1)
     if row.get("source") in ("gate", "operator"):
         row["source"] = "headless"
     if args.pane is not None:

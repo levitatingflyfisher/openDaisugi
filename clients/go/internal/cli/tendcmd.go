@@ -48,7 +48,7 @@ func lookPath(name, path string) (string, error) {
 // refuse is set for a matcher this binary does not carry (PW-1);
 // notBuilt for a key nothing builds, which Python raises on.
 func (e *Env) matcher() (m *pathways.Matcher, notBuilt string, err error) {
-	cfg, err := config.Load(filepath.Join(e.home, ".opendaisugi", "config.yaml"))
+	cfg, err := config.Load(filepath.Join(e.dataHome(), "config.yaml"))
 	if err != nil {
 		return nil, "", fmt.Errorf("the config file is not one this binary reads: %w", err)
 	}
@@ -87,7 +87,7 @@ func (e *Env) tend(args []string) error {
 		return e.usage(cmd, err)
 	}
 	model := p.str("--model", "anthropic/claude-sonnet-4-20250514")
-	dataDir := p.str("--data-dir", filepath.Join(e.home, ".opendaisugi"))
+	dataDir := p.str("--data-dir", e.dataHome())
 	dry := p.flag("--dry-run")
 	rep, err := e.runTend(dataDir, model, minTraces, lookback, dry, nil)
 	if err != nil {
@@ -142,7 +142,7 @@ func identityOf(m *pathways.Matcher, key string) string {
 // re-embed, or enough traces to cluster.
 func (e *Env) tendCheck(dataDir, model string, minTraces, lookback int64, dry bool, extra int, started float64) (*tendState, error) {
 	const cmd = "tend"
-	cfg, cerr := config.Load(filepath.Join(e.home, ".opendaisugi", "config.yaml"))
+	cfg, cerr := config.Load(filepath.Join(e.dataHome(), "config.yaml"))
 	if cerr != nil {
 		return nil, e.refuse(cmd, fmt.Errorf("the config file is not one this binary reads: %w", cerr))
 	}
@@ -300,7 +300,7 @@ func (e *Env) distillRepeats(args []string) error {
 	if err != nil {
 		return e.usage(cmd, err)
 	}
-	dataDir := p.str("--data-dir", filepath.Join(e.home, ".opendaisugi"))
+	dataDir := p.str("--data-dir", e.dataHome())
 	path := filepath.Join(dataDir, "gateway", "turns.jsonl")
 	// Skipped lines are logged on the opendaisugi logger, which prints
 	// nothing by default.
@@ -334,6 +334,7 @@ func (e *Env) distillRepeats(args []string) error {
 			return exit(2)
 		}
 		var find func(string) bool
+		var warning string
 		db := filepath.Join(dataDir, "pathways.db")
 		if _, err := os.Stat(db); err == nil {
 			s, err := pathways.Open(db)
@@ -344,10 +345,20 @@ func (e *Env) distillRepeats(args []string) error {
 			key := m.Key
 			find = func(task string) bool {
 				r, err := s.Find(task, key, e.potionEnv(), -1)
+				if err == nil && warning == "" {
+					warning = r.Warning
+				}
 				return err == nil && r.Match != nil
 			}
 		}
 		cands = distill.RankReuse(turns, emb, m.Threshold, find)
+		// The first stale-embeddings warning find gave (Python prints it
+		// once per process); nothing is printed or written before this.
+		if warning != "" {
+			if err := e.staleOnce(warning); err != nil {
+				return e.refuse(cmd, err)
+			}
+		}
 	}
 	if len(cands) == 0 {
 		e.out("no repeated asks found yet.\n")

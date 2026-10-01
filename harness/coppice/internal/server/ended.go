@@ -139,11 +139,14 @@ func endedFallbackState(p layout.Pane) (state, source, detail string, ts float64
 // whose harness table has resume_args. It reads the config file once per
 // call, the same way harnessArgv does, so an edit to resume_args takes
 // effect on the next status call with no restart.
-func (s *Server) resumableCount() int {
+func (s *Server) resumableCount(only map[string]bool) int {
 	cfg, found, err := config.Load()
 	n := 0
 	for _, p := range s.tree.Panes() {
 		if !p.Closed || p.HarnessSessionID == "" {
+			continue
+		}
+		if only != nil && !only[p.ID] {
 			continue
 		}
 		switch p.Kind {
@@ -283,7 +286,7 @@ func (s *Server) releaseResume(id string) {
 // no_such_pane; or, if CreatePane or startPane failed, with no dropRecord
 // at all, so the second call's fresh read finds the same ended record the
 // first call left untouched and can retry the resume itself.
-func (s *Server) handlePaneResume(_ *Client, r *proto.Request) proto.Response {
+func (s *Server) handlePaneResume(c *Client, r *proto.Request) proto.Response {
 	if s.isClosed() {
 		return proto.ErrResp(r.ID, proto.ErrServerClosed,
 			"this server has closed. It cannot start a new pane.")
@@ -301,12 +304,38 @@ func (s *Server) handlePaneResume(_ *Client, r *proto.Request) proto.Response {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest,
 			"pane.resume takes positive cols and rows, or neither.")
 	}
+	router, _ := r.Str("router")
+	if router != "" && !validRouterWord(router) {
+		return proto.ErrResp(r.ID, proto.ErrBadRequest, RouterWordsRefusal)
+	}
 	if !s.claimResume(id) {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest,
 			fmt.Sprintf("pane %s is already resuming.", id))
 	}
 	defer s.releaseResume(id)
+	return s.resumeEnded(r.ID, resumeArgs{
+		id: id, cols: cols, rows: rows, hasCols: hasCols, hasRows: hasRows, router: router,
+		fenced: s.callerFenced(roleOrOperator(c)),
+	})
+}
 
+// resumeArgs is what resumeEnded takes. router is "" for the record's own
+// env, or direct or gateway for a base URL set on the new pane (F12a).
+type resumeArgs struct {
+	id               string
+	cols, rows       int
+	hasCols, hasRows bool
+	router           string
+	// fenced is true when the caller may be a fenced process: the resumed
+	// pane is fenced whatever its record said (FN-R-15).
+	fenced bool
+}
+
+// resumeEnded is the body of pane.resume. The caller holds the claim on
+// a.id (claimResume).
+func (s *Server) resumeEnded(reqID string, a resumeArgs) proto.Response {
+	id, cols, rows, hasCols, hasRows := a.id, a.cols, a.rows, a.hasCols, a.hasRows
+	r := &proto.Request{ID: reqID}
 	rec, ok := s.tree.Pane(id)
 	if !ok {
 		return proto.ErrResp(r.ID, proto.ErrNoSuchPane,
@@ -356,11 +385,22 @@ func (s *Server) handlePaneResume(_ *Client, r *proto.Request) proto.Response {
 			label = DefaultForemanLabel + "-old"
 		}
 	}
+	env := maps.Clone(rec.Env)
+	if a.router != "" {
+		key, val, err := s.routerEnv(rec.Harness, a.router)
+		if err != nil {
+			return proto.ErrResp(r.ID, proto.ErrBadRequest, err.Error())
+		}
+		if env == nil {
+			env = map[string]string{}
+		}
+		env[key] = val
+	}
 	newRec, err := s.tree.CreatePane(rec.Workspace, rec.Tab, layout.Pane{
-		Label: label, Cwd: rec.Cwd, Argv: argv, Env: maps.Clone(rec.Env), Kind: rec.Kind,
+		Label: label, Cwd: rec.Cwd, Argv: argv, Env: env, Kind: rec.Kind,
 		Harness: rec.Harness, Cols: cols, Rows: rows, TaskID: rec.TaskID,
 		HarnessSessionID: sessionID, ForkPending: forkPending, ParentPane: parentPane,
-		ExtraArgs: rec.ExtraArgs,
+		ExtraArgs: rec.ExtraArgs, Model: rec.Model, Fence: fenceOr(rec.Fence, a.fenced),
 	})
 	if err != nil {
 		code := proto.ErrNoSuchTab
@@ -369,14 +409,22 @@ func (s *Server) handlePaneResume(_ *Client, r *proto.Request) proto.Response {
 		}
 		return proto.ErrResp(r.ID, code, err.Error())
 	}
+	// A resumed session writes on in the transcripts the old pane
+	// claimed, so they move to the new pane before its hook can report.
+	if resumed {
+		s.moveClaims(id, newRec.ID)
+	}
 	if err := s.startPane(newRec); err != nil {
+		if resumed {
+			s.moveClaims(newRec.ID, id)
+		}
 		// Same cleanup as pane.create and pane.fork: nothing ran, so
 		// nothing stays of the NEW record. The ended one this resume was
 		// trying to replace is left exactly as it was.
 		_ = s.tree.RemovePane(newRec.ID)
 		s.removeLive(newRec.ID)
 		s.states.Forget(newRec.ID)
-		s.saveLayout()
+		s.markLayoutDirty()
 		code := proto.ErrSpawnFailed
 		if errors.Is(err, errUnknownHarness) || errors.Is(err, adapters.ErrNotBuilt) ||
 			errors.Is(err, errUnknownPaneKind) {
@@ -388,7 +436,11 @@ func (s *Server) handlePaneResume(_ *Client, r *proto.Request) proto.Response {
 	if talkHeld {
 		s.followForemanLocked(id, newRec.ID, resumed)
 	}
-	return proto.OKResp(r.ID, map[string]any{
+	out := map[string]any{
 		"pane": newRec.ID, "workspace": newRec.Workspace, "tab": newRec.Tab, "resumed": resumed,
-	})
+	}
+	if a.router != "" {
+		out["router"] = a.router
+	}
+	return proto.OKResp(r.ID, out)
 }

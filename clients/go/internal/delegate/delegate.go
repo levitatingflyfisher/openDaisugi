@@ -7,11 +7,13 @@
 package delegate
 
 import (
+	"crypto/sha256"
 	"errors"
 	"math/big"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"unicode/utf8"
@@ -19,6 +21,7 @@ import (
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/statefile"
 )
 
 // The constants of delegate.py.
@@ -68,10 +71,25 @@ type Rule struct {
 	MinLines    pyjson.Int
 	AllowRemote bool
 	File        string
+	// Seed is the trial's seed, 0 when the rule names none.
+	Seed int64
 }
 
 // Acting reports a state in RULE_STATES_ACTING.
-func (r *Rule) Acting() bool { return r.State == "audit" || r.State == "active" }
+func (r *Rule) Acting() bool { return r.State == "audit" || r.State == "active" || r.State == "trial" }
+
+// maxSeed is delegate.MAX_SEED.
+var maxSeed = big.NewInt(1 << 53)
+
+// ArmOf is delegate.arm_of: graft when the first 8 hex digits of the
+// SHA-256 of SEED:ID:VERSION:SESSION read as an even number, else control.
+func ArmOf(r *Rule, session string) string {
+	sum := sha256.Sum256([]byte(strconv.FormatInt(r.Seed, 10) + ":" + r.ID + ":" + r.Version.Text + ":" + session))
+	if sum[3]%2 == 0 {
+		return "graft"
+	}
+	return "control"
+}
 
 // MinLinesBig is the threshold as an integer.
 func (r *Rule) MinLinesBig() *big.Int { return bigOf(r.MinLines) }
@@ -161,7 +179,25 @@ func ParseRule(v any, file string) (*Rule, string) {
 			allowRemote = b
 		}
 	}
-	return &Rule{ID: id, Version: version, State: state, MinLines: minLines, AllowRemote: allowRemote, File: file}, ""
+	var seed int64
+	if raw, has := obj.Get("trial"); has {
+		const why = "trial must be an object with an integer seed from 0 to 2**53"
+		t, ok := raw.(*pyjson.Object)
+		if !ok {
+			return nil, why
+		}
+		i, ok := intOf(t.Value("seed"))
+		if !ok {
+			return nil, why
+		}
+		n := bigOf(i)
+		if n.Sign() < 0 || n.Cmp(maxSeed) > 0 {
+			return nil, why
+		}
+		seed = n.Int64()
+	}
+	return &Rule{ID: id, Version: version, State: state, MinLines: minLines, AllowRemote: allowRemote, File: file,
+		Seed: seed}, ""
 }
 
 // Bad is a rule file that is not used, and why.
@@ -204,15 +240,21 @@ func loadJSON(raw []byte) (any, bool, error) {
 // LoadRules is delegate.load_rules over the gate root: the rules that
 // read, by file name, and each file that does not.
 func LoadRules(root string) ([]*Rule, []Bad, error) {
-	dir := join(root, "grafts")
-	enc, e := pystr.FSEncode(dir)
-	if e != nil || strings.ContainsRune(dir, 0) {
+	// GR-R-1: the root and grafts/ are opened without following a link,
+	// and a rule file is read only as statefile.OpenFileIn allows.
+	fds, ok := statefile.OpenDirs(root, "grafts")
+	if !ok {
 		return nil, nil, nil
 	}
-	f, err := os.Open(string(enc))
-	if err != nil {
+	defer statefile.Close(fds)
+	dfd := fds[len(fds)-1]
+	noteDir := statefile.NoteDir(root, "grafts")
+	dup, derr := syscall.Dup(dfd)
+	if derr != nil {
 		return nil, nil, nil
 	}
+	syscall.CloseOnExec(dup)
+	f := os.NewFile(uintptr(dup), "grafts")
 	ents, err := f.ReadDir(-1)
 	f.Close()
 	if err != nil {
@@ -229,7 +271,7 @@ func LoadRules(root string) ([]*Rule, []Bad, error) {
 	var rules []*Rule
 	var bad []Bad
 	for _, name := range names {
-		raw, ok := readFile(join(dir, name))
+		raw, ok := readRuleFile(dfd, noteDir, name)
 		if !ok {
 			bad = append(bad, Bad{name, "not readable JSON"})
 			continue
@@ -308,7 +350,12 @@ func CountLines(data []byte) int {
 
 // MeasureFile is delegate.measure: the file, or why the delegate cannot
 // read it.
-func MeasureFile(path string) (*Measure, string) {
+func MeasureFile(path string) (*Measure, string) { return MeasureFileFollow(path, true) }
+
+// MeasureFileFollow is delegate.measure(path, follow): with follow false
+// the last part of the path is opened without following a symbolic link,
+// and a link is refused.
+func MeasureFileFollow(path string, follow bool) (*Measure, string) {
 	if strings.ContainsRune(path, 0) {
 		return nil, "the file cannot be opened"
 	}
@@ -316,8 +363,15 @@ func MeasureFile(path string) (*Measure, string) {
 	if e != nil {
 		return nil, "the file cannot be opened"
 	}
-	fd, err := syscall.Open(string(enc), syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	flags := syscall.O_RDONLY | syscall.O_NONBLOCK | syscall.O_CLOEXEC
+	if !follow {
+		flags |= syscall.O_NOFOLLOW
+	}
+	fd, err := syscall.Open(string(enc), flags, 0)
 	if err != nil {
+		if !follow && err == syscall.ELOOP {
+			return nil, "it is a symbolic link"
+		}
 		return nil, "the file cannot be opened"
 	}
 	defer syscall.Close(fd)
@@ -541,4 +595,16 @@ func RouteDelegate(dataDir string, env *Envelope, allowRemote bool, getenv func(
 	}
 	rt.OK, rt.Reason = true, "the remote worker "+model+" on "+host+", granted by the envelope"
 	return rt, nil
+}
+
+// readRuleFile reads a rule file by its fd in grafts/; ok is false for a
+// file that is missing, refused or cannot be read.
+func readRuleFile(dfd int, noteDir, name string) ([]byte, bool) {
+	fd, ok := statefile.OpenFileIn(dfd, noteDir, name, -1)
+	if !ok {
+		return nil, false
+	}
+	defer syscall.Close(fd)
+	raw, err := statefile.ReadAll(fd)
+	return raw, err == nil
 }

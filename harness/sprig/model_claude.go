@@ -24,7 +24,19 @@ type ClaudeCodeModel struct {
 	Binary  string
 	Model   string
 	Timeout time.Duration
-	run     func(prompt string) (string, error) // overridable for tests (no live call)
+	// Tools is the wall: the tools the prompt offers. Empty offers all four.
+	Tools []string
+	// NoTools starts claude with every built-in tool off and an empty
+	// strict MCP config, and the prompt names no tool (--tools none).
+	NoTools bool
+	// System, when SystemSet, is the prompt's opening in place of sprig's.
+	System    string
+	SystemSet bool
+	// MCPConfig is the JSON of --mcp-config, passed to claude, which
+	// runs the servers; MCPServers are their names. Empty is none.
+	MCPConfig  string
+	MCPServers []string
+	run        func(prompt string) (string, error) // overridable for tests (no live call)
 }
 
 // NewClaudeCodeModel returns a model wired to the real `claude -p` subprocess.
@@ -34,12 +46,23 @@ func NewClaudeCodeModel() *ClaudeCodeModel {
 	return m
 }
 
+// ModelName is the model this backend asks for.
+func (m *ClaudeCodeModel) ModelName() string { return m.Model }
+
 func (m *ClaudeCodeModel) Next(history []Message) (Message, error) {
 	runner := m.run
 	if runner == nil {
 		runner = m.callClaude
 	}
-	out, err := runner(formatPrompt(history))
+	tools := m.Tools
+	if len(tools) == 0 {
+		tools = AllToolNames
+	}
+	prompt := formatPromptFor(history, tools)
+	if m.NoTools || m.SystemSet {
+		prompt = formatPromptWith(history, tools, m.NoTools, m.System, m.SystemSet)
+	}
+	out, err := runner(prompt)
 	if err != nil {
 		return Message{}, err
 	}
@@ -60,11 +83,31 @@ func (m *ClaudeCodeModel) Next(history []Message) (Message, error) {
 // stdin, injection-safe and unbounded). Model can be operator- or
 // plan-authored, so it is bound with the --model=<value> form: the value can
 // never be reparsed as a separate flag.
-func claudeArgs(binary, model string) []string {
+func claudeArgs(binary, model string, noTools bool, mcpConfig string, mcpServers []string) []string {
 	if binary == "" {
 		binary = "claude"
 	}
-	args := []string{binary, "-p", "--output-format", "json", "--allowedTools", ""}
+	allowed := ""
+	for i, s := range mcpServers {
+		if i > 0 {
+			allowed += ","
+		}
+		allowed += "mcp__" + s
+	}
+	// --no-session-persistence: a sprig call is one shot and never resumes,
+	// so it leaves no transcript in ~/.claude/projects. Without it the
+	// foreman's compactor calls would come back as "past chats" (FM-R-78).
+	args := []string{binary, "-p", "--output-format", "json", "--no-session-persistence", "--allowedTools", allowed}
+	switch {
+	case noTools && mcpConfig == "":
+		// Every built-in off, and no MCP server but none: the call is a
+		// raw responder that cannot touch a file or a tool.
+		args = append(args, "--tools", "", "--strict-mcp-config", "--mcp-config="+emptyMCPConfig)
+	case noTools:
+		args = append(args, "--tools", "", "--strict-mcp-config", "--mcp-config="+mcpConfig)
+	case mcpConfig != "":
+		args = append(args, "--strict-mcp-config", "--mcp-config="+mcpConfig)
+	}
 	if model != "" {
 		args = append(args, "--model="+model)
 	}
@@ -82,10 +125,11 @@ func (m *ClaudeCodeModel) callClaude(prompt string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	args := claudeArgs(m.Binary, m.Model)
+	args := claudeArgs(m.Binary, m.Model, m.NoTools, m.MCPConfig, m.MCPServers)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = os.TempDir() // neutral CWD — no project context leaks into the call
+	cmd.Env = ChildEnv(cmd.Dir)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("claude -p failed (quota/auth/binary): %w", err)
@@ -137,26 +181,83 @@ func parseClaudeCLIEnvelope(raw string) (string, Usage, error) {
 	return strings.TrimSpace(env.Result), usage, nil
 }
 
+// emptyMCPConfig is the --mcp-config of a call with no tools.
+const emptyMCPConfig = `{"mcpServers":{}}`
+
 const _toolFence = "```sprig-tool"
 
 // knownTools is sprig's fixed protocol vocabulary. It guards the forgiving
 // parser: an UNfenced JSON object counts as a call only if it names one of
 // these, so a final answer that merely contains some JSON is never misread.
-var knownTools = map[string]bool{"read": true, "write": true, "edit": true, "bash": true}
+var knownTools = map[string]bool{"read": true, "write": true, "edit": true, "bash": true, "spawn": true}
 
-// formatPrompt renders the conversation plus the tool protocol into one prompt.
-func formatPrompt(history []Message) string {
+// promptToolLines is each tool's line in the prompt's tool list, and
+// promptExamples a call of it for the prompt's example.
+var promptToolLines = map[string]string{
+	"read":  "  read  {\"path\"}          — return a file's contents\n",
+	"write": "  write {\"path\",\"content\"} — write a file\n",
+	"edit":  "  edit  {\"path\",\"old\",\"new\"} — replace a unique string\n",
+	"bash":  "  bash  {\"cmd\"}           — run a shell command\n",
+	"spawn": "  spawn {\"task\",\"envelope\",\"profile\",\"model\",\"tools\",\"tokens\",\"turns\"}: start a child agent and wait for its answer\n",
+}
+
+var promptExamples = map[string]string{
+	"read":  `{"tool":"read","input":{"path":"main.go"}}`,
+	"write": `{"tool":"write","input":{"path":"notes.txt","content":"hi"}}`,
+	"edit":  `{"tool":"edit","input":{"path":"main.go","old":"Run","new":"Start"}}`,
+	"bash":  `{"tool":"bash","input":{"cmd":"ls"}}`,
+	"spawn": `{"tool":"spawn","input":{"task":"list the TODOs","envelope":{"permissions":{"file_read":["/w/**"]}}}}`,
+}
+
+var countWords = []string{"no tools", "one tool", "two tools", "three tools", "four tools", "five tools"}
+
+// formatPromptWith renders the prompt for a run with no tools or with a
+// system file. With no tools there is no tool protocol: the opening is the
+// system text (sprig's no-tools line when no file was given), then the
+// conversation. With a system file and tools, the file replaces the first
+// line of the tool protocol and the rest stays.
+func formatPromptWith(history []Message, wall []string, noTools bool, system string, systemSet bool) string {
+	if !noTools {
+		p := formatPromptFor(history, wall)
+		first := strings.SplitN(p, "\n", 2)
+		return system + "\n" + first[1]
+	}
+	open := noToolsPrompt
+	if systemSet {
+		open = system
+	}
 	var b strings.Builder
-	b.WriteString("You are sprig, a minimal coding agent. You have four tools:\n")
-	b.WriteString("  read  {\"path\"}          — return a file's contents\n")
-	b.WriteString("  write {\"path\",\"content\"} — write a file\n")
-	b.WriteString("  edit  {\"path\",\"old\",\"new\"} — replace a unique string\n")
-	b.WriteString("  bash  {\"cmd\"}           — run a shell command\n\n")
+	b.WriteString(open)
+	b.WriteString("\n\nConversation so far:\n")
+	for _, msg := range history {
+		role := msg.Role
+		if role == "tool" {
+			role = "tool-result"
+		}
+		fmt.Fprintf(&b, "[%s] %s\n", role, msg.Text)
+	}
+	b.WriteString("\nYour reply:")
+	return b.String()
+}
+
+// formatPrompt renders the conversation plus the tool protocol into one
+// prompt, offering all four tools.
+func formatPrompt(history []Message) string { return formatPromptFor(history, AllToolNames) }
+
+// formatPromptFor renders the prompt offering only the tools of the wall,
+// in sprig's order. The example call uses the wall's first tool.
+func formatPromptFor(history []Message, wall []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "You are sprig, a minimal coding agent. You have %s:\n", countWords[len(wall)])
+	for _, name := range wall {
+		b.WriteString(promptToolLines[name])
+	}
+	b.WriteString("\n")
 	b.WriteString("To CALL a tool, reply with ONLY this and nothing else:\n")
 	b.WriteString(_toolFence + "\n{\"tool\":\"<name>\",\"input\":{...}}\n```\n")
 	b.WriteString("To FINISH, reply with your final answer as plain text (no block).\n\n")
 	b.WriteString("Example — call a tool:\n")
-	b.WriteString(_toolFence + "\n{\"tool\":\"read\",\"input\":{\"path\":\"main.go\"}}\n```\n")
+	b.WriteString(_toolFence + "\n" + promptExamples[wall[0]] + "\n```\n")
 	b.WriteString("Example — finish (plain text, no block):\n")
 	b.WriteString("main.go defines three functions: New, Run, and Close.\n\n")
 	b.WriteString("Conversation so far:\n")

@@ -58,6 +58,9 @@ type mcpServer struct {
 	journal     *tracejournal.Journal
 	cache       *envgen.Cache
 	out         io.Writer
+	// stale prints the stale-embeddings warning once per server, as
+	// Python does once per process.
+	stale *staleWarner
 }
 
 func (e *Env) mcpServe(args []string) error {
@@ -74,7 +77,7 @@ func (e *Env) mcpServe(args []string) error {
 		return e.cmdHelp(cmd, "", "Serve openDaisugi tools over MCP stdio.", opts)
 	}
 	s := &mcpServer{e: e, out: e.Stdout,
-		dataDir: gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi"))),
+		dataDir: gateroot.PathStr(p.str("--data-dir", e.dataHome())),
 		model:   p.str("--model", envgen.DefaultModel)}
 	// Daisugi(model=..., data_dir=...) makes the envelope cache.
 	if s.cache, err = envgen.OpenCache(filepath.Join(s.dataDir, "envelope_cache.db")); err != nil {
@@ -152,8 +155,13 @@ func (s *mcpServer) handle(line string) {
 		s.write(mcpwire.Reply(m.ID, `{"prompts":[]}`))
 	case "prompts/get":
 		s.write(mcpwire.ErrorReply(m.ID, 0, "Unknown prompt: "+m.Params.Value("name").(string), nil))
-	case "logging/setLevel":
+	case "logging/setLevel", "resources/subscribe", "resources/unsubscribe", "completion/complete",
+		"tasks/get", "tasks/result", "tasks/list", "tasks/cancel":
+		// The oracle's server registers no handler for these.
 		s.write(mcpwire.ErrorReply(m.ID, -32601, "Method not found", nil))
+	case "resources/read":
+		uri, _ := mcpwire.NormURI(m.Params.Value("uri").(string))
+		s.write(mcpwire.ErrorReply(m.ID, 0, "Unknown resource: "+uri, nil))
 	case "tools/call":
 		name := m.Params.Value("name").(string)
 		args, _ := m.Params.Value("arguments").(*pyjson.Object)
@@ -408,6 +416,9 @@ func (s *mcpServer) receiptsForRun(a *pyjson.Object) (any, error) {
 func validate(title string, m *pmodel.Model, v any) (*pyjson.Object, error) {
 	out, verr := pmodel.Validate(title, m, v, pmodel.Python)
 	if verr != nil {
+		if why := verr.Unreadable(); why != "" {
+			return nil, refusef("%s", why)
+		}
 		return nil, &toolError{verr.String()}
 	}
 	return out.(*pyjson.Object), nil

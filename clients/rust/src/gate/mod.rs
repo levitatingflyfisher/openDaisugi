@@ -16,7 +16,10 @@ pub mod decide;
 pub mod dispatch;
 pub mod effects;
 pub mod envelope;
+pub mod fenced;
+pub mod fenceruns;
 pub mod frames;
+pub mod gatestate;
 pub mod globs;
 pub mod graft;
 pub mod hook;
@@ -33,16 +36,19 @@ pub mod pyjson;
 pub mod pystr;
 pub mod rank;
 pub mod record;
+pub mod replay;
 pub mod resident;
 pub mod rules;
 pub mod search;
 pub mod sha256;
 pub mod state_report;
+pub mod statefile;
+pub mod statewrite;
 pub mod urls;
 
 use decide::Decision;
 use effects::PERMANENT;
-use paths::{exists, path_join, path_str};
+use paths::{path_join, path_str};
 use py::text::{as_surrogate, fsdecode, has_surrogate};
 use pyjson::{dumps, loads, Object, Value};
 use pystr::py_strip;
@@ -125,6 +131,9 @@ pub struct GateResult {
     /// argparse's --help: SystemExit(0), which run_argv lets through. A
     /// resident server gives no reply to it.
     pub help: bool,
+    /// The stderr notes of a resident call's child (GR-R-3), for the
+    /// server to print; a hook call's child puts them in `stderr`.
+    pub notes: Vec<u8>,
 }
 
 /// One call's inputs.
@@ -193,7 +202,7 @@ fn fmt_from_argv(argv: &[String]) -> String {
 }
 
 /// The argv as Python reads it (UTF-8, undecodable bytes as surrogates).
-fn py_argv(args: &[OsString]) -> Vec<String> {
+pub(crate) fn py_argv(args: &[OsString]) -> Vec<String> {
     use std::os::unix::ffi::OsStrExt;
     args.iter().map(|a| fsdecode(a.as_bytes())).collect()
 }
@@ -384,7 +393,7 @@ fn run_native(
         Ok(h) => h,
         Err(e) => return undecided(format!("Path.home() raises at import: {}", e.msg)),
     };
-    r.default_root = path_join(&path_join(&home_dir, ".opendaisugi"), "gate");
+    r.default_root = path_join(&r.data_home_at(&home_dir), "gate");
     r.root = match &args.root {
         Some(x) => path_str(x),
         None => r.default_root.clone(),
@@ -403,6 +412,9 @@ fn run_native(
             r.config_gate_mode()?
         }
     };
+    // effective_gate_mode: the calling pane's marker can lower enforce.
+    let mode = std::mem::take(&mut r.mode);
+    r.mode = r.effective_mode(mode);
     r.decide(stdin)
 }
 
@@ -461,7 +473,8 @@ impl Runner {
 
     fn is_disarmed(&self) -> R<bool> {
         let _f = frames::frame();
-        exists(&path_join(&self.root, "DISARMED"))
+        // GR-R-1: a regular file this user owns, read through no link.
+        Ok(statefile::open(&path_str(&self.root), &[], "DISARMED", None).is_some())
     }
 
     /// `gate.gate_and_contract`: the verdict, its log lines, and the host
@@ -487,6 +500,44 @@ impl Runner {
             }
         };
         outcome(&d, &self.fmt)
+    }
+
+    /// `gate._resident_refusal`: why a resident call is denied before it is
+    /// checked, or None (FN-R-21).
+    fn resident_refusal(&self, obj: Option<&Object>) -> Option<String> {
+        if !self.resident {
+            return None;
+        }
+        if let Some(s) = self.session.as_deref().filter(|s| !s.is_empty()) {
+            if !fenceruns::session_ok(s) {
+                return Some(fenceruns::SESSION_REFUSAL.into());
+            }
+        }
+        let p = obj?;
+        match p.value("session_id") {
+            Value::Null => {}
+            Value::Str(s) if fenceruns::session_ok(s) => {}
+            _ => return Some(fenceruns::SESSION_REFUSAL.into()),
+        }
+        if self.checkpoints && self.caller.workspace.is_some() {
+            // A fenced session (FN-R-36): the server would run git on
+            // config the agent writes, so it takes no checkpoint at all.
+            return Some(fenceruns::FENCED_CHECKPOINT_REFUSAL.into());
+        }
+        let cwd = p.value("cwd");
+        if self.checkpoints && cwd.truthy() {
+            let Some(ws) = self.caller.workspace.as_deref() else {
+                return Some(fenceruns::NO_WORKSPACE_REFUSAL.into());
+            };
+            match cwd.as_str() {
+                Some(c) if !c.contains('\0') && c.starts_with('/') && fenceruns::inside(c, ws) => {}
+                _ => return Some(fenceruns::OUTSIDE_REFUSAL.into()),
+            }
+            if let Some(why) = fenceruns::git_dir_refusal(ws) {
+                return Some(why.into());
+            }
+        }
+        None
     }
 
     fn decide_body(&self, stdin: &[u8]) -> R<Decision> {
@@ -526,13 +577,29 @@ impl Runner {
             Some(s) if !s.is_empty() => Value::Str(s.clone()),
             _ => Value::Null,
         };
-        let env = self.load_envelope(&pin)?;
+        // gate._resident_refusal: denied before it is checked (FN-R-21).
+        let why = self.resident_refusal(obj);
+        let (env, refusal) = if why.is_some() { (None, None) } else { self.load_envelope_checked(&pin)? };
         // Only the predicate stage needs Z3, and a context takes about
         // 9 ms to make: start it now, on a thread, when that stage may run.
         if env.as_ref().is_some_and(|e| !e.invariants.is_empty() || !e.postconditions.is_empty()) {
             crate::z3py::prewarm();
         }
         let mut d = match (&env, &payload, obj) {
+            // Denied in every mode: the server makes the writes, so it must
+            // not make them where the caller points.
+            _ if why.is_some() => Decision {
+                allow: false,
+                would_deny: true,
+                reason: why.clone().unwrap_or_default(),
+                elapsed_ms: self.elapsed_ms(),
+                tier: PERMANENT.into(),
+                ..Default::default()
+            },
+            // A refusal is not an absence: say which file, and the fix (GR-R-8).
+            (None, _, _) if refusal.is_some() => {
+                self.deny(&format!("the gate refused its envelope state: {}", refusal.as_deref().unwrap_or("")))
+            }
             (None, _, _) => self.deny(
                 "no envelope registered for this session — run `daisugi gate register <envelope.json>` to \
                  authorize it, or `daisugi gate disarm` to switch the gate off",
@@ -544,7 +611,7 @@ impl Runner {
             (_, _, None) => self.deny("hook payload is not a JSON object"),
             (Some(env), _, Some(p)) => self.evaluate_call(p, env)?,
         };
-        if self.ask && self.mode == "enforce" && d.would_deny && !d.pane_rule {
+        if why.is_none() && self.ask && self.mode == "enforce" && d.would_deny && !d.pane_rule {
             if let Some(p) = obj {
                 d = self.maybe_ask(p, d, &session_id)?;
                 if d.allow && d.updated_input.is_some() {
@@ -555,14 +622,14 @@ impl Runner {
             }
         }
         // gate._maybe_graft, on the evaluate_call branch only.
-        if !d.ask && !too_big {
+        if why.is_none() && !d.ask && !too_big {
             if let (Some(env), Some(_), Some(p)) = (&env, &payload, obj) {
-                d = self.maybe_graft(p, d, env)?;
+                d = self.maybe_graft(p, d, env, &session_id)?;
             }
         }
         d.elapsed_ms = d.elapsed_ms.max(0.0);
         let join = obj.map(join_of).unwrap_or_default();
-        self.log_audit(&session_id, &d, &payload_session, Some(&join))?;
+        let logged = self.log_audit(&session_id, &d, &payload_session, Some(&join))?;
         if let Some(p) = obj {
             let tree = self.log_tree(p, &d, &session_id)?;
             if self.checkpoints && d.allow {
@@ -573,9 +640,17 @@ impl Runner {
             }
             self.report_state(p, &d, &session_id, tree)?;
         }
+        // An enforce-mode allow whose audit line did not land is denied
+        // (gate.AUDIT_REFUSAL, FN-R-17).
+        if !logged && self.mode == "enforce" && d.allow {
+            return Ok(self.deny(AUDIT_REFUSAL));
+        }
         Ok(d)
     }
 }
+
+/// `gate.AUDIT_REFUSAL`.
+pub const AUDIT_REFUSAL: &str = "the gate cannot write its audit log, so it denies the call";
 
 /// The deny the outer process gives when its worker did not answer: the
 /// call's host format read as argparse reads it (the last `--format` wins,
@@ -593,6 +668,21 @@ pub fn backstop_deny_text(argv: &[String], why: &str) -> GateResult {
         reason: format!("gate internal error (denied fail-closed): {why}"),
         ..Default::default()
     };
+    outcome(&d, &fmt).unwrap_or_else(|_| printed("", &format!("openDaisugi gate: DENIED — {}", d.reason), 2))
+}
+
+/// The deny in the format `gate._fmt_from_argv` reads off argv, with
+/// `reason`: the resident server's deny for a request that names a path.
+pub fn deny_fmt(argv: &[String], reason: &str) -> GateResult {
+    let fmt = fmt_from_argv(argv);
+    let d = Decision { allow: false, would_deny: true, reason: reason.to_string(), ..Default::default() };
+    outcome(&d, &fmt).unwrap_or_else(|_| printed("", &format!("openDaisugi gate: DENIED — {}", d.reason), 2))
+}
+
+/// The format's deny for `argv`, with `reason`.
+pub fn deny_text(argv: &[String], reason: &str) -> GateResult {
+    let fmt = deny_format_text(argv);
+    let d = Decision { allow: false, would_deny: true, reason: reason.to_string(), ..Default::default() };
     outcome(&d, &fmt).unwrap_or_else(|_| printed("", &format!("openDaisugi gate: DENIED — {}", d.reason), 2))
 }
 

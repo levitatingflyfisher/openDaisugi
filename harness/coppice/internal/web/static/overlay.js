@@ -5,16 +5,18 @@
 
 // JOURNAL is the overlay id of the journal. No view id starts with a colon.
 export const JOURNAL = ':journal';
+// GARDEN is the overlay id of the garden, the page's own drawn view.
+export const GARDEN = ':garden';
 // COLONY is the view that can pin as a strip.
 export const COLONY = 'colony';
 // PIN_KEY is where this browser keeps whether the colony strip is pinned.
 export const PIN_KEY = 'coppice.colony.pinned';
-// JOURNAL_KEPT is the most entries the journal shows.
-export const JOURNAL_KEPT = 200;
+// JOURNAL_KEPT is the most entries the journal shows: the most the server
+// keeps.
+export const JOURNAL_KEPT = 500;
 
-// JOURNAL_SOURCE says where the journal's lines come from, since the
-// server keeps no history of verdicts.
-export const JOURNAL_SOURCE = 'The server keeps no verdict history. This lists the gate reports in the shift log\'s events of the last two hours, and each last verdict this page saw. A verdict made while an agent kept working shows only if this page saw it as the last one.';
+// JOURNAL_SOURCE says where the journal's lines come from.
+export const JOURNAL_SOURCE = "This lists the verdicts the gate and each agent's loop report, newest first. The journal keeps 100 per agent, 500 in all, oldest first. They stay across a server restart.";
 
 // overlayNext is the overlay after one action. state is {open, sel, pane,
 // pinned}: open is a view id, JOURNAL, or ''; sel the panes a view was
@@ -40,60 +42,38 @@ export function escCloses(state, keys) {
   return Boolean(state && state.open) && keys !== 'window';
 }
 
-// verdictOfDetail reads the detail a gate report carries: "verdict=allow"
-// or "verdict=deny clause=<clause>". Anything else is null.
-export function verdictOfDetail(detail) {
-  const d = String(detail || '');
-  if (d === 'verdict=allow') return { decision: 'allow', clause: '' };
-  const m = d.match(/^verdict=deny(?: clause=(.*))?$/);
-  if (m) return { decision: 'deny', clause: m[1] || '' };
-  return null;
+// PANELS are the screens that open as a panel over the floor and never
+// replace it: the New form and Settings.
+export const PANELS = Object.freeze(['new', 'settings']);
+
+// isPanel is true when a route's screen opens as a panel over the floor.
+export function isPanel(screen) {
+  return PANELS.includes(screen);
 }
 
-// journalFromEvents is the gate verdicts among state events, newest first:
-// an allow or deny a gate report's detail names, and each ask a gate
-// report raised. pane, when given, keeps only that agent's.
-export function journalFromEvents(events, pane) {
+// panelEsc is true when Esc should close an open panel. Esc inside a
+// field closes it too, since a panel has no other use for Esc. It does
+// not close while the keys are in a window, where Esc is the agent's.
+export function panelEsc(screen, keys) {
+  return isPanel(screen) && keys !== 'window';
+}
+
+// GATE_KINDS are the decisions a row's class name may carry. Any other
+// decision gets the class 'other', so a text from a file never becomes a
+// class.
+const GATE_KINDS = ['allow', 'deny', 'ask'];
+
+// journalRows are the entries floor.journal returned as rows, newest
+// first, at most JOURNAL_KEPT. pane, when given, keeps only that agent's.
+// An entry the server did not shape as a verdict is dropped.
+export function journalRows(entries, pane) {
   const out = [];
-  for (const e of Array.isArray(events) ? events : []) {
-    if (!e || e.event !== 'state' || e.source !== 'gate' || typeof e.pane !== 'string') continue;
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (!e || typeof e.pane !== 'string' || typeof e.decision !== 'string' || !Number.isFinite(e.at)) continue;
     if (pane && e.pane !== pane) continue;
-    const ts = Number(e.ts) || 0;
-    if (e.state === 'blocked' && e.ask && typeof e.ask === 'object') {
-      out.push({ pane: e.pane, ts, decision: 'ask', tool: String(e.ask.tool || ''), clause: '', what: String(e.ask.summary || '') });
-      continue;
-    }
-    const v = verdictOfDetail(e.detail);
-    if (v) out.push({ pane: e.pane, ts, decision: v.decision, tool: '', clause: v.clause, what: '' });
+    out.push({ pane: e.pane, ts: e.at, decision: e.decision, kind: GATE_KINDS.includes(e.decision) ? e.decision : 'other', tool: String(e.tool || ''), clause: String(e.clause || ''), mode: String(e.mode || '') });
   }
-  return out.sort((a, b) => b.ts - a.ts);
-}
-
-// seeVerdicts adds each row's last verdict to seen, a map of key to entry,
-// when this page has not seen it before, and returns seen.
-export function seeVerdicts(seen, panes) {
-  const map = seen instanceof Map ? seen : new Map();
-  for (const p of Array.isArray(panes) ? panes : []) {
-    const g = p && p.gate;
-    if (!g || !['allow', 'deny', 'ask'].includes(g.decision) || !Number.isFinite(g.at)) continue;
-    const key = p.id + '|' + g.at + '|' + g.decision;
-    if (!map.has(key)) map.set(key, { pane: p.id, ts: g.at, decision: g.decision, tool: String(g.tool || ''), clause: String(g.clause || ''), what: '' });
-  }
-  while (map.size > JOURNAL_KEPT) map.delete(map.keys().next().value);
-  return map;
-}
-
-// SAME_S is how far apart in time an event and a seen verdict can be and
-// still be one verdict: the gate's own clock against the server's.
-const SAME_S = 3;
-
-// journal merges the verdicts from events with the ones this page saw,
-// newest first, at most JOURNAL_KEPT. A seen verdict names its tool, so
-// it wins over an event for the same agent, decision and moment.
-export function journal(fromEvents, seen, pane) {
-  const mine = [...(seen instanceof Map ? seen.values() : [])].filter((e) => !pane || e.pane === pane);
-  const kept = (Array.isArray(fromEvents) ? fromEvents : []).filter((e) => (!pane || e.pane === pane) && !mine.some((s) => s.pane === e.pane && s.decision === e.decision && Math.abs(s.ts - e.ts) <= SAME_S));
-  return [...kept, ...mine].sort((a, b) => b.ts - a.ts).slice(0, JOURNAL_KEPT);
+  return out.sort((a, b) => b.ts - a.ts).slice(0, JOURNAL_KEPT);
 }
 
 // readPinned reads whether the colony strip is pinned.
@@ -106,7 +86,7 @@ export function savePinned(storage, on) {
   try { storage.setItem(PIN_KEY, on ? '1' : '0'); } catch { /* storage is a convenience */ }
 }
 
-// JOURNAL_MS is how often an open journal reads the shift log's events.
+// JOURNAL_MS is how often an open journal reads floor.journal.
 export const JOURNAL_MS = 3000;
 
 // clock is a unix time as HH:MM:SS, local time.
@@ -128,49 +108,34 @@ function make(tag, className, text) {
 
 // mountOverlay draws the overlay and the colony strip. d carries the page
 // elements (el, title, pin, close, frame, journal, strip, unpin), the two
-// view hosts (host, stripHost), api, labelOf(pane), titleOf(view id),
+// view hosts (host, stripHost), garden ({ el, show, hide }, optional), rpc, labelOf(pane), titleOf(view id),
 // onFloor(), fixes(message) for an error's buttons, toMessage, storage,
-// every and cancel for the journal's timer, place(el) to size the panel,
+// every and cancel for the journal's timer, stripFits() (false when the strip would take a window) and dots (the one-line form), place(el) to size the panel,
 // and relayout() for when the strip shows or hides.
 export function mountOverlay(d) {
   let st = overlayNext(undefined, { type: 'close' });
   st.pinned = readPinned(d.storage);
-  const seen = new Map();
-  let events = [];
-  let top = 0;
-  // have holds the pane, time and detail of each kept event, so the ring
-  // and the live stream never add one event twice, and two reports at one
-  // moment stay two.
-  const have = new Set();
-  const keyOf = (e) => e.pane + '|' + e.ts + '|' + (e.detail || '');
-  const keep = (list) => {
-    for (const e of list) {
-      const k = keyOf(e);
-      if (have.has(k)) continue;
-      have.add(k);
-      events.push(e);
-    }
-    if (events.length > 2000) {
-      for (const e of events.splice(0, events.length - 2000)) have.delete(keyOf(e));
-    }
-  };
-  let ringErr = null;
+  let rows = [];
+  let readErr = null;
   let timer = null;
+  let reading = false;
   const stopTimer = () => {
     if (timer !== null) d.cancel(timer);
     timer = null;
   };
 
-  const readRing = async () => {
+  const readJournal = async () => {
+    if (reading) return;
+    reading = true;
+    const pane = st.pane;
     try {
-      const body = await d.api('/api/events?since=' + top);
-      const fresh = (Array.isArray(body && body.events) ? body.events : []).filter((e) => e && typeof e.ts === 'number' && e.ts > top);
-      keep(fresh);
-      for (const e of fresh) top = Math.max(top, e.ts);
-      ringErr = null;
+      const body = await d.rpc('floor.journal', pane ? { pane } : {});
+      rows = Array.isArray(body && body.entries) ? body.entries : [];
+      readErr = null;
     } catch (e) {
-      ringErr = e;
+      readErr = e;
     }
+    reading = false;
     if (st.open === JOURNAL) paintJournal();
   };
 
@@ -182,21 +147,21 @@ export function mountOverlay(d) {
       bar.append(make('span', '', 'Showing ' + d.labelOf(st.pane) + '.'));
       const all = make('button', 'ghost', 'All agents');
       all.type = 'button';
-      all.addEventListener('click', () => { st = { ...st, pane: '' }; render(); });
+      all.addEventListener('click', () => { st = { ...st, pane: '' }; rows = []; render(); readJournal(); });
       bar.append(all);
     } else {
       bar.append(make('span', '', 'Showing every agent.'));
     }
     box.append(bar, make('p', 'muted journal-source', JOURNAL_SOURCE));
-    if (ringErr) {
-      const m = d.toMessage(ringErr);
-      const line = make('p', 'journal-error', 'The shift log\'s events did not load: ' + m.text);
+    if (readErr) {
+      const m = d.toMessage(readErr);
+      const line = make('p', 'journal-error', 'The journal did not load: ' + m.text);
       line.append(...d.fixes(m));
       box.append(line);
     }
-    const list = journal(journalFromEvents(events, st.pane), seen, st.pane);
+    const list = journalRows(rows, st.pane);
     if (list.length === 0) {
-      box.append(make('p', 'muted', 'No gate verdicts yet.'));
+      if (!readErr) box.append(make('p', 'muted', 'No gate verdicts yet.'));
       return;
     }
     const ol = make('ol', 'journal-list');
@@ -204,9 +169,9 @@ export function mountOverlay(d) {
       const li = make('li', 'journal-row');
       li.append(
         make('span', 'muted when', clock(e.ts)),
-        make('span', 'gate-mark gate-' + e.decision, GLYPH[e.decision] || '?'),
+        make('span', 'gate-mark gate-' + e.kind, GLYPH[e.kind] || '?'),
         make('span', 'who', d.labelOf(e.pane)),
-        make('span', 'what', [e.decision, e.tool, e.clause ? 'clause ' + e.clause : '', e.what].filter(Boolean).join(' · ')),
+        make('span', 'what', [e.decision, e.tool, e.clause ? 'clause ' + e.clause : ''].filter(Boolean).join(' · ')),
       );
       ol.append(li);
     }
@@ -217,15 +182,26 @@ export function mountOverlay(d) {
     const open = st.open;
     d.el.hidden = !open;
     d.pin.hidden = open !== COLONY || st.pinned || (typeof d.always === 'function' && d.always());
-    if (open === JOURNAL) {
+    if (d.garden) {
+      d.garden.el.hidden = open !== GARDEN;
+      if (open === GARDEN) d.garden.show();
+      else d.garden.hide();
+    }
+    if (open === GARDEN) {
+      stopTimer();
+      d.title.textContent = 'Garden';
+      d.frame.hidden = true;
+      d.journal.hidden = true;
+      d.host.hide();
+    } else if (open === JOURNAL) {
       d.title.textContent = 'Journal';
       d.frame.hidden = true;
       d.journal.hidden = false;
       d.host.hide();
       paintJournal();
       if (timer === null) {
-        readRing();
-        timer = d.every(readRing, JOURNAL_MS);
+        readJournal();
+        timer = d.every(readJournal, JOURNAL_MS);
       }
     } else {
       stopTimer();
@@ -247,9 +223,14 @@ export function mountOverlay(d) {
     // A phone's overview always carries the strip when the server lists
     // the colony; always() says so.
     const always = typeof d.always === 'function' && d.always();
-    const on = (st.pinned || always) && d.onFloor();
+    const want = (st.pinned || always) && d.onFloor();
+    // When the strip would take a window, it shows as one line of dots in
+    // the bar instead, which takes no height from the windows.
+    const dots = want && typeof d.stripFits === 'function' && !d.stripFits();
+    const on = want && !dots;
     const was = !d.strip.hidden;
     d.strip.hidden = !on;
+    if (d.dots) d.dots.hidden = !dots;
     // The strip takes height from the windows, so they lay out again.
     if (was !== on && typeof d.relayout === 'function') d.relayout();
     if (on) {
@@ -292,17 +273,10 @@ export function mountOverlay(d) {
       if (!d.onFloor() && st.open) apply({ type: 'close' });
       else placeStrip();
     },
-    // panesChanged keeps each new last verdict the page saw.
-    panesChanged: (panes) => {
-      seeVerdicts(seen, panes);
-      if (st.open === JOURNAL) paintJournal();
-    },
-    // onEvent keeps a live state event for the journal.
+    // onEvent reads the journal again when a gate reports while it shows.
     onEvent: (msg) => {
-      if (!msg || msg.event !== 'state' || typeof msg.ts !== 'number' || msg.ts <= top) return;
-      keep([msg]);
-      if (st.open === JOURNAL && msg.source === 'gate') paintJournal();
+      if (st.open === JOURNAL && msg && msg.event === 'state' && msg.source === 'gate') readJournal();
     },
-    place: () => { if (st.open) d.place(d.el); },
+    place: () => { if (st.open) d.place(d.el); placeStrip(); },
   };
 }

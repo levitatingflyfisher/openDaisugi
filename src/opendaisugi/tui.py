@@ -20,6 +20,11 @@ import sys
 from pathlib import Path
 
 from opendaisugi.modules import detect_stages
+from opendaisugi.voice.models import parakeet_usable
+
+# Our copy of textual-serve's page, with the font served from textual-serve's
+# own static folder instead of Google Fonts. See tui_web/app_index.html.
+WEB_TEMPLATES = Path(__file__).resolve().with_name("tui_web")
 
 try:  # Textual is an optional extra; import lazily so the core CLI never needs it.
     from textual.app import App
@@ -80,7 +85,9 @@ if _HAVE_TEXTUAL:
             self.data_dir = Path(data_dir)
             self.interval = interval
             self.config_path = self.data_dir / "config.yaml"
-            self._stages = detect_stages(self.data_dir)  # resolve the map once
+            self._stages = detect_stages(
+                self.data_dir, parakeet_ok=parakeet_usable()
+            )  # resolve the map once
             self.status_text = ""
             self.selected_session: str | None = None
 
@@ -244,4 +251,4 @@ def serve(
         f"{shlex.quote(sys.executable)} -m opendaisugi.cli dashboard --tui "
         f"--data-dir {shlex.quote(str(data_dir))} --interval {interval}"
     )
-    Server(command, host=host, port=port, title="daisugi").serve()
+    Server(command, host=host, port=port, title="daisugi", templates_path=WEB_TEMPLATES).serve()

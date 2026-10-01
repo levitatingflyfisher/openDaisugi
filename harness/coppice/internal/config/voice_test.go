@@ -67,3 +67,19 @@ func TestTheTalkKeyCannotBeAKeyTheFloorAlreadyUses(t *testing.T) {
 		t.Fatal("a talk key equal to the leave key was accepted")
 	}
 }
+
+func TestSpeakKeysRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	in := Config{Voice: Voice{SpeakURL: "http://127.0.0.1:8880", SpeakModel: "kokoro", SpeakVoice: "af_heart", SpeakProfile: "tts"}}
+	if err := Save(in); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Voice.SpeakURL != in.Voice.SpeakURL || got.Voice.SpeakModel != "kokoro" ||
+		got.Voice.SpeakVoice != "af_heart" || got.Voice.SpeakProfile != "tts" {
+		t.Fatalf("voice = %+v", got.Voice)
+	}
+}

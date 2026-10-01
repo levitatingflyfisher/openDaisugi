@@ -141,3 +141,17 @@ def test_an_mcp_text_that_mentions_config_yaml_is_left_to_the_envelope(allow_all
     call = _call("mcp__fs__write_file", {"body": "fix the config.yaml parser"})
     d = evaluate_call(call, allow_all, mode="audit", root=root)
     assert d.reason != DAISUGI_CONFIG_REFUSAL
+
+
+@pytest.mark.parametrize("var", ["OPENDAISUGI_HOME", "XDG_DATA_HOME"])
+def test_a_config_moved_by_the_environment_is_guarded(allow_all, root, tmp_path, monkeypatch, var):
+    """OPENDAISUGI_HOME and XDG_DATA_HOME can move the data home, and with
+    it config.yaml. The moved config is guarded, as is the legacy one."""
+    moved = tmp_path / "moved"
+    monkeypatch.setenv(var, str(moved))
+    data = moved if var == "OPENDAISUGI_HOME" else moved / "opendaisugi"
+    assert data / "config.yaml" in daisugi_config_roots(root)
+    assert Path.home() / ".opendaisugi" / "config.yaml" in daisugi_config_roots(root)
+    path = str(data / "config.yaml")
+    d = evaluate_call(_call("Write", {"file_path": path}), allow_all, mode="enforce", root=root)
+    assert d.reason == DAISUGI_CONFIG_REFUSAL

@@ -110,7 +110,10 @@ def main() -> int:
             cls, problems = verdict
         else:
             cls, problems = compare(case, got, before)
-        if cls == "agree" and got["tree"] != before:
+        # A case may opt out of the guard when its own journal is broken on
+        # purpose (`lora export` reads one that holds a trace with no YAML),
+        # so Python cannot read it back whatever the binary does.
+        if cls == "agree" and got["tree"] != before and case.get("guard", True):
             guarded += 1
             problems = guard(binary, work)
             if problems:

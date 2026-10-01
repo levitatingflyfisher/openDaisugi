@@ -316,7 +316,8 @@ func (p *proc) Prompt(text string) error {
 		argv = append(argv, "--", text)
 	}
 
-	cmd := exec.CommandContext(p.ctx, binary(), argv...)
+	name, args := pane.Wrapped(p.opts.Wrap, binary(), argv)
+	cmd := exec.CommandContext(p.ctx, name, args...)
 	cmd.Dir = p.opts.Cwd
 	// Rule (a) of pane.Adapter: the only path by which the gate hook finds
 	// COPPICE_SOCK and COPPICE_PANE, for this turn's process same as every

@@ -94,6 +94,24 @@ def test_run_registers_a_cwd_keyed_envelope_not_default(tmp_path):
     assert envelopes[0].stem in cmd
 
 
+def test_start_gives_the_resident_gate_the_captures_root_the_fence_gives(tmp_path):
+    """The first server wins, so `daisugi start` fixes the same server-chosen
+    captures root as `daisugi fence` (<gate root>/captures), and a fenced run
+    that finds this server has its captures land."""
+    root = tmp_path / "data" / "gate"
+    spawned = []
+
+    def spawn(argv):
+        spawned.append(argv)
+        _touch_sock(root)(argv)
+
+    run_start(_opts(tmp_path, spawn=spawn))
+    argv = spawned[0]
+    i = argv.index("--captures-root")
+    assert argv[i + 1] == str(root / "captures")
+    assert argv[argv.index("--root") + 1] == str(root)
+
+
 def test_run_starts_the_gate_server_and_reports_done_once_the_socket_appears(tmp_path):
     root = tmp_path / "data" / "gate"
     spawned = []

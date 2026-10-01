@@ -166,47 +166,6 @@ func (c *Change) Written() []string {
 	return out
 }
 
-// PlanApply is Runtime.apply(home, {GATE}, ...) decided without writing.
-// err is ErrUnsupported for a shape this package refuses.
-func PlanApply(rt Runtime, home, self, root string, enforce, ask bool) (*Change, error) {
-	ch := &Change{Runtime: rt}
-	mode := "audit"
-	if enforce {
-		mode = "enforce"
-	}
-	var e *Edit
-	var err error
-	switch rt.Key {
-	case "claude":
-		entry := HookEntry(self, HookOptions{Mode: mode, Root: root, Ask: ask})
-		e, err = PlanClaudeGate(gateroot.Join(home, ".claude/settings.json"), entry)
-	case "codex":
-		ch.Mkdirs = []string{gateroot.Join(home, ".codex")}
-		entry := HookEntry(self, HookOptions{Mode: mode, Root: root})
-		e, err = PlanCodexGate(gateroot.Join(home, ".codex/hooks.json"), entry)
-	case "hermes":
-		ch.Mkdirs = []string{gateroot.Join(home, ".hermes")}
-	case "openclaw":
-		ch.Mkdirs = []string{gateroot.Join(home, ".openclaw/workspace")}
-	}
-	if isFail(err) {
-		ch.Failed, ch.Why = true, err.Error()
-		return ch, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if e != nil {
-		ch.Edits = append(ch.Edits, e)
-	}
-	if rt.Key == "claude" && e != nil && e.Warning == "" && !isDir(gateroot.Join(home, ".claude")) {
-		// Claude's apply does not make ~/.claude: the write raises.
-		ch.Failed, ch.Why = true, gateroot.Join(home, ".claude")+" does not exist"
-		ch.Edits = nil
-	}
-	return ch, nil
-}
-
 // popStep is one _pop_json_hook call of a runtime's reverse.
 type popStep struct {
 	path   string
@@ -240,48 +199,6 @@ func unknownGateHook(settingsPath string) string {
 		}
 	}
 	return ""
-}
-
-// PlanReverse is the gate part of Runtime.reverse: the gate hook, and on
-// Claude Code the floor-report hooks, removed.
-func PlanReverse(rt Runtime, home string) (*Change, error) {
-	ch := &Change{Runtime: rt}
-	var steps []popStep
-	switch rt.Key {
-	case "claude":
-		p := gateroot.Join(home, ".claude/settings.json")
-		steps = []popStep{
-			{p, config.IsGateHook, []string{"PreToolUse"}},
-			{p, isAnyRecordHook, []string{"Stop", "Notification", "SubagentStart", "SubagentStop"}},
-		}
-	case "codex":
-		steps = []popStep{{gateroot.Join(home, ".codex/hooks.json"), config.IsGateHook, []string{"PreToolUse"}}}
-	}
-	if len(steps) > 0 {
-		if why := unknownGateHook(steps[0].path); why != "" {
-			// reverse() raises before it touches anything: the runtime is
-			// left as it is and reported as failed, naming the hook.
-			ch.Failed, ch.Why = true, why
-			return ch, nil
-		}
-	}
-	var prior *Edit
-	for _, s := range steps {
-		e, err := PlanPopHook(s.path, s.match, s.events, prior)
-		if isFail(err) {
-			// reverse() would raise, and uninstall would print the
-			// exception's text, which this binary cannot reproduce.
-			return nil, ErrUnsupported
-		}
-		if err != nil {
-			return nil, err
-		}
-		if e != nil {
-			ch.Edits = append(ch.Edits, e)
-			prior = e
-		}
-	}
-	return ch, nil
 }
 
 // ApplyChange makes the directories and applies the edits in order.

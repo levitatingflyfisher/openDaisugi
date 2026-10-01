@@ -12,6 +12,13 @@ SHA256="8292919c88a0f7d3fb31d0cd0253ca5a9531bc1ede82b0537f2c63dd8abe6a7a"
   { echo "tree-sitter-bash.wasm already present and verified"; exit 0; }
 curl -fsSL "$URL" -o ts-bash.tgz
 tar -xzf ts-bash.tgz package/tree-sitter-bash.wasm
+rm ts-bash.tgz
+# Check the file before it takes the place of the grammar, so a bad
+# download never sits where a later run would find it.
+if ! echo "$SHA256  package/tree-sitter-bash.wasm" | sha256sum -c -; then
+  rm -rf package
+  echo "fetch.sh: tree-sitter-bash.wasm failed its sha256 check" >&2
+  exit 1
+fi
 mv package/tree-sitter-bash.wasm tree-sitter-bash.wasm
-rmdir package; rm ts-bash.tgz
-echo "$SHA256  tree-sitter-bash.wasm" | sha256sum -c -
+rmdir package

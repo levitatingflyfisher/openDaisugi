@@ -1,0 +1,4 @@
+#!/bin/sh
+# A stand-in for claude that the first-run question finds on PATH. It is
+# never run as an agent; run, it only sleeps.
+exec sleep 600

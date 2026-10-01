@@ -35,6 +35,12 @@ fn deps(s: &Object) -> Vec<String> {
 /// raises: ValueError for a cycle, KeyError for a dependency that is not
 /// a step.
 pub fn topo_order(plan: &Object) -> Result<Vec<&Object>, PyError> {
+    Ok(levels(plan)?.into_iter().flatten().collect())
+}
+
+/// `dag.dependency_levels`: networkx's topological generations of the
+/// plan's graph, each a list of steps, with the errors `topo_order` names.
+pub fn levels(plan: &Object) -> Result<Vec<Vec<&Object>>, PyError> {
     let ss = steps(plan);
     let mut by_id: HashMap<String, &Object> = HashMap::new();
     let mut nodes: Vec<String> = vec![];
@@ -66,7 +72,7 @@ pub fn topo_order(plan: &Object) -> Result<Vec<&Object>, PyError> {
     }
     let mut zero: Vec<String> = nodes.iter().filter(|n| indeg.get(*n).copied().unwrap_or(0) == 0).cloned().collect();
     let mut remaining: HashMap<String, usize> = indeg.into_iter().filter(|(_, d)| *d > 0).collect();
-    let mut ids: Vec<String> = vec![];
+    let mut gens: Vec<Vec<String>> = vec![];
     while !zero.is_empty() {
         let gen = std::mem::take(&mut zero);
         for n in &gen {
@@ -82,19 +88,23 @@ pub fn topo_order(plan: &Object) -> Result<Vec<&Object>, PyError> {
                 }
             }
         }
-        ids.extend(gen);
+        gens.push(gen);
     }
     if !remaining.is_empty() {
         return Err(PyError { typ: "ValueError", msg: "Plan has a cycle; run verify(plan, envelope) before supervising".into() });
     }
-    let mut order = vec![];
-    for id in ids {
-        match by_id.get(&id) {
-            Some(s) => order.push(*s),
-            None => return Err(PyError { typ: "KeyError", msg: repr(&id) }),
+    let mut out = vec![];
+    for gen in gens {
+        let mut level = vec![];
+        for id in gen {
+            match by_id.get(&id) {
+                Some(s) => level.push(*s),
+                None => return Err(PyError { typ: "KeyError", msg: repr(&id) }),
+            }
         }
+        out.push(level);
     }
-    Ok(order)
+    Ok(out)
 }
 
 /// `distiller.plan_structure_signature`: the step types in topological

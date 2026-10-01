@@ -23,6 +23,10 @@ func (s *Server) RegisterAgentCommands() {
 	_ = s.Handle("agent.prompt", s.handleAgentPrompt)
 	_ = s.Handle("agent.wait", s.handleAgentWait)
 	_ = s.Handle("agent.read", s.handleAgentRead)
+	_ = s.Handle("agent.set_mode", s.handleSetMode)
+	_ = s.Handle("agent.set_model", s.handleSetModel)
+	_ = s.Handle("agent.set_router", s.handleSetRouter)
+	_ = s.Handle("agent.move", s.handleMove)
 }
 
 // truncate cuts s to at most n runes. ApplyState uses it to build a
@@ -81,7 +85,17 @@ func (s *Server) ApplyState(paneID string, ev proto.PaneStateEvent) proto.PaneSt
 		s.noteAsk(paneID, ev.Ask)
 	}
 	prev, hadPrev := s.states.Current(paneID)
+	// The gate-idle stamp follows the merge under one lock (CP-R-57), so two
+	// hook reports that race cannot leave a stamp over a working pane.
+	lp, live := s.Live(paneID)
+	if live {
+		lp.stampMu.Lock()
+	}
 	merged, changed := s.states.Apply(paneID, ev, now)
+	if live {
+		s.restamp(lp, ev, merged)
+		lp.stampMu.Unlock()
+	}
 	if hadPrev && prev.State == proto.StateWorking && turnEnded(merged) {
 		s.wentIdle(paneID)
 	}
@@ -109,6 +123,25 @@ func (s *Server) ApplyState(paneID string, ev proto.PaneStateEvent) proto.PaneSt
 		hook(paneID, merged)
 	}
 	return merged
+}
+
+// restamp keeps the gate-idle stamp in step with the merge (CP-R-57). The
+// hooks speak as gate (PreToolUse) and as headless (Stop and Notification,
+// whose hook reports source "headless"); the process and manifest sources
+// never touch it. Only an event the merge took counts: one it held back
+// changes nothing. Call it under lp.stampMu.
+func (s *Server) restamp(lp *LivePane, in, merged proto.PaneStateEvent) {
+	if in.Source != proto.SrcGate && in.Source != proto.SrcHeadless {
+		return
+	}
+	if merged.Source != in.Source || merged.State != in.State || merged.TS != in.TS {
+		return
+	}
+	if in.State == proto.StateIdle {
+		lp.gateIdleSince.CompareAndSwap(0, s.clock().UnixNano())
+	} else {
+		lp.gateIdleSince.Store(0)
+	}
 }
 
 // stateEvent is the state event on the wire. Held is set only by the
@@ -151,6 +184,13 @@ func (s *Server) handleReportState(c *Client, r *proto.Request) proto.Response {
 	if err != nil {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest, err.Error())
 	}
+	// A transcript path names the file the server reads as this pane's
+	// messages, so only a process inside the pane may name it, and only a
+	// file no other pane named first and that began after the pane did.
+	// A refused transcript refuses only itself: the rest of the report,
+	// the state, the ask, the verdict and the session id, still counts, and
+	// the reply's transcript names the refusal.
+	real, refusal := s.checkTranscript(c, id, ev.Harness, extras.TranscriptPath)
 	ev.Pane = &id
 	// Only the server marks an ask as held by a harness: when the pane's
 	// live harness owns the ask the report names, as it does when the gate
@@ -193,7 +233,7 @@ func (s *Server) handleReportState(c *Client, r *proto.Request) proto.Response {
 	// not a plugin, not a peer nobody could place.
 	ro := c.roleOf()
 	own := ro.pane && !ro.unknown && ro.plugin == "" && ro.paneID == id
-	s.noteReport(id, ev.Harness, extras, own)
+	s.noteReport(id, extras, real)
 	if own && ev.HarnessSessionID != nil {
 		s.noteHarnessSession(id, ev.Harness, *ev.HarnessSessionID)
 	}
@@ -206,6 +246,9 @@ func (s *Server) handleReportState(c *Client, r *proto.Request) proto.Response {
 	}
 	if downgraded {
 		res["note"] = "source became gate. Attach to this pane to speak as the operator."
+	}
+	if refusal != "" {
+		res["transcript"] = refusal
 	}
 	return proto.OKResp(r.ID, res)
 }
@@ -289,6 +332,28 @@ func (s *Server) notifyWaiters(paneID string, ev proto.PaneStateEvent, now float
 	}
 	s.waiters = keep
 	s.mu.Unlock()
+}
+
+// watchState registers a waiter for pane id's state until and returns its
+// channel and the drop that removes it. A state applied after the call
+// reaches the channel, however short it lasts, which a poll of the current
+// state can miss.
+func (s *Server) watchState(paneID, until string) (<-chan proto.PaneStateEvent, func()) {
+	w := &waiter{pane: paneID, until: until, ch: make(chan proto.PaneStateEvent, 1)}
+	s.mu.Lock()
+	s.waiters = append(s.waiters, w)
+	s.mu.Unlock()
+	return w.ch, func() {
+		s.mu.Lock()
+		keep := s.waiters[:0]
+		for _, x := range s.waiters {
+			if x != w {
+				keep = append(keep, x)
+			}
+		}
+		s.waiters = keep
+		s.mu.Unlock()
+	}
 }
 
 // effectiveCurrent reads a pane's current state through state.EffectiveState,
@@ -430,6 +495,7 @@ func (s *Server) agentRow(paneID string) (map[string]any, bool) {
 // agent.read do not filter this way - an ended pane still answers either,
 // since its grid stays readable until it is forgotten or resumed.
 func (s *Server) handleAgentList(_ *Client, r *proto.Request) proto.Response {
+	s.refreshProcess()
 	wantEnded, _ := r.Bool("ended")
 	matched := make([]layout.Pane, 0)
 	for _, p := range s.tree.Panes() {
@@ -452,6 +518,7 @@ func (s *Server) handleAgentList(_ *Client, r *proto.Request) proto.Response {
 
 func (s *Server) handleAgentGet(_ *Client, r *proto.Request) proto.Response {
 	id, _ := r.Str("pane")
+	s.refreshProcess(id)
 	row, ok := s.agentRow(id)
 	if !ok {
 		return proto.ErrResp(r.ID, proto.ErrNoSuchPane,
@@ -479,6 +546,21 @@ func (s *Server) handleAgentPrompt(c *Client, r *proto.Request) proto.Response {
 	id, _ := r.Str("pane")
 	if c.viewOnlyOn(id) {
 		return refuseViewOnly(r, id)
+	}
+	// A model on the prompt applies to this turn and the ones after it.
+	// Only a harness that runs a process per turn takes one.
+	if model, _ := r.Str("model"); model != "" {
+		if !modelName.MatchString(model) {
+			return proto.ErrResp(r.ID, proto.ErrBadRequest, ModelWordsRefusal)
+		}
+		ms, ok := lp.Adapter.(pane.ModelSetter)
+		if !ok {
+			rec, _ := s.tree.Pane(id)
+			return proto.ErrResp(r.ID, proto.ErrBadRequest,
+				swapRefusal("model", s.labelOf(id), harnessWord(rec.Harness)))
+		}
+		ms.SetModel(model)
+		_ = s.updatePane(id, func(p *layout.Pane) { p.Model = model })
 	}
 	if lp.Adapter != nil {
 		// A harness that holds asks of its own learns who typed, so a

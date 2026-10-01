@@ -6,6 +6,7 @@
 package testhome
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,15 +14,49 @@ import (
 	"github.com/opendaisugi/coppice/internal/toolchain"
 )
 
-var realHome string
+var realHome, canary string
+
+// Canary is the directory OPENDAISUGI_HOME names during the tests. Nothing
+// may be written there: a test that falls back to a default data home
+// lands in it, and CanaryWritten names what it wrote.
+func Canary() string { return canary }
+
+// CheckCanary is the exit code of a test run: code, or 1 when a test wrote
+// under the canary, which it names on stderr. Each TestMain that calls
+// Isolate passes its m.Run() code through it.
+func CheckCanary(code int) int {
+	if w := CanaryWritten(); len(w) > 0 {
+		fmt.Fprintln(os.Stderr, "a test wrote under OPENDAISUGI_HOME:", w)
+		return 1
+	}
+	return code
+}
+
+// CanaryWritten lists every path under the canary, or nil when it is
+// empty, as it must be.
+func CanaryWritten() []string {
+	if canary == "" {
+		return nil
+	}
+	var out []string
+	_ = filepath.Walk(canary, func(p string, _ os.FileInfo, err error) error {
+		if err == nil && p != canary {
+			out = append(out, p)
+		}
+		return nil
+	})
+	return out
+}
 
 // RealHome is the home the process had before Isolate, or "" before it.
 // Only a check that a test stays out of it should read it.
 func RealHome() string { return realHome }
 
-// Isolate points HOME, XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME,
-// XDG_CACHE_HOME, XDG_BIN_HOME and XDG_RUNTIME_DIR into a new scratch
-// directory, and returns it. The libghostty-vt prefix the cgo tests look
+// Isolate clears every XDG_* variable, COPPICE_DATA_DIR and
+// CLAUDE_CONFIG_DIR, points HOME, XDG_CONFIG_HOME, XDG_DATA_HOME,
+// XDG_STATE_HOME, XDG_CACHE_HOME, XDG_BIN_HOME and XDG_RUNTIME_DIR into a
+// new scratch directory, sets OPENDAISUGI_HOME to the canary in it, and
+// returns it. The libghostty-vt prefix the cgo tests look
 // for is found first, so moving HOME does not make them skip.
 func Isolate(prefix string) (string, error) {
 	realHome, _ = os.UserHomeDir()
@@ -31,6 +66,14 @@ func Isolate(prefix string) (string, error) {
 	dir, err := os.MkdirTemp("", prefix)
 	if err != nil {
 		return "", err
+	}
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "XDG_") {
+			_ = os.Unsetenv(k)
+		}
+	}
+	for _, k := range []string{"OPENDAISUGI_HOME", "COPPICE_DATA_DIR", "CLAUDE_CONFIG_DIR"} {
+		_ = os.Unsetenv(k)
 	}
 	for k, sub := range map[string]string{
 		"HOME": "home", "XDG_CONFIG_HOME": "config", "XDG_DATA_HOME": "data",
@@ -44,6 +87,13 @@ func Isolate(prefix string) (string, error) {
 		if err := os.Setenv(k, p); err != nil {
 			return "", err
 		}
+	}
+	canary = filepath.Join(dir, "canary")
+	if err := os.MkdirAll(canary, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Setenv("OPENDAISUGI_HOME", canary); err != nil {
+		return "", err
 	}
 	return dir, nil
 }

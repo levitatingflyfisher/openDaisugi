@@ -30,7 +30,10 @@ fn env() -> potion::Env {
 
 fn matcher_key() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is unset".to_string())?;
-    daisugi_verify::cli::config::load(&format!("{home}/.opendaisugi/config.yaml"))
+    daisugi_verify::cli::config::load(&format!(
+        "{}/config.yaml",
+        daisugi_verify::datahome::dir(|k| std::env::var(k).ok(), &home, daisugi_verify::datahome::exists)
+    ))
         .map(|c| c.matcher_model)
         .map_err(|_| "the config file is not read by this binary".to_string())
 }

@@ -1,0 +1,37 @@
+[package]
+name = "sprig-rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "sprig"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sprig"
+path = "src/main.rs"
+
+[[bin]]
+name = "sprig-hook"
+path = "src/bin/sprig-hook.rs"
+
+[[bin]]
+name = "sprig-mcp"
+path = "src/bin/sprig-mcp.rs"
+
+[[bin]]
+name = "weave"
+path = "src/bin/weave.rs"
+
+[dependencies]
+# TLS for the API backend's https: the versions and features
+# harness/coppice-rs and clients/rust already lock (PINS.md).
+rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = { version = "=1.15.1", features = ["std"] }
+ring = "=0.17.14"
+
+[profile.release]
+debug = false
+strip = "symbols"

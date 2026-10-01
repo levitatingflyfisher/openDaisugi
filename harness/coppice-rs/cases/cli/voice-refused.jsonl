@@ -1,0 +1,9 @@
+# [voice] args may not set a flag coppice sets.
+#!config [voice]
+#!config args = ["--port=9"]
+{"id": "s", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "off"}}
+{"id": "v", "cmd": "voice.start"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "s2", "cmd": "voice.status"}
+{"id": "$id", "ok": true, "result": {"state": "off"}}

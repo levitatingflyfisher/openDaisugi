@@ -6,12 +6,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/opendaisugi/coppice/internal/config"
 	"github.com/opendaisugi/coppice/internal/layout"
 	"github.com/opendaisugi/coppice/internal/proto"
+	"github.com/opendaisugi/coppice/internal/web"
 )
 
 // outsideTTL is how long the floor trusts what it read about the world
@@ -246,7 +248,16 @@ func (s *Server) stackOf(p layout.Pane, v factsView) map[string]any {
 		if mode == "" {
 			mode = modeOff
 		}
-		st["daisugi"] = map[string]any{"mode": mode, "armed": !s.disarmed()}
+		d := map[string]any{"mode": mode, "armed": !s.disarmed()}
+		// The owner set this agent to watching; the gate reads it on the
+		// agent's next tool call, so mode may still say enforcing.
+		if m, note := s.modeMarker(p.ID); m != "" {
+			d["marker"] = m
+			if note != "" {
+				d["markerNote"] = note
+			}
+		}
+		st["daisugi"] = d
 	}
 	if len(st) == 0 {
 		return nil
@@ -290,6 +301,69 @@ func (s *Server) gateInstalled() bool {
 	return false
 }
 
+// hookRootArg finds the --root a daisugi gate hook command names, in
+// the raw text of a harness settings file.
+var hookRootArg = regexp.MustCompile(`opendaisugi\.gate[^"\n]*?--root(?:=|\s+)([^\s"\\]+)`)
+
+// hookRoot is the gate root an installed gate hook names with --root when
+// it is not this server's gate root, or "". Then the gate reads markers
+// from another place, so a mode set here does nothing, and the mode row
+// says so (F11-R-15). A root that starts with ~/ is read from the home. A
+// hook with no --root is taken to use the default root, which is this
+// server's when both run with their defaults; that case is not checked.
+func (s *Server) hookRoot() string {
+	if s.cfg.HookHome == "" {
+		return ""
+	}
+	for _, f := range hookFiles {
+		raw, err := os.ReadFile(filepath.Join(s.cfg.HookHome, f))
+		if err != nil {
+			continue
+		}
+		for _, m := range hookRootArg.FindAllStringSubmatch(string(raw), -1) {
+			root := m[1]
+			if strings.HasPrefix(root, "~/") {
+				root = filepath.Join(s.cfg.HookHome, root[2:])
+			}
+			if filepath.Clean(root) != filepath.Clean(s.cfg.GateRoot) {
+				return m[1]
+			}
+		}
+	}
+	return ""
+}
+
+// phoneCertWarnDays is how close to its end the phone's tailscale
+// certificate must be before floor.facts names it. The phone server
+// renews it under 30 days, so a certificate this close means renewal
+// failed.
+const phoneCertWarnDays = 7
+
+// phoneCertDays is the whole days left on the phone server's tailscale
+// certificate, and false when there is none to warn about. It reads only
+// a phone server that runs now (the pair it names in web/serving.json,
+// with a live pid) or a saved one (web.json enabled under --tls
+// tailscale: its cert_file, or the default pair when blank). A fact that
+// cannot be read is absent, never guessed.
+func (s *Server) phoneCertDays(now time.Time) (int, bool) {
+	certFile, ok := web.ServingCert(web.ServingPath(s.cfg.DataDir))
+	if !ok {
+		cfg, err := web.LoadConfig(web.ConfigPath(s.cfg.DataDir))
+		if err != nil || !cfg.Enabled || cfg.TLS != string(web.TLSTailscale) {
+			return 0, false
+		}
+		certFile = cfg.CertFile
+		if certFile == "" {
+			certFile, _ = web.TailscalePaths(s.cfg.DataDir)
+		}
+	}
+	leaf, err := web.LoadLeaf(certFile)
+	if err != nil {
+		return 0, false
+	}
+	return web.CertDays(leaf.NotAfter, now), true
+}
+
 // modeRank orders the daisugi modes by how much they guard.
 var modeRank = map[string]int{modeOff: 0, "watching": 1, "enforcing": 2}
 
@@ -301,6 +375,7 @@ var modeRank = map[string]int{modeOff: 0, "watching": 1, "enforcing": 2}
 // ended panes included, over each such pane's whole total.
 func (s *Server) handleFloorFacts(_ *Client, r *proto.Request) proto.Response {
 	s.pruneFacts()
+	s.refreshProcess()
 	now := s.clock()
 	ty, tm, td := now.Date()
 	counts := map[string]int{modeOff: 0, "watching": 0, "enforcing": 0}
@@ -346,13 +421,22 @@ func (s *Server) handleFloorFacts(_ *Client, r *proto.Request) proto.Response {
 			}
 		}
 	}
+	daisugi := map[string]any{
+		"mode": mode, "armed": !s.disarmed(),
+		"enforcing": counts["enforcing"], "watching": counts["watching"], "off": counts[modeOff],
+		"installed": s.gateInstalled(),
+	}
+	if root := s.hookRoot(); root != "" {
+		daisugi["hook_root"] = root
+	}
 	res := map[string]any{
-		"daisugi": map[string]any{
-			"mode": mode, "armed": !s.disarmed(),
-			"enforcing": counts["enforcing"], "watching": counts["watching"], "off": counts[modeOff],
-			"installed": s.gateInstalled(),
-		},
+		"daisugi": daisugi,
 		"working": working, "needing_you": needing, "tokens_today": today,
+	}
+	// The saving is the gateway's own figure and nothing else: with none,
+	// the reply has no such key.
+	if tokens, ok := s.savedToday(now); ok {
+		res["saved_today"] = map[string]any{"tokens": tokens}
 	}
 	// The floor's foreman, when the one the server tracks runs now.
 	s.talkMu.Lock()
@@ -360,6 +444,13 @@ func (s *Server) handleFloorFacts(_ *Client, r *proto.Request) proto.Response {
 	s.talkMu.Unlock()
 	if live, _ := s.foremanState(fid); live {
 		res["foreman"] = map[string]any{"pane": fid, "label": s.labelOf(fid)}
+	}
+	// The chat foreman's last turn: the profile it ran on, once one has run.
+	if name, ok := s.lastTurnProfile(); ok {
+		res["foreman_turn"] = map[string]any{"ran_on": name}
+	}
+	if days, ok := s.phoneCertDays(now); ok && days < phoneCertWarnDays {
+		res["phone_cert_days"] = days
 	}
 	if gateway, _ := s.gatewayFacts(); gateway != "" {
 		gw := map[string]any{"url": gateway}

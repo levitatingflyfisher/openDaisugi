@@ -16,6 +16,7 @@ import (
 	"unsafe"
 
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/statefile"
 )
 
 // A host reads anything but a deny contract as an allow: Claude Code
@@ -83,6 +84,7 @@ type frame struct {
 	OutStdout []byte `json:"out_stdout"`
 	OutStderr []byte `json:"out_stderr"`
 	Help      bool   `json:"help"`
+	Notes     []byte `json:"notes"`
 	Exit      int    `json:"exit"`
 	Native    bool   `json:"native"`
 	Why       string `json:"why"`
@@ -155,11 +157,18 @@ func ChildFrame(argv []string, stdin []byte, environ []string) (out []byte) {
 		}
 	}()
 	testCrash(env)
+	// A note about a refused state file (GR-R-3) is kept for the answer.
+	statefile.CollectNotes()
 	var res Result
 	if q != nil {
 		res = RunResident(q, env)
 	} else {
 		res = Run(argv, stdin, env)
+	}
+	if notes := statefile.TakeNotes(); q != nil {
+		res.Notes = string(notes)
+	} else if len(notes) > 0 {
+		res.Stderr = string(notes) + res.Stderr
 	}
 	return encodeFrame(res, res.Why, nonce)
 }
@@ -167,14 +176,14 @@ func ChildFrame(argv []string, stdin []byte, environ []string) (out []byte) {
 func encodeFrame(res Result, why, nonce string) []byte {
 	b, _ := json.Marshal(frame{Stdout: []byte(res.Stdout), Stderr: []byte(res.Stderr), Exit: res.Exit,
 		OutStdout: []byte(res.OutStdout), OutStderr: []byte(res.OutStderr), Help: res.Help,
-		Native: res.Native, Why: why, Done: true, Nonce: nonce})
+		Native: res.Native, Why: why, Done: true, Nonce: nonce, Notes: []byte(res.Notes)})
 	return b
 }
 
 // fromFrame is the Result a complete frame carries.
 func fromFrame(f frame) Result {
 	return Result{Stdout: string(f.Stdout), Stderr: string(f.Stderr), Exit: f.Exit, Native: f.Native, Why: f.Why,
-		OutStdout: string(f.OutStdout), OutStderr: string(f.OutStderr), Help: f.Help}
+		OutStdout: string(f.OutStdout), OutStderr: string(f.OutStderr), Help: f.Help, Notes: string(f.Notes)}
 }
 
 // ChildEnviron is environ as the child gets it: the width of the terminal

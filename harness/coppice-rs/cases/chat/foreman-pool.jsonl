@@ -1,0 +1,108 @@
+# Worker pools and the queue (FM-R-93 to FM-R-101). A worker profile may name
+# a pool in pools.toml: entries (machine, base URL) that serve ONE model. A
+# spawn takes the first entry with a free slot, else the job waits in a
+# queue that `coppice foreman queue` shows. The fake daisugi (cases/chat/
+# fixtures/fake-daisugi.py) logs the base URL its run got, and waits for a
+# go file, so each worker ends when the case says. A model that is not the
+# pool's model is refused. A run on an entry that does not answer cools the
+# entry, and the job moves to the other entry of the same pool; when the
+# quota is out on both the job is requeued and the foreman says so (that
+# line holds a clock time, which CP-R-58 masks). A local pool goes on.
+#!config projects = ["{WORK}/proj"]
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_TURN_DIR={WORK}/turns
+#!env FAKE_TREE_LOG={WORK}/tree.log
+#!env FAKE_TREE_START={WORK}/start.log
+#!env FAKE_TREE_GO={WORK}/go
+#!env FAKE_BUNDLE_FILE={WORK}/bundle.json
+#!env FAKE_FAIL_FILE={WORK}/fail.txt
+#!env FAKE_FAIL_DELAY=4
+#!env COPPICE_TEST_HOOKS=1
+#!env COPPICE_IMPORT_POLL_MS=100
+{"id":"w1","write":"{WORK}/proj/README","text":"a project\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w2","write":"{HOME}/.config/coppice/envelopes/proj.json","text":"{\"envelope\": {\"tools\": [\"read\"], \"paths\": [\"<repo>\"]}, \"tokens\": 5000, \"turns\": 3}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w3","write":"{WORK}/bundle.json","text":"{\"desk\":{\"wire\":\"openai\",\"base_url\":\"http://127.0.0.1:1/v1\",\"model\":\"m1\",\"key_env\":null,\"key\":null},\"cloud\":{\"wire\":\"openai\",\"base_url\":\"http://127.0.0.1:1/v1\",\"model\":\"m2\",\"key_env\":null,\"key\":null},\"local\":{\"wire\":\"openai\",\"base_url\":\"http://127.0.0.1:1/v1\",\"model\":\"m4\",\"key_env\":null,\"key\":null}}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w4","write":"{HOME}/.config/coppice/pools.toml","text":"idle_after = \"1s\"\n[pool.desk]\nmodel = \"m1\"\n[[pool.desk.entries]]\nname = \"a\"\nbase_url = \"http://127.0.0.1:11/v1\"\n[[pool.desk.entries]]\nname = \"b\"\nbase_url = \"http://127.0.0.1:12/v1\"\n[pool.cloud]\nmodel = \"m2\"\n[[pool.cloud.entries]]\nname = \"c\"\nbase_url = \"http://127.0.0.1:21/v1\"\n[[pool.cloud.entries]]\nname = \"d\"\nbase_url = \"http://127.0.0.1:22/v1\"\n[pool.local]\nmodel = \"m4\"\n[[pool.local.entries]]\nname = \"l\"\nbase_url = \"http://127.0.0.1:23/v1\"\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"floor.talk","text":"spawn proj profile=desk ran1"}
+{"id":"$id","ok":true,"result":{"message":"log/0"}}
+#!retry 20000
+{"id":"2","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/0"},{"id":"log/1","role":"agent","tool":"spawn"},{"id":"log/2","role":"agent","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-1 on a"}]}}
+{"id":"3","cmd":"floor.talk","text":"spawn proj profile=desk ran2"}
+{"id":"$id","ok":true,"result":{"message":"log/3"}}
+#!retry 20000
+{"id":"4","cmd":"floor.chat","since":"log/3"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/4","tool":"spawn"},{"id":"log/5","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-2 on b"}]}}
+{"id":"5","cmd":"floor.talk","text":"spawn proj profile=desk ran3"}
+{"id":"$id","ok":true,"result":{"message":"log/6"}}
+#!retry 20000
+{"id":"6","cmd":"floor.chat","since":"log/6"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/7","tool":"spawn"},{"id":"log/8","text":"tools zoom,date,spawn,status; spawn gave error=False: queued proj-3: every entry of the pool desk is busy or not answering (1 waiting)"}]}}
+{"id":"7","cli":["foreman","queue"]}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"queue:\n  proj-1 | proj | desk | foreground | running | a\n  proj-2 | proj | desk | foreground | running | b\n  proj-3 | proj | desk | foreground | waiting | -\nentries:\n  cloud/c | 0 of 1 slots | free\n  cloud/d | 0 of 1 slots | free\n  desk/a | 1 of 1 slots | busy\n  desk/b | 1 of 1 slots | busy\n  local/l | 0 of 1 slots | free\n","stderr":""}}
+{"id":"8","file":"{WORK}/start.log"}
+{"id":"$id","ok":true,"result":{"text":"started ran1 http://127.0.0.1:11/v1\nstarted ran2 http://127.0.0.1:12/v1\n","mode":"*"}}
+{"id":"w5","write":"{WORK}/go/ran1","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"9","cmd":"floor.chat","since":"log/8"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/9","role":"work","text":"[proj-1] report\nall done"},{"id":"log/10","role":"work","text":"[proj-3] started on a"}]}}
+{"id":"w6","write":"{WORK}/go/ran2","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"10","cmd":"floor.chat","since":"log/10"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/11","role":"work","text":"[proj-2] report\nall done"}]}}
+{"id":"w7","write":"{WORK}/go/ran3","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"11","cmd":"floor.chat","since":"log/11"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/12","role":"work","text":"[proj-3] report\nall done"}]}}
+{"id":"12","cmd":"floor.talk","text":"spawn proj profile=desk model=other ran4"}
+{"id":"$id","ok":true,"result":{"message":"log/13"}}
+#!retry 20000
+{"id":"13","cmd":"floor.chat","since":"log/13"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/14","tool":"spawn"},{"id":"log/15","text":"tools zoom,date,spawn,status; spawn gave error=True: the pool desk serves the model m1 only; a spawn on it cannot ask for other"}]}}
+{"id":"w8","write":"{WORK}/fail.txt","text":"http://127.0.0.1:11/v1\tdial tcp 127.0.0.1:11: connect: connection refused\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"14","cmd":"floor.talk","text":"spawn proj profile=desk ran5"}
+{"id":"$id","ok":true,"result":{"message":"log/16"}}
+#!retry 20000
+{"id":"15","cmd":"floor.chat","since":"log/16"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/17","tool":"spawn"},{"id":"log/18","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-4 on a"},{"id":"log/19","role":"work","text":"[proj-4] a did not answer; moved to b"}]}}
+{"id":"16","file":"{DATA}/foreman/work/queue.json","count":"\"state\":\"cooling\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"17","file":"{DATA}/foreman/work/queue.json","count":"\"reason\":\"cannot connect\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"w9","write":"{WORK}/go/ran5","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"18","cmd":"floor.chat","since":"log/19"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/20","role":"work","text":"[proj-4] report\nall done"}]}}
+{"id":"w10","write":"{WORK}/fail.txt","text":"http://127.0.0.1:21/v1\tanthropic api 429: rate_limit_error\nhttp://127.0.0.1:22/v1\tanthropic api 429: rate_limit_error\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"19","cmd":"floor.talk","text":"spawn proj profile=cloud ran6"}
+{"id":"$id","ok":true,"result":{"message":"log/21"}}
+#!retry 20000
+{"id":"20","cmd":"floor.chat","since":"log/21"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/22","tool":"spawn"},{"id":"log/23","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-5 on c"},{"id":"log/24","role":"work","text":"[proj-5] c is out of quota (HTTP 429); moved to d"},{"id":"log/25","role":"work","text":"[proj-5] d is out of quota (HTTP 429)"},{"id":"log/26","role":"work","text":"*"}]}}
+{"id":"21","file":"{DATA}/foreman/work/queue.json","count":"\"reason\":\"HTTP 429\""}
+{"id":"$id","ok":true,"result":{"count":2}}
+{"id":"22","file":"{DATA}/foreman/work/queue.json","count":"\"state\":\"waiting\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"23","cmd":"floor.talk","text":"spawn proj profile=local ran7"}
+{"id":"$id","ok":true,"result":{"message":"log/27"}}
+#!retry 20000
+{"id":"24","cmd":"floor.chat","since":"log/27"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/28","tool":"spawn"},{"id":"log/29","text":"tools zoom,date,spawn,status; spawn gave error=False: started proj-6 on l"}]}}
+{"id":"w11","write":"{WORK}/go/ran7","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"25","cmd":"floor.chat","since":"log/29"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/30","role":"work","text":"[proj-6] report\nall done"}]}}

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/opendaisugi/coppice/internal/proto"
 )
 
 // createShellPane starts one pty pane running argv in a temp directory and
@@ -122,5 +124,152 @@ func TestAGateBlockStaysBlockedWhileTheProcessSpeaks(t *testing.T) {
 	row := rowFor(t, listPanes(t, s), id)
 	if row["state"] != "blocked" || row["source"] != "gate" {
 		t.Fatalf("gate hold lost to the process source: %v", row)
+	}
+}
+
+// A read computes the process fact from the last write and the read's own
+// clock, not from the last tick (CP-R-50). A pane that printed and was seen
+// to print lists as working at once; the 1 s tick used to leave "no output
+// yet" for up to a second after the output was on the screen.
+func TestAReadAfterOutputSeesTheOutputAtOnce(t *testing.T) {
+	s := newPaneServer(t)
+	for i := 0; i < 5; i++ {
+		id := createShellPane(t, s, "sh", "-c", "echo ready; exec sleep 30")
+		got := roundTrip(t, s, `{"id":"1","cmd":"pane.wait_output","pane":"`+id+`","contains":"ready","timeout_ms":10000}`)
+		if !got[0].OK {
+			t.Fatalf("wait_output: %+v", got[0].Error)
+		}
+		row := rowFor(t, listPanes(t, s), id)
+		if row["state"] != "working" || row["detail"] != "output in the last 5 s" {
+			t.Fatalf("run %d: a read after the output listed %v / %v", i, row["state"], row["detail"])
+		}
+	}
+}
+
+// quietThenRedraw leaves pane id with a standing gate idle, moves the
+// clock 6 s past its last output, and then writes a few bytes of redraw.
+// The redraw is stamped by the real clock, so the skew goes back to zero
+// to make it a write "just now".
+func quietThenRedraw(t *testing.T, s *Server, id string) *LivePane {
+	t.Helper()
+	lp, ok := s.Live(id)
+	if !ok {
+		t.Fatalf("no live pane %s", id)
+	}
+	// A turn drew the screen, the gate said idle, and 6 s later the process
+	// source called the quiet screen idle too. That idle replaces the
+	// gate's in the merged state, so the pane must remember the gate's.
+	if _, err := lp.Grid.Write([]byte("turn output")); err != nil {
+		t.Fatal(err)
+	}
+	s.processTick(id, lp)
+	s.ApplyState(id, proto.PaneStateEvent{
+		V: 1, TS: nowSeconds(), SessionID: id, Harness: "fakeh", Pane: &id,
+		State: proto.StateIdle, Source: proto.SrcGate,
+	})
+	s.clockSkew.Store(int64(6 * time.Second))
+	s.processTick(id, lp)
+	if st, _ := s.effectiveState(id); st.State != "idle" || st.Source != "process" {
+		t.Fatalf("6 s after the turn the pane is %s from %s, want idle from process", st.State, st.Source)
+	}
+	// The grid marks a burst by its writes: the turn was 6 s ago.
+	lp.Grid.StampWriteForTest(time.Now().Add(-6 * time.Second))
+	if _, err := lp.Grid.Write([]byte("12:01")); err != nil {
+		t.Fatal(err)
+	}
+	s.clockSkew.Store(0)
+	s.processTick(id, lp)
+	return lp
+}
+
+// A gate idle stands against a short redraw of a quiet pane (CP-R-56): a
+// clock or a status line ticking on an idle harness is no work. Output
+// that goes on for a second more is work, and the process fact applies.
+func TestAShortRedrawDoesNotOutrankAStandingGateIdle(t *testing.T) {
+	s := newPaneServer(t)
+	id := createShellPane(t, s, "sh", "-c", "exec sleep 30")
+	lp := quietThenRedraw(t, s, id)
+	if st, _ := s.effectiveState(id); st.State != "idle" {
+		t.Fatalf("after a short redraw the pane is %s from %s, want idle", st.State, st.Source)
+	}
+	time.Sleep(processSustain + 100*time.Millisecond)
+	if _, err := lp.Grid.Write([]byte("12:02")); err != nil {
+		t.Fatal(err)
+	}
+	s.processTick(id, lp)
+	if st, _ := s.effectiveState(id); st.State != "working" || st.Source != "process" {
+		t.Fatalf("after output for a second more the pane is %s from %s, want working from process", st.State, st.Source)
+	}
+}
+
+// A burst starts at a write after a quiet gap, not at a look that saw the
+// gap (CP-R-56). On a loaded box no look may fall inside the 7 s between
+// two draws, so the old burst start would make the second draw a burst of
+// 7 s and let the process working outrank the standing gate idle. The Go
+// case is cases/facts/redraw.jsonl.
+func TestABurstAfterAGapIsNewEvenIfNoLookSawTheGap(t *testing.T) {
+	s := newPaneServer(t)
+	id := createShellPane(t, s, "sh", "-c", "exec sleep 30")
+	lp, _ := s.Live(id)
+	s.ApplyState(id, proto.PaneStateEvent{
+		V: 1, TS: 1, SessionID: id, Harness: "fakeh", Pane: &id,
+		State: proto.StateIdle, Source: proto.SrcGate, Detail: "Stop",
+	})
+	if _, err := lp.Grid.Write([]byte("turn")); err != nil {
+		t.Fatal(err)
+	}
+	s.processTick(id, lp) // the look that sees the first burst
+	// No look during the next 7 s. The second draw lands at +7 s.
+	first, _ := lp.Grid.LastWrite()
+	lp.Grid.StampWriteForTest(first.Add(7 * time.Second))
+	s.clockSkew.Store(int64(7500 * time.Millisecond))
+	s.processTick(id, lp)
+	if st, _ := s.effectiveState(id); st.State != "idle" || st.Source != "gate" {
+		t.Fatalf("after a draw 7 s after the last the pane is %s from %s, want idle from gate", st.State, st.Source)
+	}
+}
+
+// A hook idle that stands is not replaced by the first look's "no output
+// yet" (CP-R-56): whether the hook or the first look came first must not
+// decide the source. On a loaded box the tick starts late and the look came
+// second (cases/facts/redraw.jsonl:4 read process on Go).
+func TestTheFirstLookDoesNotReplaceAStandingHookIdle(t *testing.T) {
+	s := newPaneServer(t)
+	id := createShellPane(t, s, "sh", "-c", "exec sleep 30")
+	lp, _ := s.Live(id)
+	lp.procMu.Lock()
+	lp.procState = "" // no look has run yet
+	lp.procMu.Unlock()
+	s.ApplyState(id, proto.PaneStateEvent{
+		V: 1, TS: 1, SessionID: id, Harness: "fakeh", Pane: &id,
+		State: proto.StateIdle, Source: proto.SrcGate, Detail: "Stop",
+	})
+	s.processTick(id, lp)
+	if st, _ := s.effectiveState(id); st.State != "idle" || st.Source != "gate" {
+		t.Fatalf("after the first look the pane is %s from %s, want idle from gate", st.State, st.Source)
+	}
+}
+
+// The same holds when a draw was held first: the process source published
+// nothing, so its later quiet idle replaces no fact and the hook idle stays.
+func TestAQuietIdleAfterAHeldDrawDoesNotReplaceAStandingHookIdle(t *testing.T) {
+	s := newPaneServer(t)
+	id := createShellPane(t, s, "sh", "-c", "exec sleep 30")
+	lp, _ := s.Live(id)
+	lp.procMu.Lock()
+	lp.procState = ""
+	lp.procMu.Unlock()
+	s.ApplyState(id, proto.PaneStateEvent{
+		V: 1, TS: 1, SessionID: id, Harness: "fakeh", Pane: &id,
+		State: proto.StateIdle, Source: proto.SrcGate, Detail: "Stop",
+	})
+	if _, err := lp.Grid.Write([]byte("turn")); err != nil {
+		t.Fatal(err)
+	}
+	s.processTick(id, lp) // the first look sees the draw and holds it
+	s.clockSkew.Store(int64(6 * time.Second))
+	s.processTick(id, lp) // quiet now: the idle must not replace the hook
+	if st, _ := s.effectiveState(id); st.State != "idle" || st.Source != "gate" {
+		t.Fatalf("after a held draw and 6 s of quiet the pane is %s from %s, want idle from gate", st.State, st.Source)
 	}
 }

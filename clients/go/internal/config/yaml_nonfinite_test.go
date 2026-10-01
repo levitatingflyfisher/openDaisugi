@@ -14,7 +14,7 @@ func TestPlainNonFiniteFloats(t *testing.T) {
 		".nan": math.NaN(), ".NaN": math.NaN(), ".NAN": math.NaN(),
 		".inf": math.Inf(1), "+.inf": math.Inf(1), ".Inf": math.Inf(1), "-.INF": math.Inf(-1),
 	} {
-		v, err := plain(in)
+		v, err := plainOf(in)
 		if err != nil || v.Kind != Float {
 			t.Errorf("%s: got %+v %v, want a Float", in, v, err)
 			continue
@@ -26,8 +26,17 @@ func TestPlainNonFiniteFloats(t *testing.T) {
 	}
 	// PyYAML does not resolve these to floats: they stay strings.
 	for _, in := range []string{"nan", "inf", "NaN", "+.nan", ".nAn"} {
-		if v, err := plain(in); err != nil || v.Kind != Str {
+		if v, err := plainOf(in); err != nil || v.Kind != Str {
 			t.Errorf("%s: got %+v %v, want a Str", in, v, err)
 		}
 	}
+}
+
+// plainOf is the value of in as a plain scalar in a mapping.
+func plainOf(in string) (Value, error) {
+	v, err := ParseYAML("a: " + in + "\n")
+	if err != nil {
+		return Value{}, err
+	}
+	return v.Map["a"], nil
 }

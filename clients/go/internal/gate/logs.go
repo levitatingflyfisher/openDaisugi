@@ -10,11 +10,15 @@ import (
 
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/statefile"
 )
 
 // plan is every write one call makes, computed before any of them runs.
 type plan struct {
 	result Result
+	// mustLog is an enforce-mode allow: its audit line must land, or the
+	// call is denied (FN-R-17).
+	mustLog bool
 
 	auditDir  string
 	auditFile string
@@ -409,7 +413,8 @@ func mkdirPrivate(d string) error {
 	if err := os.Mkdir(d, 0o700); err != nil && !os.IsExist(err) {
 		return err
 	}
-	_ = os.Chmod(d, 0o700)
+	// On the directory's own fd, never through a link (GR-R-9).
+	statefile.ChmodPrivate(d)
 	return nil
 }
 
@@ -431,13 +436,24 @@ func appendLine(path, line string, private bool) error {
 	return cerr
 }
 
+// AuditRefusal is gate.AUDIT_REFUSAL: the deny of an enforce-mode allow
+// whose audit line could not be written.
+const AuditRefusal = "the gate cannot write its audit log, so it denies the call"
+
 // apply makes the writes in the Python gate's order. Each is best-effort,
-// as in Python: a failed write never changes the verdict.
+// as in Python: a failed write never changes the verdict, but for one. An
+// enforce-mode allow whose audit line does not land is denied: an agent
+// that can chmod the log must not turn the audit off with no word
+// (FN-R-17).
 func (pl *plan) apply(r *runner) {
 	if pl.auditRec != nil {
+		logged := false
 		if mkdirPrivate(pl.auditDir) == nil {
 			pl.auditRec.Set("at", pyjson.Float(pyTime(time.Now())))
-			_ = appendLine(pl.auditFile, dumpsLine(pl.auditRec, true), true)
+			logged = appendLine(pl.auditFile, dumpsLine(pl.auditRec, true), true) == nil
+		}
+		if !logged && pl.mustLog {
+			pl.result = outcome(r.deny(AuditRefusal), r.fmt)
 		}
 	}
 	treeOK := false

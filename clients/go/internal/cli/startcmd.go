@@ -227,11 +227,9 @@ func (e *Env) startSteps(cwd, dataDir string, enforce, ask, act, noUI bool) ([]s
 		out = append(out, startStep{"envelope", "skipped",
 			"an envelope for this directory is already registered at " + envPath})
 	case act:
-		_, followed, err := gateroot.Register(env, key, root)
-		if err != nil {
+		if _, err := gateroot.Register(env, key, root); err != nil {
 			return nil, e.failPy(cmd, err)
 		}
-		e.noteFile(envPath, followed)
 		out = append(out, startStep{"envelope", "done",
 			fmt.Sprintf("registered a starter envelope for %s at %s", cwd, envPath)})
 	default:
@@ -250,7 +248,9 @@ func (e *Env) startSteps(cwd, dataDir string, enforce, ask, act, noUI bool) ([]s
 		}
 		// start._detach: this binary's `gate serve`, in a session of its
 		// own, with no terminal; then the socket must appear.
-		e.spawnGateServer(root)
+		// The first server wins, so start fixes the captures root the
+		// fence fixes (FN-R-32, FN-R-35).
+		startGateSpawn(e, root, gateCapturesArgs(root)...)
 		t0 := time.Now()
 		for !exists(sock) && time.Since(t0) < startServerWait {
 			time.Sleep(50 * time.Millisecond)
@@ -268,6 +268,15 @@ func (e *Env) startSteps(cwd, dataDir string, enforce, ask, act, noUI bool) ([]s
 	return append(out, view), nil
 }
 
+// gateCapturesArgs is the captures root a resident gate on root gets,
+// whoever starts it: <root>/captures, sprig's own default.
+func gateCapturesArgs(root string) []string {
+	return []string{"--captures-root", gateroot.Join(root, "captures")}
+}
+
+// startGateSpawn is how start starts the server; a test sees its argv.
+var startGateSpawn = (*Env).spawnGateServer
+
 // startServerWait is StartOptions.server_wait_s.
 const startServerWait = 2 * time.Second
 
@@ -277,24 +286,26 @@ func exists(p string) bool {
 	return err == nil
 }
 
-// spawnGateServer starts `<self> gate serve --root root` detached, with
+// spawnGateServer starts `<self> gate serve --root root [extra]` detached, with
 // this process's environment and no stdin, stdout or stderr. A spawn that
 // fails is seen as a socket that never appears.
-func (e *Env) spawnGateServer(root string) {
+func (e *Env) spawnGateServer(root string, extra ...string) int {
 	self, err := install.Self()
 	if err != nil {
-		return
+		return 0
 	}
 	null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
-		return
+		return 0
 	}
 	defer null.Close()
-	cmd := exec.Command(self, "gate", "serve", "--root", root)
+	cmd := exec.Command(self, append([]string{"gate", "serve", "--root", root}, extra...)...)
 	cmd.Env = e.Environ
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = null, null, null
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if cmd.Start() == nil {
-		go func() { _ = cmd.Wait() }()
+	if cmd.Start() != nil {
+		return 0
 	}
+	go func() { _ = cmd.Wait() }()
+	return cmd.Process.Pid
 }

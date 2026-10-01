@@ -44,7 +44,7 @@ test('a rejected token shows the settings screen and schedules no reconnect', as
   await new Promise((r) => setImmediate(r));
 
   assert.equal(element('screen-settings').hidden, false);
-  assert.equal(element('screen-roster').hidden, true);
+  assert.equal(element('screen-roster').hidden, false, 'Settings hid the floor');
   assert.equal(liveTimers().length, 0);
 });
 
@@ -129,4 +129,20 @@ test('a second connect() while the socket is connecting, open, or closing opens 
   first.readyState = 2; // CLOSING
   connect();
   assert.equal(lastSocket(), first, 'a second call while CLOSING made a new socket');
+});
+
+test('show never hides the floor, whatever screen it draws', async () => {
+  reset();
+  await freshApp();
+  for (const name of ['roster', 'new', 'settings', 'pane', 'roster']) {
+    global.window.coppice.show(name);
+    assert.equal(element('screen-roster').hidden, false, 'show(' + name + ') hid the floor');
+  }
+  global.window.coppice.show('new');
+  assert.equal(element('screen-new').hidden, false);
+  assert.equal(element('screen-settings').hidden, true);
+  assert.equal(element('back').hidden, true, 'a panel has its own close, not Back');
+  global.window.coppice.show('settings');
+  assert.equal(element('screen-new').hidden, true);
+  assert.equal(element('screen-settings').hidden, false);
 });

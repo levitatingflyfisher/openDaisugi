@@ -86,19 +86,6 @@ func WriteFile(p, text string) (followed string, err error) {
 	return followed, replaceFile(target, text, 0)
 }
 
-// WriteFileMode is WriteFile for a private file: the file has mode from
-// the moment it exists, as register_envelope's chmod 0600 leaves it.
-func WriteFileMode(p, text string, mode os.FileMode) (followed string, err error) {
-	target, err := resolveLinks(p)
-	if err != nil {
-		return "", err
-	}
-	if target != p {
-		followed = target
-	}
-	return followed, replaceFile(target, text, mode)
-}
-
 // ReplaceFile writes text to p atomically. A symlink at p is replaced by
 // the new file, never written through.
 func ReplaceFile(p, text string) error { return replaceFile(p, text, 0) }

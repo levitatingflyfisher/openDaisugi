@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, fields
@@ -33,6 +34,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from opendaisugi.gateway import RouteDecision, TurnSaving
+
+# finish() runs on worker threads in knn and model mode. This one lock orders every
+# journal and answer-store write (the Go fileMu and the Rust FILE_LOCK).
+FILE_LOCK = threading.Lock()
 
 _WHITESPACE = re.compile(r"\s+")
 
@@ -75,6 +80,14 @@ class GatewayTurnRecord:
     # The turn's time in the proxy, from the request to the end of the
     # answer, in milliseconds. None for a turn recorded outside the proxy.
     elapsed_ms: float | None = None
+    # The coppice pane and floor the turn came from, when its base URL named
+    # them. The journal line has these two keys only then.
+    pane: str | None = None
+    floor: str | None = None
+    # The knn router's row id for the turn and the one-line reason it routed by.
+    # The journal line has these keys only for a turn routed in knn mode.
+    turn_id: str | None = None
+    reason: str | None = None
 
     @property
     def dollars_saved(self) -> float:
@@ -89,6 +102,10 @@ def record_turn(
     ask: str | None = None,
     created_at: str | None = None,
     elapsed_ms: float | None = None,
+    pane: str | None = None,
+    floor: str | None = None,
+    turn_id: str | None = None,
+    reason: str | None = None,
 ) -> GatewayTurnRecord:
     """Build a turn record from a routing decision and its measured saving.
 
@@ -122,6 +139,10 @@ def record_turn(
         cache_read_tokens=saving.actual.cache_read_tokens,
         cache_creation_tokens=saving.actual.cache_creation_tokens,
         elapsed_ms=elapsed_ms,
+        pane=pane,
+        floor=floor,
+        turn_id=turn_id,
+        reason=reason,
     )
 
 
@@ -220,8 +241,12 @@ class GatewayJournal:
 
     def append(self, record: GatewayTurnRecord) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(asdict(record)) + "\n")
+        with FILE_LOCK, self.path.open("a", encoding="utf-8") as fh:
+            line = asdict(record)
+            for key in ("pane", "floor", "turn_id", "reason"):
+                if line[key] is None:
+                    del line[key]
+            fh.write(json.dumps(line) + "\n")
 
     def load(self) -> list[GatewayTurnRecord]:
         if not self.path.exists():

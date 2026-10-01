@@ -1,0 +1,4106 @@
+{
+ "prices": {
+  "claude-opus-4-8": [
+   15.0,
+   75.0
+  ],
+  "claude-sonnet-5": [
+   3.0,
+   15.0
+  ],
+  "claude-haiku-4-5": [
+   1.0,
+   5.0
+  ],
+  "local-model": [
+   0.0,
+   0.0
+  ]
+ },
+ "decide": [
+  {
+   "name": "empty table",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": true,
+    "reason": "knn: 0 of 0 neighbours have a known outcome (need 3)",
+    "known": 0,
+    "neighbours": [],
+    "scores": []
+   }
+  },
+  {
+   "name": "two known only",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "unknown",
+     "ts": 1003.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": true,
+    "reason": "knn: 2 of 3 neighbours have a known outcome (need 3)",
+    "known": 2,
+    "neighbours": [
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "unknown"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     }
+    ],
+    "scores": []
+   }
+  },
+  {
+   "name": "cheap model did well",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9901475310325623,
+      0.0990147516131401,
+      0.0990147516131401,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-haiku-4-5",
+    "fallback": false,
+    "reason": "knn: claude-haiku-4-5; 5 neighbours, 5 known; scores claude-haiku-4-5 0.82, claude-opus-4-8 0.47",
+    "known": 5,
+    "neighbours": [
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t5",
+      "similarity": 0.990338,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-haiku-4-5",
+      "score": 0.819874
+     },
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.46559
+     }
+    ]
+   }
+  },
+  {
+   "name": "cheap model did badly",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "bad",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "bad",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "bad",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "bad",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9901475310325623,
+      0.0990147516131401,
+      0.0990147516131401,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": false,
+    "reason": "knn: claude-opus-4-8; 5 neighbours, 5 known; scores claude-opus-4-8 0.47",
+    "known": 5,
+    "neighbours": [
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t5",
+      "similarity": 0.990338,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.46559
+     }
+    ]
+   }
+  },
+  {
+   "name": "cheap mixed",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "bad",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9901475310325623,
+      0.0990147516131401,
+      0.0990147516131401,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": false,
+    "reason": "knn: claude-opus-4-8; 5 neighbours, 5 known; scores claude-opus-4-8 0.53",
+    "known": 5,
+    "neighbours": [
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.990338,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t5",
+      "similarity": 0.83205,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.83205,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.527082
+     }
+    ]
+   }
+  },
+  {
+   "name": "no known neighbour for the cheap model",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "bad",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "bad",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "bad",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "bad",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "bad",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": false,
+    "reason": "knn: claude-opus-4-8; 5 neighbours, 5 known; scores claude-opus-4-8 -0.06",
+    "known": 5,
+    "neighbours": [
+     {
+      "turn_id": "t5",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "bad"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-opus-4-8",
+      "score": -0.057027
+     }
+    ]
+   }
+  },
+  {
+   "name": "cheap model has only unknown neighbours",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "unknown",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "unknown",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9901475310325623,
+      0.0990147516131401,
+      0.0990147516131401,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9901475310325623,
+      0.0990147516131401,
+      0.0990147516131401,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9901475310325623,
+      0.0990147516131401,
+      0.0990147516131401,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": false,
+    "reason": "knn: claude-opus-4-8; 5 neighbours, 3 known; scores claude-opus-4-8 0.60",
+    "known": 3,
+    "neighbours": [
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "unknown"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "unknown"
+     },
+     {
+      "turn_id": "t5",
+      "similarity": 0.990338,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.990338,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.990338,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.598834
+     }
+    ]
+   }
+  },
+  {
+   "name": "only the eight nearest count",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1005.0
+    },
+    {
+     "seq": 6,
+     "turn_id": "t6",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1006.0
+    },
+    {
+     "seq": 7,
+     "turn_id": "t7",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1007.0
+    },
+    {
+     "seq": 8,
+     "turn_id": "t8",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1008.0
+    },
+    {
+     "seq": 9,
+     "turn_id": "t9",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1009.0
+    },
+    {
+     "seq": 10,
+     "turn_id": "t10",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1010.0
+    },
+    {
+     "seq": 11,
+     "turn_id": "t11",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1011.0
+    },
+    {
+     "seq": 12,
+     "turn_id": "t12",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1012.0
+    },
+    {
+     "seq": 13,
+     "turn_id": "t13",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1013.0
+    },
+    {
+     "seq": 14,
+     "turn_id": "t14",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1014.0
+    },
+    {
+     "seq": 15,
+     "turn_id": "t15",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1015.0
+    },
+    {
+     "seq": 16,
+     "turn_id": "t16",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1016.0
+    },
+    {
+     "seq": 17,
+     "turn_id": "t17",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1017.0
+    },
+    {
+     "seq": 18,
+     "turn_id": "t18",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1018.0
+    },
+    {
+     "seq": 19,
+     "turn_id": "t19",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1019.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-haiku-4-5",
+    "fallback": false,
+    "reason": "knn: claude-haiku-4-5; 8 neighbours, 8 known; scores claude-haiku-4-5 0.89, claude-opus-4-8 0.30",
+    "known": 8,
+    "neighbours": [
+     {
+      "turn_id": "t8",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t7",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t6",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t5",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-haiku-4-5",
+      "score": 0.886576
+     },
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.3
+     }
+    ]
+   }
+  },
+  {
+   "name": "a similarity tie goes to the newer row",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1005.0
+    },
+    {
+     "seq": 6,
+     "turn_id": "t6",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1006.0
+    },
+    {
+     "seq": 7,
+     "turn_id": "t7",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1007.0
+    },
+    {
+     "seq": 8,
+     "turn_id": "t8",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1008.0
+    },
+    {
+     "seq": 9,
+     "turn_id": "t9",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1009.0
+    },
+    {
+     "seq": 10,
+     "turn_id": "t10",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1010.0
+    },
+    {
+     "seq": 11,
+     "turn_id": "t11",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1011.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-haiku-4-5",
+    "fallback": false,
+    "reason": "knn: claude-haiku-4-5; 8 neighbours, 8 known; scores claude-haiku-4-5 0.89, claude-opus-4-8 0.30",
+    "known": 8,
+    "neighbours": [
+     {
+      "turn_id": "t11",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t10",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t9",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t8",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t7",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t6",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t5",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-haiku-4-5",
+      "score": 0.886576
+     },
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.3
+     }
+    ]
+   }
+  },
+  {
+   "name": "below the threshold",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.0,
+      0.0,
+      0.0,
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.0,
+      0.0,
+      0.0,
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.0,
+      0.0,
+      0.0,
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.0,
+      0.0,
+      0.0,
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.0,
+      0.0,
+      0.0,
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": true,
+    "reason": "knn: 0 of 0 neighbours have a known outcome (need 3)",
+    "known": 0,
+    "neighbours": [],
+    "scores": []
+   }
+  },
+  {
+   "name": "a row exactly at the threshold counts",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.28221625089645386,
+      0.9407208561897278,
+      0.18814417719841003,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.28221625089645386,
+      0.9407208561897278,
+      0.18814417719841003,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.28221625089645386,
+      0.9407208561897278,
+      0.18814417719841003,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.28221625089645386,
+      0.9407208561897278,
+      0.18814417719841003,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.28221625089645386,
+      0.9407208561897278,
+      0.18814417719841003,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.461226,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-haiku-4-5",
+    "fallback": false,
+    "reason": "knn: claude-haiku-4-5; 5 neighbours, 5 known; scores claude-haiku-4-5 0.75, claude-opus-4-8 0.30",
+    "known": 5,
+    "neighbours": [
+     {
+      "turn_id": "t5",
+      "similarity": 0.461226,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.461226,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.461226,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.461226,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.461226,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-haiku-4-5",
+      "score": 0.75444
+     },
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.3
+     }
+    ]
+   }
+  },
+  {
+   "name": "a row just above the threshold is left out",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.28221625089645386,
+      0.9407208561897278,
+      0.18814417719841003,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.28221625089645386,
+      0.9407208561897278,
+      0.18814417719841003,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.28221625089645386,
+      0.9407208561897278,
+      0.18814417719841003,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.28221625089645386,
+      0.9407208561897278,
+      0.18814417719841003,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.28221625089645386,
+      0.9407208561897278,
+      0.18814417719841003,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.461227,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": true,
+    "reason": "knn: 0 of 0 neighbours have a known outcome (need 3)",
+    "known": 0,
+    "neighbours": [],
+    "scores": []
+   }
+  },
+  {
+   "name": "cheap request is never upgraded",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-haiku-4-5",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-haiku-4-5",
+    "fallback": true,
+    "reason": "knn: 0 of 5 neighbours have a known outcome (need 3)",
+    "known": 0,
+    "neighbours": [
+     {
+      "turn_id": "t5",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     }
+    ],
+    "scores": []
+   }
+  },
+  {
+   "name": "sonnet request, haiku did well",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-sonnet-5",
+     "outcome": "bad",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-sonnet-5",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-sonnet-5",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-haiku-4-5",
+    "fallback": false,
+    "reason": "knn: claude-haiku-4-5; 5 neighbours, 5 known; scores claude-haiku-4-5 0.77, claude-sonnet-5 0.13",
+    "known": 5,
+    "neighbours": [
+     {
+      "turn_id": "t5",
+      "similarity": 0.998868,
+      "model": "claude-sonnet-5",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-haiku-4-5",
+      "score": 0.766541
+     },
+     {
+      "model": "claude-sonnet-5",
+      "score": 0.133459
+     }
+    ]
+   }
+  },
+  {
+   "name": "local rung did well",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "local-model",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "local-model",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "local-model",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "local-model",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1005.0
+    },
+    {
+     "seq": 6,
+     "turn_id": "t6",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1006.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": "local-model",
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "local-model",
+     "claude-haiku-4-5"
+    ],
+    "model": "local-model",
+    "fallback": false,
+    "reason": "knn: local-model; 6 neighbours, 6 known; scores local-model 0.83, claude-haiku-4-5 0.65, claude-opus-4-8 0.47",
+    "known": 6,
+    "neighbours": [
+     {
+      "turn_id": "t6",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t5",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "local-model",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "local-model",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "local-model",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "local-model",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "local-model",
+      "score": 0.833207
+     },
+     {
+      "model": "claude-haiku-4-5",
+      "score": 0.653208
+     },
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.466541
+     }
+    ]
+   }
+  },
+  {
+   "name": "local rung did badly",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "local-model",
+     "outcome": "bad",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "local-model",
+     "outcome": "bad",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "local-model",
+     "outcome": "bad",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "local-model",
+     "outcome": "bad",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1005.0
+    },
+    {
+     "seq": 6,
+     "turn_id": "t6",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1006.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": "local-model",
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "local-model",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-haiku-4-5",
+    "fallback": false,
+    "reason": "knn: claude-haiku-4-5; 6 neighbours, 6 known; scores claude-haiku-4-5 0.65, claude-opus-4-8 0.47",
+    "known": 6,
+    "neighbours": [
+     {
+      "turn_id": "t6",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t5",
+      "similarity": 0.998868,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "local-model",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "local-model",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "local-model",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "local-model",
+      "outcome": "bad"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-haiku-4-5",
+      "score": 0.653208
+     },
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.466541
+     }
+    ]
+   }
+  },
+  {
+   "name": "another embedder's rows do not count",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "other",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "other",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "other",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "other",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "other",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": true,
+    "reason": "knn: 0 of 0 neighbours have a known outcome (need 3)",
+    "known": 0,
+    "neighbours": [],
+    "scores": []
+   }
+  },
+  {
+   "name": "a row of another size never matches",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      1.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      1.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      1.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      1.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      1.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": true,
+    "reason": "knn: 0 of 0 neighbours have a known outcome (need 3)",
+    "known": 0,
+    "neighbours": [],
+    "scores": []
+   }
+  },
+  {
+   "name": "an unpriced cheap model is not a candidate",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "mystery-model",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "mystery-model",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "mystery-model",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "mystery-model",
+     "outcome": "good",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "mystery-model",
+     "outcome": "good",
+     "ts": 1005.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "mystery-model",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": true,
+    "reason": "knn: 0 of 5 neighbours have a known outcome (need 3)",
+    "known": 0,
+    "neighbours": [
+     {
+      "turn_id": "t5",
+      "similarity": 0.998868,
+      "model": "mystery-model",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "mystery-model",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "mystery-model",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "mystery-model",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "mystery-model",
+      "outcome": "good"
+     }
+    ],
+    "scores": []
+   }
+  },
+  {
+   "name": "opus rows do not count for a sonnet request",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "bad",
+     "ts": 1003.0
+    }
+   ],
+   "requested": "claude-sonnet-5",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-sonnet-5",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-sonnet-5",
+    "fallback": true,
+    "reason": "knn: 1 of 3 neighbours have a known outcome (need 3)",
+    "known": 1,
+    "neighbours": [
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.83205,
+      "model": "claude-haiku-4-5",
+      "outcome": "bad"
+     }
+    ],
+    "scores": []
+   }
+  },
+  {
+   "name": "a cheaper model must match the requested one's success",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-sonnet-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-sonnet-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-sonnet-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.7071067690849304,
+      0.7071067690849304,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1004.0
+    }
+   ],
+   "requested": "claude-sonnet-5",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-sonnet-5",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-sonnet-5",
+    "fallback": false,
+    "reason": "knn: claude-sonnet-5; 4 neighbours, 4 known; scores claude-sonnet-5 0.60",
+    "known": 4,
+    "neighbours": [
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "claude-sonnet-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-sonnet-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "claude-sonnet-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t4",
+      "similarity": 0.83205,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-sonnet-5",
+      "score": 0.599864
+     }
+    ]
+   }
+  },
+  {
+   "name": "a local model with one bad row never wins",
+   "query": [
+    0.9805806875228882,
+    0.1961161345243454,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "local-model",
+     "outcome": "bad",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "bad",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "bad",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      0.9701424837112427,
+      0.24253562092781067,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "bad",
+     "ts": 1004.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": "local-model",
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "local-model",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-opus-4-8",
+    "fallback": false,
+    "reason": "knn: claude-opus-4-8; 4 neighbours, 4 known; scores claude-opus-4-8 0.00",
+    "known": 4,
+    "neighbours": [
+     {
+      "turn_id": "t4",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t3",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.998868,
+      "model": "claude-opus-4-8",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 0.998868,
+      "model": "local-model",
+      "outcome": "bad"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.000136
+     }
+    ]
+   }
+  },
+  {
+   "name": "sixty-four dimensions",
+   "query": [
+    -0.134309321641922,
+    -0.00663886358961463,
+    0.12103158980607986,
+    -0.18537749350070953,
+    -0.0577070452272892,
+    0.06996341049671173,
+    0.19763386249542236,
+    -0.10877522826194763,
+    0.0188952274620533,
+    0.14656567573547363,
+    -0.15984340012073517,
+    -0.03217295557260513,
+    0.0954974964261055,
+    0.22316795587539673,
+    -0.08324113488197327,
+    0.044429317116737366,
+    0.172099769115448,
+    -0.134309321641922,
+    -0.00663886358961463,
+    0.12103158980607986,
+    -0.18537749350070953,
+    -0.0577070452272892,
+    0.06996341049671173,
+    0.19763386249542236,
+    -0.10877522826194763,
+    0.0188952274620533,
+    0.14656567573547363,
+    -0.15984340012073517,
+    -0.03217295557260513,
+    0.0954974964261055,
+    0.22316795587539673,
+    -0.08324113488197327,
+    0.044429317116737366,
+    0.172099769115448,
+    -0.134309321641922,
+    -0.00663886358961463,
+    0.12103158980607986,
+    -0.18537749350070953,
+    -0.0577070452272892,
+    0.06996341049671173,
+    0.19763386249542236,
+    -0.10877522826194763,
+    0.0188952274620533,
+    0.14656567573547363,
+    -0.15984340012073517,
+    -0.03217295557260513,
+    0.0954974964261055,
+    0.22316795587539673,
+    -0.08324113488197327,
+    0.044429317116737366,
+    0.172099769115448,
+    -0.134309321641922,
+    -0.00663886358961463,
+    0.12103158980607986,
+    -0.18537749350070953,
+    -0.0577070452272892,
+    0.06996341049671173,
+    0.19763386249542236,
+    -0.10877522826194763,
+    0.0188952274620533,
+    0.14656567573547363,
+    -0.15984340012073517,
+    -0.03217295557260513,
+    0.0954974964261055
+   ],
+   "rows": [
+    {
+     "seq": 1,
+     "turn_id": "t1",
+     "embedder": "fake",
+     "vec": [
+      -0.134309321641922,
+      -0.00663886358961463,
+      0.12103158980607986,
+      -0.18537749350070953,
+      -0.0577070452272892,
+      0.06996341049671173,
+      0.19763386249542236,
+      -0.10877522826194763,
+      0.0188952274620533,
+      0.14656567573547363,
+      -0.15984340012073517,
+      -0.03217295557260513,
+      0.0954974964261055,
+      0.22316795587539673,
+      -0.08324113488197327,
+      0.044429317116737366,
+      0.172099769115448,
+      -0.134309321641922,
+      -0.00663886358961463,
+      0.12103158980607986,
+      -0.18537749350070953,
+      -0.0577070452272892,
+      0.06996341049671173,
+      0.19763386249542236,
+      -0.10877522826194763,
+      0.0188952274620533,
+      0.14656567573547363,
+      -0.15984340012073517,
+      -0.03217295557260513,
+      0.0954974964261055,
+      0.22316795587539673,
+      -0.08324113488197327,
+      0.044429317116737366,
+      0.172099769115448,
+      -0.134309321641922,
+      -0.00663886358961463,
+      0.12103158980607986,
+      -0.18537749350070953,
+      -0.0577070452272892,
+      0.06996341049671173,
+      0.19763386249542236,
+      -0.10877522826194763,
+      0.0188952274620533,
+      0.14656567573547363,
+      -0.15984340012073517,
+      -0.03217295557260513,
+      0.0954974964261055,
+      0.22316795587539673,
+      -0.08324113488197327,
+      0.044429317116737366,
+      0.172099769115448,
+      -0.134309321641922,
+      -0.00663886358961463,
+      0.12103158980607986,
+      -0.18537749350070953,
+      -0.0577070452272892,
+      0.06996341049671173,
+      0.19763386249542236,
+      -0.10877522826194763,
+      0.0188952274620533,
+      0.14656567573547363,
+      -0.15984340012073517,
+      -0.03217295557260513,
+      0.0954974964261055
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1001.0
+    },
+    {
+     "seq": 2,
+     "turn_id": "t2",
+     "embedder": "fake",
+     "vec": [
+      -0.09716639667749405,
+      0.05270465463399887,
+      0.2025757133960724,
+      -0.0721878930926323,
+      0.07768316566944122,
+      0.22755421698093414,
+      -0.04720938205718994,
+      0.10266166925430298,
+      -0.1721019297838211,
+      -0.02223087288439274,
+      0.12764018774032593,
+      -0.14712341129779816,
+      0.002747636055573821,
+      0.15261869132518768,
+      -0.1221449077129364,
+      0.027726145461201668,
+      0.17759719491004944,
+      -0.09716639667749405,
+      0.05270465463399887,
+      0.2025757133960724,
+      -0.0721878930926323,
+      0.07768316566944122,
+      0.22755421698093414,
+      -0.04720938205718994,
+      0.10266166925430298,
+      -0.1721019297838211,
+      -0.02223087288439274,
+      0.12764018774032593,
+      -0.14712341129779816,
+      0.002747636055573821,
+      0.15261869132518768,
+      -0.1221449077129364,
+      0.027726145461201668,
+      0.17759719491004944,
+      -0.09716639667749405,
+      0.05270465463399887,
+      0.2025757133960724,
+      -0.0721878930926323,
+      0.07768316566944122,
+      0.22755421698093414,
+      -0.04720938205718994,
+      0.10266166925430298,
+      -0.1721019297838211,
+      -0.02223087288439274,
+      0.12764018774032593,
+      -0.14712341129779816,
+      0.002747636055573821,
+      0.15261869132518768,
+      -0.1221449077129364,
+      0.027726145461201668,
+      0.17759719491004944,
+      -0.09716639667749405,
+      0.05270465463399887,
+      0.2025757133960724,
+      -0.0721878930926323,
+      0.07768316566944122,
+      0.22755421698093414,
+      -0.04720938205718994,
+      0.10266166925430298,
+      -0.1721019297838211,
+      -0.02223087288439274,
+      0.12764018774032593,
+      -0.14712341129779816,
+      0.002747636055573821
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1002.0
+    },
+    {
+     "seq": 3,
+     "turn_id": "t3",
+     "embedder": "fake",
+     "vec": [
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354,
+      -0.14250828325748444,
+      -0.04125905781984329,
+      0.05999016389250755,
+      0.1612393856048584,
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354,
+      -0.14250828325748444,
+      -0.04125905781984329,
+      0.05999016389250755,
+      0.1612393856048584,
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354,
+      -0.14250828325748444,
+      -0.04125905781984329,
+      0.05999016389250755,
+      0.1612393856048584,
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1003.0
+    },
+    {
+     "seq": 4,
+     "turn_id": "t4",
+     "embedder": "fake",
+     "vec": [
+      -0.134309321641922,
+      -0.00663886358961463,
+      0.12103158980607986,
+      -0.18537749350070953,
+      -0.0577070452272892,
+      0.06996341049671173,
+      0.19763386249542236,
+      -0.10877522826194763,
+      0.0188952274620533,
+      0.14656567573547363,
+      -0.15984340012073517,
+      -0.03217295557260513,
+      0.0954974964261055,
+      0.22316795587539673,
+      -0.08324113488197327,
+      0.044429317116737366,
+      0.172099769115448,
+      -0.134309321641922,
+      -0.00663886358961463,
+      0.12103158980607986,
+      -0.18537749350070953,
+      -0.0577070452272892,
+      0.06996341049671173,
+      0.19763386249542236,
+      -0.10877522826194763,
+      0.0188952274620533,
+      0.14656567573547363,
+      -0.15984340012073517,
+      -0.03217295557260513,
+      0.0954974964261055,
+      0.22316795587539673,
+      -0.08324113488197327,
+      0.044429317116737366,
+      0.172099769115448,
+      -0.134309321641922,
+      -0.00663886358961463,
+      0.12103158980607986,
+      -0.18537749350070953,
+      -0.0577070452272892,
+      0.06996341049671173,
+      0.19763386249542236,
+      -0.10877522826194763,
+      0.0188952274620533,
+      0.14656567573547363,
+      -0.15984340012073517,
+      -0.03217295557260513,
+      0.0954974964261055,
+      0.22316795587539673,
+      -0.08324113488197327,
+      0.044429317116737366,
+      0.172099769115448,
+      -0.134309321641922,
+      -0.00663886358961463,
+      0.12103158980607986,
+      -0.18537749350070953,
+      -0.0577070452272892,
+      0.06996341049671173,
+      0.19763386249542236,
+      -0.10877522826194763,
+      0.0188952274620533,
+      0.14656567573547363,
+      -0.15984340012073517,
+      -0.03217295557260513,
+      0.0954974964261055
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "bad",
+     "ts": 1004.0
+    },
+    {
+     "seq": 5,
+     "turn_id": "t5",
+     "embedder": "fake",
+     "vec": [
+      -0.09716639667749405,
+      0.05270465463399887,
+      0.2025757133960724,
+      -0.0721878930926323,
+      0.07768316566944122,
+      0.22755421698093414,
+      -0.04720938205718994,
+      0.10266166925430298,
+      -0.1721019297838211,
+      -0.02223087288439274,
+      0.12764018774032593,
+      -0.14712341129779816,
+      0.002747636055573821,
+      0.15261869132518768,
+      -0.1221449077129364,
+      0.027726145461201668,
+      0.17759719491004944,
+      -0.09716639667749405,
+      0.05270465463399887,
+      0.2025757133960724,
+      -0.0721878930926323,
+      0.07768316566944122,
+      0.22755421698093414,
+      -0.04720938205718994,
+      0.10266166925430298,
+      -0.1721019297838211,
+      -0.02223087288439274,
+      0.12764018774032593,
+      -0.14712341129779816,
+      0.002747636055573821,
+      0.15261869132518768,
+      -0.1221449077129364,
+      0.027726145461201668,
+      0.17759719491004944,
+      -0.09716639667749405,
+      0.05270465463399887,
+      0.2025757133960724,
+      -0.0721878930926323,
+      0.07768316566944122,
+      0.22755421698093414,
+      -0.04720938205718994,
+      0.10266166925430298,
+      -0.1721019297838211,
+      -0.02223087288439274,
+      0.12764018774032593,
+      -0.14712341129779816,
+      0.002747636055573821,
+      0.15261869132518768,
+      -0.1221449077129364,
+      0.027726145461201668,
+      0.17759719491004944,
+      -0.09716639667749405,
+      0.05270465463399887,
+      0.2025757133960724,
+      -0.0721878930926323,
+      0.07768316566944122,
+      0.22755421698093414,
+      -0.04720938205718994,
+      0.10266166925430298,
+      -0.1721019297838211,
+      -0.02223087288439274,
+      0.12764018774032593,
+      -0.14712341129779816,
+      0.002747636055573821
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1005.0
+    },
+    {
+     "seq": 6,
+     "turn_id": "t6",
+     "embedder": "fake",
+     "vec": [
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354,
+      -0.14250828325748444,
+      -0.04125905781984329,
+      0.05999016389250755,
+      0.1612393856048584,
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354,
+      -0.14250828325748444,
+      -0.04125905781984329,
+      0.05999016389250755,
+      0.1612393856048584,
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354,
+      -0.14250828325748444,
+      -0.04125905781984329,
+      0.05999016389250755,
+      0.1612393856048584,
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354
+     ],
+     "model": "claude-haiku-4-5",
+     "outcome": "good",
+     "ts": 1006.0
+    },
+    {
+     "seq": 7,
+     "turn_id": "t7",
+     "embedder": "fake",
+     "vec": [
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354,
+      -0.14250828325748444,
+      -0.04125905781984329,
+      0.05999016389250755,
+      0.1612393856048584,
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354,
+      -0.14250828325748444,
+      -0.04125905781984329,
+      0.05999016389250755,
+      0.1612393856048584,
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354,
+      -0.14250828325748444,
+      -0.04125905781984329,
+      0.05999016389250755,
+      0.1612393856048584,
+      -0.16782058775424957,
+      -0.06657136231660843,
+      0.034677859395742416,
+      0.13592708110809326,
+      -0.1931328922510147,
+      -0.09188367426395416,
+      0.00936555303633213,
+      0.11061477661132812,
+      0.21186400949954987,
+      -0.1171959787607193,
+      -0.015946753323078156,
+      0.08530247211456299,
+      0.18655169010162354
+     ],
+     "model": "claude-opus-4-8",
+     "outcome": "good",
+     "ts": 1007.0
+    }
+   ],
+   "requested": "claude-opus-4-8",
+   "cheap": "claude-haiku-4-5",
+   "local": null,
+   "threshold": 0.25,
+   "expect": {
+    "candidates": [
+     "claude-opus-4-8",
+     "claude-haiku-4-5"
+    ],
+    "model": "claude-haiku-4-5",
+    "fallback": false,
+    "reason": "knn: claude-haiku-4-5; 4 neighbours, 4 known; scores claude-haiku-4-5 0.55, claude-opus-4-8 0.30",
+    "known": 4,
+    "neighbours": [
+     {
+      "turn_id": "t4",
+      "similarity": 1.0,
+      "model": "claude-haiku-4-5",
+      "outcome": "bad"
+     },
+     {
+      "turn_id": "t1",
+      "similarity": 1.0,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t5",
+      "similarity": 0.306566,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     },
+     {
+      "turn_id": "t2",
+      "similarity": 0.306566,
+      "model": "claude-haiku-4-5",
+      "outcome": "good"
+     }
+    ],
+    "scores": [
+     {
+      "model": "claude-haiku-4-5",
+      "score": 0.553122
+     },
+     {
+      "model": "claude-opus-4-8",
+      "score": 0.3
+     }
+    ]
+   }
+  }
+ ],
+ "label": [
+  {
+   "name": "a retry makes it bad",
+   "prev": {
+    "outcome": "unknown",
+    "ts": 1000.0,
+    "vec": [
+     0.9805806875228882,
+     0.1961161345243454,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "embedder": "fake"
+   },
+   "now": 1100.0,
+   "vec": [
+    0.9701424837112427,
+    0.24253562092781067,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "threshold": 0.25,
+   "expect": "bad"
+  },
+  {
+   "name": "moving on makes it good",
+   "prev": {
+    "outcome": "unknown",
+    "ts": 1000.0,
+    "vec": [
+     0.9805806875228882,
+     0.1961161345243454,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "embedder": "fake"
+   },
+   "now": 1100.0,
+   "vec": [
+    0.0,
+    0.0,
+    0.0,
+    0.7071067690849304,
+    0.7071067690849304,
+    0.0
+   ],
+   "threshold": 0.25,
+   "expect": "good"
+  },
+  {
+   "name": "exactly ten minutes still counts",
+   "prev": {
+    "outcome": "unknown",
+    "ts": 1000.0,
+    "vec": [
+     0.9805806875228882,
+     0.1961161345243454,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "embedder": "fake"
+   },
+   "now": 1600.0,
+   "vec": [
+    0.0,
+    0.0,
+    0.0,
+    0.7071067690849304,
+    0.7071067690849304,
+    0.0
+   ],
+   "threshold": 0.25,
+   "expect": "good"
+  },
+  {
+   "name": "past ten minutes stays unknown",
+   "prev": {
+    "outcome": "unknown",
+    "ts": 1000.0,
+    "vec": [
+     0.9805806875228882,
+     0.1961161345243454,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "embedder": "fake"
+   },
+   "now": 1600.5,
+   "vec": [
+    0.0,
+    0.0,
+    0.0,
+    0.7071067690849304,
+    0.7071067690849304,
+    0.0
+   ],
+   "threshold": 0.25,
+   "expect": null
+  },
+  {
+   "name": "a known outcome is kept",
+   "prev": {
+    "outcome": "bad",
+    "ts": 1000.0,
+    "vec": [
+     0.9805806875228882,
+     0.1961161345243454,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "embedder": "fake"
+   },
+   "now": 1100.0,
+   "vec": [
+    0.0,
+    0.0,
+    0.0,
+    0.7071067690849304,
+    0.7071067690849304,
+    0.0
+   ],
+   "threshold": 0.25,
+   "expect": null
+  },
+  {
+   "name": "another embedder is left alone",
+   "prev": {
+    "outcome": "unknown",
+    "ts": 1000.0,
+    "vec": [
+     0.9805806875228882,
+     0.1961161345243454,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "embedder": "other"
+   },
+   "now": 1100.0,
+   "vec": [
+    0.9701424837112427,
+    0.24253562092781067,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "threshold": 0.25,
+   "expect": null
+  },
+  {
+   "name": "a retry just under the threshold moves on",
+   "prev": {
+    "outcome": "unknown",
+    "ts": 1000.0,
+    "vec": [
+     0.9805806875228882,
+     0.1961161345243454,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "embedder": "fake"
+   },
+   "now": 1100.0,
+   "vec": [
+    0.7071067690849304,
+    0.7071067690849304,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "threshold": 0.99,
+   "expect": "good"
+  },
+  {
+   "name": "a retry at the threshold is bad",
+   "prev": {
+    "outcome": "unknown",
+    "ts": 1000.0,
+    "vec": [
+     0.9805806875228882,
+     0.1961161345243454,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "embedder": "fake"
+   },
+   "now": 1100.0,
+   "vec": [
+    0.7071067690849304,
+    0.7071067690849304,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "threshold": 0.83205,
+   "expect": "bad"
+  }
+ ],
+ "round6": [
+  [
+   0.0,
+   0.0
+  ],
+  [
+   0.1234565,
+   0.123457
+  ],
+  [
+   0.9999999,
+   1.0
+  ],
+  [
+   1.0,
+   1.0
+  ],
+  [
+   -0.4999995,
+   -0.499999
+  ],
+  [
+   0.3333333,
+   0.333333
+  ]
+ ],
+ "pack": {
+  "vec": [
+   0.26726123690605164,
+   0.5345224738121033,
+   0.8017837405204773,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "hex": "77d6883e77d6083fb3414d3f000000000000000000000000"
+ }
+}

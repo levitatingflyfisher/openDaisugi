@@ -1,0 +1,19 @@
+# A foreman whose screen never rests still gets its words (CP-R-57). The fake
+# harness is quiet for 12 s, then redraws one byte every 500 ms for 30 s. The
+# page goes in once the screen is quiet and its turn ends with the Stop hook,
+# which reports idle as source headless (hook.py). The redraw then flips the
+# process source to working, the hook idle stands, and the queue sends the
+# words after 3 s. Without CP-R-57 they wait for the redraw to end, longer
+# than the case waits.
+#!config default = "fakeh"
+#!config [harness.fakeh]
+#!config command = "/bin/sh"
+#!config args = ["-c", "printf '\\033[?2004h'; echo ready; (sleep 12; i=0; while [ $i -lt 60 ]; do sleep 0.5; printf t; i=$((i+1)); done) & while IFS= read -r l; do printf '%s\\n' \"$l\" >> {WORK}/in; done"]
+{"id":"1","cmd":"floor.talk","text":"WORD-STATUS"}
+{"id":"$id","ok":true,"result":{"pane":"$f","label":"foreman","started":true,"queued":1}}
+{"id":"2","cmd":"pane.wait_output","pane":"$f","contains":"You are the foreman","timeout_ms":25000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"3","cmd":"pane.report_state","pane":"$f","event":{"v":1,"ts":4000000000,"session_id":"s","harness":"fakeh","pane":"$f","state":"idle","source":"headless","detail":"session stop"}}
+{"id":"$id","ok":true,"result":{"pane":"$f","state":"idle","source":"headless"}}
+{"id":"4","cmd":"pane.wait_output","pane":"$f","contains":"WORD-STATUS","timeout_ms":25000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}

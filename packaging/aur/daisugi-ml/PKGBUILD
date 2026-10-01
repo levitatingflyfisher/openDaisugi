@@ -1,0 +1,42 @@
+# The train pack as a system pack, for `daisugi lora train` and
+# `daisugi pack run train` with the system's Python and the
+# distribution's PyTorch and Hugging Face packages. Not published.
+#
+# package() lays out the worker files and a manifest under
+# /usr/lib/opendaisugi/packs/train with scripts/system-pack.py, and
+# compiles the worker's Python files there, so nothing is written under
+# /usr at run time. It builds no virtual environment and runs no pip. The
+# daisugi binaries (Go, Rust or Python) use it when the user has no train
+# pack of their own (`daisugi pack install train`, online or from an
+# offline bundle, which goes to the user's data dir and comes first).
+#
+# It is its own package, not a split of opendaisugi, so building it
+# builds no Go, Rust or Z3 (ruling PK-R-20). python-numpy, python-pytorch and
+# python-datasets are in extra; python-transformers, python-peft,
+# python-trl and python-accelerate are in the AUR (checked 2026-10-08).
+#
+# _commit is the commit the opendaisugi package pins. Until one exists,
+# the empty _commit makes makepkg stop at the source step, the intent.
+
+pkgname=daisugi-ml
+pkgver=0.43.0
+pkgrel=1
+_commit=
+pkgdesc='LoRA training for the daisugi binaries with the system PyTorch (the train pack)'
+arch=('any')
+url='https://github.com/levitatingflyfisher/openDaisugi'
+license=('MIT')
+depends=('opendaisugi' 'python' 'python-numpy' 'python-pytorch' 'python-transformers' 'python-peft'
+         'python-trl' 'python-datasets' 'python-accelerate')
+makedepends=('git')
+source=("openDaisugi::git+${url}.git#commit=${_commit}")
+sha256sums=('SKIP')
+
+package() {
+  cd "${srcdir}/openDaisugi"
+  local packs="${pkgdir}/usr/lib/opendaisugi/packs"
+  python scripts/system-pack.py train "${packs}" --python /usr/bin/python
+  python -m compileall -q -d /usr/lib/opendaisugi/packs/train/worker "${packs}/train/worker"
+  python -O -m compileall -q -d /usr/lib/opendaisugi/packs/train/worker "${packs}/train/worker"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

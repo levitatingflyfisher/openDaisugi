@@ -1,0 +1,7 @@
+# A host is letters, digits, dots and hyphens, or an IP address: an
+# underscore is no address in Go or Rust, and the browser speaks.
+#!config [voice]
+#!config enabled = false
+#!config speak_url = "http://gpu_box:8880"
+{"id":"s0","cmd":"speech.status"}
+{"id":"$id","ok":true,"result":{"mode":"browser","line":"[voice] speak_url is not an http:// or https:// address with no user name, password or query, so the browser's own voice speaks. Fix speak_url in coppice.toml, then start the coppice server again."}}

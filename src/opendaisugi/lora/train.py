@@ -14,7 +14,7 @@ Typical invocation::
 
     python -m opendaisugi.lora.train \\
         --jsonl train.jsonl \\
-        --base-model Qwen/Qwen2.5-1.5B-Instruct \\
+        --base-model ibm-granite/granite-4.1-3b \\
         --output adapters/robin \\
         --qlora
 
@@ -26,6 +26,7 @@ Hugging Face PEFT adapter directory.
 from __future__ import annotations
 
 import argparse
+import os
 from typing import Sequence
 
 
@@ -45,8 +46,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--base-model",
-        default="Qwen/Qwen2.5-1.5B-Instruct",
-        help="Hugging Face model id to fine-tune (default: Qwen/Qwen2.5-1.5B-Instruct)",
+        default=None,
+        help="Hugging Face model id or local path to fine-tune (default: the model "
+        "`daisugi models use` recorded, else the catalog default for this hardware)",
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        help="Daisugi data directory that holds the recorded model (default: the data home)",
     )
     parser.add_argument(
         "--output",
@@ -120,10 +127,91 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_base_model(args: argparse.Namespace) -> str:
+    """--base-model, else the recorded garden model, else the catalog
+    default for this hardware."""
+    if args.base_model:
+        return args.base_model
+    from pathlib import Path
+
+    from opendaisugi.datahome import data_home
+    from opendaisugi.hardware import detect_voice_hardware
+    from opendaisugi.model_catalog import base_model
+
+    data_dir = Path(args.data_dir) if args.data_dir else data_home()
+    return base_model(data_dir, detect_voice_hardware())
+
+
+def has_experts(config) -> bool:
+    """Whether a model config has mixture-of-experts layers."""
+    n = getattr(config, "num_local_experts", None) or getattr(config, "num_experts", None)
+    return bool(n)
+
+
+def core_count() -> int:
+    """The number of cores this process may run on."""
+    try:
+        return len(os.sched_getaffinity(0)) or 1
+    except AttributeError:
+        return os.cpu_count() or 1
+
+
+def device_plan(cuda: bool, cores: int) -> dict:
+    """The dtype and the thread count for the training run, and the line
+    that says them. A CPU with no native bf16 instructions runs bf16 on
+    mostly one core (852 s for one step of granite-4.0-1b, PK-R-8), so on
+    the CPU the run uses fp32 and one torch thread per core."""
+    if cuda:
+        return {"dtype": "bfloat16", "threads": None, "line": "training on the GPU in bfloat16"}
+    return {
+        "dtype": "float32",
+        "threads": cores,
+        "line": f"training on the CPU in float32 with {cores} threads",
+    }
+
+
+def sft_kwargs(args: argparse.Namespace, cuda: bool, moe: bool = False) -> dict:
+    """The SFTConfig arguments. trl calls the sequence limit max_length
+    (it was max_seq_length before trl 0.20). With no GPU, transformers
+    trains on the CPU only when use_cpu is set, and there in fp32. The loss is the
+    model's own ("nll"): trl's default chunked loss reads MoE fields that
+    a Granite 4 hybrid config does not have. A model with no experts gets
+    no router loss: a dense Granite 4 keeps MoE fields in its config, and
+    trl would ask it for router logits it does not have."""
+    kw = {
+        "output_dir": args.output,
+        "num_train_epochs": args.epochs,
+        "per_device_train_batch_size": args.batch_size,
+        "gradient_accumulation_steps": args.grad_accum,
+        "learning_rate": args.lr,
+        "max_length": args.max_seq_len,
+        "logging_steps": 10,
+        "save_strategy": "epoch",
+        "bf16": cuda,
+        "seed": args.seed,
+        "report_to": "none",
+        "use_cpu": not cuda,
+        "loss_type": "nll",
+    }
+    if not moe:
+        kw["router_aux_loss_coef"] = 0.0
+    return kw
+
+
 def _train(args: argparse.Namespace) -> int:
     # Lazy imports — fail loudly on the GPU box only, never at module import.
     # In --dry-run we import only `datasets` so CPU-only laptops can smoke-test
     # the JSONL path without triggering bitsandbytes CUDA init.
+    plan = None
+    if not args.dry_run:
+        import torch
+
+        plan = device_plan(torch.cuda.is_available(), core_count())
+        if plan["threads"] is not None:
+            torch.set_num_threads(plan["threads"])
+        # The first line the pack worker sends on as progress.
+        print(plan["line"], flush=True)
+
     from datasets import load_dataset
 
     dataset = load_dataset("json", data_files=args.jsonl, split="train")
@@ -163,7 +251,7 @@ def _train(args: argparse.Namespace) -> int:
     model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
         quantization_config=quant_config,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=getattr(torch, plan["dtype"]),
         device_map="auto",
     )
 
@@ -177,17 +265,7 @@ def _train(args: argparse.Namespace) -> int:
     )
 
     sft_config = SFTConfig(
-        output_dir=args.output,
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum,
-        learning_rate=args.lr,
-        max_seq_length=args.max_seq_len,
-        logging_steps=10,
-        save_strategy="epoch",
-        bf16=True,
-        seed=args.seed,
-        report_to="none",
+        **sft_kwargs(args, cuda=torch.cuda.is_available(), moe=has_experts(model.config))
     )
 
     trainer = SFTTrainer(
@@ -208,6 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point. Parses args, then hands off to ``_train``."""
     parser = _build_parser()
     args = parser.parse_args(argv)
+    args.base_model = resolve_base_model(args)
     return _train(args)
 
 

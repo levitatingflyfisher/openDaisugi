@@ -1,0 +1,41 @@
+# speech.status and speech.say against a fake speech server (an
+# OpenAI-style POST /v1/audio/speech). The fake answers by the input: the
+# audio, a 404, nothing, more than the 2 MiB cap, a chunked body, a reply
+# slower than the 10 second limit, and the headers it saw. The key comes
+# from the operator profile tts in the fake daisugi's bundle, and reaches
+# the server as the bearer only.
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/web/bin/fake-daisugi
+#!env FAKE_BUNDLE_FILE={FIXTURES}/web/speech-bundle.json
+#!config [voice]
+#!config enabled = false
+#!config speak_url = "http://{ADDR2}"
+#!config speak_model = "m1"
+#!config speak_voice = "v1"
+#!config speak_profile = "tts"
+{"id":"s0","cmd":"speech.status"}
+{"id":"$id","ok":true,"result":{"mode":"server","model":"m1","profile":"tts","url":"http://{ADDR2}/v1/audio/speech","voice":"v1"}}
+{"id":"p1","cmd":"pane.create","cwd":"{START}","cmd_argv":["/usr/bin/python3","{FIXTURES}/web/fake-speech.py","{ADDR2}"],"kind":"pty","label":"speech"}
+{"id":"$id","ok":true,"result":{"pane":"$sp"}}
+#!retry 8000
+{"id":"a1","cmd":"speech.say","text":"  Hello there.  "}
+{"id":"$id","ok":true,"result":{"audio":"SUQzIGZha2UgYXVkaW8=","bytes":14,"type":"audio/mpeg"}}
+{"id":"a2","cmd":"speech.say","text":"whoami"}
+{"id":"$id","ok":true,"result":{"audio":"YXV0aD1CZWFyZXIgc2stdGVzdC0wMDAwIG1vZGVsPW0xIHZvaWNlPXYxIGZvcm1hdD1tcDM=","bytes":53,"type":"audio/mpeg"}}
+{"id":"a3","cmd":"speech.say","text":"chunked"}
+{"id":"$id","ok":true,"result":{"audio":"SUQzIGZha2UgYXVkaW8=","bytes":14,"type":"audio/mpeg"}}
+{"id":"e1","cmd":"speech.say","text":"error"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"The speech server at {ADDR2} answered 404. Check [voice] speak_model, speak_voice and speak_profile in coppice.toml."}}
+{"id":"e1r","cmd":"speech.say","text":"redirect"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"The speech server at {ADDR2} answered 302. Check [voice] speak_model, speak_voice and speak_profile in coppice.toml."}}
+{"id":"e2","cmd":"speech.say","text":"empty"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"The speech server at {ADDR2} sent no audio. Check [voice] speak_model and speak_voice in coppice.toml."}}
+{"id":"e3","cmd":"speech.say","text":"huge"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"The speech server at {ADDR2} sent more than 2 MiB of audio for one sentence. Use a shorter sentence or another server."}}
+{"id":"e4","cmd":"speech.say","text":"slow"}
+{"id":"$id","ok":false,"error":{"code":"timeout","message":"The speech server at {ADDR2} took longer than 10 seconds. Check that it runs and is not busy."}}
+{"id":"e5","cmd":"speech.say","text":"   "}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"speech.say needs the text to speak."}}
+{"id":"e6","cmd":"speech.say"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"speech.say needs the text to speak."}}
+{"id":"e7","cmd":"speech.say","text":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"That text is over 2000 bytes. Send one sentence at a time."}}

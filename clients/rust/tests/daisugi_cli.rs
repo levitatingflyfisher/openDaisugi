@@ -117,8 +117,8 @@ fn the_child_variable_alone_makes_no_child() {
 #[test]
 fn a_command_not_carried_says_so_in_one_line() {
     let home = scratch("notyet");
-    let (code, out, err) = run(daisugi(&home, &["viz"]), "");
-    assert_eq!((code, out.as_str(), err.as_str()), (2, "", "daisugi viz is not in this binary yet.\n"));
+    let (code, out, err) = run(daisugi(&home, &["gate", "audit"]), "");
+    assert_eq!((code, out.as_str(), err.as_str()), (2, "", "daisugi gate audit is not in this binary yet.\n"));
     // The version is the build's: DAISUGI_VERSION, or the checkout's git
     // describe, never a fixed number.
     let (code, out, _) = run(daisugi(&home, &["--version"]), "");
@@ -202,10 +202,13 @@ fn install_writes_a_hook_status_reads_back() {
             daisugi_verify::dialect::DIALECT_HASH
         )
     );
-    // A second install finds the same hook and changes nothing.
+    // A second install finds the same hooks and writes nothing; as the
+    // oracle does, it still lists the skill it links (IN-1).
+    let before = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
     let (code, out, _) = run(daisugi(&home, &["install", "--gate", "--runtime", "claude", "--yes"]), "");
     assert_eq!(code, 0);
-    assert!(out.contains("All runtimes were already configured"), "{out}");
+    assert!(out.contains("Done. Files modified:\n  ") && out.contains("opendaisugi-checklist\n\nRestart"), "{out}");
+    assert_eq!(std::fs::read_to_string(home.join(".claude/settings.json")).unwrap(), before);
     let _ = std::fs::remove_dir_all(&home);
 }
 
@@ -360,4 +363,45 @@ fn the_live_view_on_a_terminal() {
     let frames: Vec<&str> = out.split("\x1b[H\x1b[2J").collect();
     assert!(frames.len() >= 3 && frames[1].find("▼ ●") != frames[2].find("▼ ●"), "the pulse did not move");
     let _ = std::fs::remove_dir_all(&home);
+}
+
+/// DAISUGI_PORT (PK-R-15): `install` run as daisugi-rs hands the whole
+/// command, with its arguments, to the port the variable names, beside it;
+/// with no such sibling it stops with one line and changes nothing.
+#[test]
+fn install_hands_over_to_the_port_daisugi_port_names() {
+    let home = scratch("port");
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    put_exe(&bin.join("daisugi-rs"), Some(std::path::Path::new(env!("CARGO_BIN_EXE_daisugi"))), "");
+    put_exe(&bin.join("daisugi"), None, "#!/bin/sh\necho \"go port: $* hop=$DAISUGI_PORT_HOP\"\n");
+    let mut c = Command::new(bin.join("daisugi-rs"));
+    c.args(["-q", "install", "--gate", "--dry-run"])
+        .env_clear()
+        .env("HOME", &home)
+        .env("PATH", "/usr/bin:/bin")
+        .env("DAISUGI_PORT", "go")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let (code, out, err) = run(c, "");
+    assert_eq!((code, out.as_str()), (0, "go port: -q install --gate --dry-run hop=1\n"), "{err}");
+    let mut c = Command::new(bin.join("daisugi-rs"));
+    c.args(["install", "--dry-run"])
+        .env_clear()
+        .env("HOME", &home)
+        .env("PATH", "/usr/bin:/bin")
+        .env("DAISUGI_PORT", "python")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let (code, _, err) = run(c, "");
+    assert_eq!(code, 2);
+    assert_eq!(
+        err,
+        format!(
+            "daisugi: DAISUGI_PORT is python, but there is no daisugi-py beside {}. Install it, or unset DAISUGI_PORT. Nothing was changed.\n",
+            bin.join("daisugi-rs").display()
+        )
+    );
 }

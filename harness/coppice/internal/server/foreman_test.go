@@ -323,6 +323,26 @@ func TestAForemanThatKeepsDrawingWhileIdleStillGetsThePage(t *testing.T) {
 	res := talk(t, s, "WORD-TICK")
 	id, _ := res["pane"].(string)
 	t.Cleanup(func() { closePane(t, s, id) })
+	// The hook's idle comes after the process fact says working, as it
+	// does for a real harness. A gate idle that came first would be
+	// replaced by the tick's working a moment later, and that pane never
+	// reads idle again while it draws.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		lp, ok := s.Live(id)
+		if ok {
+			lp.procMu.Lock()
+			st := lp.procState
+			lp.procMu.Unlock()
+			if st == proto.StateWorking {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the process fact never said working")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	gateIdle(t, s, id)
 	time.Sleep(500 * time.Millisecond)
 	got := waitFile(t, in, "WORD-TICK", 10*time.Second)
@@ -595,4 +615,106 @@ func TestResumingAnOldForemanAfterANewOneStartsIsNotTheForeman(t *testing.T) {
 	if tracked != fresh {
 		t.Fatalf("tracked foreman = %q, want the new %q", tracked, fresh)
 	}
+}
+
+// A page's turn that starts and ends between two polls of the talk queue
+// still counts as the turn: the words go after it at once, not after
+// foremanWait (30 s). A fake foreman whose hook says working and then idle
+// within a millisecond did this in chat/read.jsonl, and the queue waited
+// the whole 30 s for a turn it had missed.
+func TestAPageTurnShorterThanAPollStillLetsTheWordsGo(t *testing.T) {
+	toolchain.RequireOrSkip(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	in := filepath.Join(t.TempDir(), "in")
+	script := `stty -echo; printf '\033[?2004h'; echo ready; ` +
+		`while IFS= read -r l; do printf '%s\n' "$l" >> '` + in + `'; done`
+	if err := config.Save(config.Config{Default: "fakeh", Harness: map[string]config.Harness{
+		"fakeh": {Command: "sh", Args: []string{"-c", script}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(t)
+	// The process source reads the pane as quiet from the start, so only
+	// the hook's events below make a turn.
+	s.clockSkew.Store(int64(2 * processQuiet))
+	res := talk(t, s, "WORD-QUICK")
+	id, _ := res["pane"].(string)
+	t.Cleanup(func() { closePane(t, s, id) })
+	gateIdle(t, s, id)
+	// The end of the paste comes with the page's Enter.
+	waitFile(t, in, "\x1b[201~", 10*time.Second)
+	for _, st := range []string{proto.StateWorking, proto.StateIdle} {
+		s.ApplyState(id, proto.PaneStateEvent{
+			V: 1, TS: nowSeconds(), SessionID: id, Harness: "fakeh", Pane: &id,
+			State: st, Source: proto.SrcGate,
+		})
+	}
+	waitFile(t, in, "WORD-QUICK", 10*time.Second)
+}
+
+// A foreman with a gate idle, quiet for 6 s, that redraws a few bytes
+// still gets its words (CP-R-56). The redraw used to read as working from
+// the process source, and the queue waited for an idle that only a hook or
+// 5 more quiet seconds would bring.
+func TestAShortRedrawOfAnIdleForemanDoesNotHoldTheWords(t *testing.T) {
+	toolchain.RequireOrSkip(t)
+	in := fakeForeman(t)
+	s := newTestServer(t)
+	// The process source reads the pane as quiet from the start.
+	s.clockSkew.Store(int64(10 * time.Second))
+	res := talk(t, s, "WORD-REDRAW")
+	id, _ := res["pane"].(string)
+	t.Cleanup(func() { closePane(t, s, id) })
+	gateIdle(t, s, id)
+	waitFile(t, in, "\x1b[201~", 10*time.Second)
+	for _, st := range []string{proto.StateWorking, proto.StateIdle} {
+		s.ApplyState(id, proto.PaneStateEvent{
+			V: 1, TS: nowSeconds(), SessionID: id, Harness: "fakeh", Pane: &id,
+			State: st, Source: proto.SrcGate,
+		})
+	}
+	// The page's turn ended. The redraw lands before the queue's next poll.
+	lp, _ := s.Live(id)
+	// The grid marks a burst by its writes: the foreman's output was 6 s ago.
+	lp.Grid.StampWriteForTest(time.Now().Add(-6 * time.Second))
+	if _, err := lp.Grid.Write([]byte("12:01")); err != nil {
+		t.Fatal(err)
+	}
+	s.clockSkew.Store(0)
+	s.processTick(id, lp)
+	waitFile(t, in, "WORD-REDRAW", 3*time.Second)
+}
+
+// A foreman whose page landed, whose Stop hook then said idle, and whose
+// screen redraws every 500 ms for 30 s, still gets its words within 12 s of
+// that idle (CP-R-57). The process source reads such a screen as working
+// the whole time, and the queue used to wait for it to stop.
+func TestAStatusLineThatNeverRestsDoesNotHoldTheWords(t *testing.T) {
+	toolchain.RequireOrSkip(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	in := filepath.Join(t.TempDir(), "in")
+	script := `stty -echo; printf '\033[?2004h'; echo ready; ` +
+		`(sleep 12; i=0; while [ $i -lt 60 ]; do sleep 0.5; printf t; i=$((i+1)); done) & ` +
+		`while IFS= read -r l; do printf '%s\n' "$l" >> '` + in + `'; done`
+	if err := config.Save(config.Config{Default: "fakeh", Harness: map[string]config.Harness{
+		"fakeh": {Command: "sh", Args: []string{"-c", script}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(t)
+	res := talk(t, s, "WORD-STATUS")
+	id, _ := res["pane"].(string)
+	t.Cleanup(func() { closePane(t, s, id) })
+	// The page goes in once the screen is quiet (about 5 s). Its turn ends:
+	// the Stop hook says idle the way the real hook does, as source headless
+	// (hook.py). The screen then goes quiet for good measure and, from 12 s,
+	// redraws every 500 ms for 30 s. The process source flips to working,
+	// the hook idle stands, and the words must not wait for the redraw to
+	// end (CP-R-57).
+	waitFile(t, in, "\x1b[201~", 15*time.Second)
+	s.ApplyState(id, proto.PaneStateEvent{
+		V: 1, TS: nowSeconds(), SessionID: id, Harness: "fakeh", Pane: &id,
+		State: proto.StateIdle, Source: proto.SrcHeadless, Detail: "session stop",
+	})
+	waitFile(t, in, "WORD-STATUS", 20*time.Second)
 }

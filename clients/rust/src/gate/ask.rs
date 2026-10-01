@@ -7,11 +7,13 @@
 use super::decide::Decision;
 use super::envelope::Envelope;
 use super::effects::UNDOABLE;
-use super::paths::{os_error, os_path};
+use super::paths::{os_error, os_path, path_str};
+use super::statefile::{self, Miss};
+use super::statewrite;
 use super::pymodel::decode_utf8_strict;
 use super::pyjson::{dumps, loads, py_str, LoadError, Object, Value};
 use super::{random_hex, undecided, Fault, PyErr, Runner, R};
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -41,46 +43,27 @@ fn io(e: std::io::Error, p: &Path) -> Fault {
     Fault::Raised(os_error(&e, &p.to_string_lossy()))
 }
 
-/// `ask._mkdir`.
-fn mkdir(p: &Path) -> R<()> {
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(p).map_err(|e| io(e, p))?;
-    let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700));
-    Ok(())
-}
-
-/// `ask._write_json(path, body)`: through a `.tmp` file and `os.replace`.
-fn write_json(path: &Path, body: &Object) -> R<()> {
-    if let Some(parent) = path.parent() {
-        mkdir(parent)?;
-    }
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, dumps(&Value::Obj(body.clone()), true)).map_err(|e| io(e, &tmp))?;
-    let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    std::fs::rename(&tmp, path).map_err(|e| io(e, path))
-}
-
-/// `ask._read_json(path)`: a dict, or None for any OSError or ValueError.
-fn read_json(path: &Path) -> R<Option<Object>> {
-    let raw = match std::fs::read(path) {
+/// `ask._load`: the JSON object in an open file and its mtime, both from
+/// the fd. A file that is not readable JSON, or not an object, is None.
+fn load(fd: OwnedFd) -> R<(Option<Object>, f64)> {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let have = unsafe { libc::fstat(fd.as_raw_fd(), &mut st) } == 0;
+    let mtime = if have { st.st_mtime as f64 + st.st_mtime_nsec as f64 / 1e9 } else { 0.0 };
+    let raw = match statefile::read_all(fd) {
         Ok(r) => r,
-        Err(_) => return Ok(None),
+        Err(_) => return Ok((None, mtime)),
     };
     let text = match decode_utf8_strict(&raw) {
         Ok(t) => t,
-        Err(_) => return Ok(None),
+        Err(_) => return Ok((None, mtime)),
     };
     match loads(&text) {
-        Ok(Value::Obj(o)) => Ok(Some(o)),
-        Ok(_) => Ok(None),
+        Ok(Value::Obj(o)) => Ok((Some(o), mtime)),
+        Ok(_) => Ok((None, mtime)),
         // json.loads raises RecursionError, which is no ValueError.
         Err(LoadError::Recursion) => undecided("an ask file nested past Python's recursion limit"),
-        Err(_) => Ok(None),
+        Err(_) => Ok((None, mtime)),
     }
-}
-
-fn mtime(p: &Path) -> Option<f64> {
-    let m = std::fs::metadata(p).ok()?.modified().ok()?;
-    Some(m.duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0))
 }
 
 /// `os.kill(pid, 0)` for `_pid_alive`, with the OverflowError Python's
@@ -157,27 +140,36 @@ fn now() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-/// `path.unlink()` with FileNotFoundError ignored and any other OSError
-/// raised.
-fn unlink_missing_ok(p: &Path) -> R<()> {
-    match std::fs::remove_file(p) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(io(e, p)),
+/// `os.unlink(name, dir_fd=fd)` with FileNotFoundError ignored and any other
+/// OSError raised.
+fn unlink_at_missing_ok(dirfd: i32, name: &str, shown: &Path) -> R<()> {
+    let c = match std::ffi::CString::new(name) {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+    if unsafe { libc::unlinkat(dirfd, c.as_ptr(), 0) } == 0 {
+        return Ok(());
+    }
+    let e = std::io::Error::last_os_error();
+    if e.kind() == std::io::ErrorKind::NotFound {
+        Ok(())
+    } else {
+        Err(io(e, shown))
     }
 }
 
-/// `Path.glob("*.json")` in one directory: dotfiles included, directories
-/// too.
-fn json_names(dir: &Path) -> Vec<PathBuf> {
-    match std::fs::read_dir(dir) {
-        Ok(rd) => rd
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".json")))
-            .collect(),
-        Err(_) => vec![],
+/// True when `name` is an entry in the directory `dirfd`, a dangling link
+/// included.
+fn entry_exists(dirfd: i32, name: &str) -> bool {
+    let Ok(c) = std::ffi::CString::new(name) else {
+        return false;
+    };
+    let fd = unsafe { libc::openat(dirfd, c.as_ptr(), libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return false;
     }
+    unsafe { libc::close(fd) };
+    true
 }
 
 impl Runner {
@@ -188,18 +180,62 @@ impl Runner {
         }
     }
 
-    /// `ask.operator_present(root)`.
+    /// The gate root as the statefile routines spell it.
+    fn ask_root(&self) -> String {
+        path_str(&self.root)
+    }
+
+    /// `ask._read`: the body and, for a file that opened, its mtime, through
+    /// the checked open (GR-R-10). Missing and refused both read as no file.
+    fn ask_read(&self, dirs: &[&str], name: &str) -> R<(Option<Object>, Option<f64>)> {
+        match statefile::probe(&self.ask_root(), dirs, name, None) {
+            Err(_) => Ok((None, None)),
+            Ok(fd) => {
+                let (body, m) = load(fd)?;
+                Ok((body, Some(m)))
+            }
+        }
+    }
+
+    /// `ask._write`: the body written through the directory fd, a link at
+    /// the name replaced. False when the gate refuses the path.
+    fn ask_write(&self, sub: &str, name: &str, body: &Object) -> R<bool> {
+        let text = dumps(&Value::Obj(body.clone()), true);
+        match statewrite::write_file(&self.ask_root(), &[sub], name, &text, true) {
+            Ok(_) => Ok(true),
+            Err(e) if statewrite::write_refused(&e).is_some() => Ok(false),
+            Err(e) => Err(io(e, &self.gate_root().join(sub).join(name))),
+        }
+    }
+
+    /// `ask.channel_ok`: false when asks/ or answers/ exists and the gate
+    /// refuses it. Missing is fine: the first ask makes them.
+    fn channel_ok(&self) -> bool {
+        for sub in [ASKS, ANSWERS] {
+            if let Err(Miss::Refused(_)) = statefile::probe_dirs(&self.ask_root(), &[sub]) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// `ask._drop`: `<root>/<sub>/<name>` removed through the directory fd.
+    /// A directory the gate refuses is left alone; any other failure raises.
+    fn ask_drop(&self, sub: &str, name: &str) -> R<()> {
+        match statewrite::unlink_file(&self.ask_root(), &[sub], name) {
+            Ok(_) => Ok(()),
+            Err(e) if statewrite::write_refused(&e).is_some() => Ok(()),
+            Err(e) => Err(io(e, &self.gate_root().join(sub).join(name))),
+        }
+    }
+
+    /// `ask.operator_present(root)`, read through the checked open.
     fn operator_present(&self) -> R<bool> {
-        let p = self.gate_root().join(PRESENCE);
-        let body = match read_json(&p)? {
-            Some(b) => b,
-            None => return Ok(false),
+        let (body, mtime) = self.ask_read(&[], PRESENCE)?;
+        let (Some(body), Some(m)) = (body, mtime) else {
+            return Ok(false);
         };
-        let age = match mtime(&p) {
-            Some(m) => now() - m,
-            None => return Ok(false),
-        };
-        if age > 15.0 {
+        if now() - m > 15.0 {
             return Ok(false);
         }
         match body.value("pid") {
@@ -210,11 +246,16 @@ impl Runner {
 
     /// `ask._sweep_expired(root, now=now)`.
     fn sweep_expired(&self, at: f64) -> R<()> {
-        let root = self.gate_root();
-        let asks = root.join(ASKS);
-        if asks.exists() {
-            for p in json_names(&asks) {
-                let body = read_json(&p)?;
+        let root = self.ask_root();
+        let afds = statefile::probe_dirs(&root, &[ASKS]).ok();
+        let asks_fd = afds.as_ref().and_then(|f| f.last()).map(|f| f.as_raw_fd());
+        if let Some(afd) = asks_fd {
+            let note_dir = statefile::note_dir(&root, &[ASKS]);
+            for name in statewrite::list_json(afd) {
+                let body = match statefile::probe_file_in(afd, &note_dir, &name, None) {
+                    Ok(fd) => load(fd)?.0,
+                    Err(_) => None,
+                };
                 let deadline = match &body {
                     Some(b) => match b.get("deadline") {
                         None => 0.0,
@@ -223,19 +264,16 @@ impl Runner {
                     None => 0.0,
                 };
                 if body.is_none() || deadline <= at {
-                    unlink_missing_ok(&p)?;
-                    if let Some(name) = p.file_name() {
-                        unlink_missing_ok(&root.join(ANSWERS).join(name))?;
-                    }
+                    unlink_at_missing_ok(afd, &name, &self.gate_root().join(ASKS).join(&name))?;
+                    self.ask_drop(ANSWERS, &name)?;
                 }
             }
         }
-        let answers = root.join(ANSWERS);
-        if answers.exists() {
-            for p in json_names(&answers) {
-                if let Some(name) = p.file_name() {
-                    if !asks.join(name).exists() {
-                        unlink_missing_ok(&p)?;
+        if let Ok(wfds) = statefile::probe_dirs(&root, &[ANSWERS]) {
+            if let Some(wfd) = wfds.last().map(|f| f.as_raw_fd()) {
+                for name in statewrite::list_json(wfd) {
+                    if asks_fd.is_none_or(|a| !entry_exists(a, &name)) {
+                        unlink_at_missing_ok(wfd, &name, &self.gate_root().join(ANSWERS).join(&name))?;
                     }
                 }
             }
@@ -245,26 +283,30 @@ impl Runner {
 
     /// `ask._consume(root, tool_use_id)`.
     fn consume(&self, tid: &str) -> R<()> {
-        let root = self.gate_root();
         for sub in [ASKS, ANSWERS] {
-            unlink_missing_ok(&root.join(sub).join(format!("{}.json", safe(tid))))?;
+            self.ask_drop(sub, &format!("{}.json", safe(tid)))?;
         }
         Ok(())
     }
 
-    /// `ask.wait_answer(root, tool_use_id=tid, timeout_s=...)`.
+    /// `ask.wait_answer(root, tool_use_id=tid, timeout_s=...)`. An answer
+    /// file that is there but refused, or a refused answers/, is not an
+    /// answer: the wait ends with none.
     fn wait_answer(&self, tid: &str, timeout_s: f64) -> R<Option<Object>> {
-        let root = self.gate_root();
         let name = format!("{}.json", safe(tid));
-        let ask_path = root.join(ASKS).join(&name);
-        let answer_path = root.join(ANSWERS).join(&name);
-        let expected = read_json(&ask_path)?.map(|b| b.value("nonce").clone()).unwrap_or(Value::Null);
-        let ask_mtime = mtime(&ask_path);
+        let (ask_body, ask_mtime) = self.ask_read(&[ASKS], &name)?;
+        let expected = ask_body.map(|b| b.value("nonce").clone()).unwrap_or(Value::Null);
         let t_end = Instant::now() + Duration::from_secs_f64(timeout_s.clamp(0.0, 1e9));
         loop {
-            if answer_path.exists() {
-                let body = read_json(&answer_path)?;
-                let answer_mtime = mtime(&answer_path);
+            let probed = statefile::probe(&self.ask_root(), &[ANSWERS], &name, None);
+            if !matches!(probed, Err(Miss::Missing)) {
+                let (body, answer_mtime) = match probed {
+                    Ok(fd) => {
+                        let (b, m) = load(fd)?;
+                        (b, Some(m))
+                    }
+                    Err(_) => (None, None),
+                };
                 let valid = match &body {
                     Some(b) => {
                         let decision = b.value("decision");
@@ -333,6 +375,11 @@ impl Runner {
         if !tool_use_id.truthy() || !self.operator_present()? {
             return Ok(d);
         }
+        // GR-R-10: an asks/ or answers/ the gate refuses (a link, another
+        // user's, writable by others) takes no ask, so the deny stands.
+        if !self.channel_ok() {
+            return Ok(d);
+        }
         if !self.ask_timeout_s.is_finite() {
             // int(timeout_s) in the reason raises, and an infinite wait
             // is no answer the port can give.
@@ -359,7 +406,9 @@ impl Runner {
             .with("counterexample", d.counterexample())
             .with("toolInput", p.value("tool_input").clone())
             .with("tier", d.tier.as_str());
-        write_json(&self.gate_root().join(ASKS).join(format!("{}.json", safe(&tid))), &body)?;
+        if !self.ask_write(ASKS, &format!("{}.json", safe(&tid)), &body)? {
+            return Ok(d);
+        }
         let _ = super::best_effort(self.report_blocked(p, &d, session_id, &tid, deadline));
         let remaining = (deadline - now()).max(0.0);
         let reply = self.wait_answer(&tid, remaining)?;
@@ -412,7 +461,7 @@ impl Runner {
             .with("toolInput", p.value("tool_input").clone())
             .with("clause", d.clause())
             .with("tier", d.tier.as_str());
-        write_json(&self.gate_root().join(PROPOSALS).join(format!("{pid}.json")), &body)
+        self.ask_write(PROPOSALS, &format!("{pid}.json"), &body).map(|_| ())
     }
 }
 
@@ -437,5 +486,170 @@ mod tests {
         assert_eq!(safe("..a/b.."), "a_b");
         assert_eq!(safe(""), "none");
         assert_eq!(safe("é"), "_");
+    }
+
+    // GR-R-10: the ask channel is read and written through no link. A
+    // planted link at operator.json, asks/ or answers/ used to let a
+    // concurrent workspace write supply an allow. Each test plants one and
+    // needs the refusal. Python twin: tests/test_ask_channel_state.py.
+
+    use crate::gate::statefile::tests::{dir, file, mode};
+    use std::os::unix::fs::symlink;
+
+    fn runner(root: &str) -> Runner {
+        Runner {
+            env: Default::default(),
+            home: String::new(),
+            wd: Default::default(),
+            real_cache: Default::default(),
+            root: root.to_string(),
+            default_root: String::new(),
+            mode: "enforce".into(),
+            fmt: "claude".into(),
+            session: None,
+            captures: None,
+            verify_timeout_s: 1.0,
+            ask: true,
+            ask_timeout_s: 1.0,
+            checkpoints: false,
+            t0: Instant::now(),
+            resident: false,
+            caller: Default::default(),
+        }
+    }
+
+    fn gate_root() -> (PathBuf, String) {
+        let r = dir().join("gate");
+        std::fs::create_dir_all(&r).unwrap();
+        mode(&r, 0o700);
+        let s = r.to_str().unwrap().to_string();
+        (r, s)
+    }
+
+    fn presence(p: &Path, m: u32) {
+        std::fs::write(p, format!("{{\"pid\": {}, \"at\": 0}}", std::process::id())).unwrap();
+        mode(p, m);
+    }
+
+    fn post_one(r: &Runner, root: &Path) -> String {
+        let body = Object::new().with("tier", "permanent");
+        assert!(r.ask_write(ASKS, "t1.json", &body.with("nonce", "n1")).unwrap());
+        let raw = std::fs::read_to_string(root.join("asks/t1.json")).unwrap();
+        assert!(raw.contains("n1"));
+        "n1".into()
+    }
+
+    fn forged(nonce: &str) -> String {
+        format!("{{\"toolUseId\": \"t1\", \"decision\": \"allow\", \"nonce\": \"{nonce}\"}}")
+    }
+
+    #[test]
+    fn a_plain_presence_file_counts() {
+        let (root, s) = gate_root();
+        presence(&root.join("operator.json"), 0o600);
+        assert!(runner(&s).operator_present().unwrap());
+    }
+
+    #[test]
+    fn an_operator_file_that_is_linked_or_shared_is_no_operator() {
+        let (root, s) = gate_root();
+        let r = runner(&s);
+        let op = root.join("operator.json");
+        let real = dir().join("elsewhere.json");
+        presence(&real, 0o600);
+        symlink(&real, &op).unwrap();
+        assert!(!r.operator_present().unwrap(), "symlink");
+        std::fs::remove_file(&op).unwrap();
+        presence(&op, 0o666);
+        assert!(!r.operator_present().unwrap(), "world writable");
+        mode(&op, 0o600);
+        std::fs::hard_link(&op, dir().join("second")).unwrap();
+        assert!(!r.operator_present().unwrap(), "hard link");
+    }
+
+    #[test]
+    fn a_symlinked_asks_dir_takes_no_ask() {
+        let (root, s) = gate_root();
+        let r = runner(&s);
+        let real = dir();
+        symlink(&real, root.join("asks")).unwrap();
+        assert!(!r.channel_ok());
+        assert!(!r.ask_write(ASKS, "t1.json", &Object::new()).unwrap());
+        assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_symlinked_answers_dir_is_not_honored_and_the_wait_ends_at_once() {
+        let (root, s) = gate_root();
+        let r = runner(&s);
+        let nonce = post_one(&r, &root);
+        let real = dir();
+        std::fs::write(real.join("t1.json"), forged(&nonce)).unwrap();
+        mode(&real.join("t1.json"), 0o600);
+        symlink(&real, root.join("answers")).unwrap();
+        assert!(!r.channel_ok());
+        let t0 = Instant::now();
+        assert!(r.wait_answer("t1", 30.0).unwrap().is_none());
+        assert!(t0.elapsed() < Duration::from_secs(5));
+        assert!(real.join("t1.json").exists(), "removed through the link");
+    }
+
+    #[test]
+    fn an_answer_that_is_linked_shared_or_hard_linked_is_not_honored() {
+        let (root, s) = gate_root();
+        let r = runner(&s);
+        for name in ["symlink", "world writable", "hard link"] {
+            let _ = std::fs::remove_dir_all(root.join("asks"));
+            let _ = std::fs::remove_dir_all(root.join("answers"));
+            let nonce = post_one(&r, &root);
+            std::fs::create_dir(root.join("answers")).unwrap();
+            mode(&root.join("answers"), 0o700);
+            let p = root.join("answers/t1.json");
+            match name {
+                "symlink" => {
+                    let real = dir().join("real.json");
+                    file(&real, 0o600);
+                    std::fs::write(&real, forged(&nonce)).unwrap();
+                    symlink(&real, &p).unwrap();
+                }
+                "world writable" => {
+                    std::fs::write(&p, forged(&nonce)).unwrap();
+                    mode(&p, 0o666);
+                }
+                _ => {
+                    std::fs::write(&p, forged(&nonce)).unwrap();
+                    mode(&p, 0o600);
+                    std::fs::hard_link(&p, dir().join("second")).unwrap();
+                }
+            }
+            assert!(r.wait_answer("t1", 2.0).unwrap().is_none(), "{name}: a forged answer was honored");
+        }
+    }
+
+    #[test]
+    fn a_real_answer_is_still_honored() {
+        let (root, s) = gate_root();
+        let r = runner(&s);
+        let nonce = post_one(&r, &root);
+        let body = Object::new().with("toolUseId", "t1").with("decision", "allow").with("nonce", nonce.as_str());
+        assert!(r.ask_write(ANSWERS, "t1.json", &body).unwrap());
+        let got = r.wait_answer("t1", 2.0).unwrap().unwrap();
+        assert_eq!(got.value("decision"), &Value::Str("allow".into()));
+        assert!(!root.join("asks/t1.json").exists());
+    }
+
+    #[test]
+    fn the_sweep_removes_a_planted_ask_link_and_reads_no_target() {
+        let (root, s) = gate_root();
+        let r = runner(&s);
+        let real = dir().join("real-ask.json");
+        std::fs::write(&real, format!("{{\"deadline\": {}}}", now() + 600.0)).unwrap();
+        mode(&real, 0o600);
+        std::fs::create_dir(root.join("asks")).unwrap();
+        mode(&root.join("asks"), 0o700);
+        symlink(&real, root.join("asks/x.json")).unwrap();
+        r.sweep_expired(now()).unwrap();
+        assert!(std::fs::symlink_metadata(root.join("asks/x.json")).is_err());
+        assert!(real.exists());
     }
 }

@@ -16,6 +16,9 @@ from opendaisugi.models import Envelope, Permission
 SEARCH_REFUSAL = "this search reaches coppice's secrets. Search a narrower directory."
 PANE_REFUSAL = "a pane can propose. It cannot allow."
 HOME = str(Path.home())
+# The home's parent, for globs that must match the home: /home on a real
+# box, a scratch dir under the tests (conftest moves HOME).
+_PARENT = str(Path.home().parent)
 
 
 @pytest.fixture
@@ -72,8 +75,8 @@ _DENIED = [
     ("rg token /*", "/work"),
     ("rg --hidden token ~/.*", "/work"),
     ("rg --hidden token ~/.o*", "/work"),
-    ("rg token /hom?/" + Path.home().name, "/work"),
-    ("rg token /[h]ome/" + Path.home().name, "/work"),
+    ("rg token " + _PARENT[:-1] + "?/" + Path.home().name, "/work"),
+    ("rg token " + _PARENT[:-1] + "[" + _PARENT[-1] + "]/" + Path.home().name, "/work"),
     ("rg token {" + HOME + ",/x}", "/work"),
     ("find /* -type f -exec cat {} +", "/work"),
     # F5: find's own options before its roots.
@@ -184,9 +187,9 @@ _MANY = "{" + ",".join(f"/a{i}" for i in range(1, 65)) + "," + HOME + "}"
     "command",
     [
         "rg token " + HOME[:-1] + "{" + HOME[-1] + ".." + HOME[-1] + "}",
-        "rg token /{a..z}ome/" + Path.home().name,
+        "rg token " + _PARENT[:-1] + "{a..z}/" + Path.home().name,
         "rg token " + HOME[:-1] + "{01..03}",
-        "rg token /home/{a..1}",
+        "rg token " + _PARENT + "/{a..1}",
         "rg token " + _MANY,
         'sh -c "sh -c \'sh -c \\"rg token ~\\"\'"',
         'bash -c "bash -c \'bash -c \\"sh -c \\\\\\"rg token ~\\\\\\"\\"\'"',

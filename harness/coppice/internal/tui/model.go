@@ -6,7 +6,11 @@ package tui
 
 import (
 	"fmt"
+	"math"
+	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/opendaisugi/coppice/internal/attach"
@@ -50,6 +54,14 @@ type Row struct {
 	Kind string
 	// Trust is true while the pane shows Claude's folder trust screen.
 	Trust bool
+	// Changed lists the watched workspace files (git hooks, git config,
+	// Claude's project settings) a fenced run changed, from pane.list's
+	// workspace_changed. The rail shows them.
+	Changed []string
+	// Mode is the daisugi mode the gate last reported (enforcing,
+	// watching or off), "" when the server sends none. Marker is
+	// "watching" while the owner set the agent to watching.
+	Mode, Marker string
 }
 
 // KindHeadless is the Row.Kind of an agent that takes whole messages
@@ -90,8 +102,12 @@ func (r Row) needsYou() bool {
 
 // lookingOf reads the looking list of a pane.list row, or nil when nobody
 // looks. A value that is not a string is skipped.
-func lookingOf(m map[string]any) []string {
-	raw, _ := m["looking"].([]any)
+func lookingOf(m map[string]any) []string { return stringsOf(m, "looking") }
+
+// stringsOf reads a list of strings from a pane.list row, skipping a value
+// that is not a non-empty string.
+func stringsOf(m map[string]any, key string) []string {
+	raw, _ := m[key].([]any)
 	var out []string
 	for _, v := range raw {
 		if s, ok := v.(string); ok && s != "" {
@@ -161,17 +177,32 @@ type Model struct {
 	Peek    *PeekView
 	Prompt  string
 	Message string
-	Default string
-	NeedYou int
-	Tiles   *tiles.Tiles
-	Screens map[string]*attach.Screen
+	// Restarted is how many agents the restart line offered to bring
+	// back. While it is above 0 the footer adds R resume all. Any key
+	// ends it.
+	Restarted int
+	Default   string
+	NeedYou   int
+	Tiles     *tiles.Tiles
+	Screens   map[string]*attach.Screen
 	// Talking is true while the prompt line has the keyboard: Space is
 	// text and Enter runs the line. ctrl-t sets it, and so does the first
 	// printable byte. Esc clears it with the prompt.
 	Talking bool
 	// Confirm holds the id of the pane ctrl-w asked to close. The prompt
 	// line shows the question until y closes it or any other key cancels.
-	Confirm string
+	// With ConfirmMode the question is m's: whether to lower the agent to
+	// watching.
+	Confirm     string
+	ConfirmMode bool
+	// ConfirmRouter is the route (direct or gateway) the question asks
+	// about when Confirm names an agent to restart for a router swap.
+	ConfirmRouter string
+	// ConfirmLoop is the harness the question asks about when Confirm names
+	// an agent whose conversation moves there, and ConfirmLine the replay
+	// cost line the server's preview gave.
+	ConfirmLoop string
+	ConfirmLine string
 	// Tasks is the last task.list, refreshed with the roster.
 	Tasks []TaskRow
 	// Path is the stack of tasks the roster is pushed into, from the
@@ -181,6 +212,9 @@ type Model struct {
 	// Tree is the open tree view, which stands in for the roster while
 	// it is open.
 	Tree *TreeView
+	// Journal is the open journal, which covers the windows while it is
+	// open.
+	Journal *JournalView
 	// RowAt holds, for every screen line of the last render, the
 	// cursor-order index of the roster row drawn there, or -1. TileAt holds,
 	// for every screen column, the shown slot index drawn there, or -1.
@@ -204,6 +238,20 @@ type Model struct {
 	// away and back, keyed by pane id.
 	HeadlessLine   map[string]string
 	HeadlessCursor map[string]int
+	// ForemanID is the pane id of the floor's tracked foreman, from
+	// floor.facts, or "". Its window draws Chat, the messages of
+	// floor.chat, with an input line of its own that sends floor.talk.
+	// ChatScreen turns that window to the foreman's terminal. ChatSeen is
+	// the id of the newest reply a chat window has shown.
+	ForemanID  string
+	Chat       []ChatMsg
+	ChatSeen   string
+	ChatScreen bool
+	// ChatErr is set while the server refuses floor.chat for this floor.
+	ChatErr string
+	// ImportLine is "importing 12/340" while the foreman imports old chats
+	// (FM-R-85), else "". The bar shows it.
+	ImportLine string
 	// Leave is the key that gives the keyboard back to the roster. The
 	// typing header and footer name it.
 	Leave byte
@@ -247,6 +295,10 @@ type Model struct {
 	// Renaming holds the id of the pane the prompt line renames. The
 	// prompt holds the new label until Enter sends it or Esc drops it.
 	Renaming string
+	// Swapping holds the id of the agent whose model or router the prompt
+	// line swaps. The prompt holds the line, model NAME or router
+	// direct|gateway, until Enter sends it or Esc drops it.
+	Swapping string
 	// ClearAll is true while the prompt line asks whether to forget
 	// every ended agent the fold lists.
 	ClearAll bool
@@ -270,6 +322,8 @@ type Model struct {
 	// body line of the cursor in the last render, or -1.
 	shown   int
 	bodyCur int
+	// slim is true when the last render drew the slim rail.
+	slim bool
 }
 
 // Picker is the open project picker: the projects from project.list and
@@ -284,6 +338,88 @@ type Project struct {
 	Path   string
 	Name   string
 	Pinned bool
+	// Missing is true when the directory is gone. The picker draws such a
+	// row dim, and x removes it from the list.
+	Missing bool
+}
+
+// modal is true while a question, the picker, the rename field, the prompt
+// line or the tree has the keys.
+func (m *Model) modal() bool {
+	return m.Confirm != "" || m.ClearAll || m.Picker != nil || m.Renaming != "" || m.Swapping != "" || m.Talking || m.Tree != nil
+}
+
+// RestartLine is what the status line says once, after a start that found
+// agents which stopped with the old server and can come back. The footer
+// adds R resume all until a key is pressed.
+func RestartLine(n int) string {
+	if n == 1 {
+		return "1 agent stopped when coppice restarted."
+	}
+	return fmt.Sprintf("%d agents stopped when coppice restarted.", n)
+}
+
+// StartedLine is the status line after a new agent: its name, the
+// directory, and why that directory when it was not the selected agent's.
+// where names the project the owner picked, for a reply with no directory.
+func StartedLine(res map[string]any, where string) string {
+	label, _ := res["label"].(string)
+	if label == "" {
+		label = "a new agent"
+	}
+	dir, _ := res["cwd"].(string)
+	if dir == "" {
+		dir = where
+	} else {
+		dir = filepath.Clean(dir)
+	}
+	out := "Started " + label
+	if dir != "" {
+		out += " in " + dir
+	}
+	switch why, _ := res["why"].(string); why {
+	case "recent":
+		out += " (your last project)"
+	case "pinned":
+		out += " (a pinned project)"
+	case "start":
+		out += " (the start directory)"
+	}
+	return out + "."
+}
+
+// dirBase is the last element of a directory path, or the path itself when
+// it has none.
+func dirBase(dir string) string {
+	t := strings.TrimRight(dir, "/")
+	if i := strings.LastIndex(t, "/"); i >= 0 && i+1 < len(t) {
+		return t[i+1:]
+	}
+	return dir
+}
+
+// ProjectCounts is the state counts of the live agents in one project, for
+// the picker: "1 needs · 2 working", asks first. It is "" when the project
+// has no agent.
+func (m *Model) ProjectCounts(path string) string {
+	want := filepath.Clean(path)
+	n := map[string]int{}
+	for _, r := range m.Rows {
+		if r.Parent != "" || r.Worktree == "" || filepath.Clean(r.Worktree) != want {
+			continue
+		}
+		n[r.State]++
+	}
+	var parts []string
+	for _, c := range []struct{ state, word string }{
+		{proto.StateBlocked, "needs"}, {proto.StateWorking, "working"}, {proto.StateIdle, "idle"},
+		{proto.StateUnknown, "unknown"}, {proto.StateDone, "done"},
+	} {
+		if n[c.state] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n[c.state], c.word))
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 // NotesShown is how many notes the floor draws.
@@ -608,7 +744,9 @@ func RowsFrom(list []map[string]any, now float64) []Row {
 		}
 		r.QuietFor, _ = num(p, "quiet_for")
 		r.Looking = lookingOf(p)
+		r.Changed = stringsOf(p, "workspace_changed")
 		r.Stack = stackText(p)
+		r.Mode, r.Marker = daisugiOf(p)
 		if r.State == "blocked" {
 			r.Held = heldOf(p, now)
 		}
@@ -955,14 +1093,128 @@ func (m *Model) labelOf(id string) string {
 // asked, the clear-all question, the rename field, or the typed prompt.
 func (m *Model) PromptLine() string {
 	switch {
+	case m.Confirm != "" && m.ConfirmRouter != "":
+		return RouterQuestion(m.labelOf(m.Confirm))
+	case m.Confirm != "" && m.ConfirmLoop != "":
+		return LoopQuestion(m.ConfirmLine)
+	case m.Confirm != "" && m.ConfirmMode:
+		return WatchQuestion(m.labelOf(m.Confirm))
 	case m.Confirm != "":
 		return StopQuestion(m.labelOf(m.Confirm))
 	case m.ClearAll:
 		return ClearAllQuestion(len(m.recent()))
 	case m.Renaming != "":
 		return "rename " + textwidth.Printable(m.labelOf(m.Renaming), 0) + ": " + m.Prompt
+	case m.Swapping != "":
+		return "swap " + textwidth.Printable(m.labelOf(m.Swapping), 0) + ": " + m.Prompt
 	}
 	return m.Prompt
+}
+
+// RouterQuestion is the one question s asks before a router swap.
+func RouterQuestion(label string) string {
+	return "Restarts " + textwidth.Printable(label, 0) + " and resumes its conversation. A turn in progress ends. Enter resumes, Esc keeps."
+}
+
+// LoopQuestion is the one question s asks before a conversation moves to
+// another loop: the replay cost line first.
+func LoopQuestion(line string) string {
+	return textwidth.Printable(line, 0) + " Enter moves, Esc keeps."
+}
+
+// SwapHint is what s says to a line it cannot read.
+const SwapHint = "Type model NAME, router direct|gateway or loop HARNESS. Esc keeps things as they are."
+
+// tokenWord is a token count in a few characters: 999, 12.3k, 2.5M.
+func tokenWord(n float64) string {
+	cut := func(x float64) string { return strconv.FormatFloat(math.Round(x*10)/10, 'f', -1, 64) }
+	switch {
+	case !(n > 0):
+		return "0"
+	case n < 1000:
+		return strconv.FormatFloat(math.Round(n), 'f', -1, 64)
+	case n < 1e6:
+		return cut(n/1000) + "k"
+	}
+	return cut(n/1e6) + "M"
+}
+
+// MoveLine is the replay cost line s shows before a move, from the reply of
+// agent.move with preview: the size of the brief in tokens, and the size of
+// the whole conversation when older turns stay behind.
+func MoveLine(res map[string]any, to string) string {
+	tokens, _ := res["tokens"].(float64)
+	line := "Moves about " + tokenWord(tokens) + " tokens of conversation to " + to + "."
+	if trimmed, _ := res["trimmed"].(bool); trimmed {
+		if all, _ := res["conversation"].(float64); all > 0 {
+			line += " Older turns stay behind (about " + tokenWord(all) + " in all)."
+		} else {
+			line += " Older turns stay behind."
+		}
+	}
+	return line + " This agent stays."
+}
+
+// LoopDone is the status line after s moves a conversation. A terminal
+// agent with a ready rule takes the brief at its first idle prompt, so a
+// queued brief says so, and a note tells if it never goes in. One with no
+// ready rule has the brief typed at once, and nothing says it landed.
+func LoopDone(label, to, when string) string {
+	label = textwidth.Printable(label, 0)
+	line := "Started " + to + " with the conversation of " + label + ". " + label + " stays."
+	switch when {
+	case "queued":
+		line += " The brief goes in when " + to + " is ready, or a note says it did not."
+	case "typed":
+		line += " The brief was typed in at once. Check that it landed."
+	}
+	return line
+}
+
+// ModelDone is the status line after s swaps a model. when is the reply's
+// own: now, queued or next turn.
+func ModelDone(label, model, when string) string {
+	label = textwidth.Printable(label, 0)
+	switch when {
+	case "queued":
+		return label + " switches to " + model + " at its next idle prompt."
+	case "next turn":
+		return label + " uses " + model + " from its next turn."
+	}
+	return "Asked " + label + " to switch to " + model + "."
+}
+
+// RouterDone is the status line after s swaps a router. The agent comes
+// back as a new window that enforces, since its mode marker went with the
+// old pane.
+func RouterDone(label, router string) string {
+	way := "through the gateway"
+	if router == "direct" {
+		way = "direct"
+	}
+	return textwidth.Printable(label, 0) + " restarted and resumed " + way + ". It enforces again."
+}
+
+// SwapNone is what s says to an agent it has no swap for.
+func SwapNone(label, harness string) string {
+	if harness == "" {
+		harness = "a pane with no harness"
+	}
+	return "Swapping the model, router or loop of " + textwidth.Printable(label, 0) + " is not built for " + harness + " yet."
+}
+
+// swaps says which swaps s offers for a row: a model for claude in a
+// terminal and for headless sprig, a router for claude, and a move to
+// another loop for claude and headless sprig, the two conversations the
+// server can read.
+func swaps(r Row) (model, router, loop bool) {
+	if r.Parent != "" {
+		return false, false, false
+	}
+	model = (r.Harness == "claude" && r.Kind != KindHeadless) || (r.Harness == "sprig" && r.Kind == KindHeadless)
+	router = r.Harness == "claude"
+	loop = r.Harness == "claude" || (r.Harness == "sprig" && r.Kind == KindHeadless)
+	return model, router, loop
 }
 
 // ClearAllQuestion is the one line Clear all asks before it forgets n
@@ -977,4 +1229,42 @@ func ClearAllQuestion(n int) string {
 // StopQuestion is the one line ctrl-w asks before it stops a live agent.
 func StopQuestion(label string) string {
 	return "Stop " + textwidth.Printable(label, 0) + "? Enter stops it, Esc keeps it."
+}
+
+// WatchQuestion is the one question m asks before an agent goes from
+// enforcing to watching.
+func WatchQuestion(label string) string {
+	return "Watch only? The gate will log the calls of " + textwidth.Printable(label, 0) +
+		" and stop none. While it watches, it can also change the gate for other agents. Enter yes, Esc no."
+}
+
+// ModeDone is the status line after m sets a mode. The gate reads the
+// marker on the agent's next tool call, so it says when.
+func ModeDone(label, mode string) string {
+	label = textwidth.Printable(label, 0)
+	if mode == "watching" {
+		return label + " watches from its next tool call. The gate logs its calls and stops none."
+	}
+	return label + " goes back to the gate's own mode from its next tool call."
+}
+
+// HookRootLine is what m says when the installed gate hook names another
+// gate root than the server's: a mode set here would do nothing
+// (F11-R-15).
+func HookRootLine(root string) string {
+	return "The gate hook reads another gate root, " + textwidth.Printable(root, 0) +
+		", so a mode set here does nothing."
+}
+
+// GateWatches is what m says on an agent that watches because the whole
+// gate does: its hook runs in audit, so there is nothing to lower
+// (F11-R-14).
+func GateWatches(label string) string {
+	return "The gate itself watches every call of " + textwidth.Printable(label, 0) +
+		": its hook runs in audit, so there is nothing to lower here."
+}
+
+// ModeNoGate is what m says on an agent no gate hook reports for.
+func ModeNoGate(label string) string {
+	return "No gate hook reports for " + textwidth.Printable(label, 0) + ", so it has no daisugi mode to set."
 }

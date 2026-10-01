@@ -14,6 +14,7 @@ import (
 	"daisugi-verify/internal/lazyre"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/statefile"
 )
 
 // ErrUnsure marks an envelope pydantic may coerce or refuse in a way this
@@ -86,22 +87,26 @@ func StarterEnvelope(ws string, decompose bool) (*pyjson.Object, error) {
 }
 
 // Register is gate.register_envelope: the dump written to
-// envelopes/<safe session or default>.json, the directory 0700 and the
-// file 0600 from the moment it exists. followed is the file written when
-// the envelope's path was a symlink.
-func Register(env *pyjson.Object, session string, root string) (path, followed string, err error) {
-	d := EnvelopesDir(root)
-	if err := mkdirPrivate(d); err != nil {
-		return "", "", err
-	}
+// envelopes/<safe session or default>.json through the root's directory fds
+// (GR-R-9), the directories 0700 and the file 0600 from the moment it
+// exists, then read back with the gate's reader. A link at the file's name
+// or a directory is refused, as is a file the gate would not load: the
+// error is a *statefile.WriteRefused.
+func Register(env *pyjson.Object, session string, root string) (path string, err error) {
 	name := "default"
 	if session != "" {
 		name = SafeSessionID(session)
 	}
-	p := Join(d, name+".json")
+	p := Join(EnvelopesDir(root), name+".json")
 	// pydantic's model_dump_json keeps non-ASCII text as is.
-	followed, err = WriteFileMode(p, pyjson.DumpsIndent(env, 2, false), 0o600)
-	return p, followed, err
+	dirs := []string{"envelopes"}
+	if _, err := statefile.WriteFile(root, dirs, name+".json", pyjson.DumpsIndent(env, 2, false), false); err != nil {
+		return "", err
+	}
+	if err := statefile.VerifyWritten(root, dirs, name+".json"); err != nil {
+		return "", err
+	}
+	return p, nil
 }
 
 // Validate is Envelope(**in) followed by model_dump(): every field in
@@ -186,6 +191,14 @@ func Validate(in *pyjson.Object) (*pyjson.Object, error) {
 		return nil, err
 	}
 	out.Set("shell_interpreter_policy", policy)
+	// The deadline is left out when absent or null, as the oracle dumps it.
+	deadline, err := optFloat(in, "deadline")
+	if err != nil {
+		return nil, err
+	}
+	if deadline != nil {
+		out.Set("deadline", deadline)
+	}
 	return out, nil
 }
 

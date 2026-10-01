@@ -1,0 +1,12 @@
+# A speak_profile the operator's agent profiles do not hold is said by name,
+# before any request leaves; a fake daisugi that fails says why in one line.
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/web/bin/fake-daisugi
+#!env FAKE_BUNDLE_FILE={FIXTURES}/web/speech-bundle.json
+#!config [voice]
+#!config enabled = false
+#!config speak_url = "http://127.0.0.1:9"
+#!config speak_profile = "nope"
+{"id":"a1","cmd":"speech.say","text":"Hello."}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"The speak profile \"nope\" is not in the operator's agent profiles (a key variable it names may be unset). Fix [voice] speak_profile in coppice.toml."}}
+{"id":"s0","cmd":"speech.status"}
+{"id":"$id","ok":true,"result":{"mode":"server","model":"kokoro","voice":"af_heart","profile":"nope","url":"http://127.0.0.1:9/v1/audio/speech"}}

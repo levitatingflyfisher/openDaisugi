@@ -55,7 +55,8 @@ pub enum Col {
     Int(i64),
     Real(f64),
     Text(String),
-    Blob,
+    /// A BLOB: bytes in Python.
+    Blob(Vec<u8>),
 }
 
 impl Col {
@@ -65,7 +66,7 @@ impl Col {
             ValueRef::Integer(i) => Col::Int(i),
             ValueRef::Real(f) => Col::Real(f),
             ValueRef::Text(b) => Col::Text(text(b)?),
-            ValueRef::Blob(_) => Col::Blob,
+            ValueRef::Blob(b) => Col::Blob(b.to_vec()),
         })
     }
 }
@@ -286,7 +287,8 @@ impl Store {
                     ValueRef::Integer(i) => Col::Int(i),
                     ValueRef::Real(f) if f == 0.0 => Col::Int(0),
                     ValueRef::Real(f) => Col::Real(f),
-                    _ => Col::Blob,
+                    ValueRef::Blob(b) => Col::Blob(b.to_vec()),
+                    ValueRef::Text(t) => Col::Text(String::from_utf8_lossy(t).into_owned()),
                 };
                 Ok((n, s))
             })

@@ -11,6 +11,7 @@ use super::sizing::{size_step, Ladder, Sizing};
 use crate::gate::py::text::repr;
 use crate::gate::pyjson::{Object, Value};
 use crate::llm::Client;
+use crate::supervise::executors::Job;
 use crate::supervise::{ms, str_of, ExecResult, Executor};
 
 /// `orchestrator._task_step_prompt`.
@@ -32,9 +33,44 @@ pub struct TaskExecutor {
     pub ladder: Ladder,
     /// The realized sizing of each step run, in run order.
     pub live: Rc<RefCell<Vec<Sizing>>>,
+    /// The sizing of each step a job is running, until `job_done`.
+    pub pending: Rc<RefCell<std::collections::HashMap<String, Sizing>>>,
 }
 
 impl Executor for TaskExecutor {
+    /// `parallel_safe`: true only under an unlimited budget, where no
+    /// step's model depends on another's spend.
+    fn parallel_safe(&self) -> bool {
+        self.tracker.borrow().total.is_none()
+    }
+
+    /// The step sized here, asked of its model on another thread with a
+    /// copy of the client; `job_done` records the spend in order.
+    fn job(&mut self, step: &Object, timeout_s: u64, max_out: usize) -> Option<Job> {
+        let pm = str_of(step, "preferred_model");
+        let rem = self.tracker.borrow().remaining();
+        let sz = size_step(step, &self.ladder, Some(rem), &pm);
+        self.live.borrow_mut().push(sz.clone());
+        let mut sized = step.clone();
+        sized.set("preferred_model", sz.model.as_str());
+        self.pending.borrow_mut().insert(str_of(step, "id"), sz);
+        let client = self.llm.borrow_mut().fork();
+        Some(Box::new(move || {
+            let llm = Rc::new(RefCell::new(client));
+            Ok(delegate(&llm, &sized, &task_prompt(&sized), timeout_s, max_out))
+        }))
+    }
+
+    fn job_done(&mut self, step: &Object, res: &ExecResult) -> Result<(), String> {
+        let Some(sz) = self.pending.borrow_mut().remove(&str_of(step, "id")) else { return Ok(()) };
+        let tokens = res.tokens.unwrap_or(sz.est_tokens);
+        let model = res.model.clone().unwrap_or(sz.model.clone());
+        match self.tracker.borrow_mut().record(&str_of(step, "id"), &model, tokens, res.cost_usd) {
+            Ok(()) | Err(RecordErr::Exceeded(_)) => Ok(()),
+            Err(RecordErr::Value(m)) => Err(m),
+        }
+    }
+
     fn run(&mut self, step: &Object, timeout_s: u64, max_out: usize) -> Result<ExecResult, String> {
         let pm = str_of(step, "preferred_model");
         let rem = self.tracker.borrow().remaining();

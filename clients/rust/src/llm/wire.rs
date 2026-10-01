@@ -312,8 +312,13 @@ pub fn post(w: &Wire, body: &[u8], timeout: f64, proxies: &netproxy::Httpx) -> R
         Err(http::Fail::Timeout) => Err(m(format!("the model call to {} timed out", w.url))),
         Err(http::Fail::Proxy(code, reason)) => Err(m(format!("the proxy refused the model call: {code} {reason}"))),
         Err(http::Fail::Fails(t)) => Err(m(format!("the model call could not start: {t}"))),
+        // httpx.InvalidURL is not an error post() catches: it reaches the
+        // caller as it is.
+        Err(http::Fail::Invalid(t)) => Err(m(t)),
         Err(http::Fail::Unported(why)) => Err(PostErr::Unported(why)),
-        Err(http::Fail::Other(_)) => Err(m(format!("could not reach the model server at {}", w.url))),
+        Err(http::Fail::Other(_) | http::Fail::Refused | http::Fail::Write(_)) => {
+            Err(m(format!("could not reach the model server at {}", w.url)))
+        }
     }
 }
 

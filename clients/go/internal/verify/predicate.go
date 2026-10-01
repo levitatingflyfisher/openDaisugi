@@ -1,8 +1,10 @@
 package verify
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 )
 
 // Expression mirrors the predicate.py discriminated union. Every concrete
@@ -201,12 +203,22 @@ func ParseExpression(raw json.RawMessage) (Expression, error) {
 		}
 		return NumericRange{Path: str(e.Path), Min: min, Max: max}, nil
 	case "length_range":
+		// pydantic's int fields: a number with a fractional part (or one
+		// past what this binary holds) is a ValidationError, never cut to
+		// an int.
+		whole := func(f float64) bool { return f == math.Trunc(f) && math.Abs(f) < 1<<62 }
 		min := 0
 		if e.Min != nil {
+			if !whole(*e.Min) {
+				return nil, fmt.Errorf("length_range min is not an int")
+			}
 			min = int(*e.Min)
 		}
 		var max *int
 		if e.Max != nil {
+			if !whole(*e.Max) {
+				return nil, fmt.Errorf("length_range max is not an int")
+			}
 			m := int(*e.Max)
 			max = &m
 		}
@@ -264,11 +276,15 @@ func decodeAny(raw json.RawMessage) (interface{}, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
+	// Numbers as Python holds them: an int no float64 holds exactly stays
+	// an exact json.Number.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
 	var v interface{}
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := dec.Decode(&v); err != nil {
 		return nil, err
 	}
-	return v, nil
+	return exactNumbers(v), nil
 }
 
 func decodeAnySlice(raws []json.RawMessage) ([]interface{}, error) {

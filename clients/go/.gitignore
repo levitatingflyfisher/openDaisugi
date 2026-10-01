@@ -8,3 +8,5 @@
 /.native
 /daisugi
 /pathway-probe
+/.mujoco
+/.onnxruntime

@@ -9,6 +9,7 @@ use super::py::text::{repr, surrogate_char};
 use super::pyjson::{self, dumps, py_decode_error, py_float_repr, Object, Value};
 use super::pystr::safe_session_id;
 use super::state_report::{report_explicit, valid_coppice_pane_id};
+use std::collections::HashMap;
 
 /// `gate_server._MAX_REQUEST`: a request line is read up to its newline or
 /// this many bytes, whichever comes first.
@@ -40,6 +41,9 @@ pub struct Caller {
     pub herdr_pane: Option<String>,
     pub data_dir: Option<String>,
     pub peer_pid: Option<i64>,
+    /// The workspace of the fence run above the caller, set by the server
+    /// from the peer pid, never by the request (FN-R-21).
+    pub workspace: Option<String>,
 }
 
 impl Caller {
@@ -123,6 +127,7 @@ pub fn parse_request(line: &[u8]) -> Option<Request> {
             herdr_pane: field("herdr_pane"),
             data_dir: field("coppice_data_dir"),
             peer_pid: None,
+            workspace: None,
         },
     })
 }
@@ -290,7 +295,8 @@ pub fn encode_request(q: &Request) -> Vec<u8> {
         .with("pane", c.pane.clone())
         .with("herdr_pane", c.herdr_pane.clone())
         .with("data_dir", c.data_dir.clone())
-        .with("peer_pid", c.peer_pid);
+        .with("peer_pid", c.peer_pid)
+        .with("workspace", c.workspace.clone());
     dumps(&Value::Obj(o), true).into_bytes()
 }
 
@@ -319,6 +325,7 @@ pub fn decode_request(b: &[u8]) -> Option<Request> {
             herdr_pane: field("herdr_pane"),
             data_dir: field("data_dir"),
             peer_pid,
+            workspace: field("workspace"),
         },
     })
 }
@@ -344,11 +351,36 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
 /// stdout, stderr and exit code. Deep input recurses: run it on a large
 /// stack.
 pub fn hook_report(argv: &[String], raw: &[u8], caller: &Caller, home: &str) -> (String, String, i32) {
+    hook_report_with(argv, raw, home, true, &|row: &Object| {
+        if caller.names_a_pane() {
+            caller.report(row);
+        }
+    })
+}
+
+/// `_state_report.hook_report_argv` as the command line runs it: the pane
+/// identity comes from `env`, the environment this process shares with its
+/// caller, as `report_state` reads it by default.
+pub fn hook_report_cli(argv: &[String], raw: &[u8], env: &HashMap<String, String>, home: &str) -> (String, String, i32) {
+    hook_report_with(argv, raw, home, false, &|row: &Object| {
+        let _ = super::state_report::report_state_env(env, row);
+    })
+}
+
+fn hook_report_with(
+    argv: &[String],
+    raw: &[u8],
+    home: &str,
+    resident: bool,
+    deliver: &dyn Fn(&Object),
+) -> (String, String, i32) {
     let (pane, root) = match parse_hook_report_argv(argv) {
         Some(x) => x,
         None => return (String::new(), "daisugi hook report: bad arguments".into(), 1),
     };
-    let root = root.unwrap_or_else(|| path_join(&path_join(&path_str(home), ".opendaisugi"), "gate"));
+    let root = root.unwrap_or_else(|| {
+        path_join(&crate::datahome::dir(|k| std::env::var(k).ok(), &path_str(home), crate::datahome::exists), "gate")
+    });
     let text = match std::str::from_utf8(raw) {
         Ok(t) => t.to_string(),
         Err(_) => {
@@ -362,6 +394,12 @@ pub fn hook_report(argv: &[String], raw: &[u8], caller: &Caller, home: &str) -> 
         Ok(Value::Obj(o)) => o,
         _ => return (String::new(), "daisugi hook report: event must be a JSON object".into(), 1),
     };
+    // The resident gate builds a path from it (FN-R-21).
+    if resident && row.get("session_id").is_some() {
+        if !row.value("session_id").as_str().is_some_and(super::fenceruns::session_ok) {
+            return (String::new(), format!("daisugi hook report: {}", super::fenceruns::SESSION_REFUSAL), 1);
+        }
+    }
     if matches!(row.value("source").as_str(), Some("gate") | Some("operator")) {
         row.set("source", "headless");
     }
@@ -372,9 +410,7 @@ pub fn hook_report(argv: &[String], raw: &[u8], caller: &Caller, home: &str) -> 
         return (String::new(), format!("daisugi hook report: {m}"), 1);
     }
     let _ = append_report_tree(&root, &row);
-    if caller.names_a_pane() {
-        caller.report(&row);
-    }
+    deliver(&row);
     (String::new(), String::new(), 0)
 }
 

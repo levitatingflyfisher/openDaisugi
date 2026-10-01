@@ -31,6 +31,8 @@ type item struct {
 	kind  itemKind
 	row   Row
 	group railGroup
+	// depth is how many levels of subtask a row sits under.
+	depth int
 }
 
 // key names an item so the cursor can find it again after a refresh. A
@@ -75,15 +77,19 @@ func (m *Model) recent() []Row {
 func (m *Model) items() []item {
 	var out []item
 	rows := m.visible()
-	for _, g := range m.groups() {
+	groups := m.groups()
+	for _, g := range groups {
+		if m.hidden(g, groups) {
+			continue
+		}
 		out = append(out, item{kind: itemGroup, group: g})
 		if m.Folded[g.Key] {
 			continue
 		}
 		for _, r := range g.Rows {
-			out = append(out, item{kind: itemRow, row: r})
+			out = append(out, item{kind: itemRow, row: r, depth: g.Depth})
 			for _, c := range childrenOf(rows, r.ID) {
-				out = append(out, item{kind: itemRow, row: c})
+				out = append(out, item{kind: itemRow, row: c, depth: g.Depth})
 			}
 		}
 	}
@@ -157,6 +163,7 @@ func endedRowsFrom(list []map[string]any, now float64) []Row {
 			c := int(code)
 			r.ExitCode = &c
 		}
+		r.Changed = stringsOf(p, "workspace_changed")
 		if at, ok := num(p, "ended_at"); ok && now > at {
 			r.Age = now - at
 		}
@@ -252,15 +259,17 @@ func (m *Model) cursorToEnded(id string) {
 }
 
 // startOrder is the order the windows fill in when the floor opens: the
-// agents that need you, then the working ones, then the rest, each group
-// in rail order. Subagents never fill a window.
+// agents that need you, then the foreman while it holds a reply no window
+// showed, then the working ones, then the rest, each group in rail order.
+// Subagents never fill a window. An agent only ever takes a free window.
 func (m *Model) startOrder() []string {
 	rows := m.treeRows()
 	var out []string
 	for _, pick := range []func(Row) bool{
 		func(r Row) bool { return r.needsYou() },
-		func(r Row) bool { return !r.needsYou() && r.State == "working" },
-		func(r Row) bool { return !r.needsYou() && r.State != "working" },
+		func(r Row) bool { return !r.needsYou() && m.foremanFirst(r.ID) },
+		func(r Row) bool { return !r.needsYou() && r.State == "working" && !m.foremanFirst(r.ID) },
+		func(r Row) bool { return !r.needsYou() && r.State != "working" && !m.foremanFirst(r.ID) },
 	} {
 		for _, r := range rows {
 			if r.Parent == "" && pick(r) {

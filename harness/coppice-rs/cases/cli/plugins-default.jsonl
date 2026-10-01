@@ -1,0 +1,12 @@
+#!env XDG_CONFIG_HOME={FIXTURES}/cli/defaultconf
+# A config with no plugins key runs the default list: the views, and
+# notify-ntfy, which finishes at once with no topic.
+#!retry 5000
+{"id": "f", "log": "plugin=notify-ntfy"}
+{"id": "$id", "ok": true, "result": {"lines": ["time={MASKED} level=INFO msg=\"plugins: plugin finished\" plugin=notify-ntfy"]}}
+{"id": "s", "log": "notify-ntfy:"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "ls", "ls": "{HOME}/.local/share/coppice/plugins"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "pr", "log": "plugins: plugin ", "prefix": true}
+{"id": "$id", "ok": true, "result": {"lines": []}}

@@ -36,6 +36,10 @@ type TaskExecutor struct {
 
 const maxRetries = 2
 
+// ParallelSafe is OrchestratorTaskExecutor.parallel_safe: true only under
+// an unlimited budget, where no step's model depends on another's spend.
+func (t *TaskExecutor) ParallelSafe() bool { return t.Tracker.Total == nil }
+
 func (t *TaskExecutor) Run(step *pyjson.Object, timeoutS, maxOut int) (supervise.ExecResult, error) {
 	pm, _ := step.Value("preferred_model").(string)
 	sz := SizeStep(step, t.Ladder, t.Tracker, pm)

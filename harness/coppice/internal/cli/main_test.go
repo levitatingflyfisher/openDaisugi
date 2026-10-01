@@ -25,7 +25,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	code := m.Run()
+	code := testhome.CheckCanary(m.Run())
 	os.RemoveAll(dir)
 	os.Exit(code)
 }

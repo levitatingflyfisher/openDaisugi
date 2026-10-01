@@ -11,8 +11,163 @@ export const SEGMENTS = ['loop', 'daisugi', 'router', 'model'];
 
 // SWAP_NOTE is what a segment's details say while no verb swaps it.
 export const SWAP_NOTE = 'Swap is not built yet.';
-// MODE_NOTE is what the daisugi details say while no verb sets the mode.
-export const MODE_NOTE = 'Changing the mode from here is not built yet.';
+// MODE_OFF_NOTE is what the daisugi details say under the mode row: the
+// mode is set here, but off never is.
+export const MODE_OFF_NOTE = MESSAGES.modeOff().text;
+
+// modeAsk is the one question before an agent goes from enforcing to
+// watching.
+export const modeAsk = (label) => 'Watch only? The gate will log the calls of ' + label + ' and stop none. While it watches, it can also change the gate for other agents.';
+
+// modeDone is the status line after agent.set_mode. The gate reads the
+// marker on the agent's next tool call, so it says when. Enforce takes the
+// marker away, and the agent goes back to whatever mode the gate itself
+// runs in, which may be watching too, so it never says enforces
+// (F11-R-14).
+export function modeDone(label, mode) {
+  return mode === 'watching'
+    ? label + ' watches from its next tool call. The gate logs its calls and stops none.'
+    : label + " goes back to the gate's own mode from its next tool call.";
+}
+
+// hookRootLine is the mode row's one line when the installed gate hook
+// names another gate root than coppice's (F11-R-15).
+export const hookRootLine = (root) =>
+  'The gate hook reads another gate root, ' + root + ', so a mode set here does nothing.';
+
+// gateWatches is the mode row's one line when the whole gate watches: the
+// hook runs in audit, so no agent can be lowered and the row offers no
+// button (F11-R-14).
+export const gateWatches = (label) =>
+  'The gate itself watches every call of ' + label + ': its hook runs in audit, so there is nothing to lower here.';
+
+// modeChoice is the mode row's one button for a pane row: the mode it sets
+// (next), its words, and the question it asks first ('' for none). The
+// marker the owner set wins over the mode the gate last reported, since
+// the gate reads it on the next call. An agent that watches with no marker
+// watches because the whole gate does, so the row has a line and no
+// button (next null). null when there is nothing to set: no gate hook
+// reports for the agent, or the agent ended.
+export function modeChoice(row, facts) {
+  const st = row && row.stack;
+  const d = st && st.daisugi && typeof st.daisugi === 'object' ? st.daisugi : null;
+  if (!d || !str(d.mode) || d.mode === 'off' || row.closed === true || row.state === 'done') return null;
+  const label = str(row.label) || str(row.id) || 'this agent';
+  // The installed hook reads markers from another gate root, so a mode
+  // set here does nothing (F11-R-15).
+  const hookRoot = facts && facts.daisugi && str(facts.daisugi.hook_root);
+  if (hookRoot) return { next: null, line: hookRootLine(hookRoot) };
+  if (d.marker === 'watching') return { next: 'enforcing', label: 'Enforce', ask: '' };
+  if (d.mode === 'watching') return { next: null, line: gateWatches(label) };
+  return { next: 'watching', label: 'Watch only', ask: modeAsk(label) };
+}
+
+// MODELS is the harness's own list of models for the model row. Only
+// claude has one: its /model takes these names. A headless sprig agent
+// takes a typed name, since sprig runs on any provider's model.
+export const MODELS = { claude: ['opus', 'sonnet', 'haiku'] };
+
+// ROUTER_NOTE is what the router details say under the swap row.
+export const ROUTER_NOTE = 'A router change restarts the agent and resumes its conversation.';
+
+// routerAsk is the one question before a router swap.
+export const routerAsk = (label) => 'Restarts ' + label + ' and resumes its conversation. A turn in progress ends.';
+
+// modelDone is the status line after agent.set_model, from the reply's
+// when: now, queued or next turn.
+export function modelDone(label, model, when) {
+  if (when === 'queued') return label + ' switches to ' + model + ' at its next idle prompt.';
+  if (when === 'next turn') return label + ' uses ' + model + ' from its next turn.';
+  return 'Asked ' + label + ' to switch to ' + model + '.';
+}
+
+// routerDone is the status line after agent.set_router. The agent comes
+// back as a new window that enforces, since its old mode marker went with
+// the old pane.
+export const routerDone = (label, router) =>
+  label + ' restarted and resumed ' + (router === 'direct' ? 'direct' : 'through the gateway') + '. It enforces again.';
+
+// LOOPS is the harness names the loop row offers, the ones the new-agent
+// bar opens by name. The server refuses one that coppice.toml has no table
+// for, with the line that adds it.
+export const LOOPS = ['claude', 'codex', 'pi', 'sprig', 'opencode'];
+
+// LOOP_NOTE is what the loop details say under the swap row.
+export const LOOP_NOTE = 'A new agent takes the conversation. This agent stays until you close it.';
+
+// moveLine is the one line the loop row shows before anything moves, from
+// the reply of agent.move with preview: the size of the brief in tokens,
+// and the size of the whole conversation when older turns stay behind.
+export function moveLine(res, to) {
+  let line = 'Moves about ' + fmtTokens(res && res.tokens) + ' tokens of conversation to ' + to + '.';
+  if (res && res.trimmed === true) {
+    const all = Number(res.conversation);
+    line += all > 0 ? ' Older turns stay behind (about ' + fmtTokens(all) + ' in all).' : ' Older turns stay behind.';
+  }
+  return line + ' This agent stays.';
+}
+
+// moveDone is the status line after agent.move. A terminal agent with a
+// ready rule takes the brief at its first idle prompt, so a queued brief
+// says so, and a note tells if it never goes in. One with no ready rule
+// has the brief typed at once, and nothing says it landed.
+export function moveDone(label, to, res) {
+  const line = 'Started ' + to + ' with the conversation of ' + label + '. ' + label + ' stays.';
+  if (res && res.when === 'queued') return line + ' The brief goes in when ' + to + ' is ready, or a note says it did not.';
+  if (res && res.when === 'typed') return line + ' The brief was typed in at once. Check that it landed.';
+  return line;
+}
+
+// loopSwap is the loop row for a pane row: the other harnesses it may
+// move to. null for an ended agent, a row that names no harness, and a
+// harness whose conversation the server cannot read.
+export function loopSwap(row) {
+  if (!row || row.closed === true || row.state === 'done') return null;
+  const own = str(row.harness) || str(row.stack && row.stack.loop);
+  if (!own) return null;
+  // Only a conversation the server can read moves: claude, and headless sprig.
+  if (own !== 'claude' && !(own === 'sprig' && str(row.kind) === 'headless')) return null;
+  return { kind: 'loop', choices: LOOPS.filter((h) => h !== own).map((h) => ({ next: h, label: h })) };
+}
+
+// modelSwap is the model row for a pane row: what the owner may pick, and
+// when it lands. null where no swap is built: an ended agent, and every
+// harness but claude in a terminal and sprig headless.
+export function modelSwap(row) {
+  if (!row || row.closed === true || row.state === 'done') return null;
+  const harness = str(row.harness) || str(row.stack && row.stack.loop);
+  if (harness === 'claude' && str(row.kind) !== 'headless') {
+    return { kind: 'model', options: MODELS.claude, free: false, when: 'The change goes in at the next idle prompt.' };
+  }
+  if (harness === 'sprig' && str(row.kind) === 'headless') {
+    return { kind: 'model', options: [], free: true, when: 'The change applies from the next turn.' };
+  }
+  return null;
+}
+
+// routerSwap is the router row for a pane row: the routes it may take
+// instead of its own, and the question asked first. Direct needs no
+// gateway. The gateway is offered only where the floor knows one.
+// Switchyard is a setting of the gateway, so it is not a choice here.
+// null where no swap is built: an ended agent, and every harness but claude.
+export function routerSwap(row, facts) {
+  if (!row || row.closed === true || row.state === 'done') return null;
+  if ((str(row.harness) || str(row.stack && row.stack.loop)) !== 'claude') return null;
+  const label = str(row.label) || str(row.id) || 'this agent';
+  const cur = str(row.stack && row.stack.router);
+  const gw = facts && facts.gateway && str(facts.gateway.url);
+  const choices = [];
+  if (cur !== 'direct') choices.push({ next: 'direct', label: 'Direct' });
+  if (gw && cur !== 'gateway' && cur !== 'switchyard') {
+    // A gateway the facts say is silent is shown but greyed out: the server
+    // refuses the swap before it stops the agent.
+    const down = gatewayDown(facts);
+    choices.push(down
+      ? { next: 'gateway', label: 'Through the gateway', disabled: true, why: 'The gateway does not answer.' }
+      : { next: 'gateway', label: 'Through the gateway' });
+  }
+  return choices.length ? { kind: 'router', choices, ask: routerAsk(label) } : null;
+}
 
 // GLYPH marks a verdict. An ask has its own glyph, apart from the ? of a
 // field not known.
@@ -111,11 +266,13 @@ export function light(row) {
 export function details(key, row, facts, now) {
   const st = (row && row.stack) || {};
   if (key === 'loop') {
-    return { title: 'Loop', lines: [['harness', str(st.loop) || 'not known'], ['state', str(row && row.state) || 'not known']], note: SWAP_NOTE };
+    const swap = loopSwap(row);
+    return { title: 'Loop', lines: [['harness', str(st.loop) || 'not known'], ['state', str(row && row.state) || 'not known']], note: swap ? LOOP_NOTE : SWAP_NOTE, swap };
   }
   if (key === 'daisugi') {
     const d = st.daisugi && typeof st.daisugi === 'object' ? st.daisugi : null;
     const lines = [['mode', d && str(d.mode) ? d.mode : 'not known']];
+    if (d && d.marker === 'watching') lines.push(['next call', 'watching']);
     if (d && typeof d.armed === 'boolean') lines.push(['armed', d.armed ? 'yes' : 'no']);
     const g = row && row.gate;
     if (g && GLYPH[g.decision]) {
@@ -126,8 +283,8 @@ export function details(key, row, facts, now) {
       lines.push(['last verdict', 'none yet']);
     }
     // An agent no gate hook reports for gets the command that installs one.
-    const note = d && d.mode === 'off' ? MESSAGES.gateOff().text : MODE_NOTE;
-    return { title: 'daisugi', lines, note };
+    const note = d && d.mode === 'off' ? MESSAGES.gateOff().text : MODE_OFF_NOTE;
+    return { title: 'daisugi', lines, note, mode: modeChoice(row, facts) };
   }
   if (key === 'router') {
     const lines = [['route', str(st.router) || 'not known']];
@@ -136,7 +293,8 @@ export function details(key, row, facts, now) {
       lines.push(['gateway', gw.url]);
       lines.push(['answers', gw.answers === true ? 'yes' : gw.answers === false ? 'no' : 'not known']);
     }
-    return { title: 'Router', lines, note: SWAP_NOTE };
+    const swap = routerSwap(row, facts);
+    return { title: 'Router', lines, note: swap ? ROUTER_NOTE : SWAP_NOTE, swap };
   }
   const t = row && row.tokens;
   const lines = [['model', str(st.model) || 'not reported yet']];
@@ -145,7 +303,8 @@ export function details(key, row, facts, now) {
   } else {
     lines.push(['tokens', 'not reported yet']);
   }
-  return { title: 'Model', lines, note: SWAP_NOTE };
+  const swap = modelSwap(row);
+  return { title: 'Model', lines, note: swap ? swap.when : SWAP_NOTE, swap };
 }
 
 const sum = (t) => (t && typeof t === 'object'
@@ -194,6 +353,12 @@ export function factsItems(facts, rows) {
     const hint = MESSAGES.gateNotInstalled();
     items.push({ key: 'gate-hint', text: hint.text, health: 'warn', title: hint.text, action: hint.actions[0] });
   }
+  // The phone's tailscale certificate is close to its end: warn, with
+  // Renew. The server names it only under 7 days left.
+  if (typeof facts.phone_cert_days === 'number' && Number.isFinite(facts.phone_cert_days)) {
+    const m = MESSAGES.phoneCert(facts.phone_cert_days);
+    items.push({ key: 'phone-cert', text: m.text, health: facts.phone_cert_days < 0 ? 'bad' : 'warn', title: m.text, action: m.actions[0] });
+  }
   const gw = facts.gateway;
   if (!gw || !str(gw.url)) items.push({ key: 'gateway', text: 'no gateway', health: 'off', title: 'No gateway is set in coppice.toml.' });
   else if (gw.answers === true) items.push({ key: 'gateway', text: 'gateway answers', health: 'ok', title: gw.url });
@@ -210,6 +375,15 @@ export function factsItems(facts, rows) {
     key: 'tokens', text: 'tokens today ' + fmtTokens(sum(t)), health: 'plain',
     title: 'fresh in ' + part('fresh') + ', cache read ' + part('cache_read') + ', cache write ' + part('cache_write') + ', out ' + part('out'),
   });
+  // A saving comes from the gateway's own figure. With none, or one that is
+  // not a count, the header names no saving.
+  const sv = facts.saved_today;
+  if (sv && typeof sv === 'object' && Number.isFinite(sv.tokens) && sv.tokens >= 0) {
+    items.push({
+      key: 'saved', text: 'saved ' + fmtTokens(sv.tokens), health: 'plain',
+      title: 'The gateway reports ' + sv.tokens + ' frontier tokens saved today.',
+    });
+  }
   return items;
 }
 
@@ -262,9 +436,12 @@ export function gateMarkEls(mark, onClick) {
 }
 
 // detailsBox is an open segment's details: its title, a Journal button on
-// the daisugi details when onJournal is given, a close control, its lines
-// and its note.
-export function detailsBox(d, { onJournal, onClose }) {
+// the daisugi details when onJournal is given, a close control, its lines,
+// the mode row when onMode is given, and its note. The mode row is one
+// button. Watch only asks once first: onAsk(true) asks the page to draw
+// the box again with asking true, which shows the question with Watch
+// only and Keep enforcing. onMode(mode) sets the mode.
+export function detailsBox(d, { onJournal, onClose, onMode, asking, onAsk, onSwap, swapAsking, onSwapAsk, swapLine, onMovePreview }) {
   const box = make('div', 'stack-details');
   box.dataset.details = d.title;
   const top = make('div', 'details-top');
@@ -288,9 +465,119 @@ export function detailsBox(d, { onJournal, onClose }) {
   top.append(close);
   const dl = make('dl');
   for (const [k, v] of d.lines) dl.append(make('dt', '', k), make('dd', '', v));
-  box.append(top, dl, make('p', 'muted details-note', d.note));
+  box.append(top, dl);
+  if (d.mode && typeof onMode === 'function') box.append(modeRow(d.mode, { onMode, asking, onAsk }));
+  if (d.swap && typeof onSwap === 'function') box.append(swapRow(d.swap, { onSwap, asking: swapAsking, onAsk: onSwapAsk, line: swapLine, onPreview: onMovePreview }));
+  box.append(make('p', 'muted details-note', d.note));
   box.addEventListener('click', stop);
   return box;
+}
+
+// modeRow is the mode row of the daisugi details: one button, or while
+// asking, the question and its two answers.
+function modeRow(choice, { onMode, asking, onAsk }) {
+  const row = make('div', 'mode-row');
+  if (!choice.next) {
+    row.append(make('p', 'mode-ask', choice.line));
+    return row;
+  }
+  const ask = (on) => { if (typeof onAsk === 'function') onAsk(on); };
+  const button = (cls, text, fn) => {
+    const b = make('button', cls, text);
+    b.type = 'button';
+    b.addEventListener('click', (e) => {
+      stop(e);
+      fn();
+    });
+    return b;
+  };
+  if (choice.ask && asking) {
+    row.append(
+      make('p', 'mode-ask', choice.ask),
+      button('deny', choice.label, () => { ask(false); onMode(choice.next); }),
+      button('ghost', 'Keep enforcing', () => ask(false)),
+    );
+    return row;
+  }
+  row.append(button('ghost mode-set', choice.label, () => (choice.ask ? ask(true) : onMode(choice.next))));
+  return row;
+}
+
+// swapRow is the swap row of the model and router details. A claude model
+// row is one button for each model, and a sprig one a box for a name and a
+// Set button: onSwap('model', name). A router row has a button for each
+// route. A route asks first, with Resume and Keep: onAsk(next) shows the
+// question and onSwap('router', next) restarts the agent. A loop row has a
+// button for each other harness; it shows the replay cost first, with Move
+// and Keep, and onSwap('loop', next) moves the conversation.
+function swapRow(sw, { onSwap, asking, onAsk, line, onPreview }) {
+  const row = make('div', 'mode-row swap-row');
+  const button = (cls, text, fn) => {
+    const b = make('button', cls, text);
+    b.type = 'button';
+    b.addEventListener('click', (e) => {
+      stop(e);
+      fn();
+    });
+    return b;
+  };
+  if (sw.kind === 'model') {
+    for (const name of sw.options) row.append(button('ghost model-set', name, () => onSwap('model', name)));
+    if (sw.free) {
+      const input = make('input', 'swap-input');
+      input.type = 'text';
+      input.placeholder = 'model name';
+      input.setAttribute('aria-label', 'Model name');
+      input.addEventListener('click', stop);
+      const go = () => {
+        const name = String(input.value || '').trim();
+        if (name) onSwap('model', name);
+      };
+      input.addEventListener('keydown', (e) => {
+        stop(e);
+        if (e.key === 'Enter') go();
+      });
+      row.append(input, button('ghost model-set', 'Set', go));
+    }
+    return row;
+  }
+  const ask = (v) => { if (typeof onAsk === 'function') onAsk(v); };
+  if (sw.kind === 'loop') {
+    // A loop choice asks the server what the move carries, then shows it
+    // with Move and Keep: onPreview(next) reads the cost and asks the page
+    // to draw the box again with asking set.
+    const to = sw.choices.find((c) => c.next === asking);
+    if (to && line) {
+      row.append(
+        make('p', 'mode-ask', line),
+        button('ghost loop-go', 'Move', () => { ask(''); onSwap('loop', to.next); }),
+        button('ghost', 'Keep', () => ask('')),
+      );
+      return row;
+    }
+    for (const c of sw.choices) {
+      row.append(button('ghost loop-set', c.label, () => { if (typeof onPreview === 'function') onPreview(c.next); }));
+    }
+    return row;
+  }
+  const chosen = sw.choices.find((c) => c.next === asking);
+  if (chosen) {
+    row.append(
+      make('p', 'mode-ask', sw.ask),
+      button('deny', 'Resume', () => { ask(''); onSwap('router', chosen.next); }),
+      button('ghost', 'Keep', () => ask('')),
+    );
+    return row;
+  }
+  for (const c of sw.choices) {
+    const b = button('ghost router-set', c.label, () => { if (!c.disabled) ask(c.next); });
+    if (c.disabled) {
+      b.disabled = true;
+      b.title = c.why;
+    }
+    row.append(b);
+  }
+  return row;
 }
 
 // FACTS_MS is how often the header row reads the floor facts.
@@ -310,23 +597,28 @@ export const FACTS_MS = 5000;
 // hides hintEl when there is none. The header row that carries the hint
 // is hidden on a phone and on a narrow screen, so the rail carries it
 // there.
+// The phone certificate warning goes there too, for the same reason.
+const HINT_KEYS = ['gate-hint', 'phone-cert'];
+
 export function paintHint(hintEl, items, onAction) {
   if (!hintEl) return;
-  const it = (items || []).find((x) => x.key === 'gate-hint');
+  const its = (items || []).filter((x) => HINT_KEYS.includes(x.key));
   hintEl.textContent = '';
-  hintEl.hidden = !it;
-  if (!it) return;
-  const words = document.createElement('span');
-  words.textContent = it.text;
-  hintEl.append(words);
-  if (it.action && typeof onAction === 'function') {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'fix';
-    b.textContent = it.action.label;
-    b.addEventListener('click', () => onAction(it.action));
-    hintEl.append(' ', b);
-  }
+  hintEl.hidden = its.length === 0;
+  its.forEach((it, i) => {
+    if (i > 0) hintEl.append(' ');
+    const words = document.createElement('span');
+    words.textContent = it.text;
+    hintEl.append(words);
+    if (it.action && typeof onAction === 'function') {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'fix';
+      b.textContent = it.action.label;
+      b.addEventListener('click', () => onAction(it.action));
+      hintEl.append(' ', b);
+    }
+  });
 }
 
 export function mountFacts(el, { rpc, connected, got, tick, later, cancel, rows, onAction, hintEl }) {

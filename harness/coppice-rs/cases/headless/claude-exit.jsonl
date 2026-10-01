@@ -1,0 +1,35 @@
+# A claude pane whose process exits on its own after one turn ends with
+# the exit code in its done. Its record stays ended, and pane.resume
+# starts a new pane that resumes the recorded session. Over a restart, a
+# live claude pane with a session id is resumed through its adapter, and
+# the restore report says so.
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/adapters/fake-claude.sh
+#!watch state,note
+#!settle 300
+{"id":"1","cmd":"pane.create","kind":"headless","harness":"claude","cwd":"{WORK}","label":"ex","env":{"COPPICE_CLAUDE_FIXTURE":"{FIXTURES}/adapters/claude-stream.jsonl","COPPICE_CLAUDE_EXIT":"3"}}
+{"id":"$id","ok":true,"result":{"pane":"$ex"}}
+{"id":"2","cmd":"agent.prompt","pane":"$ex","text":"go","wait":true,"until":"done","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$ex","state":"done","source":"headless"}}
+{"id":"3","cmd":"agent.get","pane":"$ex"}
+{"id":"$id","ok":true,"result":{"pane":"$ex","closed":true,"state":"done","detail":"claude exited: exit=3","harness_session_id":"11111111-2222-3333-4444-555555555555"}}
+{"id":"4","cmd":"pane.read","pane":"$ex"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"5","cmd":"pane.list","ended":true}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"6","cmd":"server.status"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"7","cmd":"pane.resume","pane":"$ex"}
+{"id":"$id","ok":true,"result":{"pane":"$re","resumed":true}}
+{"id":"8","cmd":"agent.get","pane":"$re"}
+{"id":"$id","ok":true,"result":{"pane":"$re","closed":false,"state":"unknown"}}
+{"id":"9","cmd":"pane.list","ended":true}
+{"id":"$id","ok":true,"result":{"panes":[],"path":["floor"]}}
+#!tree
+#!restart
+{"id":"10","cmd":"server.status"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"11","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"12","cmd":"agent.get","pane":"$re"}
+{"id":"$id","ok":true,"result":{"pane":"$re","closed":false}}
+#!tree

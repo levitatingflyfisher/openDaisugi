@@ -1,0 +1,41 @@
+# A saved tailscale phone server at boot whose renewal fails: the pair on
+# disk still has 5 days, so it serves on the tailnet with it, and logs the
+# failure once. The fake's tailscale cert fails while {WORK}/certfail says
+# fail.
+#!env PATH={FIXTURES}/web/bin:/usr/bin:/bin
+#!env FAKE_TS_CERT_FAIL_FILE={WORK}/certfail
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--persist", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h1", "http": "GET", "url": "https://127.0.0.2:{PORT}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "e1", "cli": ["web", "cert", "tailscale"], "env": {"FAKE_TS_DAYS": "5"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w1", "write": "{WORK}/certfail", "text": "fail"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+{"id": "g1", "http": "GET", "url": "https://127.0.0.2:{PORT}/api/token/check", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "lg", "log": "web:"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "c1", "file": "{WORK}/server.log", "count": "web: the certificate renewal failed"}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+# A pair that is not a certificate is never written over.
+{"id": "w2", "write": "{WORK}/notes.txt", "text": "my notes\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "n1", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT2}", "--qr=false", "--cert", "{WORK}/notes.txt", "--key", "{WORK}/notes.key"]}
+{"id": "$id", "ok": true, "result": {"code": 1, "stdout": "", "stderr": "{WORK}/notes.txt is not a PEM certificate, so tailscale cert will not write over it. Move it away or name another --cert, then run coppice web serve --tls tailscale again.\n"}}
+{"id": "f1", "file": "{WORK}/notes.txt"}
+{"id": "$id", "ok": true, "result": {"text": "my notes\n"}}
+# After --forget and a restart, no phone server runs or is saved, so
+# floor.facts names no certificate, though the pair has 5 days.
+{"id": "ff0", "cmd": "floor.facts"}
+{"id": "$id", "ok": true, "result": {"phone_cert_days": 5}}
+{"id": "fg", "cli": ["web", "serve", "--forget"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+#!restart
+{"id": "ff", "cmd": "floor.facts"}
+{"id": "$id", "ok": true, "result": "*"}

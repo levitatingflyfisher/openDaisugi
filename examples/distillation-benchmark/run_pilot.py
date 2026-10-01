@@ -54,17 +54,11 @@ from opendaisugi.benchmark import RunMetric, meets_stage4_bar, run_paired_benchm
 OLLAMA = "http://localhost:11434"
 
 
-# --- token accounting: tally every litellm call in one orchestrate ----------
-
-
+# --- token accounting -------------------------------------------------------
 class _Tally:
-    """Tokens for every litellm call in one orchestrate, captured by WRAPPING
-    acompletion/completion — synchronous with the await, so it can't be lost to
-    an orphaned async logging worker (litellm's callback path races with our
-    per-call asyncio.run()). Instructor retries flow through the same wrapped
-    functions, so a small model's schema retries are counted as the real cost
-    they are. openDaisugi imports these at each call site, so patching the
-    module attribute is enough."""
+    """Token count for one orchestrate. openDaisugi no longer calls models
+    through a wrapper library, so there is no call to hook here; the count
+    stays 0 and the results report tokens as not measured."""
 
     def __init__(self):
         self.total = 0
@@ -74,33 +68,9 @@ class _Tally:
         self.total = 0
         self.calls = 0
 
-    def _add(self, resp):
-        u = getattr(resp, "usage", None)
-        if u is not None:
-            self.total += getattr(u, "total_tokens", 0) or 0
-            self.calls += 1
-
 
 def _install_tally() -> _Tally:
-    import litellm
-
-    litellm.drop_params = True
-    tally = _Tally()
-    orig_a, orig_s = litellm.acompletion, litellm.completion
-
-    async def _wrapped_a(*a, **k):
-        r = await orig_a(*a, **k)
-        tally._add(r)
-        return r
-
-    def _wrapped_s(*a, **k):
-        r = orig_s(*a, **k)
-        tally._add(r)
-        return r
-
-    litellm.acompletion = _wrapped_a
-    litellm.completion = _wrapped_s
-    return tally
+    return _Tally()
 
 
 def _resident_model() -> str | None:
@@ -205,13 +175,13 @@ def _metric(res, tokens: int, dt_ms: float) -> RunMetric:
 def make_runner(model: str, *, cwd: str, verbose: bool = False):
     import tempfile
 
-    from opendaisugi.tier1 import LiteLLMTier1Provider
+    from opendaisugi.tier1 import OllamaTier1Provider
 
     tally = _install_tally()
     envelope = _envelope(cwd)
     # The local model as Tier-1 too, so the plan's `task` (LLM-reasoning) steps
     # route to it instead of falling through to a cloud model with no API key.
-    tier1 = LiteLLMTier1Provider(model=model, base_url=OLLAMA, api_key=None)
+    tier1 = OllamaTier1Provider(model=model, base_url=OLLAMA)
     stats = {"warm_reused": 0, "warm_total": 0}
     warm_dirs: dict[str, str] = {}  # task_id -> primed, isolated data_dir
 

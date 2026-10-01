@@ -219,7 +219,26 @@ const AGENTIC_TOOL_CAPABILITIES: &[(&str, &str)] = &[
     ("MultiEdit", "file_write"),
     ("WebFetch", "network"),
     ("WebSearch", "network"),
+    // sprig's spawn tool: the gate sees it as mcp__sprig__spawn, which the
+    // envelope admits only when mcp_allowlist names sprig/spawn.
+    ("Spawn", "mcp_allowlist"),
 ];
+
+/// `verify.SPAWN_MCP_KEY`: the mcp_allowlist key of the Spawn tool, as
+/// the gate keys mcp__sprig__spawn.
+pub const SPAWN_MCP_KEY: &str = "sprig/spawn";
+
+/// `verify.agentic_tool_granted`: whether the envelope backs a host tool
+/// an agentic step asks for. Spawn needs its own name in mcp_allowlist.
+pub fn agentic_tool_granted(tool: &str, perms: &Permission) -> bool {
+    let Some((_, cap)) = AGENTIC_TOOL_CAPABILITIES.iter().find(|(n, _)| *n == tool) else {
+        return false;
+    };
+    if tool == "Spawn" {
+        return glob_engine::head_allowed(SPAWN_MCP_KEY, &perms.mcp_allowlist);
+    }
+    capability_granted(perms, cap)
+}
 
 fn capability_granted(perms: &Permission, cap: &str) -> bool {
     match cap {
@@ -271,7 +290,7 @@ fn check_agentic_step(step: &Step, perms: &Permission) -> Vec<Violation> {
                     .with(kv(&[("step", sv(id)), ("tool", sv(tool))]), None),
             ),
             Some((_, cap)) => {
-                if !capability_granted(perms, cap) {
+                if !agentic_tool_granted(tool, perms) {
                     out.push(
                         Violation::step("permissions", id.clone())
                             .msg(format!("Step '{id}' requests host tool '{tool}' but the envelope grants no {cap} capability"))

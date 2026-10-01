@@ -39,6 +39,8 @@ var Config = &Model{Name: "Config", Fields: []Field{
 	{Name: "auto_tend", Schema: Nullable{Bool{}}, Default: constant(nil)},
 	{Name: "gateway_local_model", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "gateway_router", Schema: Str{}, Default: constant("rules")},
+	{Name: "gateway_router_model", Schema: Nullable{Str{}}, Default: constant(nil)},
+	{Name: "gateway_grader", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "switchyard_route_id", Schema: Str{}, Default: constant("daisugi")},
 	{Name: "switchyard_capable_model", Schema: Str{}, Default: constant("claude-sonnet-5")},
 	{Name: "switchyard_efficient_model", Schema: Nullable{Str{}}, Default: constant(nil)},
@@ -66,4 +68,5 @@ var Config = &Model{Name: "Config", Fields: []Field{
 	{Name: "voice_cleanup_model", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "voice_cleanup_base_url", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "voice_server_url", Schema: Str{}, Default: constant("http://127.0.0.1:7477")},
+	{Name: "agent_profiles", Schema: Any{}, Default: constant(nil), OmitNone: true},
 }}

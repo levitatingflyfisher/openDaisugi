@@ -25,16 +25,20 @@ var VerificationResult = &Model{Name: "VerificationResult", Fields: []Field{
 
 // StepField is a step held as Any with coerce_step before it and the
 // StepBase check after (RefinementRecord.step): a dict of a registered
-// type validates as that step. A string, another shape, or a step that
-// fails its own validation is UnreadableStep: this port does not word
-// those errors, and callers refuse.
+// type, or a str that decodes to one, validates as that step. Another
+// shape, or a step that fails its own validation, is UnreadableStep:
+// this port does not word those errors, and callers refuse.
 type StepField struct{ Nullable bool }
 
 func (s StepField) validate(v any, loc []any, mode Mode) (any, []Err) {
 	if v == nil && s.Nullable {
 		return nil, nil
 	}
-	if o, ok := v.(*pyjson.Object); ok {
+	item, _, refuse := CoerceStep(v)
+	if refuse != "" {
+		return nil, one(loc, UnreadableStep, refuse, v)
+	}
+	if o, ok := item.(*pyjson.Object); ok {
 		if tag, has := o.Get("type"); has {
 			if name, isStr := tag.(string); isStr {
 				if m := StepTypes[name]; m != nil {

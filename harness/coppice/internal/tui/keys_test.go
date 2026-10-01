@@ -52,13 +52,13 @@ func TestLoneEscIsUpAfterTheWait(t *testing.T) {
 
 func TestFooterComesFromTheTable(t *testing.T) {
 	f := Keys()
-	for _, b := range Table() {
+	for _, b := range withoutMode(Table()) {
 		if !strings.Contains(f, b.Keys+" "+b.Help) {
 			t.Fatalf("footer %q lacks %q", f, b.Keys+" "+b.Help)
 		}
 	}
-	if len(Table()) != 10 {
-		t.Fatalf("%d bindings, want 10", len(Table()))
+	if len(Table()) != 11 {
+		t.Fatalf("%d bindings, want 11", len(Table()))
 	}
 	if strings.Contains(f, "q quit") || strings.Contains(f, "t open") {
 		t.Fatalf("footer names a key that is text now: %q", f)

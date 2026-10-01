@@ -113,15 +113,36 @@ def conversation_key(body: dict) -> str:
     return "no-user-text"
 
 
+def _strip_reminders(text: str) -> str:
+    """Cut every ``<system-reminder>...</system-reminder>`` block. The harness adds
+    these to the user turn; they are not the user's words. An unclosed tag stays."""
+    out = []
+    pos = 0
+    while True:
+        start = text.find("<system-reminder>", pos)
+        if start < 0:
+            break
+        end = text.find("</system-reminder>", start)
+        if end < 0:
+            break
+        out.append(text[pos:start])
+        pos = end + len("</system-reminder>")
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def _message_text(content: object) -> str:
     """Human text of one message's content — the string form, or its text blocks joined.
-    tool_result / tool_use / image blocks contribute nothing."""
+    tool_result / tool_use / image blocks contribute nothing. Harness reminder blocks
+    are cut."""
     if isinstance(content, str):
-        return content
+        return _strip_reminders(content)
     if isinstance(content, list):
-        parts = [
-            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
-        ]
+        parts = []
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "text":
+                t = b.get("text", "")
+                parts.append(_strip_reminders(t) if isinstance(t, str) else t)
         return " ".join(p for p in parts if p)
     return ""
 

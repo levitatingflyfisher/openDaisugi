@@ -507,7 +507,7 @@ def build_modules_cases() -> list[dict[str, Any]]:
             **LEX,
             **cfg(
                 "matcher_model: potion\ngateway_router: switchyard\nllm_backend: claude-code\n"
-                "voice_engine: parakeet\nshell_allow_decomposition: true\n"
+                "voice_engine: moonshine\nshell_allow_decomposition: true\n"
                 "llm_base_url: http://gpu-box:11434/v1\nllm_host_kind: ollama\n"
                 "llm_host_model: qwen3:8b\nllm_context_window: 32768\n"
             ),
@@ -640,6 +640,15 @@ def build_modules_cases() -> list[dict[str, Any]]:
             before=cfg("matcher_model: lexical\ngateway_router: switchyard\n"),
         )
     )
+    add(
+        case(
+            "modules knn selected",
+            "modules",
+            *j,
+            before=cfg("matcher_model: lexical\ngateway_router: knn\n"),
+        )
+    )
+    add(case("modules knn row text", "modules", before=LEX))
     add(
         case(
             "modules switchyard binary", "modules", *j, before={**LEX, **fake("switchyard-server")}
@@ -790,6 +799,68 @@ def build_modules_cases() -> list[dict[str, Any]]:
     add(case("modules unknown option", "modules", "--bogus"))
     add(case("modules extra arg", "modules", "x"))
     add(case("modules plain", "--plain", "modules", before=LEX))
+    # The pieces view: which of the six pieces run here.
+    claude_json = {
+        ".claude.json": {
+            "text": json.dumps({"mcpServers": {"opendaisugi": {"command": "daisugi"}}}) + "\n"
+        }
+    }
+    for fmt in ((), ("--json",)):
+        sfx = " json" if fmt else ""
+        add(case("modules pieces fresh" + sfx, "modules", "--pieces", *fmt, before=LEX))
+        add(
+            case(
+                "modules pieces gate only" + sfx,
+                "modules",
+                "--pieces",
+                *fmt,
+                before={**LEX, **settings(PreToolUse=[GATE_HOOK])},
+            )
+        )
+        add(
+            case(
+                "modules pieces all on" + sfx,
+                "modules",
+                "--pieces",
+                *fmt,
+                before={
+                    **cfg("matcher_model: lexical\ngateway_router: switchyard\n"),
+                    **settings(PreToolUse=[GATE_HOOK, GATEWAY_HOOK]),
+                    **claude_json,
+                    ".pi/agent/extensions/daisugi-gate/index.ts": {"text": "// gate\n"},
+                    **fake("sprig"),
+                },
+                sockets=[".opendaisugi/coppice/server.sock"],
+            )
+        )
+    add(
+        case(
+            "modules pieces gateway env",
+            "modules",
+            "--pieces",
+            "--json",
+            before=LEX,
+            env={"OPENDAISUGI_GATEWAY_BASE_URL": "http://127.0.0.1:8787"},
+        )
+    )
+    add(
+        case(
+            "modules pieces data dir",
+            "modules",
+            "--pieces",
+            "--data-dir",
+            "{HOME}/dd",
+            before={"dd/config.yaml": {"text": "gateway_router: switchyard\n"}, **LEX},
+        )
+    )
+    add(
+        case(
+            "modules pieces bad mcp file",
+            "modules",
+            "--pieces",
+            before={**LEX, ".claude.json": {"text": "{"}},
+        )
+    )
     return C
 
 

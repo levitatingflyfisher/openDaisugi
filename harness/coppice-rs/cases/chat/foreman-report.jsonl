@@ -1,0 +1,36 @@
+# A worker's report to a pane foreman (bring your own foreman). The pane
+# foreman (cases/chat/fixtures/pane/claude) spawns a worker through the
+# standing socket. The pane foreman holds no chat, so the worker's report,
+# on one line, is typed into its pane when it is idle and shown in the chat
+# files as a note. The fake daisugi answers once the case writes its go
+# file (FR-R-6).
+#!config default = "claude"
+#!config projects = ["{WORK}/proj"]
+#!config [harness.claude]
+#!config command = "{FIXTURES}/chat/pane/claude"
+#!env FAKE_PANE_DIR={WORK}/pane
+#!env FAKE_PANE_SPAWN=1
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_TREE_LOG={WORK}/tree.log
+#!env FAKE_TREE_GO={WORK}/go
+{"id":"w1","write":"{WORK}/proj/README","text":"a project\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w2","write":"{HOME}/.config/coppice/envelopes/proj.json","text":"{\"envelope\": {\"tools\": [\"read\"]}, \"tokens\": 5000, \"turns\": 3}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"floor.talk","text":"hello"}
+{"id":"$id","ok":true,"result":{"pane":"$f","label":"foreman","started":true,"queued":1}}
+{"id":"2","cmd":"pane.wait_output","pane":"$f","contains":"hello","timeout_ms":40000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"3","file":"{WORK}/pane/tools.json"}
+{"id":"$id","ok":true,"result":{"text":"{\n \"False 0\": \"no workers\",\n \"False 1\": \"This foreman keeps its own memory. The floor keeps no log of its chat, so there is nothing here to open.\",\n \"False 2\": \"This foreman keeps its own memory. The floor keeps no log of its chat, so there is nothing here to open.\",\n \"False 3\": \"started proj-1\"\n}"}}
+{"id":"w3","write":"{WORK}/go/ran","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"4","cmd":"pane.wait_output","pane":"$f","contains":"[proj-1] report all done","timeout_ms":30000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+#!retry 10000
+{"id":"5","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"messages":[{"role":"owner","text":"hello","pane":"$f"},{"role":"note","text":"[proj-1] report all done","pane":"$f"}]}}
+{"id":"6","file":"{DATA}/foreman/work/workers.json","count":"\"state\":\"ran\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"7","cmd":"pane.close","pane":"$f"}
+{"id":"$id","ok":true,"result":{"pane":"$f","closed":true}}

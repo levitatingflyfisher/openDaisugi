@@ -99,7 +99,7 @@ test('a rejected token opens a Settings screen that already knows the server and
   assert.equal(element('screen-settings').hidden, false);
   assert.equal(element('set-origin').textContent, 'Server ' + global.location.origin);
   assert.equal(element('set-token').value, TOKEN);
-  assert.equal(element('title').textContent, 'Settings');
+  assert.equal(element('title').textContent, 'Floor', 'Settings is a panel over the floor');
 });
 
 // The failure this names: the operator pastes a good token after a
@@ -193,4 +193,32 @@ test('a scanned token in the hash is stored and the hash is replaced', async () 
 
   assert.deepEqual(calls[0], [null, '', '#/roster']);
   assert.equal(global.localStorage.getItem('coppice.token'), scanned);
+});
+
+// The failure this names: Esc closes Settings, and the token the operator
+// had pasted and not yet saved is thrown away on the next open.
+test('an unsaved token survives closing and reopening Settings, until Save or Forget', async () => {
+  reset();
+  global.localStorage.setItem('coppice.token', TOKEN);
+  await freshApp();
+  const open = () => { global.location.hash = '#/settings'; global.window.dispatchEvent(new global.CustomEvent('coppice:route')); };
+  const close = () => { global.location.hash = '#/roster'; global.window.dispatchEvent(new global.CustomEvent('coppice:route')); };
+  open();
+  assert.equal(element('set-token').value, TOKEN);
+  element('set-token').value = 'half-typed';
+  element('set-token').dispatchEvent({ type: 'input' });
+  close();
+  open();
+  assert.equal(element('set-token').value, 'half-typed', 'closing Settings threw the typed token away');
+  element('forget-token').dispatchEvent({ type: 'click' });
+  close();
+  open();
+  assert.equal(element('set-token').value, '', 'a forgotten token came back from the draft');
+  const fresh = 'D'.repeat(43);
+  element('set-token').value = fresh;
+  element('set-token').dispatchEvent({ type: 'input' });
+  element('save-settings').dispatchEvent({ type: 'click' });
+  close();
+  open();
+  assert.equal(element('set-token').value, fresh);
 });

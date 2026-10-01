@@ -93,7 +93,7 @@ func main() {
 				usage = gateway.NormalizeOpenAIUsage(usage)
 			}
 			before := lines(g.JournalPath)
-			srv.Record(gw, prepared, usage, t.Original && prepared != nil && prepared.Decision.Downgraded, t.Answer, t.Served)
+			srv.Record(gw, prepared, usage, t.Original && prepared != nil && prepared.Decision.Downgraded, t.Answer, t.Served, false)
 			after := lines(g.JournalPath)
 			recs := []any{}
 			for _, ln := range after[len(before):] {

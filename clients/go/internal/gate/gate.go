@@ -12,10 +12,13 @@
 package gate
 
 import (
+	"daisugi-verify/internal/fenceruns"
+	"daisugi-verify/internal/statefile"
 	"fmt"
 	"math"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"daisugi-verify/internal/delegate"
@@ -58,6 +61,9 @@ type Result struct {
 	// kept, argparse's own text left out. A resident server's reply
 	// carries these.
 	OutStdout, OutStderr string
+	// Notes are the stderr notes of a resident call's child (GR-R-3), for
+	// the server to print; a hook call's child puts them in Stderr.
+	Notes string
 	// Help is argparse's --help: SystemExit(0), which run_argv lets
 	// through. A resident server gives no reply to it.
 	Help bool
@@ -380,12 +386,12 @@ func runNative(argv []string, stdin []byte, env map[string]string, rc *Caller) (
 		r.captures = &c
 	}
 	r.checkEnv()
-	r.defaultRoot = pathJoin(r.pathHome(), ".opendaisugi/gate")
+	r.defaultRoot = pathJoin(r.dataHome(), "gate")
 	r.root = r.defaultRoot
 	if o.root != nil {
 		r.root = pathStr(*o.root)
 	}
-	r.mode = r.resolveMode(o.mode)
+	r.mode = r.effectiveMode(r.resolveMode(o.mode))
 	// gate_and_contract runs at frame 6 of `python -m opendaisugi.gate`:
 	// runpy's two frames, the module, main and run_argv sit under it.
 	r.depth = 5
@@ -536,6 +542,8 @@ func (r *runner) decideRecord(p *pyjson.Object, rec *record, toolName string, en
 	switch {
 	case r.paneRuleHit(cwd, rec):
 		refusal = paneRefusal
+	case r.chatWireHit(rec):
+		refusal = chatRefusal
 	case r.floorHit(cwd, rec, floorGuard):
 		refusal = floorRefusal
 	case r.floorHit(cwd, rec, daisugiGuard):
@@ -544,11 +552,34 @@ func (r *runner) decideRecord(p *pyjson.Object, rec *record, toolName string, en
 		refusal = opencodeRefusal
 	case r.searchAboveSecretHit(cwd, rec):
 		refusal = searchRefusal
-	case rankRecordHit(rec):
+	case r.rankRecordHit(rec):
 		refusal = rankRefusal
+	case r.treeWriteHit(rec):
+		refusal = treeRefusal
+	case r.gateChangeHit(rec):
+		refusal = gateChangeRefusal
+	case r.labelHit(rec):
+		refusal = labelRefusal
+	case r.packHit(rec):
+		refusal = packRefusal
 	}
 	if refusal != "" {
 		return hard(refusal)
+	}
+	if dir, hit := r.gateStateHit(cwd, rec); hit {
+		return hard(gateStateRefusal(dir))
+	}
+	if dl, ok := env.deadline(); ok && r.gateNow() > dl {
+		d := r.deny(deadlineReason(dl))
+		d.ToolName = toolName
+		if rec != nil {
+			d.StepType = rec.StepType
+			d.Detail = rec.Command
+			if d.Detail == "" {
+				d.Detail = rec.Path
+			}
+		}
+		return d
 	}
 	if rec == nil {
 		d := r.deny("unrecognized tool " + pyjson.Repr(toolName) +
@@ -706,9 +737,21 @@ func (r *runner) decide(stdin []byte) *plan {
 	if isObj {
 		cwd = pyStrOr(p.Value("cwd"))
 	}
-	env := r.loadEnvelope(pin)
+	why := r.residentRefusal(p, isObj)
+	var env *envelope
+	var refusal string
+	if why == "" {
+		env, refusal = r.loadEnvelopeChecked(pin)
+	}
 	var d *decision
 	switch {
+	case why != "":
+		// Denied in every mode: the server makes the writes, so it must
+		// not make them where the caller points (FN-R-21).
+		d = &decision{Allow: false, WouldDeny: true, Reason: why, ElapsedMS: r.elapsedMS(), Tier: tierPermanent}
+	case env == nil && refusal != "":
+		// A refusal is not an absence: say which file, and the fix (GR-R-8).
+		d = r.deny("the gate refused its envelope state: " + refusal)
 	case env == nil:
 		d = r.deny("no envelope registered for this session — run `daisugi gate register <envelope.json>` to authorize it, or `daisugi gate disarm` to switch the gate off")
 	case tooBig:
@@ -726,7 +769,7 @@ func (r *runner) decide(stdin []byte) *plan {
 			}
 		}
 		if !d.Ask {
-			d = r.maybeGraft(p, d, env)
+			d = r.maybeGraft(p, d, env, sessionID)
 		}
 	}
 	sid := r.safeSession(sessionID)
@@ -751,11 +794,54 @@ func (r *runner) decide(stdin []byte) *plan {
 		pl.state(r, sid, p, d)
 	}
 	pl.result = outcome(d, r.fmt)
+	pl.mustLog = r.mode == "enforce" && d.Allow
 	return pl
 }
 
+// residentRefusal is gate._resident_refusal: why a resident call is denied
+// before it is checked, or "".
+func (r *runner) residentRefusal(p *pyjson.Object, isObj bool) string {
+	if !r.resident {
+		return ""
+	}
+	if r.session != nil && *r.session != "" && !fenceruns.SessionOK(*r.session) {
+		return fenceruns.SessionRefusal
+	}
+	if !isObj {
+		return ""
+	}
+	if sid := p.Value("session_id"); sid != nil {
+		if s, ok := sid.(string); !ok || !fenceruns.SessionOK(s) {
+			return fenceruns.SessionRefusal
+		}
+	}
+	if r.checkpoints && r.caller.Workspace != "" {
+		// A fenced session (FN-R-36): the server would run git on config
+		// the agent writes, so it takes no checkpoint at all.
+		return fenceruns.FencedCheckpointRefusal
+	}
+	cwd := p.Value("cwd")
+	if r.checkpoints && pyjson.Truthy(cwd) {
+		if r.caller.Workspace == "" {
+			return fenceruns.NoWorkspaceRefusal
+		}
+		c, ok := cwd.(string)
+		if !ok || strings.ContainsRune(c, 0) || !strings.HasPrefix(c, "/") || !fenceruns.Inside(c, r.caller.Workspace) {
+			return fenceruns.OutsideRefusal
+		}
+		if why := fenceruns.GitDirRefusalFor(r.caller.Workspace); why != "" {
+			return why
+		}
+	}
+	return ""
+}
+
 func (r *runner) isDisarmed() bool {
-	return exists(pathJoin(r.root, "DISARMED"))
+	fd, ok := statefile.Open(pathStr(r.root), nil, "DISARMED", -1)
+	if ok {
+		syscall.Close(fd)
+	}
+	return ok
 }
 
 // outcome is gate._outcome, with print()'s trailing newline.

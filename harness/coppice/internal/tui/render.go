@@ -42,6 +42,29 @@ const (
 	minWindow = 80
 )
 
+// slimCols is the width of the slim rail: the cursor mark, the window
+// number, the state dot and two letters of the label, and one space. A
+// screen from slimFrom columns up to the width where the full rail and a
+// window fit draws the rail this way, so one window of at least 80
+// columns shows beside it.
+const (
+	slimCols = 6
+	slimFrom = 88
+)
+
+// slimRail reports whether a screen of cols columns draws the slim rail.
+func slimRail(cols int) bool {
+	return cols >= slimFrom && cols < railCols+minWindow+1
+}
+
+// railWidth is the width of the rail on a screen of cols columns.
+func railWidth(cols int) int {
+	if slimRail(cols) {
+		return slimCols
+	}
+	return railCols
+}
+
 // emptySlotText is the header of a window with no agent in it.
 const emptySlotText = "Empty. Select a row and press this window's number."
 
@@ -63,20 +86,36 @@ func typingWords(leave byte) string {
 // prompt line, a question, the picker or the tree has the keys, the ways
 // on and back from there.
 func footerText(m *Model) string {
+	if m.Restarted > 0 && m.Typing == "" && !m.modal() {
+		return "R resume all  " + footerBase(m)
+	}
+	return footerBase(m)
+}
+
+// footerBase is the footer without the restart offer.
+func footerBase(m *Model) string {
 	switch {
 	case m.Typing != "":
+		back := ""
+		if m.Typing == m.ForemanID && m.ChatScreen {
+			back = "  click Chat to read the chat"
+		}
 		return config.KeyName(m.Leave) + " back to the rail, then ctrl-c quits  click another window to type there  " +
-			m.talkName() + " speak"
+			m.talkName() + " speak" + back
 	case m.Confirm != "" || m.ClearAll:
 		return "Enter yes  Esc no"
 	case m.Renaming != "":
 		return "Enter renames  Esc keeps the name"
+	case m.Swapping != "":
+		return "Enter swaps  Esc keeps things as they are"
 	case m.Talking:
 		return "Enter runs the line  Esc lets it go"
 	case m.Picker != nil:
-		return "1-9 or Enter starts " + m.defaultHarness() + " there  Up Down move  Esc closes"
+		return "1-9, 0 or Enter starts " + m.defaultHarness() + " there  x removes missing  Up Down move  Esc closes"
 	case m.Tree != nil:
 		return "Enter goes into the task  Up Down move  Esc closes"
+	case m.Journal != nil:
+		return "Up Down scroll  Esc or j closes"
 	}
 	if it, ok := m.SelectedItem(); ok {
 		switch it.kind {
@@ -99,6 +138,11 @@ func footerText(m *Model) string {
 		}
 	}
 	table := Table()
+	// m shows only on an agent it can act on, so a floor with no gate
+	// keeps its footer short.
+	if r, ok := m.Selected(); !ok || !modeSettable(r) {
+		table = withoutMode(table)
+	}
 	if m.Peek.Answerable() {
 		// The peek's answer keys win over n while an ask shows.
 		for i := range table {
@@ -113,14 +157,23 @@ func footerText(m *Model) string {
 // footerLines wraps the footer text at its two-space gaps into lines of
 // at most cols cells, so every key stays on screen at any width. It never
 // gives more than three lines, and cuts the last one when it must. The
-// rail's own key line names the talk key too, when that costs no line;
-// the typing footer always names it.
+// rail's own key line names the talk key and the journal key too, each
+// when that costs no line; the typing footer always names the talk key.
 func footerLines(m *Model, cols int) []string {
 	text := footerText(m)
 	lines := wrapFooter(text, cols)
 	if m.Typing == "" && strings.HasSuffix(text, "Esc up") {
-		if more := wrapFooter(text+"  "+m.talkName()+" speak", cols); len(more) == len(lines) {
-			lines = more
+		extras := []string{m.talkName() + " speak", "j journal"}
+		if r, ok := m.Selected(); ok {
+			if mdl, rtr, lp := swaps(r); mdl || rtr || lp {
+				extras = append(extras, "s swap")
+			}
+		}
+		for _, extra := range extras {
+			if more := wrapFooter(text+"  "+extra, cols); len(more) == len(lines) {
+				text += "  " + extra
+				lines = more
+			}
 		}
 	}
 	return lines
@@ -177,8 +230,11 @@ func wrapFooter(text string, cols int) []string {
 
 // windowCount is how many windows a screen of cols columns shows: as many
 // as fit beside the rail at minWindow columns each, with one divider
-// column before each window.
+// column before each window. The slim rail leaves room for one.
 func windowCount(cols int) int {
+	if slimRail(cols) {
+		return 1
+	}
 	n := (cols - railCols) / (minWindow + 1)
 	if n < 0 {
 		return 0
@@ -191,7 +247,7 @@ func windowCount(cols int) int {
 // with one divider column before each, and the last window takes any
 // remainder.
 func splitWidths(cols, n int) (rail int, widths []int) {
-	rail = railCols
+	rail = railWidth(cols)
 	if rail > cols {
 		rail = cols
 	}
@@ -266,7 +322,7 @@ func cutSGR(s string, w int) string {
 // stateColor is the SGR code for one pane state.
 func stateColor(state string) string {
 	switch state {
-	case "blocked":
+	case "blocked", replyMark:
 		return sgrAmber
 	case "working":
 		return sgrBlue
@@ -313,22 +369,59 @@ func ageText(age float64) string {
 
 // bar is line 0: the program name, the path of tasks the roster is pushed
 // into, and how many of the panes it shows need the operator.
-func bar(m *Model) string {
+func bar(m *Model) string { return barLine(m, 0) }
+
+// barLine is the bar for a screen of cols columns, or with no limit when
+// cols is 0. On the slim rail the cursor row's name shows after the path,
+// cut so the count at the end always stays on screen.
+func barLine(m *Model, cols int) string {
 	head := "coppice"
 	for _, id := range m.Path {
 		head += " › " + textwidth.Printable(m.taskLabel(id), 0)
 	}
+	var suffix string
 	switch m.NeedYou {
 	case 0:
-		return head + " · quiet"
+		suffix = " · quiet"
 	case 1:
-		return head + " · 1 needs you"
+		suffix = " · 1 needs you"
+	default:
+		suffix = fmt.Sprintf(" · %d need you", m.NeedYou)
 	}
-	return fmt.Sprintf("%s · %d need you", head, m.NeedYou)
+	if m.ImportLine != "" {
+		suffix += " · " + textwidth.Printable(m.ImportLine, 0)
+	}
+	if m.slim {
+		// The slim rail has two letters a row. The cursor row's name shows
+		// here, where it can be read in full.
+		if r, ok := m.Selected(); ok {
+			name := textwidth.Printable(railName(r), 0)
+			if cols > 0 {
+				name = textwidth.Truncate(name, cols-textwidth.Width(head)-textwidth.Width(suffix)-3)
+			}
+			if name != "" {
+				head += " · " + name
+			}
+		}
+	}
+	return head + suffix
 }
 
 // lookingText is "· alice looking" for the people attached to a pane, or
 // "" when nobody looks.
+// changedText is the rail's word on a fenced run that changed a watched
+// workspace file, or "" (FN-R-13).
+func changedText(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = textwidth.Printable(f, 0)
+	}
+	return "workspace config changed: " + strings.Join(out, ", ")
+}
+
 func lookingText(names []string) string {
 	if len(names) == 0 {
 		return ""
@@ -374,8 +467,8 @@ func fitAt(at []int, height int) []int {
 // railFocused is true while the rail has the keys: no window types, and
 // no prompt, question, picker or tree has them.
 func (m *Model) railFocused() bool {
-	return m.Typing == "" && !m.Talking && m.Renaming == "" && m.Confirm == "" &&
-		!m.ClearAll && m.Picker == nil && m.Tree == nil
+	return m.Typing == "" && !m.Talking && m.Renaming == "" && m.Swapping == "" && m.Confirm == "" &&
+		!m.ClearAll && m.Picker == nil && m.Tree == nil && m.Journal == nil
 }
 
 // windowTag is the window number a row shows, as "1 ", or two spaces
@@ -389,6 +482,160 @@ func (m *Model) windowTag(id string) string {
 		return fmt.Sprintf("%d ", slot+1)
 	}
 	return "  "
+}
+
+// railName is a row's label, or its id when it has none. A subagent
+// without a label shows its child name.
+func railName(r Row) string {
+	label := textwidth.Printable(r.Label, 0)
+	if label == "" {
+		label = r.ID
+		if r.Parent != "" && r.Child != "" {
+			label = r.Child
+		}
+	}
+	return label
+}
+
+// firstCells is the first n cells of s, cut at a rune boundary and padded
+// with spaces to exactly n cells.
+func firstCells(s string, n int) string {
+	w := 0
+	var b strings.Builder
+	for _, r := range s {
+		rw := textwidth.Width(string(r))
+		if w+rw > n {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return b.String() + strings.Repeat(" ", n-w)
+}
+
+// slimLabels gives each row of the item list its two cells on the slim
+// rail: the shortest prefix, one cell or two, that no other row shares.
+// Rows that still collide keep the first cell of the prefix and take a
+// digit for the second, counted from 1 among the rows that share the
+// prefix, in list order.
+func slimLabels(items []item) map[string]string {
+	names := map[string]string{}
+	one, two := map[string]int{}, map[string]int{}
+	for _, it := range items {
+		if it.kind != itemRow {
+			continue
+		}
+		n := railName(it.row)
+		names[it.row.ID] = n
+		one[firstCells(n, 1)]++
+		two[firstCells(n, 2)]++
+	}
+	out := map[string]string{}
+	seen := map[string]int{}
+	for _, it := range items {
+		if it.kind != itemRow {
+			continue
+		}
+		n := names[it.row.ID]
+		p1, p2 := firstCells(n, 1), firstCells(n, 2)
+		switch {
+		case one[p1] == 1 && strings.TrimSpace(p1) != "":
+			out[it.row.ID] = firstCells(p1, 2)
+		case two[p2] == 1:
+			out[it.row.ID] = p2
+		default:
+			seen[p2]++
+			out[it.row.ID] = p1 + fmt.Sprint(seen[p2]%10)
+		}
+	}
+	return out
+}
+
+// maxIndent is the most levels of subtask the full rail indents.
+const maxIndent = 4
+
+// slimRowLine is one pane's line on the slim rail, exactly slimCols cells:
+// the cursor mark, the window number, the state dot, two letters of the
+// label and a space. A subagent has no window number.
+func slimRowLine(r Row, cursor, dim, focused bool, tag, label string, reply bool) string {
+	mark := " "
+	if cursor {
+		mark = "›"
+	}
+	num := " "
+	if tag != "" && r.Parent == "" {
+		num = tag[:1]
+	}
+	color := stateColor(r.State)
+	if r.Held != nil {
+		color = stateColor("working")
+	}
+	if dim {
+		color = sgrFaint
+	}
+	if cursor && focused {
+		color += sgrReverse
+	}
+	dot := "●"
+	if reply {
+		dot = "*"
+	}
+	return color + mark + num + dot + label + " " + sgrReset
+}
+
+// slimGroupLine is a group header on the slim rail, exactly slimCols
+// cells: the mark, the fold arrow and three cells of the title.
+func slimGroupLine(m *Model, g railGroup, cursor, focused bool) string {
+	mark := " "
+	if cursor {
+		mark = "›"
+	}
+	arrow := "▾"
+	if m.Folded[g.Key] {
+		arrow = "▸"
+	}
+	color := ""
+	if g.needs() > 0 {
+		color = sgrAmber
+	}
+	if cursor && focused {
+		color += sgrReverse
+	}
+	if g.Depth > 0 {
+		// A subtask header leads its title with a dot, so it does not read
+		// as a sibling of the task above it.
+		return color + mark + arrow + "·" + firstCells(g.Title, 2) + " " + sgrReset
+	}
+	return color + mark + arrow + firstCells(g.Title, 3) + " " + sgrReset
+}
+
+// slimRecentLine is a Recent item on the slim rail, exactly slimCols
+// cells.
+func slimRecentLine(m *Model, it item, cursor, focused bool) string {
+	mark := " "
+	if cursor {
+		mark = "›"
+	}
+	text := ""
+	switch it.kind {
+	case itemFold:
+		arrow := "▸"
+		if m.RecentOpen {
+			arrow = "▾"
+		}
+		text = arrow + fmt.Sprint(len(m.recent()))
+	case itemResumeAll:
+		text = " res"
+	case itemClearAll:
+		text = " clr"
+	default:
+		text = "x" + railName(it.row)
+	}
+	color := sgrFaint
+	if cursor && focused {
+		color += sgrReverse
+	}
+	return color + mark + firstCells(text, 4) + " " + sgrReset
 }
 
 // rowLine is one pane's line. The cursor row carries the mark, every
@@ -421,7 +668,8 @@ func rowLine(r Row, cursor, dim, focused bool, tag string, cols int) string {
 		line = "waiting on " + textwidth.Printable(r.Held.TaskLabel, 0) + "'s foreman · " + ageText(r.Held.Waited)
 		color = stateColor("working")
 	}
-	fields := []string{label, textwidth.Printable(r.Harness, 0), state, ageText(r.Age), line, lookingText(r.Looking)}
+	fields := []string{label, textwidth.Printable(r.Harness, 0), state, ageText(r.Age), line, lookingText(r.Looking),
+		changedText(r.Changed)}
 	kept := fields[:0]
 	for _, f := range fields {
 		if f != "" {
@@ -454,6 +702,10 @@ func roster(m *Model, cols, height int) (lines []string, at []int) {
 	items := m.items()
 	m.norm(items)
 	focused := m.railFocused()
+	var labels map[string]string
+	if m.slim {
+		labels = slimLabels(items)
+	}
 	cursorAt := -1
 	if len(rows) == 0 {
 		text := "Nothing running. Enter opens " + m.defaultHarness() + " here."
@@ -466,6 +718,9 @@ func roster(m *Model, cols, height int) (lines []string, at []int) {
 		lines = append(lines, textwidth.Pad(text, cols))
 		at = append(at, -1)
 	}
+	if m.slim && len(lines) > 0 {
+		lines[0] = textwidth.Pad(textwidth.Truncate("none", cols), cols)
+	}
 	for i, it := range items {
 		if it.kind == itemFold {
 			lines = append(lines, textwidth.Pad("", cols))
@@ -476,6 +731,10 @@ func roster(m *Model, cols, height int) (lines []string, at []int) {
 		}
 		switch it.kind {
 		case itemGroup:
+			if m.slim {
+				lines = append(lines, slimGroupLine(m, it.group, i == m.Cursor, focused))
+				break
+			}
 			lines = append(lines, groupLine(m, it.group, i == m.Cursor, focused, cols))
 		case itemRow:
 			r := it.row
@@ -483,8 +742,21 @@ func roster(m *Model, cols, height int) (lines []string, at []int) {
 			if r.Parent != "" && tag != "" {
 				tag = "  "
 			}
+			if m.slim {
+				lines = append(lines, slimRowLine(r, i == m.Cursor, m.Typing != "", focused, tag, labels[r.ID], m.replyWaiting(r.ID)))
+				break
+			}
+			tag += strings.Repeat("  ", min(it.depth, maxIndent))
+			if m.replyWaiting(r.ID) {
+				// The foreman has a reply and no window to show it in.
+				r.State = replyMark
+			}
 			lines = append(lines, rowLine(r, i == m.Cursor, m.Typing != "", focused, tag, cols))
 		default:
+			if m.slim {
+				lines = append(lines, slimRecentLine(m, it, i == m.Cursor, focused))
+				break
+			}
 			lines = append(lines, recentLine(m, it, i == m.Cursor, focused, cols))
 		}
 		at = append(at, i)
@@ -550,13 +822,27 @@ func pickerBody(m *Model, cols, height int) (lines []string, cur int) {
 		num := "  "
 		if i < 9 {
 			num = fmt.Sprintf("%d ", i+1)
+		} else if i == 9 {
+			num = "0 "
 		}
 		pin := ""
 		if pr.Pinned {
 			pin = "  pinned"
 		}
-		text := "  " + mark + num + textwidth.Printable(pr.Name, 0) + "  " + textwidth.Printable(pr.Path, 0) + pin
-		lines = append(lines, textwidth.Pad(text, cols))
+		name := textwidth.Printable(pr.Name, 0)
+		color := ""
+		if pr.Missing {
+			name += " (missing)"
+			color = sgrFaint
+		} else if c := m.ProjectCounts(pr.Path); c != "" {
+			name += "  " + c
+		}
+		text := "  " + mark + num + name + "  " + textwidth.Printable(pr.Path, 0) + pin
+		line := textwidth.Pad(text, cols)
+		if color != "" {
+			line = color + line + sgrReset
+		}
+		lines = append(lines, line)
 	}
 	if height > 0 && cur >= height {
 		lines = lines[cur-height+1:]
@@ -660,7 +946,11 @@ func headlessFootLine(m *Model, id string, w int) string {
 	line := m.HeadlessLine[id]
 	var shown string
 	if line == "" {
-		shown = textwidth.Pad(textwidth.Truncate(headlessPlaceholder, w), w)
+		hint := headlessPlaceholder
+		if m.chatWindow(id) {
+			hint = chatPlaceholder
+		}
+		shown = textwidth.Pad(textwidth.Truncate(hint, w), w)
 	} else {
 		shown, _ = headlessVisible(line, m.HeadlessCursor[id], w)
 	}
@@ -710,6 +1000,9 @@ func tileLines(m *Model, id string, i, w, h int) []string {
 	end := ""
 	if id != "" && w > 4 {
 		end = " " + closeMark
+		if word := m.toggleWord(id); word != "" && w > 20 {
+			end = " " + word + end
+		}
 	}
 	room := w - textwidth.Width(end)
 	if id != "" && id == m.Typing {
@@ -721,12 +1014,16 @@ func tileLines(m *Model, id string, i, w, h int) []string {
 	if r, ok := m.row(id); ok && id != "" && r.Stack != "" && len(lines) < h {
 		lines = append(lines, sgrFaint+textwidth.Pad(textwidth.Truncate("  "+r.Stack, w), w)+sgrReset)
 	}
-	headless := id != "" && m.isHeadless(id) && h >= 2
+	headless := id != "" && m.takesLine(id) && h >= 2
 	budget := h
 	if headless {
 		budget = h - 1
 	}
-	if sc := m.Screens[id]; id != "" && sc != nil {
+	if m.chatWindow(id) {
+		// The window has shown the foreman's newest reply.
+		m.ChatSeen = lastReply(m.Chat)
+		lines = append(lines, chatLines(m, w, budget-len(lines))...)
+	} else if sc := m.Screens[id]; id != "" && sc != nil {
 		for _, l := range sc.Lines() {
 			if len(lines) >= budget {
 				break
@@ -790,17 +1087,29 @@ func split(m *Model, cols, height, n int) (lines []string, at, tileAt []int) {
 		id := ids[i]
 		tiles[i] = tileLines(m, id, i, widths[i], height)
 		inner := height - 1 - m.stackLines(id)
-		if id != "" && m.isHeadless(id) && height >= 2 {
+		if id != "" && m.takesLine(id) && height >= 2 {
 			inner--
 		}
 		if _, seen := m.TileSizes[id]; id != "" && !seen && widths[i] > 0 && inner > 0 {
 			m.TileSizes[id] = Size{Cols: widths[i], Rows: inner}
 		}
 	}
+	// The journal covers the windows and leaves the rail in sight.
+	var journal []string
+	if m.Journal != nil {
+		journal = journalLines(m, max(cols-railW-1, 0), height)
+		tileAt = noRows(cols)
+	}
 	lines = make([]string, height)
 	for y := range lines {
 		var b strings.Builder
 		b.WriteString(left[y])
+		if journal != nil {
+			b.WriteString(divider)
+			b.WriteString(journal[y])
+			lines[y] = b.String()
+			continue
+		}
 		for i := range tiles {
 			typing := ids[i] != "" && ids[i] == m.Typing
 			prevTyping := i > 0 && ids[i-1] != "" && ids[i-1] == m.Typing
@@ -833,7 +1142,10 @@ func Render(m *Model, cols, rows int) []string {
 	if rows <= 0 || cols <= 0 {
 		return nil
 	}
-	head := []string{textwidth.Pad(bar(m), cols)}
+	// The slim rail gives way to the whole screen while the peek, the
+	// picker or the tree is open: they need more than 6 columns.
+	m.slim = slimRail(cols) && m.Tiles != nil && m.Peek == nil && m.Picker == nil && m.Tree == nil
+	head := []string{textwidth.Pad(barLine(m, cols), cols)}
 	if m.Facts != nil && cols >= factsMinCols {
 		head = append(head, sgrFaint+textwidth.Pad(textwidth.Truncate(factsLine(m), cols), cols)+sgrReset)
 	}
@@ -880,9 +1192,12 @@ func Render(m *Model, cols, rows int) []string {
 	var mid []string
 	var at, tileAt []int
 	tiled := false
-	if n := windowCount(cols); n > 0 && m.Tiles != nil {
+	if n := windowCount(cols); n > 0 && m.Tiles != nil && (!slimRail(cols) || m.slim) {
 		mid, at, tileAt = split(m, cols, bodyH, n)
 		tiled = true
+	} else if m.Journal != nil {
+		mid, at = journalLines(m, cols, bodyH), noRows(bodyH)
+		tileAt = noRows(cols)
 	} else {
 		mid, at = body(m, cols, bodyH)
 		tileAt = noRows(cols)
@@ -928,9 +1243,9 @@ func Render(m *Model, cols, rows int) []string {
 func placeCursor(m *Model, cols, rows, bodyTop, bodyH int, prompt string) {
 	x, y := 0, bodyTop
 	switch {
-	case m.Talking || m.Renaming != "" || m.Confirm != "" || m.ClearAll:
+	case m.Talking || m.Renaming != "" || m.Swapping != "" || m.Confirm != "" || m.ClearAll:
 		x, y = textwidth.Width(prompt), rows-1
-	case m.Typing != "" && m.isHeadless(m.Typing) && len(m.TileX) > 0:
+	case m.Typing != "" && m.takesLine(m.Typing) && len(m.TileX) > 0:
 		slot := -1
 		for i, id := range m.Tiles.Shown(len(m.TileX)) {
 			if id == m.Typing {

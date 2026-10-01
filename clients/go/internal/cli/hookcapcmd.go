@@ -21,7 +21,7 @@ func (e *Env) capturesRoot(p *parsed) string {
 	if p.has("--captures-root") {
 		return gateroot.PathStr(p.str("--captures-root", ""))
 	}
-	return gateroot.Join(e.home, ".opendaisugi/captures")
+	return gateroot.Join(e.dataHome(), "captures")
 }
 
 // pyRaise ends a command with an exception Python does not catch: the

@@ -173,10 +173,44 @@ export function projectMenu(projects) {
   for (const p of Array.isArray(projects) ? projects : []) {
     if (!p || typeof p.path !== 'string' || !p.path || seen.has(p.path)) continue;
     seen.add(p.path);
-    out.push({ path: p.path, name: p.name || baseName(p.path), pinned: p.pinned === true });
+    out.push({ path: p.path, name: p.name || baseName(p.path), pinned: p.pinned === true, missing: p.missing === true });
   }
   const pinned = out.filter((p) => p.pinned);
   return [...pinned, ...out.filter((p) => !p.pinned)].slice(0, MENU_MAX);
+}
+
+// COUNT_WORDS are the words a picker row uses for each state, asks first.
+const COUNT_WORDS = [['blocked', 'needs'], ['working', 'working'], ['idle', 'idle'], ['unknown', 'unknown'], ['done', 'done']];
+
+// cleanPath is a directory path with no repeated slash, no . and no .. it
+// can fold, and no slash at its end, the way the server cleans one. It
+// follows no link.
+export function cleanPath(p) {
+  const s = String(p || '');
+  if (s === '') return '.';
+  const rooted = s.startsWith('/');
+  const out = [];
+  for (const part of s.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      if (out.length > 0 && out[out.length - 1] !== '..') out.pop();
+      else if (!rooted) out.push('..');
+      continue;
+    }
+    out.push(part);
+  }
+  const joined = out.join('/');
+  return rooted ? '/' + joined : (joined || '.');
+}
+
+// projectCounts is the state counts of the live agents in one project, for
+// the picker: '1 needs · 2 working'. It is '' when the project has none.
+export function projectCounts(panes, path) {
+  const want = cleanPath(path);
+  const rows = (Array.isArray(panes) ? panes : []).filter((p) => p && !p.closed && !p.parent
+    && typeof p.cwd === 'string' && p.cwd !== '' && cleanPath(p.cwd) === want);
+  const c = groupCounts(rows);
+  return COUNT_WORDS.filter(([s]) => c[s] > 0).map(([s, w]) => c[s] + ' ' + w).join(' · ');
 }
 
 // dropAction is what a drop on window i does. drag.slot is the window a

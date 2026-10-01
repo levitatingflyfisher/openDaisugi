@@ -1,0 +1,67 @@
+# CP-R-35: the time the event ring holds events from follows the clock.
+#!mask from
+# Push to a fake ntfy: the settings test, the card for a blocked pane,
+# the deny token's door on the answer route, and the debounce.
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "p0", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/usr/bin/python3", "{FIXTURES}/web/fake-ntfy.py", "{ADDR2}", "{WORK}/ntfy.log"], "kind": "pty", "label": "ntfy"}
+{"id": "$id", "ok": true, "result": {"pane": "$n"}}
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "fix auth"}
+{"id": "$id", "ok": true, "result": {"pane": "$a"}}
+{"id": "p2", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty"}
+{"id": "$id", "ok": true, "result": {"pane": "$b"}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false", "--ntfy", "http://{ADDR2}/", "--ntfy-topic", "t1", "--ntfy-token-env", "NTFY_TOK", "--external-url", "https://phone.test/"], "bg": "web", "env": {"NTFY_TOK": "ntfy-secret"}}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h0", "http": "GET", "url": "http://{ADDR2}/", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 501}}
+{"id": "t1", "http": "POST", "url": "http://{ADDR}/api/push/test", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+#!retry 5000
+{"id": "c1", "file": "{WORK}/ntfy.log", "count": "\n"}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+# The push watcher subscribes once the server is up; a state event before
+# that is not seen, so wait for the event ring to be live first.
+#!retry 5000
+{"id": "e0", "http": "GET", "url": "http://{ADDR}/api/events", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "mask_headers": ["Content-Length"]}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "z0", "sleep": 500}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "s1", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "gate", "ask": {"id": "toolu_p1", "tool": "Bash", "summary": "git push\norigin main", "deadline": 4102444800, "tier": "undoable", "gate": {"verdict": "ask", "rule": 3}}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": {"pane": "$a", "state": "blocked", "source": "gate"}}
+#!retry 5000
+{"id": "c2", "file": "{WORK}/ntfy.log", "count": "\n"}
+{"id": "$id", "ok": true, "result": {"count": 2}}
+# Within five seconds the same pane blocks again: no second card.
+{"id": "s2", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 2, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "working", "source": "gate"}}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "s3", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 3, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "gate", "ask": {"id": "toolu_p2", "tool": "Write", "summary": "a.txt", "deadline": 4102444800, "tier": "permanent"}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": "*"}
+# A pane with no label, and an ask with no summary: the card says the detail.
+{"id": "s4", "cmd": "pane.report_state", "pane": "$b", "event": {"v": 1, "ts": 4, "session_id": "s", "harness": "claude-code", "pane": "$b", "state": "blocked", "source": "gate", "ask": {"id": "toolu_p3", "tool": "Bash", "summary": "", "deadline": 4102444800}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": "*"}
+#!retry 5000
+{"id": "c3", "file": "{WORK}/ntfy.log", "count": "\n"}
+{"id": "$id", "ok": true, "result": {"count": 3}}
+{"id": "z1", "sleep": 1000}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "c4", "file": "{WORK}/ntfy.log"}
+{"id": "$id", "ok": true, "result": "*"}
+# A token the push minted but no longer grants: an old card's tap.
+{"id": "a1", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer 0000000000000000000000000000000000000000000000000000000000000000"}, "body": "{\"tool_use_id\":\"toolu_p1\",\"decision\":\"deny\"}"}
+{"id": "$id", "ok": true, "result": {"status": 401}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# A topic ntfy refuses.
+{"id": "v2", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false", "--ntfy", "http://{ADDR2}", "--ntfy-topic", "fail"], "bg": "web2"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "t2", "http": "POST", "url": "http://{ADDR}/api/push/test", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 502}}
+{"id": "x2", "stop": "web2"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# --ntfy with no topic: push stays off.
+{"id": "v3", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false", "--ntfy", "http://{ADDR2}"], "bg": "web3"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "t3", "http": "POST", "url": "http://{ADDR}/api/push/test", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 409}}
+{"id": "x3", "stop": "web3"}
+{"id": "$id", "ok": true, "result": {"code": 0}}

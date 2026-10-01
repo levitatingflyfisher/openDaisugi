@@ -21,7 +21,7 @@ import (
 	"daisugi-verify/internal/pystr"
 )
 
-var routers = []string{"rules", "switchyard", "off"}
+var routers = []string{"rules", "switchyard", "knn", "model", "off"}
 
 var upstreamKinds = []string{"anthropic", "ollama", "openai-compatible", "anthropic-compatible"}
 
@@ -43,7 +43,7 @@ func gatewayOpts() []opt {
 			help: "Model an easy OpenAI-wire turn is routed onto; empty disables routing on that wire."},
 		{names: []string{"--upstream-kind"}, value: true, metavar: "TEXT",
 			help: "The wire --upstream speaks: anthropic, ollama, openai-compatible, anthropic-compatible."},
-		{names: []string{"--router"}, value: true, metavar: "TEXT", help: "Who picks the model: rules, switchyard or off."},
+		{names: []string{"--router"}, value: true, metavar: "TEXT", help: "Who picks the model: rules, switchyard, knn, model or off."},
 		{names: []string{"--switchyard-config"}, value: true, metavar: "PATH", help: "Your own Switchyard TOML file."},
 		{names: []string{"--switchyard-port"}, value: true, metavar: "INTEGER", help: "The loopback port of the managed switchyard-server."},
 	}
@@ -62,6 +62,11 @@ func contains(xs []string, s string) bool {
 // errors meets it: an invalid file ends the run with pydantic's error.
 func (e *Env) loadCfg(cmd, path string) (config.Config, error) {
 	cfg, err := config.Load(path)
+	var yerr *config.YAMLError
+	if errors.As(err, &yerr) {
+		e.errf("daisugi %s: %s\n", cmd, yerr.Error())
+		return cfg, exit(1)
+	}
 	if errors.Is(err, config.ErrInvalid) {
 		e.errf("daisugi %s: pydantic_core._pydantic_core.ValidationError: %s does not validate\n", cmd, path)
 		return cfg, exit(1)
@@ -101,7 +106,7 @@ func (e *Env) gatewayCmd(args []string) error {
 	host := p.str("--host", "127.0.0.1")
 	upstream := p.str("--upstream", "https://api.anthropic.com")
 	cheap := p.str("--cheap-model", "claude-haiku-4-5")
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	capture := p.flag("--capture-answers")
 	localFlag := p.str("--local-model", "")
 	openaiUp := p.str("--openai-upstream", "https://api.openai.com")
@@ -117,7 +122,7 @@ func (e *Env) gatewayCmd(args []string) error {
 		router = cfg.GatewayRouter
 	}
 	if !contains(routers, router) {
-		e.errf("unknown --router %s.\nthe gateway knows three choosers.\nchoose one of: %s\n",
+		e.errf("unknown --router %s.\nthe gateway knows five choosers.\nchoose one of: %s\n",
 			pystr.Repr(router), strings.Join(routers, ", "))
 		return exit(1)
 	}
@@ -139,7 +144,7 @@ func (e *Env) gatewayCmd(args []string) error {
 	}
 	if !p.has("--upstream-kind") {
 		// The recorded kind counts only when --upstream names that host.
-		cfg, err := e.loadCfg(cmd, filepath.Join(e.home, ".opendaisugi", "config.yaml"))
+		cfg, err := e.loadCfg(cmd, filepath.Join(e.dataHome(), "config.yaml"))
 		if err != nil {
 			return err
 		}
@@ -152,7 +157,7 @@ func (e *Env) gatewayCmd(args []string) error {
 			}
 		}
 	}
-	mode := map[string]string{"rules": gateway.ModeRules, "switchyard": gateway.ModeExternal, "off": gateway.ModeOff}[router]
+	mode := map[string]string{"rules": gateway.ModeRules, "switchyard": gateway.ModeExternal, "knn": gateway.ModeKnn, "model": gateway.ModeModel, "off": gateway.ModeOff}[router]
 	var ext *gateway.External
 	var child *switchyardChild
 	if router == "switchyard" {
@@ -167,6 +172,24 @@ func (e *Env) gatewayCmd(args []string) error {
 	if shownLocal != "" && router == "rules" {
 		e.out("  local rung: easy turns go to %s\n", shownLocal)
 	}
+	if router == "knn" {
+		e.out("  knn outcomes: %s/gateway/routing.db\n", dataDir)
+	}
+	cfgNow, err := e.loadCfg(cmd, cfgPath)
+	if err != nil {
+		return err
+	}
+	if router == "model" {
+		rm := "not set"
+		if cfgNow.GatewayRouterModel != nil {
+			rm = *cfgNow.GatewayRouterModel
+		}
+		e.out("  router model: %s\n", rm)
+		e.out("  outcomes: %s/gateway/routing.db\n", dataDir)
+	}
+	if gateway.Off(cfgNow.GatewayGrader) != "" {
+		e.out("  grader: %s\n", *cfgNow.GatewayGrader)
+	}
 	e.out("  listening on http://%s:%d  (journal: %s/gateway/turns.jsonl)\n", host, port, dataDir)
 	e.out("  config reload: on change to %s/config.yaml, on SIGHUP, or POST http://%s:%d/_reload from this machine\n",
 		dataDir, host, port)
@@ -177,9 +200,13 @@ func (e *Env) gatewayCmd(args []string) error {
 	if capture {
 		e.out("  capturing answers to:      %s/gateway/answers.jsonl\n", dataDir)
 	}
-	build := func(localModel, cheapModel, mode string, ext *gateway.External) (*gateway.Gateway, error) {
+	build := func(localModel, cheapModel, mode string, ext *gateway.External, routerModel, graderModel string) (*gateway.Gateway, error) {
 		g := gateway.Gateway{CheapModel: cheapModel, LocalModel: localModel, RouterMode: mode, External: ext,
 			JournalPath: filepath.Join(dataDir, "gateway", "turns.jsonl")}
+		if mode == gateway.ModeKnn || mode == gateway.ModeModel {
+			g.Knn = e.knnRouter(dataDir)
+			g.RouterModel, g.GraderModel = routerModel, graderModel
+		}
 		if capture {
 			g.CaptureAnswers = true
 			g.AnswersPath = filepath.Join(dataDir, "gateway", "answers.jsonl")
@@ -198,18 +225,18 @@ func (e *Env) gatewayCmd(args []string) error {
 		if local == "" && cfg.GatewayLocalModel != nil {
 			local = *cfg.GatewayLocalModel
 		}
-		return build(local, cheap, mode, ext)
+		return build(local, cheap, mode, ext, gateway.Off(cfg.GatewayRouterModel), gateway.Off(cfg.GatewayGrader))
 	}
 	reloader := &gateway.Reloader{Path: cfgPath, Rebuild: rebuild, MinInterval: 2 * time.Second}
 	anthropic := reloader.Current()
 	if anthropic == nil {
-		if anthropic, err = build(localFlag, cheap, mode, ext); err != nil {
+		if anthropic, err = build(localFlag, cheap, mode, ext, gateway.Off(cfgNow.GatewayRouterModel), gateway.Off(cfgNow.GatewayGrader)); err != nil {
 			return e.fail(cmd, err)
 		}
 	}
 	var openai *gateway.Gateway
 	if openaiCheap != "" {
-		if openai, err = build(localFlag, openaiCheap, gateway.ModeRules, nil); err != nil {
+		if openai, err = build(localFlag, openaiCheap, gateway.ModeRules, nil, "", ""); err != nil {
 			return e.fail(cmd, err)
 		}
 	}
@@ -286,4 +313,31 @@ func bindReason(err error) string {
 		return strings.ToLower(errno.Error())
 	}
 	return err.Error()
+}
+
+// knnRouter is build_default_gateway's KnnRouter: the outcome table under
+// the data dir, the active matcher as the embedder, and its threshold. A
+// matcher this binary cannot run gives a threshold of 1.0 and an embedder
+// that fails, so every turn falls back to the rules router.
+func (e *Env) knnRouter(dataDir string) *gateway.Knn {
+	m, notBuilt, merr := e.matcher()
+	usable := merr == nil && notBuilt == ""
+	threshold := 1.0
+	if usable {
+		threshold = m.Threshold
+	}
+	return &gateway.Knn{
+		Store:     &gateway.OutcomeStore{Path: filepath.Join(dataDir, "gateway", "routing.db")},
+		Threshold: threshold,
+		Embed: func(text string) ([]float32, string, error) {
+			if !usable {
+				return nil, "", errors.New("no usable matcher")
+			}
+			emb, err := m.Embedder()
+			if err != nil {
+				return nil, "", err
+			}
+			return gateway.ToF32(emb.Encode(text)), m.Identity, nil
+		},
+	}
 }

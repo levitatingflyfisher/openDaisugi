@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -53,6 +54,9 @@ type DaisugiGate struct {
 // file_path, cmd and command, so only the name needs translating.
 var gateVocabulary = map[string]string{
 	"read": "Read", "write": "Write", "edit": "Edit", "bash": "Bash",
+	// spawn is an MCP-style tool to the gate: the envelope admits it only
+	// when mcp_allowlist names sprig/spawn.
+	"spawn": "mcp__sprig__spawn",
 }
 
 func gateToolName(name string) string {
@@ -89,9 +93,12 @@ func (g DaisugiGate) Check(call ToolCall) Verdict {
 
 	cmd := exec.CommandContext(ctx, g.Command[0], g.Command[1:]...)
 	cmd.Stdin = bytes.NewReader(payload)
+	cmd.Env = ChildEnv("")
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
+	// A gate that runs past its time is killed with its whole group.
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	err := runInGroup(cmd)
 
 	if ctx.Err() == context.DeadlineExceeded {
 		return Verdict{Allow: false, Reason: "gate timed out — fail-closed"}

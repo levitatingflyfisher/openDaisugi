@@ -220,6 +220,7 @@ func (h *weaveHook) openCardOf(step *pyjson.Object) {
 		}
 		if card.Close == nil && card.Answer == nil && rank.Decay(card, h.dataDir, t) == nil {
 			h.choices.Set(sid, weaveChoice(card.ID(), card.Opened.Value("chosen"), card.Opened.Value("status"), false, nil))
+			h.resumedCards = append(h.resumedCards, [2]string{card.ID(), rid})
 		}
 		return
 	}

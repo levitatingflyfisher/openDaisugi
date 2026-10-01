@@ -17,6 +17,9 @@ journal and the pathway store it left.
 --oracle also reruns the Python side, so a stale fixture shows up.
 --max-refused N fails the run when more than N cases are refused or not
 ported, so a binary that carries weave cannot fall back to refusing it.
+
+--sprig BIN runs the real-sprig cases with that sprig binary (the Go or
+the Rust one; run them once with each). Without it they are skipped.
 """
 
 from __future__ import annotations
@@ -30,9 +33,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import agentic_fakes  # noqa: E402 - the fake claude and sprig; --sprig sets the real one
 import weave_cases  # noqa: E402, F401 - sibling module, run as a script (it patches garden_cases)
 from cli_cases import as_daisugi  # noqa: E402
-from fixture_paths import leaks  # noqa: E402
+from fixture_paths import fixed_root, leaks  # noqa: E402
 from garden_cases import run_case  # noqa: E402
 from garden_compare import before_tree, compare, guard  # noqa: E402
 from pathway_compare import STDERR_CLASSES, diff  # noqa: E402
@@ -46,7 +50,11 @@ def main() -> int:
     ap.add_argument("--only")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--max-refused", type=int, default=None)
+    ap.add_argument(
+        "--sprig", help="the sprig binary the real-sprig cases run; without it they skip"
+    )
     args = ap.parse_args()
+    agentic_fakes.set_real_sprig(args.sprig)
     SCRATCH.mkdir(parents=True, exist_ok=True)
     binary = as_daisugi(args.binary, SCRATCH)
     cases = [
@@ -55,12 +63,16 @@ def main() -> int:
         if ln.strip()
     ]
     classes: collections.Counter[str] = collections.Counter()
-    stale = guarded = 0
+    stale = guarded = real_ran = 0
     for i, case in enumerate(cases):
         if args.only and args.only not in case["name"]:
             continue
-        work = SCRATCH / "cmp" / f"{i:04d}"
-        before = before_tree(case, SCRATCH / "cmp" / f"{i:04d}b")
+        if case.get("sprig") == "real" and not agentic_fakes.has_real_sprig():
+            classes["skipped (no --sprig)"] += 1
+            continue
+        real_ran += case.get("sprig") == "real"
+        work = fixed_root(SCRATCH, f"c/{i:04d}")
+        before = before_tree(case, fixed_root(SCRATCH, f"c/b{i:04d}"))
         got = run_case(case, cmd_for(case, binary), work)
         cls, problems = compare(case, got, before)
         if cls == "agree" and got["tree"] != before:
@@ -69,7 +81,7 @@ def main() -> int:
             if problems:
                 cls = "disagree"
         if args.oracle:
-            live = run_case(case, cmd_for(case, None), SCRATCH / "cmp" / f"{i:04d}py")
+            live = run_case(case, cmd_for(case, None), fixed_root(SCRATCH, f"c/p{i:04d}"))
             if live != case["expect"]:
                 stale += 1
                 print(f"STALE fixture: {case['name']}: {diff(case['expect'], live)[:3]}")
@@ -81,7 +93,7 @@ def main() -> int:
         elif cls in ("refused", "not-ported") and args.verbose:
             print(f"{cls}: {case['name']}")
         shutil.rmtree(work, ignore_errors=True)
-    shutil.rmtree(SCRATCH / "cmp", ignore_errors=True)
+    shutil.rmtree(SCRATCH / "c", ignore_errors=True)
     print(
         f"\nweave: {sum(classes.values())} cases: "
         + ", ".join(f"{k}={v}" for k, v in sorted(classes.items()))
@@ -96,7 +108,12 @@ def main() -> int:
     over = args.max_refused is not None and refused > args.max_refused
     if over:
         print(f"{refused} cases refused or not ported; at most {args.max_refused} are ruled")
-    return 1 if classes.get("disagree") or stale or leaked or over else 0
+    # --sprig asks for the real-sprig cases: a run that ran none of them
+    # (a wrong --only, a renamed case) must not pass.
+    no_real = args.sprig is not None and real_ran == 0
+    if no_real:
+        print("--sprig was given but no real-sprig case ran")
+    return 1 if classes.get("disagree") or stale or leaked or over or no_real else 0
 
 
 if __name__ == "__main__":

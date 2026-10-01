@@ -27,6 +27,13 @@ fn setup() -> Setup {
     let root = dir.join("data/gate");
     std::fs::create_dir_all(root.join("envelopes")).unwrap();
     std::fs::write(root.join("envelopes/default.json"), TEST_ENVELOPE).unwrap();
+    // The gate reads state only from owned, unshared files (GR-R-1), whatever the umask.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for (p, m) in [(root.clone(), 0o700), (root.join("envelopes"), 0o700), (root.join("envelopes/default.json"), 0o600)] {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+        }
+    }
     let mut env = HashMap::new();
     for (k, v) in [("HOME", "/home/user"), ("PATH", "/usr/bin:/bin")] {
         env.insert(k.to_string(), v.to_string());
@@ -251,6 +258,9 @@ fn a_read_of_a_coppice_secret_is_a_pane_rule_deny() {
         ("web//ca/./ca.key", true),
         ("web/x/../ca/leaf.key", true),
         ("voice/./token", true),
+        ("chat/2026-10-09.jsonl", true),
+        ("journal/verdicts.jsonl", true),
+        ("chat//2026-10-09.jsonl", true),
     ] {
         let p = format!(
             r#"{{"session_id":"s","tool_name":"Read","cwd":"/work","tool_input":{{"file_path":"/home/user/.opendaisugi/coppice/{secret}"}}}}"#
@@ -373,4 +383,193 @@ fn a_z3_unknown_in_self_consistency_is_denied() {
     let res = t.run("enforce", read);
     assert!(res.native && res.exit == 2, "{res:?}");
     assert_eq!(s(&res.stderr), "openDaisugi gate: DENIED — predicate: invariant 'pred' violated\n");
+}
+
+// The per-agent mode marker (F11-R-1, F11-R-2, F11-R-6). The gate cases
+// pin the whole rule against Python; these pin the shapes in one place.
+// Each needs the marker to lower a call, so each fails without it.
+const SOCK_A: &str = "/run/coppice/floor-a.sock";
+const SOCK_B: &str = "/run/coppice/floor-b.sock";
+
+fn floor_dir(t: &Setup, sock: &str) -> PathBuf {
+    let d = PathBuf::from(&t.root).join("agents").join(super::config::agent_mode_floor(sock).unwrap());
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+fn put_marker(t: &Setup, sock: &str, pane: &str, body: &[u8]) -> PathBuf {
+    let p = floor_dir(t, sock).join(format!("{pane}.mode"));
+    std::fs::write(&p, body).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
+    p
+}
+
+fn on_floor(t: &mut Setup, sock: &str, pane: &str) {
+    t.env.insert("COPPICE_SOCK".into(), sock.into());
+    t.env.insert("COPPICE_PANE".into(), pane.into());
+}
+
+const READ_OUT: &str = r#"{"session_id": "s", "tool_name": "Read", "tool_input": {"file_path": "/etc/passwd"}}"#;
+
+#[test]
+fn the_floor_key_is_the_sockets_sha256() {
+    assert_eq!(
+        super::config::agent_mode_floor(SOCK_A).unwrap(),
+        super::sha256::hexdigest(SOCK_A.as_bytes())[..16].to_string()
+    );
+}
+
+#[test]
+fn an_agent_mode_marker_lowers_only_its_own_pane_on_watching() {
+    let cases: &[(&str, &[u8], i32)] = &[
+        ("w1:p1", b"watching\n", 0),
+        ("w1:p1", b"watching", 0),
+        ("w1:p1", b"enforcing\n", 2),
+        ("w1:p1", b"WATCHING\n", 2),
+        ("w1:p1", b"watching\r\n", 2),
+        ("w1:p1", b"watching\n\n", 2),
+        ("w1:p1", b"", 2),
+        ("../w1:p1", b"watching\n", 2),
+        ("w1:p2", b"watching\n", 2),
+    ];
+    for (pane, body, want) in cases {
+        let mut t = setup();
+        put_marker(&t, SOCK_A, "w1:p1", body);
+        std::fs::write(PathBuf::from(&t.root).join("agents/w1:p1.mode"), b"watching\n").unwrap();
+        on_floor(&mut t, SOCK_A, pane);
+        let res = t.run("enforce", READ_OUT);
+        assert!(res.native && res.exit == *want, "{pane} {body:?}: {res:?}");
+        // The marker never raises an audit hook.
+        assert_eq!(t.run("audit", READ_OUT).exit, 0);
+    }
+}
+
+#[test]
+fn a_marker_in_another_floors_dir_is_ignored() {
+    let mut t = setup();
+    put_marker(&t, SOCK_B, "w1:p1", b"watching\n");
+    on_floor(&mut t, SOCK_A, "w1:p1");
+    assert_eq!(t.run("enforce", READ_OUT).exit, 2);
+    on_floor(&mut t, SOCK_B, "w1:p1");
+    assert_eq!(t.run("enforce", READ_OUT).exit, 0);
+    t.env.remove("COPPICE_SOCK");
+    assert_eq!(t.run("enforce", READ_OUT).exit, 2);
+}
+
+#[test]
+fn a_symlinked_or_fifo_marker_is_not_read() {
+    let mut t = setup();
+    let dir = floor_dir(&t, SOCK_A);
+    std::fs::write(t.dir.join("w.txt"), b"watching\n").unwrap();
+    std::os::unix::fs::symlink(t.dir.join("w.txt"), dir.join("w1:p1.mode")).unwrap();
+    let fifo = std::ffi::CString::new(dir.join("w1:p2.mode").to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    put_marker(&t, SOCK_A, "w1:p3", b"watching\n");
+    for (pane, want) in [("w1:p1", 2), ("w1:p2", 2), ("w1:p3", 0)] {
+        on_floor(&mut t, SOCK_A, pane);
+        assert_eq!(t.run("enforce", READ_OUT).exit, want, "{pane}");
+    }
+}
+
+// F11-R-7: no symlinked directory is followed, and the marker must be this
+// user's, with one link, writable by no one else. Each case first shows the
+// same marker lowering the call.
+#[test]
+fn links_and_loose_owners_keep_enforce() {
+    use std::os::unix::fs::PermissionsExt;
+    type Spoil = fn(&Setup, &std::path::Path);
+    let spoils: &[(&str, Spoil)] = &[
+        ("agents dir symlink", |t, _| {
+            let agents = PathBuf::from(&t.root).join("agents");
+            let real = t.dir.join("real-agents");
+            std::fs::rename(&agents, &real).unwrap();
+            std::os::unix::fs::symlink(&real, &agents).unwrap();
+        }),
+        ("floor dir symlink", |t, m| {
+            let dir = m.parent().unwrap().to_path_buf();
+            let real = t.dir.join("real-floor");
+            std::fs::rename(&dir, &real).unwrap();
+            std::os::unix::fs::symlink(&real, &dir).unwrap();
+        }),
+        ("hard link", |t, m| std::fs::hard_link(m, t.dir.join("second-name")).unwrap()),
+        ("group writable", |_, m| std::fs::set_permissions(m, std::fs::Permissions::from_mode(0o620)).unwrap()),
+        ("other writable", |_, m| std::fs::set_permissions(m, std::fs::Permissions::from_mode(0o602)).unwrap()),
+        ("another owner", |_, _| {
+            super::config::TEST_EUID.with(|c| c.set(Some(unsafe { libc::geteuid() } + 1)));
+        }),
+    ];
+    for (name, spoil) in spoils {
+        let mut t = setup();
+        let m = put_marker(&t, SOCK_A, "w1:p1", b"watching\n");
+        on_floor(&mut t, SOCK_A, "w1:p1");
+        assert_eq!(t.run("enforce", READ_OUT).exit, 0, "{name}: not lowered before");
+        spoil(&t, &m);
+        assert_eq!(t.run("enforce", READ_OUT).exit, 2, "{name}: still lowered");
+        super::config::TEST_EUID.with(|c| c.set(None));
+    }
+}
+
+// GR-R-1: DISARMED and the envelope are read through no link, and only as a
+// regular file this user owns that group and other cannot write. A refused
+// DISARMED is armed; a refused envelope is none, so the call is denied.
+const WIPE: &str = "rm -rf /";
+
+fn set_mode(p: &std::path::Path, m: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+}
+
+#[test]
+fn only_a_plain_owned_disarmed_file_disarms() {
+    let t = setup();
+    let marker = PathBuf::from(&t.root).join("DISARMED");
+    assert_eq!(t.bash("enforce", WIPE).exit, 2, "no marker, yet allowed");
+    std::fs::write(&marker, "x").unwrap();
+    set_mode(&marker, 0o600);
+    assert_eq!(t.bash("enforce", WIPE).exit, 0, "a plain marker did not disarm");
+    set_mode(&marker, 0o666);
+    assert_eq!(t.bash("enforce", WIPE).exit, 2, "a world-writable marker disarmed");
+    set_mode(&marker, 0o600);
+    std::fs::hard_link(&marker, t.dir.join("second-name")).unwrap();
+    assert_eq!(t.bash("enforce", WIPE).exit, 2, "a hard-linked marker disarmed");
+    std::fs::remove_file(&marker).unwrap();
+    let target = t.dir.join("elsewhere");
+    std::fs::write(&target, "x").unwrap();
+    set_mode(&target, 0o600);
+    std::os::unix::fs::symlink(&target, &marker).unwrap();
+    assert_eq!(t.bash("enforce", WIPE).exit, 2, "a symlinked marker disarmed");
+}
+
+#[test]
+fn only_a_plain_owned_envelope_below_a_real_root_is_loaded() {
+    let t = setup();
+    let read = r#"{"session_id":"s1","tool_name":"Read","tool_input":{"file_path":"/work/a.txt"},"cwd":"/work"}"#;
+    assert_eq!(t.run("enforce", read).exit, 0, "a plain envelope was not loaded");
+    let env = PathBuf::from(&t.root).join("envelopes/default.json");
+    set_mode(&env, 0o646);
+    assert_eq!(t.run("enforce", read).exit, 2, "a world-writable envelope was loaded");
+    set_mode(&env, 0o600);
+    // The envelopes directory behind a link.
+    let dir = PathBuf::from(&t.root).join("envelopes");
+    let real = t.dir.join("real-envelopes");
+    std::fs::rename(&dir, &real).unwrap();
+    std::os::unix::fs::symlink(&real, &dir).unwrap();
+    assert_eq!(t.run("enforce", read).exit, 2, "an envelopes directory behind a link was read");
+    std::fs::remove_file(&dir).unwrap();
+    std::fs::rename(&real, &dir).unwrap();
+    // The root behind a link is refused; a link above the root is followed.
+    let data = t.dir.join("data");
+    let argv = |root: &str| -> Vec<String> {
+        ["--mode", "enforce", "--root", root, "--format", "claude"].iter().map(|s| s.to_string()).collect()
+    };
+    let link = t.dir.join("gate-link");
+    std::os::unix::fs::symlink(&t.root, &link).unwrap();
+    let res = run(&argv(link.to_str().unwrap()), read.as_bytes(), t.env.clone());
+    assert_eq!(res.exit, 2, "a root behind a link was read");
+    let home = t.dir.join("home");
+    std::os::unix::fs::symlink(&data, &home).unwrap();
+    let via = format!("{}/gate", home.display());
+    let res = run(&argv(&via), read.as_bytes(), t.env.clone());
+    assert_eq!(res.exit, 0, "a root behind a symlinked parent was refused");
 }

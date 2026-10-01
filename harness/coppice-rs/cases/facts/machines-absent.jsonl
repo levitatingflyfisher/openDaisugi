@@ -1,0 +1,13 @@
+# floor.machines with no tailscale on PATH (PATH names a directory that does
+# not exist, so the real tailscale of this box is never run): absent, no
+# machines, one plain line. Then a pane connection is refused: the tailnet
+# and the profiles are the owner's.
+#!env PATH={WORK}/nowhere
+{"id":"m1","cmd":"floor.machines"}
+{"id":"$id","ok":true,"result":{"tailscale":"absent","machines":[],"line":"Tailscale is not on this box. Install Tailscale, then open Machines again."}}
+{"id":"p1","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"],"label":"kid"}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"h1","cmd":"hello","role":"pane","pane":"$c"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$c"}}
+{"id":"m2","cmd":"floor.machines"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator reads the machines."}}

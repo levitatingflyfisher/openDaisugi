@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::netproxy;
 
+#[derive(Debug)]
 pub enum Fail {
     /// The time limit ran out.
     Timeout,
@@ -16,9 +17,15 @@ pub enum Fail {
     Proxy(u16, String),
     /// httpx cannot build a client for the proxy setting: its text.
     Fails(String),
+    /// httpx.InvalidURL from a proxy setting: its text.
+    Invalid(String),
     /// A proxy setting this binary does not read as httpx does, or a URL
     /// it does not send to.
     Unported(String),
+    /// The server refused the connection (ECONNREFUSED).
+    Refused,
+    /// Writing the body out failed: the error's text.
+    Write(String),
     /// Any other failure: the connection failed or broke.
     Other(String),
 }
@@ -40,6 +47,7 @@ fn target(url: &str) -> Result<(bool, String, u16, String), Fail> {
 fn io_fail(e: std::io::Error) -> Fail {
     match e.kind() {
         std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => Fail::Timeout,
+        std::io::ErrorKind::ConnectionRefused => Fail::Refused,
         _ => other(e.to_string()),
     }
 }
@@ -68,16 +76,78 @@ pub fn post_with(
     proxies: &netproxy::Httpx,
     roots: Option<Arc<rustls::RootCertStore>>,
 ) -> Result<Answer, Fail> {
+    let (status, raw, encoding, _) = exchange("POST", url, headers, Some(body), timeout_s, proxies, roots)?;
+    Ok(Answer { status, text: crate::gate::py::text::decode_utf8_replace(&raw), encoding })
+}
+
+/// A GET of `url`: the status and the raw body.
+pub fn get(url: &str, headers: &[(&str, String)], timeout_s: f64, proxies: &netproxy::Httpx) -> Result<(u16, Vec<u8>), Fail> {
+    exchange("GET", url, headers, None, timeout_s, proxies, None).map(|(s, b, _, _)| (s, b))
+}
+
+/// A GET of `url`: the status, the raw body, its content-encoding and its
+/// link header, if any.
+pub fn get_head(
+    url: &str,
+    headers: &[(&str, String)],
+    timeout_s: f64,
+    proxies: &netproxy::Httpx,
+) -> Result<(u16, Vec<u8>, Option<String>, Option<String>), Fail> {
+    exchange("GET", url, headers, None, timeout_s, proxies, None)
+}
+
+/// A POST of `url`: the status and the raw body.
+pub fn post_raw(url: &str, headers: &[(&str, String)], body: &[u8], timeout_s: f64, proxies: &netproxy::Httpx) -> Result<(u16, Vec<u8>), Fail> {
+    exchange("POST", url, headers, Some(body), timeout_s, proxies, None).map(|(s, b, _, _)| (s, b))
+}
+
+/// One request of any method: the status, every header (name, value) in
+/// order, and the raw body (dechunked; none for a HEAD).
+pub fn request(
+    method: &str,
+    url: &str,
+    headers: &[(&str, String)],
+    timeout_s: f64,
+    proxies: &netproxy::Httpx,
+) -> Result<(u16, Vec<(String, String)>, Vec<u8>), Fail> {
+    let mut all = vec![];
+    let (status, body, _, _) = exchange_with(method, url, headers, None, timeout_s, proxies, None, Some(&mut all))?;
+    Ok((status, all, body))
+}
+
+/// One request: the status, the raw body (dechunked), and its
+/// content-encoding and link headers, if any.
+fn exchange(
+    method: &str,
+    url: &str,
+    headers: &[(&str, String)],
+    body: Option<&[u8]>,
+    timeout_s: f64,
+    proxies: &netproxy::Httpx,
+    roots: Option<Arc<rustls::RootCertStore>>,
+) -> Result<(u16, Vec<u8>, Option<String>, Option<String>), Fail> {
+    exchange_with(method, url, headers, body, timeout_s, proxies, roots, None)
+}
+
+/// Opens the connection (time limits as `dial` sets them) and sends the
+/// request.
+fn send(
+    method: &str,
+    url: &str,
+    headers: &[(&str, String)],
+    body: Option<&[u8]>,
+    dial: &netproxy::Dial,
+    proxies: &netproxy::Httpx,
+) -> Result<netproxy::Conn, Fail> {
     let (tls, host, port, path) = target(url)?;
     let origin = netproxy::Origin { tls, host: host.clone(), port, explicit_port: true };
     let route = match proxies.route(&origin) {
         Ok(r) => r,
         Err(netproxy::Refusal::Fails(w)) => return Err(Fail::Fails(w)),
+        Err(netproxy::Refusal::Invalid(w)) => return Err(Fail::Invalid(w)),
         Err(netproxy::Refusal::Unported(w)) => return Err(Fail::Unported(w)),
     };
-    let limit = if timeout_s.is_finite() && timeout_s > 0.0 { Duration::from_secs_f64(timeout_s.min(1e9)) } else { Duration::from_secs(6000) };
-    let dial = netproxy::Dial { limit: Some((Instant::now(), limit)), connect_timeout: None, roots };
-    let mut conn = match netproxy::open(&route, &origin, &dial) {
+    let mut conn = match netproxy::open(&route, &origin, dial) {
         Ok(c) => c,
         Err(netproxy::Fail::Connect(e) | netproxy::Fail::Io(e)) => return Err(io_fail(e)),
         Err(netproxy::Fail::Status(c, r)) => return Err(Fail::Proxy(c, r)),
@@ -86,14 +156,122 @@ pub fn post_with(
     let bracketed = if host.contains(':') { format!("[{host}]") } else { host.clone() };
     let host_header = if port == default_port { bracketed } else { format!("{bracketed}:{port}") };
     let line = netproxy::request_target(&conn, &origin, &path);
-    let mut req = format!("POST {line} HTTP/1.1\r\n{}host: {host_header}\r\n", netproxy::auth_line(&conn));
+    let mut req = format!("{method} {line} HTTP/1.1\r\n{}host: {host_header}\r\n", netproxy::auth_line(&conn));
     for (k, v) in headers {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
-    req.push_str(&format!("content-length: {}\r\nconnection: close\r\n\r\n", body.len()));
+    match body {
+        Some(b) => req.push_str(&format!("content-length: {}\r\nconnection: close\r\n\r\n", b.len())),
+        None => req.push_str("connection: close\r\n\r\n"),
+    }
     let mut out = req.into_bytes();
-    out.extend_from_slice(body);
+    out.extend_from_slice(body.unwrap_or_default());
     conn.io.write_all(&out).and_then(|_| conn.io.flush()).map_err(io_fail)?;
+    Ok(conn)
+}
+
+/// One request whose 200 body is written to `out` as it arrives, so a
+/// file of gigabytes costs a buffer, not its size: the status, every
+/// header, and the bytes written. Another status's body is not read. Each
+/// read waits at most five minutes; there is no overall limit.
+pub fn request_to(
+    method: &str,
+    url: &str,
+    headers: &[(&str, String)],
+    proxies: &netproxy::Httpx,
+    out: &mut dyn Write,
+) -> Result<(u16, Vec<(String, String)>, u64), Fail> {
+    let dial = netproxy::Dial { limit: None, connect_timeout: Some(Duration::from_secs(30)), roots: None };
+    let conn = send(method, url, headers, None, &dial, proxies)?;
+    let _ = conn.sock.set_read_timeout(Some(Duration::from_secs(300)));
+    let mut r = std::io::BufReader::with_capacity(65_536, conn.io);
+    let mut status: Option<u16> = None;
+    let mut all = vec![];
+    let mut total = 0usize;
+    loop {
+        let mut line = Vec::new();
+        let n = std::io::BufRead::read_until(&mut r, b'\n', &mut line).map_err(io_fail)?;
+        total += n;
+        if n == 0 || total > 65_536 {
+            return Err(other("the reply has no header end"));
+        }
+        let l = String::from_utf8_lossy(&line).trim_end_matches(['\r', '\n']).to_string();
+        if status.is_none() {
+            status = Some(l.split_whitespace().nth(1).and_then(|c| c.parse().ok()).ok_or_else(|| other("the reply has no status"))?);
+            continue;
+        }
+        if l.is_empty() {
+            break;
+        }
+        if let Some((k, v)) = l.split_once(':') {
+            all.push((k.trim().to_string(), v.trim().to_string()));
+        }
+    }
+    let status = status.unwrap_or(0);
+    if method == "HEAD" || status != 200 {
+        return Ok((status, all, 0));
+    }
+    let header = |name: &str| all.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone());
+    let chunked = header("transfer-encoding").is_some_and(|v| v.to_ascii_lowercase().contains("chunked"));
+    let length: Option<u64> = header("content-length").and_then(|v| v.parse().ok());
+    let mut written = 0u64;
+    let mut buf = vec![0u8; 65_536];
+    // Copies n bytes (None: to the end) from r to out.
+    let mut copy = |r: &mut dyn Read, n: Option<u64>, written: &mut u64| -> Result<(), Fail> {
+        let mut left = n;
+        loop {
+            let want = match left {
+                Some(0) => return Ok(()),
+                Some(k) => k.min(buf.len() as u64) as usize,
+                None => buf.len(),
+            };
+            let got = r.read(&mut buf[..want]).map_err(io_fail)?;
+            if got == 0 {
+                return match left {
+                    None => Ok(()),
+                    Some(_) => Err(other("the reply was cut short")),
+                };
+            }
+            out.write_all(&buf[..got]).map_err(|e| Fail::Write(e.to_string()))?;
+            *written += got as u64;
+            if let Some(k) = left.as_mut() {
+                *k -= got as u64;
+            }
+        }
+    };
+    if chunked {
+        loop {
+            let mut line = Vec::new();
+            std::io::BufRead::read_until(&mut r, b'\n', &mut line).map_err(io_fail)?;
+            let text = String::from_utf8_lossy(&line);
+            let hex = text.trim().split(';').next().unwrap_or("").trim().to_string();
+            let n = u64::from_str_radix(&hex, 16).map_err(|_| other("the reply's chunks are broken"))?;
+            if n == 0 {
+                return Ok((status, all, written));
+            }
+            copy(&mut r, Some(n), &mut written)?;
+            let mut crlf = Vec::new();
+            std::io::BufRead::read_until(&mut r, b'\n', &mut crlf).map_err(io_fail)?;
+        }
+    }
+    copy(&mut r, length, &mut written)?;
+    Ok((status, all, written))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn exchange_with(
+    method: &str,
+    url: &str,
+    headers: &[(&str, String)],
+    body: Option<&[u8]>,
+    timeout_s: f64,
+    proxies: &netproxy::Httpx,
+    roots: Option<Arc<rustls::RootCertStore>>,
+    mut all: Option<&mut Vec<(String, String)>>,
+) -> Result<(u16, Vec<u8>, Option<String>, Option<String>), Fail> {
+    let limit = if timeout_s.is_finite() && timeout_s > 0.0 { Duration::from_secs_f64(timeout_s.min(1e9)) } else { Duration::from_secs(6000) };
+    let dial = netproxy::Dial { limit: Some((Instant::now(), limit)), connect_timeout: None, roots };
+    let mut conn = send(method, url, headers, body, &dial, proxies)?;
     let mut raw = Vec::new();
     conn.io.read_to_end(&mut raw).map_err(io_fail)?;
     let split = raw.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| other("the reply has no header end"))?;
@@ -108,17 +286,24 @@ pub fn post_with(
     let mut chunked = false;
     let mut length: Option<usize> = None;
     let mut encoding = None;
+    let mut link = None;
     for l in lines {
         if let Some((k, v)) = l.split_once(':') {
+            if let Some(all) = all.as_deref_mut() {
+                all.push((k.trim().to_string(), v.trim().to_string()));
+            }
             match k.trim().to_ascii_lowercase().as_str() {
                 "transfer-encoding" => chunked = v.to_ascii_lowercase().contains("chunked"),
                 "content-length" => length = v.trim().parse().ok(),
                 "content-encoding" => encoding = Some(v.trim().to_string()),
+                "link" => link = Some(v.trim().to_string()),
                 _ => {}
             }
         }
     }
-    if chunked {
+    if method == "HEAD" {
+        rest.clear();
+    } else if chunked {
         rest = crate::gate::llm::dechunk(&rest).ok_or_else(|| other("the reply's chunks are broken"))?;
     } else if let Some(n) = length {
         if rest.len() < n {
@@ -126,7 +311,7 @@ pub fn post_with(
         }
         rest.truncate(n);
     }
-    Ok(Answer { status, text: crate::gate::py::text::decode_utf8_replace(&rest), encoding })
+    Ok((status, rest, encoding, link))
 }
 
 #[cfg(test)]
@@ -208,8 +393,55 @@ mod tests {
             l.local_addr().unwrap().port()
         };
         match post_with(&format!("http://127.0.0.1:{port}/v1/messages"), &headers, b"{}", 5.0, &netproxy::Httpx::none(), None) {
-            Err(Fail::Other(_)) => {}
+            Err(Fail::Refused) => {}
             _ => panic!("a refused port answered"),
         }
+    }
+
+    /// One reply from a fresh listener, then the port.
+    fn serve_once(reply: Vec<u8>) -> u16 {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut sock, _) = l.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf);
+            let _ = sock.write_all(&reply);
+        });
+        port
+    }
+
+    /// request_to writes a 200 body out (plain, chunked), reads no body of
+    /// another status, and calls a body cut short a failure; a closed
+    /// connection is not a refused one.
+    #[test]
+    fn request_to_streams_a_body() {
+        let big = vec![b'x'; 300_000];
+        let mut reply = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nX-Repo-Commit: c\r\n\r\n", big.len()).into_bytes();
+        reply.extend_from_slice(&big);
+        let port = serve_once(reply);
+        let mut out = Vec::new();
+        let (status, headers, n) = request_to("GET", &format!("http://127.0.0.1:{port}/f"), &[], &netproxy::Httpx::none(), &mut out).unwrap();
+        assert_eq!((status, n, out.len()), (200, 300_000, 300_000));
+        assert!(headers.iter().any(|(k, v)| k == "X-Repo-Commit" && v == "c"));
+
+        let port = serve_once(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n".to_vec());
+        let mut out = Vec::new();
+        let (_, _, n) = request_to("GET", &format!("http://127.0.0.1:{port}/f"), &[], &netproxy::Httpx::none(), &mut out).unwrap();
+        assert_eq!((n, out.as_slice()), (5, &b"abcde"[..]));
+
+        let port = serve_once(b"HTTP/1.1 404 Not Found\r\nContent-Length: 3\r\n\r\nno!".to_vec());
+        let mut out = Vec::new();
+        let (status, _, n) = request_to("GET", &format!("http://127.0.0.1:{port}/f"), &[], &netproxy::Httpx::none(), &mut out).unwrap();
+        assert_eq!((status, n, out.len()), (404, 0, 0));
+
+        let port = serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nabcd".to_vec());
+        let mut out = Vec::new();
+        let r = request_to("GET", &format!("http://127.0.0.1:{port}/f"), &[], &netproxy::Httpx::none(), &mut out);
+        assert!(matches!(r, Err(Fail::Other(_))), "a cut-short body passed");
+
+        let port = serve_once(Vec::new());
+        let r = request_to("GET", &format!("http://127.0.0.1:{port}/f"), &[], &netproxy::Httpx::none(), &mut Vec::new());
+        assert!(matches!(r, Err(Fail::Other(_))), "a closed connection was not a failure");
     }
 }

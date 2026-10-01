@@ -23,6 +23,10 @@ export function tokenFromHash(hash) {
 
 export function mountSettings() {
   const token = document.getElementById('set-token');
+  // draft is what was typed and not yet saved. Closing the panel keeps it;
+  // only Save or Forget token clears it, and then the field shows storage.
+  let draft = null;
+  token.addEventListener('input', () => { draft = token.value; });
 
   window.addEventListener('coppice:route', () => {
     if (window.coppice.route(location.hash).screen !== 'settings') return;
@@ -31,7 +35,7 @@ export function mountSettings() {
     // server to mean anything, and a control that changes nothing helps
     // nobody.
     document.getElementById('set-origin').textContent = 'Server ' + location.origin;
-    token.value = localStorage.getItem('coppice.token') || '';
+    token.value = draft !== null ? draft : localStorage.getItem('coppice.token') || '';
   });
 
   document.getElementById('save-settings').addEventListener('click', () => {
@@ -45,14 +49,35 @@ export function mountSettings() {
       return;
     }
     localStorage.setItem('coppice.token', tok);
+    draft = null;
     window.coppice.reconnect(tok);
     window.coppice.status('Saved. Reconnecting.');
   });
 
   document.getElementById('forget-token').addEventListener('click', () => {
     localStorage.removeItem('coppice.token');
+    draft = null;
     token.value = '';
     window.coppice.status('Token forgotten. Scan the QR again.');
+  });
+
+  // Read replies aloud is this browser's choice. Where the replies are
+  // spoken is the server's, shown here and not edited here.
+  const aloud = document.getElementById('set-read-aloud');
+  const speechLine = document.getElementById('set-speech');
+  const speech = () => window.coppice.speech;
+  if (aloud) {
+    aloud.addEventListener('change', () => {
+      if (speech()) speech().setReadAloud(aloud.checked);
+    });
+  }
+  window.addEventListener('coppice:route', () => {
+    if (window.coppice.route(location.hash).screen !== 'settings' || !speech()) return;
+    if (aloud) aloud.checked = speech().readAloud();
+    if (speechLine) speechLine.textContent = speech().describe();
+    speech().refresh().then(() => {
+      if (speechLine) speechLine.textContent = speech().describe();
+    });
   });
 
   document.getElementById('test-push').addEventListener('click', async () => {

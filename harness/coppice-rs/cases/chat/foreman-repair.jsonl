@@ -1,0 +1,60 @@
+# A bad line in the tree, or a bad view.json, is repaired and not moved aside
+# (FM-R-68 and FM-R-69). Only a bad line in main/ (the owner's and the
+# foreman's own words) still moves the whole history aside. The files are
+# written by hand, the way a crash or a bad edit leaves them, and the server is
+# restarted to open them. The note names the copy it made; its .broken-<time>
+# stamp is read a second apart on the two sides, so the compare accepts two
+# stamps at most 2 seconds apart (CP-R-59). coppice foreman view and zoom read around a bad tree line
+# and say so on stderr, and write nothing. zoom pages a long node (--offset,
+# --size) and a bad id answers with the root ids (FM-R-70).
+#!config [foreman]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env COPPICE_SPRIG_BIN={FIXTURES}/chat/fake-turn-sprig.py
+#!env FAKE_TURN_DIR={WORK}/turns
+{"id": "1", "write": "{DATA}/foreman/main/2026-10-13.jsonl", "text": "{\"i\":0,\"kind\":\"past\",\"text\":\"alpha\",\"size\":5,\"date\":\"2026-10-13T10:00:00Z\"}\n{\"i\":1,\"kind\":\"past\",\"text\":\"0123456789abcdefghij\",\"size\":20,\"date\":\"2026-10-13T10:00:01Z\"}\n{\"i\":2,\"kind\":\"past\",\"text\":\"gamma\",\"size\":5,\"date\":\"2026-10-13T10:00:02Z\"}\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "2", "write": "{DATA}/foreman/tree/2026-10-13.jsonl", "text": "{\"l\":0,\"i\":0,\"text\":\"alpha\",\"size\":5}\ngarbage {\nnull\n{\"l\":null,\"i\":1,\"text\":\"x\",\"size\":1}\n{\"l\":0,\"i\":1,\"text\":\"beta\",\"size\":4,\"TEXT\":\"y\"}\n{\"l\":0,\"i\":1,\"text\":\"\\ud800\",\"size\":1}\n{\"L\":0,\"I\":1,\"text\":\"beta\",\"size\":4}\n{\"l\":0,\"i\":2,\"text\":\"gamma\",\"size\":5}\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+#!retry 20000
+{"id": "3", "cmd": "floor.chat"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "4", "file": "{DATA}/foreman/tree/2026-10-13.jsonl", "count": "garbage"}
+{"id": "$id", "ok": true, "result": {"count": 0}}
+{"id": "5", "cli": ["foreman", "view"]}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "6", "cli": ["foreman", "zoom", "0+2"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "0+1|alpha\n1+1|0123456789abcdefghij\n", "stderr": ""}}
+{"id": "7", "cli": ["foreman", "zoom", "1+1", "--size", "8", "--offset", "8"]}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "89abcdef\n[bytes 8-16 of 20. More: offset 16]\n", "stderr": ""}}
+{"id": "8", "cli": ["foreman", "zoom", "9+1"]}
+{"id": "$id", "ok": true, "result": {"code": 1, "stdout": "", "stderr": "foreman: node 9+1: no such node; the chat has 4 messages. The root nodes are 0+4.\n"}}
+{"id": "9", "cli": ["foreman", "zoom", "1+2"]}
+{"id": "$id", "ok": true, "result": {"code": 1, "stdout": "", "stderr": "node 1+2: id must be a multiple of n. The root nodes are 0+4.\n"}}
+{"id": "10", "ls": "{DATA}/foreman/tree"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "11", "write": "{DATA}/foreman/tree/2026-10-13.jsonl", "text": "{\"l\":0,\"i\":0,\"text\":\"alpha\",\"size\":5}\ngarbage {\nnull\n{\"l\":null,\"i\":1,\"text\":\"x\",\"size\":1}\n{\"l\":0,\"i\":1,\"text\":\"beta\",\"size\":4,\"TEXT\":\"y\"}\n{\"l\":0,\"i\":1,\"text\":\"\\ud800\",\"size\":1}\n{\"L\":0,\"I\":1,\"text\":\"beta\",\"size\":4}\n{\"l\":0,\"i\":2,\"text\":\"gamma\",\"size\":5}\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "12", "cli": ["foreman", "view"]}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "13", "ls": "{DATA}/foreman/tree"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "14", "write": "{DATA}/foreman/view.json", "text": "[["}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+{"id": "15", "cmd": "floor.chat", "since": "log/3"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "16", "file": "{DATA}/foreman/view.json", "count": "\"lines\":[[0,0],[0,1],[0,2],[0,3],[0,4]"}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+{"id": "17", "cli": ["foreman", "view"]}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "18", "ls": "{DATA}/foreman"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "19", "write": "{DATA}/foreman/main/2026-10-13.jsonl", "text": "{\"i\":0,\"kind\":\"past\",\"text\":\"alpha\",\"size\":5,\"date\":\"2026-10-13T10:00:00Z\"}\n{\"i\":1,\"kind\":\"past\",\"text\":\"0123456789abcdefghij\",\"size\":20,\"date\":\"2026-10-13T10:00:01Z\"}\n{\"i\":2,\"kind\":\"past\",\"text\":\"gamma\",\"size\":5,\"date\":\"2026-10-13T10:00:02Z\"}\nnot json\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+{"id": "20", "cmd": "floor.chat"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "21", "cli": ["foreman", "view"]}
+{"id": "$id", "ok": true, "result": "*"}

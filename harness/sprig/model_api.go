@@ -31,8 +31,24 @@ type APIModel struct {
 	// Session is one id for the whole run, sent on every request.
 	// OpenCode Go refuses a call without it; other endpoints ignore it.
 	Session string
-	httpDo  func(*http.Request) (*http.Response, error) // overridable for tests
+	// Tools is the wall: the tools the request offers. Empty offers all four.
+	Tools []string
+	// NoTools sends no tool schema (--tools none).
+	NoTools bool
+	// System, when SystemSet, is the system prompt in place of sprig's.
+	System    string
+	SystemSet bool
+	// Extra are more tools (from MCP servers) the request offers after the
+	// wall's. With NoTools they are the only tools.
+	Extra  []MCPToolDef
+	httpDo func(*http.Request) (*http.Response, error) // overridable for tests
 }
+
+// ModelName is the model this backend asks for.
+func (m *APIModel) ModelName() string { return m.Model }
+
+// HeldKey is the key this backend sends, for redaction.
+func (m *APIModel) HeldKey() string { return m.APIKey }
 
 // apiSystemPrompt is deliberately tiny — the reason E exists.
 const apiSystemPrompt = "You are sprig, a minimal coding agent. Use the tools " +
@@ -43,14 +59,30 @@ const apiSystemPrompt = "You are sprig, a minimal coding agent. Use the tools " 
 // ANTHROPIC_BASE_URL (the standard SDK env var) overrides the endpoint, so the same
 // binary can drive a local mock, an Anthropic-compatible proxy, or the openDaisugi
 // gateway — not only api.anthropic.com.
-func NewAPIModel() (*APIModel, error) {
-	key := os.Getenv("ANTHROPIC_API_KEY")
-	if key == "" {
-		return nil, fmt.Errorf("the api backend needs ANTHROPIC_API_KEY — E talks the raw API and breaks the exposure freeze, so set a key to opt in")
+func NewAPIModel() (*APIModel, error) { return NewAPIModelFor("", false, "") }
+
+// DefaultAnthropicBase is the anthropic wire's base URL when neither
+// --base-url nor ANTHROPIC_BASE_URL is set.
+const DefaultAnthropicBase = "https://api.anthropic.com"
+
+// NewAPIModelFor is NewAPIModel with the key and the base given. With
+// keySet, key is the key and no key is read from the environment. base
+// is --base-url; "" falls back to ANTHROPIC_BASE_URL, then the default.
+// A key is required only for the default base: a local server gets no
+// x-api-key header.
+func NewAPIModelFor(key string, keySet bool, base string) (*APIModel, error) {
+	if !keySet {
+		key = os.Getenv("ANTHROPIC_API_KEY")
 	}
-	base := "https://api.anthropic.com"
-	if o := strings.TrimRight(os.Getenv("ANTHROPIC_BASE_URL"), "/"); o != "" {
-		base = o // trailing slash trimmed, or the path becomes //v1/messages
+	if base == "" {
+		base = os.Getenv("ANTHROPIC_BASE_URL")
+	}
+	base = strings.TrimRight(base, "/") // or the path becomes //v1/messages
+	if base == "" {
+		base = DefaultAnthropicBase
+	}
+	if key == "" && base == DefaultAnthropicBase {
+		return nil, fmt.Errorf("the api backend needs ANTHROPIC_API_KEY — E talks the raw API and breaks the exposure freeze, so set a key to opt in")
 	}
 	model := "claude-haiku-4-5"
 	if o := os.Getenv("SPRIG_MODEL"); o != "" {
@@ -80,6 +112,23 @@ type apiBlock struct {
 	Input     map[string]any `json:"input,omitempty"`
 	ToolUseID string         `json:"tool_use_id,omitempty"`
 	Content   string         `json:"content,omitempty"`
+	// CacheControl marks the end of a cached prefix.
+	CacheControl map[string]string `json:"cache_control,omitempty"`
+}
+
+var ephemeral = map[string]string{"type": "ephemeral"}
+
+// toolDefs are the tools of the request: the wall's, then the extra
+// ones. With no tools only the extra ones go.
+func (m *APIModel) toolDefs(wall []string) []map[string]any {
+	var tools []map[string]any
+	if !m.NoTools {
+		tools = apiToolsFor(wall)
+	}
+	for _, e := range m.Extra {
+		tools = append(tools, map[string]any{"name": e.Name, "description": e.Description, "input_schema": e.Schema})
+	}
+	return tools
 }
 
 type apiMessage struct {
@@ -88,12 +137,22 @@ type apiMessage struct {
 }
 
 func (m *APIModel) Next(history []Message) (Message, error) {
+	wall := m.Tools
+	if len(wall) == 0 {
+		wall = AllToolNames
+	}
+	var system any = systemFor(wall, m.NoTools, m.System, m.SystemSet)
+	if text := system.(string); m.SystemSet && text != "" {
+		system = []apiBlock{{Type: "text", Text: text, CacheControl: ephemeral}}
+	}
 	reqBody := map[string]any{
 		"model":      m.Model,
 		"max_tokens": m.maxTokens(),
-		"system":     apiSystemPrompt,
-		"tools":      apiTools(),
-		"messages":   buildMessages(history),
+		"system":     system,
+		"messages":   buildMessages(history, m.SystemSet && (!m.NoTools || len(m.Extra) > 0)),
+	}
+	if tools := m.toolDefs(wall); len(tools) > 0 {
+		reqBody["tools"] = tools
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -102,7 +161,9 @@ func (m *APIModel) Next(history []Message) (Message, error) {
 		return Message{}, err
 	}
 	req.Header.Set("content-type", "application/json")
-	req.Header.Set("x-api-key", m.APIKey)
+	if m.APIKey != "" {
+		req.Header.Set("x-api-key", m.APIKey)
+	}
 	req.Header.Set("anthropic-version", "2023-06-01")
 	if m.Session != "" {
 		req.Header.Set("x-opencode-session", m.Session)
@@ -110,14 +171,17 @@ func (m *APIModel) Next(history []Message) (Message, error) {
 
 	do := m.httpDo
 	if do == nil {
-		do = (&http.Client{Timeout: m.timeout()}).Do
+		do = wireClient(m.timeout()).Do
 	}
 	resp, err := do(req)
 	if err != nil {
 		return Message{}, err
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
+	data, err := readBody(resp.Body, "anthropic")
+	if err != nil {
+		return Message{}, err
+	}
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusBadRequest && !hasErrorText(data) {
 			return Message{}, fmt.Errorf("%s refused this request and gave no reason. Some providers refuse topics by policy. Set SPRIG_MODEL to another model and try again", m.Model)
@@ -125,6 +189,42 @@ func (m *APIModel) Next(history []Message) (Message, error) {
 		return Message{}, fmt.Errorf("anthropic api %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return parseAPIResponse(data)
+}
+
+// plainTransport is Go's default transport without the automatic
+// Accept-Encoding: gzip, so the request is the one sprig-rs sends too.
+func plainTransport() http.RoundTripper {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableCompression = true
+	return t
+}
+
+// wireClient is the HTTP client of both model wires. It follows no
+// redirect: a 3xx comes back as the response, so the key and the request
+// never go to a host the operator did not name.
+func wireClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: plainTransport(),
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+// maxResponse is the most a model's response body may hold.
+const maxResponse = 32 << 20
+
+// readBody reads a model response, at most maxResponse bytes.
+func readBody(r io.Reader, wire string) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxResponse+1))
+	if len(data) > maxResponse {
+		return nil, fmt.Errorf("%s api: the response is larger than 32 MiB", wire)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func (m *APIModel) maxTokens() int {
@@ -141,11 +241,15 @@ func (m *APIModel) timeout() time.Duration {
 	return m.Timeout
 }
 
+// The request carries two cache marks when it has a system prompt file and
+// tools to call: the system block and the end of the request. The next call
+// of a tool loop then reads everything up to the end of this one.
+//
 // buildMessages maps sprig's flat history to Messages-API content blocks. It
 // assigns synthetic tool-use ids in order and pairs the Nth tool result with the
 // Nth call — sound because the loop appends results in call order. Consecutive
 // tool results coalesce into one user message, as the API requires.
-func buildMessages(history []Message) []apiMessage {
+func buildMessages(history []Message, markEnd bool) []apiMessage {
 	var msgs []apiMessage
 	nUse, nRes := 0, 0
 	for i := 0; i < len(history); {
@@ -155,10 +259,11 @@ func buildMessages(history []Message) []apiMessage {
 			// A prompt that follows another prompt joins its message, so
 			// the roles still alternate after a turn the provider refused.
 			block := apiBlock{Type: "text", Text: m.Text}
+			blocks := []apiBlock{block}
 			if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
-				msgs[n-1].Content = append(msgs[n-1].Content, block)
+				msgs[n-1].Content = append(msgs[n-1].Content, blocks...)
 			} else {
-				msgs = append(msgs, apiMessage{Role: "user", Content: []apiBlock{block}})
+				msgs = append(msgs, apiMessage{Role: "user", Content: blocks})
 			}
 			i++
 		case "assistant":
@@ -182,6 +287,19 @@ func buildMessages(history []Message) []apiMessage {
 			msgs = append(msgs, apiMessage{Role: "user", Content: blocks})
 		default:
 			i++
+		}
+	}
+	// The end of the request carries a mark, so the next call of a tool
+	// loop reads everything up to here.
+	if markEnd && len(msgs) > 0 {
+		// An empty text block cannot carry a mark: the last block with
+		// something in it does.
+		last := &msgs[len(msgs)-1]
+		for i := len(last.Content) - 1; i >= 0; i-- {
+			if b := &last.Content[i]; b.Type != "text" || b.Text != "" {
+				b.CacheControl = ephemeral
+				break
+			}
 		}
 	}
 	return msgs
@@ -238,6 +356,43 @@ func parseAPIResponse(data []byte) (Message, error) {
 	return Message{Role: "assistant", Text: strings.TrimSpace(text.String()), Model: r.Model, Usage: usage}, nil
 }
 
+// apiToolsFor is the tools of the wall, in sprig's order, in Anthropic
+// tool-definition form.
+func apiToolsFor(wall []string) []map[string]any {
+	var tools []map[string]any
+	for _, t := range apiTools() {
+		for _, name := range wall {
+			if t["name"] == name {
+				tools = append(tools, t)
+			}
+		}
+	}
+	return tools
+}
+
+// apiSystemPromptFor is the system prompt naming the tools of the wall.
+// The full wall gives apiSystemPrompt itself.
+func apiSystemPromptFor(wall []string) string {
+	return "You are sprig, a minimal coding agent. Use the tools (" + strings.Join(wall, ", ") +
+		") to complete the task. When finished, reply with your final answer as plain text."
+}
+
+// noToolsPrompt is the system prompt of a run with no tools.
+const noToolsPrompt = "You are sprig, a minimal agent. Reply with your final answer as plain text."
+
+// systemFor is the system prompt of an API request: the --system-file
+// bytes when one was given, else sprig's own for the wall (or for no
+// tools).
+func systemFor(wall []string, noTools bool, system string, systemSet bool) string {
+	switch {
+	case systemSet:
+		return system
+	case noTools:
+		return noToolsPrompt
+	}
+	return apiSystemPromptFor(wall)
+}
+
 // apiTools is sprig's four tools in Anthropic tool-definition form (input_schema).
 func apiTools() []map[string]any {
 	obj := func(required []string, fields ...string) map[string]any {
@@ -252,6 +407,25 @@ func apiTools() []map[string]any {
 		{"name": "write", "description": "Write content to a file.", "input_schema": obj([]string{"path", "content"}, "path", "content")},
 		{"name": "edit", "description": "Replace a unique occurrence of old with new.", "input_schema": obj([]string{"path", "old", "new"}, "path", "old", "new")},
 		{"name": "bash", "description": "Run a shell command.", "input_schema": obj([]string{"cmd"}, "cmd")},
+		{"name": "spawn", "description": "Start a child agent on a task inside a narrower envelope, wait, and return its answer.",
+			"input_schema": spawnSchema()},
+	}
+}
+
+// spawnSchema is the spawn tool's input: the task and the child's
+// envelope, and optionally the agent profile, the model, the child's
+// tools, its token and turn reservation and its turn limit.
+func spawnSchema() map[string]any {
+	str := map[string]any{"type": "string"}
+	num := map[string]any{"type": "integer"}
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"task": str, "envelope": map[string]any{"type": "object"}, "profile": str, "model": str,
+			"tools":  map[string]any{"type": "array", "items": str},
+			"tokens": num, "turns": num, "max_turns": num,
+		},
+		"required": []string{"task", "envelope"},
 	}
 }
 

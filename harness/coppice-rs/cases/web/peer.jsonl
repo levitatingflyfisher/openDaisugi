@@ -1,0 +1,33 @@
+# The /proc/net/tcp check: a client on this box is placed by the process
+# that holds its end of the connection. A pane process may not answer an
+# ask through the web server, the same as on the coppice socket.
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "f1", "write": "{WORK}/gate/asks/toolu_q1.json", "text": "{\"nonce\": \"n-1\", \"tier\": \"undoable\"}"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g0", "http": "GET", "url": "http://{ADDR}/", "wait_ms": 8000, "same_as": "{FIXTURES}/web/static/index.html"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/usr/bin/python3", "-c", "import urllib.request as u, time\nr = u.Request('http://{ADDR}/api/ask/answer', data=b'{\"tool_use_id\":\"toolu_q1\",\"decision\":\"deny\"}', headers={'Authorization': 'Bearer pinned-web-token-0001'})\ntry:\n    out = 'status %d\\n' % u.urlopen(r).status\nexcept Exception as e:\n    out = 'status %d %s\\n' % (e.code, e.read().decode())\nopen('{WORK}/peer-out.txt', 'w').write(out)\ntime.sleep(600)\n"], "kind": "pty", "label": "asker"}
+{"id": "$id", "ok": true, "result": {"pane": "$p"}}
+#!retry 8000
+{"id": "r1", "file": "{WORK}/peer-out.txt", "count": "status"}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+{"id": "r1b", "file": "{WORK}/peer-out.txt"}
+{"id": "$id", "ok": true, "result": {"text": "status 403 {\"error\":\"a pane can propose. It cannot allow.\"}\n\n"}}
+{"id": "f2", "ls": "{WORK}/gate"}
+{"id": "$id", "ok": true, "result": "*"}
+# The same answer from this box, not from a pane, is written.
+{"id": "a1", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_q1\",\"decision\":\"deny\"}"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+# A pane's websocket: its hello places it as a pane.
+{"id": "p2", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/usr/bin/python3", "-c", "import sys; sys.path.insert(0, '{FIXTURES}/web'); import wsprobe; wsprobe.main('{ADDR}', 'pinned-web-token-0001', '{WORK}/ws-out.txt')"], "kind": "pty", "label": "wsclient"}
+{"id": "$id", "ok": true, "result": {"pane": "$q"}}
+#!retry 8000
+{"id": "r2", "file": "{WORK}/ws-out.txt", "count": "reply 2"}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+{"id": "r2b", "file": "{WORK}/ws-out.txt"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}

@@ -28,10 +28,19 @@ and newer typing throughout.
 
 ## Data directory
 
-All on-disk state lives under a single configurable directory (default
-`~/.opendaisugi`). Nothing outside that directory is written unless the
-caller explicitly constructs a `Journal`, `EnvelopeCache`, or
-`PathwayStore` with a different path.
+All on-disk state lives under one directory, the data home. When no flag
+names it, the same rule picks it in Python, Go and Rust:
+
+1. `$OPENDAISUGI_HOME`, when it is set and not empty;
+2. else `$XDG_DATA_HOME/opendaisugi`, when XDG_DATA_HOME is set and not
+   empty and `~/.opendaisugi` does not exist;
+3. else `~/.opendaisugi`.
+
+An existing `~/.opendaisugi` keeps working: setting XDG_DATA_HOME later
+does not move it, and nothing is migrated. The gate guards every place the
+rule can pick. Nothing outside that directory is written unless the caller
+explicitly constructs a `Journal`, `EnvelopeCache`, or `PathwayStore` with
+a different path. Model caches follow `$XDG_CACHE_HOME` (else `~/.cache`).
 
 | File                         | Purpose                                  | Safe to delete?  |
 | ---------------------------- | ---------------------------------------- | ---------------- |
@@ -41,8 +50,8 @@ caller explicitly constructs a `Journal`, `EnvelopeCache`, or
 | `journal/refinements.jsonl`  | Per-step rejection + recompute records   | Yes (loses audit trail) |
 | `trusted_signers.json`       | Trusted-signer registry (public keys)    | No (rebuild from team records) |
 
-To relocate: `Daisugi(data_dir="/var/lib/opendaisugi")` or
-`OPENDAISUGI_DATA_DIR=...`. To share across hosts (e.g. NFS), be aware
+To relocate: `Daisugi(data_dir="/var/lib/opendaisugi")`, `--data-dir` on a
+command, or `OPENDAISUGI_HOME=...`. To share across hosts (e.g. NFS), be aware
 that SQLite performs poorly over NFS — prefer a node-local directory and
 aggregate via log shipping instead.
 

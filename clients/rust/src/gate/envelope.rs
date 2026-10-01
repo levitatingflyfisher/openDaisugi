@@ -2,7 +2,7 @@
 //! jiter parses the JSON exactly as pydantic-core does, and the models'
 //! fields are validated with pydantic's lax rules and error text.
 
-use super::paths::{exists, os_error, os_path, path_join};
+use super::paths::{os_error, os_path, path_join};
 use super::pydantic::{non_finite, validation_error, LineErr};
 use super::pymodel::{at, decode_utf8_strict, universal_newlines, In, Loc, Val};
 use super::pyjson::{py_repr, Object, Value};
@@ -47,27 +47,55 @@ pub struct Envelope {
     pub dump: Object,
 }
 
+impl Envelope {
+    /// `Envelope.deadline`: the validated float, or None.
+    pub fn deadline(&self) -> Option<f64> {
+        match self.dump.value("deadline") {
+            Value::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+}
+
 impl Runner {
     /// `gate.load_envelope`: a named session's own file only, never
     /// default; with no session, default. `None` means none is registered.
     pub fn load_envelope(&self, session_id: &Value) -> R<Option<Envelope>> {
+        Ok(self.load_envelope_checked(session_id)?.0)
+    }
+
+    /// `gate.load_envelope_checked`: `load_envelope` with the third answer.
+    /// The text is None for an envelope that loads or is missing, and the
+    /// refusal (`<path>: <why> (fix: ...)`) when the root, envelopes/ or
+    /// the file is refused (GR-R-7).
+    pub fn load_envelope_checked(&self, session_id: &Value) -> R<(Option<Envelope>, Option<String>)> {
         let name = if session_id.truthy() {
             super::record::safe_session_value(session_id)?
         } else {
             "default".to_string()
         };
-        let p = path_join(&path_join(&self.root, "envelopes"), &format!("{name}.json"));
-        if exists(&p)? {
-            return load_envelope_file(&p).map(Some);
+        // GR-R-1: read through no link.
+        let file = format!("{name}.json");
+        match super::statefile::probe_read(&super::paths::path_str(&self.root), &["envelopes"], &file) {
+            Err(miss) => Ok((None, miss.refusal().map(str::to_string))),
+            Ok(Err(e)) => {
+                let p = path_join(&path_join(&self.root, "envelopes"), &file);
+                Err(Fault::from(os_error(&e, &p)))
+            }
+            Ok(Ok(raw)) => parse_envelope_bytes(&raw).map(|e| (Some(e), None)),
         }
-        Ok(None)
     }
 }
 
 /// `Envelope.model_validate_json(path.read_text(encoding="utf-8"))`.
 pub fn load_envelope_file(p: &str) -> R<Envelope> {
     let raw = std::fs::read(os_path("open", p)?).map_err(|e| Fault::from(os_error(&e, p)))?;
-    let text = decode_utf8_strict(&raw).map_err(|m| Fault::from(PyErr::new("UnicodeDecodeError", m)))?;
+    parse_envelope_bytes(&raw)
+}
+
+/// `Envelope.model_validate_json(text)` for the file's raw bytes.
+pub fn parse_envelope_bytes(raw: &[u8]) -> R<Envelope> {
+    let text = decode_utf8_strict(raw).map_err(|m| Fault::from(PyErr::new("UnicodeDecodeError", m)))?;
     parse_envelope(&universal_newlines(&text))
 }
 
@@ -208,7 +236,8 @@ fn envelope(v: &mut Val, x: &In) -> R<Option<Envelope>> {
             Some(Value::Str("surface".into())),
             literal(&["surface", "strict", "allow"]),
             o,
-        )
+        )?;
+        field(v, &root, x, "deadline", Some(Value::Null), opt(float), o)
     })?;
     let mut dump = match dump {
         Some(Value::Obj(d)) if v.errs.is_empty() => d,
@@ -220,6 +249,10 @@ fn envelope(v: &mut Val, x: &In) -> R<Option<Envelope>> {
     non_finite(&Value::Obj(dump.clone()), &root, &mut v.errs)?;
     if !v.errs.is_empty() {
         return Ok(None);
+    }
+    // The deadline is left out of the dump when absent or null.
+    if dump.value("deadline").is_null() {
+        dump.remove("deadline");
     }
     // `id` has a default factory: `env_` and eight hex digits.
     if dump.value("id").is_null() {

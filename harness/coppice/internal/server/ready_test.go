@@ -44,6 +44,20 @@ func readyServer(t *testing.T) *Server {
 
 // startFake starts a pty pane labelled "fake" that runs script under bash,
 // with harness as its harness. It answers the pane id.
+// gate is a file the test makes once the fake may go on to its next
+// screen. A fake that waits for it, in place of a fixed sleep, never
+// reaches that screen before the test sent what it means to send while
+// the pane is still loading, however slow the run.
+func gate(t *testing.T) (wait string, open func()) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "go")
+	return `until [ -e '` + p + `' ]; do sleep 0.05; done; `, func() {
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func startFake(t *testing.T, s *Server, harness, script string) string {
 	t.Helper()
 	req := map[string]any{
@@ -123,12 +137,16 @@ func TestTheTrustScreenNeedsYouWithItsWords(t *testing.T) {
 // the input box shows.
 func TestAPromptWaitsWhileThePaneStartsAndGoesWhenReady(t *testing.T) {
 	s := readyServer(t)
+	p := filepath.Join(t.TempDir(), "go")
 	id := startFake(t, s, "claude", `stty -echo; echo loading; `+
-		`if read -t 1.5 early; then echo "EARLY $early"; fi; `+
+		`until [ -e '`+p+`' ]; do if read -t 0.1 early; then echo "EARLY $early"; fi; done; `+
 		`printf '`+promptBox+`'; read x; echo "GOT $x"; sleep 10`)
 	got := call(t, s, map[string]any{"id": "p", "cmd": "pane.send_text", "pane": id, "text": "hello"})
 	if !got.OK {
 		t.Fatalf("send_text: %+v", got.Error)
+	}
+	if err := os.WriteFile(p, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	res, _ := got.Result.(map[string]any)
 	if res["queued"] != float64(1) || res["note"] != "queued until fake is ready" {
@@ -143,12 +161,14 @@ func TestAPromptWaitsWhileThePaneStartsAndGoesWhenReady(t *testing.T) {
 // agent.prompt to a pty pane goes through the same queue, and says so.
 func TestAgentPromptIsQueuedToo(t *testing.T) {
 	s := readyServer(t)
-	id := startFake(t, s, "claude", `stty -echo; echo loading; sleep 1; `+
+	wait, open := gate(t)
+	id := startFake(t, s, "claude", `stty -echo; echo loading; `+wait+
 		`printf '`+promptBox+`'; read x; echo "GOT $x"; sleep 10`)
 	got := call(t, s, map[string]any{"id": "p", "cmd": "agent.prompt", "pane": id, "text": "hi there"})
 	if !got.OK {
 		t.Fatalf("agent.prompt: %+v", got.Error)
 	}
+	open()
 	res, _ := got.Result.(map[string]any)
 	if res["note"] != "queued until fake is ready" {
 		t.Fatalf("reply = %v, want the queued note", res)
@@ -257,7 +277,8 @@ func TestAnIdlePaneGetsThePromptAtOnceAfterTheSettle(t *testing.T) {
 // Several queued prompts go in the order they came.
 func TestQueuedPromptsGoInOrder(t *testing.T) {
 	s := readyServer(t)
-	id := startFake(t, s, "claude", `stty -echo; echo loading; sleep 1; `+
+	wait, open := gate(t)
+	id := startFake(t, s, "claude", `stty -echo; echo loading; `+wait+
 		`for i in 1 2 3; do clear; printf '`+promptBox+`'; read x; echo "GOT$i $x"; sleep 0.5; done; sleep 10`)
 	for _, w := range []string{"first", "second", "third"} {
 		got := call(t, s, map[string]any{"id": "p", "cmd": "pane.send_text", "pane": id, "text": w})
@@ -265,6 +286,7 @@ func TestQueuedPromptsGoInOrder(t *testing.T) {
 			t.Fatalf("prompt %s = %+v, want it queued", w, got)
 		}
 	}
+	open()
 	waitScreen(t, s, id, "GOT1 first")
 	waitScreen(t, s, id, "GOT2 second")
 	waitScreen(t, s, id, "GOT3 third")
@@ -278,12 +300,14 @@ func TestAQuestionWhilePromptsWaitHoldsThem(t *testing.T) {
 	if err := os.WriteFile(f, []byte(trustScreen(t)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	id := startFake(t, s, "claude", `stty -echo; echo loading; sleep 0.5; clear; cat `+f+`; `+
+	wait, open := gate(t)
+	id := startFake(t, s, "claude", `stty -echo; echo loading; `+wait+`clear; cat `+f+`; `+
 		`if read -t 2 early; then echo "EARLY $early"; fi; clear; printf '`+promptBox+`'; read x; echo "GOT $x"; sleep 10`)
 	got := call(t, s, map[string]any{"id": "p", "cmd": "pane.send_text", "pane": id, "text": "held"})
 	if res, _ := got.Result.(map[string]any); !got.OK || res["queued"] == nil {
 		t.Fatalf("reply = %+v, want queued", got)
 	}
+	open()
 	text := waitScreen(t, s, id, "GOT held")
 	if strings.Contains(text, "EARLY") {
 		t.Fatalf("a queued prompt went into the question:\n%s", text)
@@ -392,13 +416,15 @@ func TestTheSecondEnterGoesAtMostOnce(t *testing.T) {
 // manifest, the queue holds. It never sends blind.
 func TestAQueueHoldsWhenItCannotReadTheScreen(t *testing.T) {
 	s := readyServer(t)
-	id := startFake(t, s, "claude", `stty -echo; echo loading; sleep 0.5; `+
+	wait, open := gate(t)
+	id := startFake(t, s, "claude", `stty -echo; echo loading; `+wait+
 		`printf '`+promptBox+`'; read x; echo "GOT $x"; sleep 10`)
 	got := call(t, s, map[string]any{"id": "p", "cmd": "pane.send_text", "pane": id, "text": "blind"})
 	if res, _ := got.Result.(map[string]any); !got.OK || res["queued"] == nil {
 		t.Fatalf("reply = %+v, want queued", got)
 	}
 	s.StopManifestTick()
+	open()
 	time.Sleep(2 * time.Second)
 	if text := screenOf(t, s, id); strings.Contains(text, "GOT") {
 		t.Fatalf("the queue sent a prompt it could not check:\n%s", text)

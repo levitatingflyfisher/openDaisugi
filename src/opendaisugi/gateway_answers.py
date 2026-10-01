@@ -31,12 +31,13 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
 
-from opendaisugi.gateway_journal import turn_signature
+from opendaisugi.gateway_journal import FILE_LOCK, turn_signature
 
 EmbedFn = Callable[[list[str]], Any]
 
@@ -108,6 +109,10 @@ class AnswerStore:
         self.max_entries = max_entries
 
     def append(self, entry: AnswerEntry) -> None:
+        with FILE_LOCK:
+            self._append(entry)
+
+    def _append(self, entry: AnswerEntry) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(asdict(entry)) + "\n")
@@ -119,7 +124,9 @@ class AnswerStore:
         entries = self.load()
         if len(entries) > self.max_entries:
             keep = entries[-self.max_entries :]
-            tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
+            tmp_path = self.path.with_suffix(
+                f"{self.path.suffix}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+            )
             tmp_path.write_text(
                 "".join(json.dumps(asdict(e)) + "\n" for e in keep), encoding="utf-8"
             )

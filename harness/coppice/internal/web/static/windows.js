@@ -46,6 +46,26 @@ export function cellFor(widthPx, cols, advance, dpr) {
   return { w, h: lineOf(font), font, dpr: Number(dpr) > 0 ? Number(dpr) : 1 };
 }
 
+// FIT_CELL_W is the cell width the phone asks the agent to fit: a little
+// over the readable floor, so the text is not at its smallest. FIT_MIN_COLS
+// and FIT_MIN_ROWS are the least size worth asking for.
+export const FIT_CELL_W = 8;
+export const FIT_MIN_COLS = 20;
+export const FIT_MIN_ROWS = 6;
+
+// fitFor is the size, in cells, to ask the agent to take so that it fills a
+// body of widthPx by heightPx with no sideways scroll: as many columns as
+// FIT_CELL_W allows, and as many rows as then fit at the cell's height. It
+// is null when the body has no size yet.
+export function fitFor(widthPx, heightPx, advance, dpr = 1) {
+  const w = Number(widthPx) || 0;
+  const h = Number(heightPx) || 0;
+  if (w <= 0 || h <= 0) return null;
+  const cols = Math.max(FIT_MIN_COLS, Math.floor(w / FIT_CELL_W));
+  const cell = cellFor(w, cols, advance, dpr);
+  return { cols, rows: Math.max(FIT_MIN_ROWS, Math.floor(h / cell.h)) };
+}
+
 // windowCapacity is the grid of windows an area of areaW by areaH CSS
 // pixels holds, each at least MIN_COLS by MIN_ROWS readable cells. It is
 // at least one window and at most MAX_WINDOWS.

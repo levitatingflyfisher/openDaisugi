@@ -37,6 +37,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -61,8 +62,10 @@ from gate_cases import (  # noqa: E402 - sibling module, run as a script
     canonical_json,
     case_id,
     envelope,
+    floor_key,
     host_verdict,
     payload,
+    private_modes,
 )
 
 FIXTURE_DIR = REPO / "clients" / "fixtures" / "gate_server"
@@ -331,6 +334,12 @@ def request_bytes(case: dict[str, Any], root: str) -> bytes:
 
 
 def prepare(case: dict[str, Any], workdir: Path) -> None:
+    prepare_state(case, workdir)
+    prepare_late(case, workdir)
+
+
+def prepare_state(case: dict[str, Any], workdir: Path) -> None:
+    """The case's gate state, up to its links and modes."""
     if workdir.exists():
         shutil.rmtree(workdir)
     data = workdir / "data"
@@ -351,6 +360,52 @@ def prepare(case: dict[str, Any], workdir: Path) -> None:
         sd = data / "sessions"
         sd.mkdir(exist_ok=True)
         (sd / f"{sid}.jsonl").write_text(text, encoding="utf-8")
+    # A fence run above the caller (FN-R-21): this process sends every
+    # request, so a record for its own pid binds the case's scratch dir.
+    if st.get("fence_run"):
+        runs = gate_root / "fence-runs"
+        runs.mkdir()
+        pid = os.getpid()
+        f = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        start = f[f.rfind(")") + 2 :].split()[19]
+        rec = {"pid": pid, "start": start, "workspace": os.path.realpath(workdir)}
+        (runs / f"{pid}.json").write_text(json.dumps(rec), encoding="utf-8")
+    # Markers under agents/: {FLOOR} is the floor key of the socket the
+    # request names, {FLOOR=<sock>} that of another socket.
+    own = str(((case.get("request") or {}).get("fields") or {}).get("coppice_sock") or "")
+    for rel, text in (st.get("agent_modes") or {}).items():
+        rel = re.sub(
+            r"\{FLOOR(?:=([^}]*))?\}",
+            lambda m: floor_key(m.group(1) if m.group(1) else own.replace("{ROOT}", root)),
+            rel,
+        )
+        f = gate_root / "agents" / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+    # The gate reads its state only from owned, unshared files (GR-R-1),
+    # whatever the umask.
+    private_modes(gate_root)
+
+
+def prepare_late(case: dict[str, Any], workdir: Path) -> None:
+    """The case's links and modes: after its server starts, which makes its
+    root 0700."""
+    st = case.get("state") or {}
+    gate_root = workdir / "data" / "gate"
+    links = st.get("links") or {}
+    if links.get("disarmed"):
+        real = workdir / "real-disarmed"
+        real.write_text("disarmed by operator\n", encoding="utf-8")
+        real.chmod(0o600)
+        os.symlink(real, gate_root / "DISARMED")
+    if links.get("envelopes"):
+        gate_root.joinpath("envelopes").rename(workdir / "real-envelopes")
+        os.symlink(workdir / "real-envelopes", gate_root / "envelopes")
+    for rel, mode in sorted((st.get("modes") or {}).items()):
+        (workdir / rel).chmod(mode)
+    if links.get("root"):
+        gate_root.rename(workdir / "real-gate")
+        os.symlink(workdir / "real-gate", gate_root)
 
 
 def _norm_text(s: str, root: str, srv: str) -> str:
@@ -484,7 +539,7 @@ class Group:
                     "COPPICE_DATA_DIR": "/srv/sdata",
                 }
             )
-        self.server = Server(cmd, self.dir / "gate", env, self.dir)
+        self.cmd, self.env = cmd, env
 
     def herdr_lines(self) -> list[str]:
         try:
@@ -495,18 +550,20 @@ class Group:
         return lines
 
     def run(self, case: dict[str, Any], workdir: Path) -> tuple[dict[str, Any], float]:
-        prepare(case, workdir)
+        prepare_state(case, workdir)
         root, srv = str(workdir), str(self.dir)
+        # The case's own server: its root is fixed when it starts (FN-R-21).
+        server = Server(self.cmd, workdir / "data" / "gate", self.env, self.dir / "logs")
+        prepare_late(case, workdir)
         cop = FakeCoppice(workdir / "c.sock", case["coppice"]) if case.get("coppice") else None
         if self.server_coppice:
             self.server_coppice.take()
         self.herdr_lines()
         try:
-            raw, secs = exchange(
-                self.server.sock, request_bytes(case, root), shut=case.get("shut", False)
-            )
+            raw, secs = exchange(server.sock, request_bytes(case, root), shut=case.get("shut", False))
         finally:
             sent = cop.close() if cop else []
+            server.stop()
         # The report goes out after the reply, and the herdr fake runs on
         # its own; give both a moment.
         time.sleep(0.15 if case.get("coppice") or case.get("herdr") else 0.0)
@@ -519,7 +576,6 @@ class Group:
         return obs, secs
 
     def close(self) -> None:
-        self.server.stop()
         if self.server_coppice:
             self.server_coppice.close()
 
@@ -528,8 +584,11 @@ class Group:
 # Building cases
 # ---------------------------------------------------------------------------
 
-PI_ARGV = ["--format", "pi", "--root", "{ROOT}/data/gate", "--verify-timeout", "4"]
-OC_ARGV = ["--format", "opencode", "--root", "{ROOT}/data/gate", "--verify-timeout", "4"]
+# No --root: a server's root is fixed when it starts, and it denies a
+# request that names one (FN-R-21). Each request case gets a server of its
+# own on {ROOT}/data/gate.
+PI_ARGV = ["--format", "pi", "--verify-timeout", "4"]
+OC_ARGV = ["--format", "opencode", "--verify-timeout", "4"]
 
 
 def client_argv(fmt: str = "claude", mode: str | None = "enforce", *extra: str) -> list[str]:
@@ -537,7 +596,7 @@ def client_argv(fmt: str = "claude", mode: str | None = "enforce", *extra: str) 
     argv = []
     if mode is not None:
         argv += ["--mode", mode]
-    return argv + ["--root", "{ROOT}/data/gate", "--format", fmt, "--verify-timeout", "5.0", *extra]
+    return argv + ["--format", fmt, "--verify-timeout", "5.0", *extra]
 
 
 def state(
@@ -545,6 +604,10 @@ def state(
     config: str | None = None,
     sessions: dict[str, str] | None = None,
     disarmed: bool = False,
+    agent_modes: dict[str, str] | None = None,
+    links: dict[str, bool] | None = None,
+    modes: dict[str, int] | None = None,
+    fence_run: bool = False,
 ) -> dict[str, Any]:
     return {
         "disarmed": disarmed,
@@ -554,6 +617,11 @@ def state(
         },
         "config": config,
         "sessions": sessions or {},
+        # Only when a case has them, so every other case's id stays.
+        **({"agent_modes": agent_modes} if agent_modes else {}),
+        **({"links": links} if links else {}),
+        **({"modes": modes} if modes else {}),
+        **({"fence_run": True} if fence_run else {}),
     }
 
 
@@ -627,7 +695,7 @@ def event(**kw: Any) -> str:
 
 _DROP = object()
 COP = {"coppice_sock": "{ROOT}/c.sock", "coppice_pane": "w1:p2"}
-REPORT_ROOT = ["--root", "{ROOT}/data/gate"]
+REPORT_ROOT: list[str] = []
 
 
 def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cases
@@ -823,6 +891,54 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
             tags=["client"],
         )
     )
+    # GR-R-1: the resident gate reads its state through no link either.
+    for name, st_, call, tag in (
+        ("DISARMED symlink", state(links={"disarmed": True}), bash("rm -rf /"), "deny"),
+        ("root symlink", state(disarmed=True, links={"root": True}), bash("rm -rf /"), "deny"),
+        (
+            "envelopes dir symlink",
+            state(links={"envelopes": True}),
+            payload("Read", {"file_path": "/work/a"}),
+            "deny",
+        ),
+        (
+            "envelope world writable",
+            state(modes={"data/gate/envelopes/default.json": 0o646}),
+            payload("Read", {"file_path": "/work/a"}),
+            "deny",
+        ),
+    ):
+        add(
+            req(
+                f"client state {name}",
+                client_argv(),
+                call,
+                st=st_,
+                tags=["client", tag, "state_links"],
+            )
+        )
+    add(
+        req(
+            "client state ok envelope",
+            client_argv(),
+            payload("Read", {"file_path": "/work/a"}),
+            tags=["client", "state_links"],
+        )
+    )
+    # The envelope's deadline holds on the resident path too.
+    for name, deadline in (
+        ("client deadline passed", 1000000000),
+        ("client deadline ahead", 4000000000),
+    ):
+        add(
+            req(
+                name,
+                client_argv(),
+                payload("Read", {"file_path": "/work/a"}),
+                st=state(envelopes={"default": envelope(deadline=deadline)}),
+                tags=["client", "deadline"],
+            )
+        )
     add(req("client empty stdin", client_argv(), "", tags=["client", "deny"]))
     add(req("client not json stdin", client_argv(), "{x", tags=["client", "deny"]))
     add(
@@ -863,7 +979,7 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
     add(
         req(
             "client bad mode",
-            ["--mode", "loud", "--root", "{ROOT}/data/gate"],
+            ["--mode", "loud"],
             bash("ls"),
             tags=["argv"],
         )
@@ -878,6 +994,52 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
     )
     add(req("client argv nul", [*client_argv(), "--session", "a\x00b"], bash("ls"), tags=["argv"]))
     add(req("client argv empty", [], bash("ls"), tags=["argv"]))
+
+    # -- FN-R-21: the server takes no path from a request -------------------------
+    for name, words in (
+        ("root", ["--root", "{ROOT}/elsewhere"]),
+        ("root equals", ["--root={ROOT}/elsewhere"]),
+        ("root prefix", ["--ro", "{ROOT}/elsewhere"]),
+        ("root short prefix", ["--r={ROOT}/elsewhere"]),
+        ("captures root", ["--captures-root", "{ROOT}/elsewhere"]),
+        ("captures prefix", ["--cap={ROOT}/elsewhere"]),
+    ):
+        add(req(f"path {name}", [*client_argv(), *words], bash("ls"), tags=["path", "deny"]))
+    add(req("path root hermes", [*client_argv("hermes"), "--root", "{ROOT}/x"], bash("ls"), tags=["path"]))
+    add(req("path report root", ["hook", "report", "--root", "{ROOT}/x"], event(), tags=["path"]))
+    for name, sid in (
+        ("dotdot", "../x"),
+        ("dot", "."),
+        ("slash", "a/b"),
+        ("empty", ""),
+        ("long", "a" * 129),
+        ("number", 7),
+        ("space", "a b"),
+    ):
+        add(req(f"session {name}", client_argv(), bash("ls", sid=sid), st=enf, tags=["session", "deny"]))
+    add(req("session longest", client_argv(), bash("ls", sid="a" * 128), st=enf, tags=["session"]))
+    add(req("session absent", client_argv(), bash("ls", sid=None), st=enf, tags=["session"]))
+    add(req("session pin bad", [*client_argv(), "--session", "../up"], bash("ls"), tags=["session"]))
+    add(req("session report bad", ["hook", "report"], event(session_id="../x"), tags=["session"]))
+    add(
+        req(
+            "checkpoint with no fence run",
+            [*client_argv(), "--checkpoints"],
+            bash("ls", cwd="{ROOT}"),
+            st=enf,
+            tags=["checkpoint", "deny"],
+        )
+    )
+    # Checkpoints are off inside the fence (FN-R-36).
+    add(
+        req(
+            "checkpoint inside the fence",
+            [*client_argv(), "--checkpoints"],
+            bash("ls", cwd="{ROOT}"),
+            st=state(config=ENFORCE, fence_run=True),
+            tags=["checkpoint", "deny"],
+        )
+    )
 
     # -- the data-dir guard -------------------------------------------------------
     grep_c = payload("Grep", {"pattern": ".", "path": "/srv/cdata/web"})
@@ -918,6 +1080,23 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
             tags=["data_dir", "deny"],
         )
     )
+    # On a resident call the caller's data dir is its pane's
+    # COPPICE_DATA_DIR, in any parameter expansion.
+    for name, line in (
+        ("var chat", "cat $COPPICE_DATA_DIR/chat/*"),
+        ("braced default chat", "cat ${COPPICE_DATA_DIR:-x}/chat/*"),
+        ("var cp journal", "cp -r $COPPICE_DATA_DIR/journal /work/x"),
+        ("var web", "cat $COPPICE_DATA_DIR/web/*"),
+    ):
+        add(
+            req(
+                f"data dir {name}",
+                client_argv(),
+                bash(line),
+                fields={"coppice_data_dir": "/srv/cdata"},
+                tags=["data_dir", "deny"],
+            )
+        )
 
     # -- reports: coppice and herdr -------------------------------------------
     rd = payload("Read", {"file_path": "/work/a"})
@@ -973,6 +1152,40 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
         )
     )
     add(req("coppice pane only", client_argv(), rd, fields={"coppice_pane": "w1:p2"}, coppice="ok"))
+    # F11: a resident call reads the marker of the pane its request names,
+    # never the server's own pane (F11-R-2).
+    outside = payload("Read", {"file_path": "/etc/passwd"})
+    for name, modes, fields, group in (
+        ("watching", {"{FLOOR}/w1:p2.mode": "watching\n"}, COP, "plain"),
+        ("enforcing", {"{FLOOR}/w1:p2.mode": "enforcing\n"}, COP, "plain"),
+        ("other pane", {"{FLOOR}/w1:p3.mode": "watching\n"}, COP, "plain"),
+        (
+            "other floor",
+            {"{FLOOR=/run/coppice/floor-b.sock}/w1:p2.mode": "watching\n"},
+            COP,
+            "plain",
+        ),
+        ("no sock", {"{FLOOR=}/w1:p2.mode": "watching\n"}, {"coppice_pane": "w1:p2"}, "plain"),
+        (
+            "bad shape",
+            {"{FLOOR}/w1:p2.mode": "watching\n"},
+            {"coppice_sock": "{ROOT}/c.sock", "coppice_pane": "../agents/w1:p2"},
+            "plain",
+        ),
+        ("server pane", {"{FLOOR=}/w5:p5.mode": "watching\n"}, None, "paneenv"),
+    ):
+        add(
+            req(
+                f"agent mode resident {name}",
+                client_argv(),
+                outside,
+                group=group,
+                st=state(agent_modes=modes),
+                fields=fields,
+                coppice="ok" if fields else None,
+                tags=["agent_mode"],
+            )
+        )
     add(
         req(
             "coppice sock missing",
@@ -1294,19 +1507,19 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
     add(
         raw(
             "argv numbers as flags",
-            b'{"v": 1, "argv": ["--verify-timeout", 4, "--mode", "enforce", "--root", "{ROOT}/data/gate", "--format", "pi"], "stdin_b64": "e30="}\n',
+            b'{"v": 1, "argv": ["--verify-timeout", 4, "--mode", "enforce", "--format", "pi"], "stdin_b64": "e30="}\n',
         )
     )
     add(
         raw(
             "argv nan",
-            b'{"v": 1, "argv": ["--verify-timeout", NaN, "--root", "{ROOT}/data/gate"], "stdin_b64": "e30="}\n',
+            b'{"v": 1, "argv": ["--verify-timeout", NaN], "stdin_b64": "e30="}\n',
         )
     )
     add(
         raw(
             "argv infinity",
-            b'{"v": 1, "argv": ["--verify-timeout", Infinity, "--mode", "enforce", "--root", "{ROOT}/data/gate"], "stdin_b64": "e30="}\n',
+            b'{"v": 1, "argv": ["--verify-timeout", Infinity, "--mode", "enforce"], "stdin_b64": "e30="}\n',
         )
     )
     add(
@@ -1431,20 +1644,19 @@ def _group_env(d: Path, home: str = FAKE_HOME) -> dict[str, str]:
     }
 
 
-def _good_request(root: Path, cmd: str, fmt: str = "claude") -> bytes:
+def _good_request(root: Path, cmd: str, fmt: str = "claude", sid: str = "s1") -> bytes:
+    del root  # the server's own root is the one it serves (FN-R-21)
     body = {
         "v": 1,
         "argv": [
             "--mode",
             "enforce",
-            "--root",
-            str(root / "data" / "gate"),
             "--format",
             fmt,
             "--verify-timeout",
             "5.0",
         ],
-        "stdin_b64": base64.b64encode(bash(cmd).encode()).decode(),
+        "stdin_b64": base64.b64encode(bash(cmd, sid=sid).encode()).decode(),
     }
     return json.dumps(body).encode() + b"\n"
 
@@ -1454,21 +1666,22 @@ def _lay_out_base(root: Path) -> None:
 
 
 def scenario_concurrent(cmd: list[str], d: Path) -> dict[str, Any]:
-    """Twelve clients at once, each against its own gate root; one slow
-    client holds a connection open the whole time without sending."""
-    server = Server(cmd, d / "gate", _group_env(d), d)
+    """Twelve clients at once, each with its own session on the server's
+    root; one slow client holds a connection open the whole time without
+    sending."""
+    base = d / "c"
+    _lay_out_base(base)
+    server = Server(cmd, base / "data" / "gate", _group_env(d), d)
     try:
         slow = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         slow.connect(str(server.sock))
         slow.sendall(b'{"v": 1, "argv": [')
         cmds = ["ls", "rm -rf /", "cat /work/a", "curl http://x", "git status", "sudo ls"] * 2
         fmts = ["claude", "pi", "opencode", "hermes"]
-        roots, reqs = [], []
+        sids, reqs = [], []
         for i, c in enumerate(cmds):
-            r = d / f"c{i:02d}"
-            _lay_out_base(r)
-            roots.append(r)
-            reqs.append(_good_request(r, c, fmts[i % len(fmts)]))
+            sids.append(f"c{i:02d}")
+            reqs.append(_good_request(base, c, fmts[i % len(fmts)], sid=sids[-1]))
         replies: list[bytes | None] = [None] * len(reqs)
         barrier = threading.Barrier(len(reqs))
 
@@ -1492,13 +1705,13 @@ def scenario_concurrent(cmd: list[str], d: Path) -> dict[str, Any]:
             slow_reply += chunk
         slow.close()
         out = []
-        for i, r in enumerate(roots):
-            fx = side_effects(r, str(d))
+        fx = side_effects(base, str(d))
+        for i, sid in enumerate(sids):
             out.append(
                 {
-                    "reply": reply_obs(replies[i] or b"", str(r), str(d)),
-                    "audit": fx["audit"],
-                    "tree": fx["tree"],
+                    "reply": reply_obs(replies[i] or b"", str(base), str(d)),
+                    "audit": [a for a in fx["audit"] if a["file"] == f"{sid}.jsonl"],
+                    "tree": {k: v for k, v in fx["tree"].items() if k == f"{sid}.jsonl"},
                 }
             )
         return {"clients": out, "slow": reply_obs(slow_reply, "", str(d))}
@@ -1510,10 +1723,10 @@ def scenario_mid_request(cmd: list[str], d: Path) -> dict[str, Any]:
     """Clients that go away: one closes mid-line, one half-closes mid-line,
     one connects and closes at once, one closes before reading its reply.
     The server keeps answering after each."""
-    server = Server(cmd, d / "gate", _group_env(d), d)
+    r = d / "r"
+    _lay_out_base(r)
+    server = Server(cmd, r / "data" / "gate", _group_env(d), d)
     try:
-        r = d / "r"
-        _lay_out_base(r)
         obs: dict[str, Any] = {}
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.connect(str(server.sock))
@@ -1616,14 +1829,13 @@ def scenario_stale(cmd: list[str], d: Path) -> dict[str, Any]:
     """A stale socket from a dead server, then a stale regular file: the
     server removes each and serves."""
     obs: dict[str, Any] = {}
-    root = d / "gate"
-    root.mkdir(parents=True)
+    r = d / "r"
+    _lay_out_base(r)
+    root = r / "data" / "gate"
     dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     dead.bind(str(root / "gate.sock"))
     dead.close()
     obs["before"] = _kind(root / "gate.sock")
-    r = d / "r"
-    _lay_out_base(r)
     server = Server(cmd, root, _group_env(d), d, name="one")
     obs["stale socket reply"] = reply_obs(
         exchange(server.sock, _good_request(r, "ls"))[0], str(r), str(d)
@@ -1837,12 +2049,28 @@ def run_all(
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, default=FIXTURE_DIR)
+    ap.add_argument(
+        "--only",
+        default="",
+        help="run only the cases whose name contains this; keep every other "
+        "case's line from the fixture as it is",
+    )
     args = ap.parse_args()
     cases = build_cases() + scenario_cases()
     names = [c["name"] for c in cases]
     dup = {n for n in names if names.count(n) > 1}
     if dup:
         raise SystemExit(f"duplicate case names: {sorted(dup)}")
+    kept: list[dict[str, Any]] = []
+    if args.only:
+        wanted = set(names)
+        fixture = args.out / "cases.jsonl"
+        if fixture.exists():
+            for ln in fixture.read_text(encoding="utf-8").splitlines():
+                old = json.loads(ln)
+                if args.only not in old["name"] and old["name"] in wanted:
+                    kept.append(old)
+        cases = [c for c in cases if args.only in c["name"]]
 
     def show(i: int, c: dict[str, Any], o: dict[str, Any]) -> None:
         brief = o.get("reply", "")[:90] if c["kind"] == "request" else "scenario"
@@ -1862,6 +2090,7 @@ def main() -> int:
         body.pop("port_expect_note", None)
         body["id"] = case_id(body)
         out_lines.append(body)
+    out_lines.extend(kept)
     out_lines.sort(key=lambda c: c["id"])
     args.out.mkdir(parents=True, exist_ok=True)
     path = args.out / "cases.jsonl"

@@ -1,0 +1,22 @@
+# The notes and the status JSON of a move (FM-R-51, FM-R-52, FM-R-55). desk is
+# out (the fake sprig answers 429 for a key that starts sk-out), so the turn
+# runs on work and the chat gets the move note; the clock time in it is masked
+# by the compare (CP-R-58). coppice foreman status --json lists the chain; the
+# end time of the cool-down is masked too.
+#!config [foreman]
+#!config mode = "chat"
+#!config turn_profiles = ["desk", "work"]
+#!config turn_model = "m1"
+#!env COPPICE_SPRIG_BIN={FIXTURES}/chat/fake-turn-sprig.py
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_BUNDLE_FILE={WORK}/bundle.json
+#!mask until
+{"id":"w1","write":"{WORK}/bundle.json","text":"{\"desk\":{\"wire\":\"anthropic\",\"base_url\":null,\"model\":\"m1\",\"key\":\"sk-out-0001\"},\"work\":{\"wire\":\"anthropic\",\"base_url\":null,\"model\":\"m1\",\"key\":\"sk-work-0001\"}}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"floor.talk","text":"one"}
+{"id":"$id","ok":true,"result":{"mode":"chat","message":"log/0","queued":1,"label":"foreman"}}
+#!retry 20000
+{"id":"2","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"source":"log","more":false,"messages":[{"id":"log/0","role":"owner","text":"one","read":true},{"id":"log/1","role":"agent","text":"sprig heard: one"},{"id":"log/2","role":"note","text":"*"}]}}
+{"id":"3","cli":["foreman","status","--json"]}
+{"id":"$id","ok":true,"result":"*"}

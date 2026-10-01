@@ -65,10 +65,37 @@ function callCwd(directory: string, tool: unknown, args: any): string {
   return args.workdir;
 }
 
+// The data home, as opendaisugi.datahome picks it: OPENDAISUGI_HOME, else
+// $XDG_DATA_HOME/opendaisugi when ~/.opendaisugi does not exist, else
+// ~/.opendaisugi. The gate's socket sits under it, in gate/. "" when there
+// is no HOME and no OPENDAISUGI_HOME.
+function dataHome(env: NodeJS.ProcessEnv): string {
+  const home = env.HOME && path.isAbsolute(env.HOME) ? env.HOME : "";
+  const od = usable(env.OPENDAISUGI_HOME, home);
+  if (od) return od;
+  if (!home) return "";
+  const dot = path.join(home, ".opendaisugi");
+  const xdg = usable(env.XDG_DATA_HOME, home);
+  if (xdg && !fs.existsSync(dot)) return path.join(xdg, "opendaisugi");
+  return dot;
+}
+
+// A data home variable as opendaisugi.datahome reads it: a leading ~ or ~/
+// is the home directory, and a value that is still not absolute is
+// ignored (""), so the socket is never looked for relative to the cwd.
+function usable(v: string | undefined, home: string): string {
+  if (!v) return "";
+  if ((v === "~" || v.startsWith("~/")) && !home) return "";
+  if (v === "~") v = home;
+  else if (v.startsWith("~/")) v = home + v.slice(1);
+  return path.isAbsolute(v) ? path.normalize(v) : "";
+}
+
 function gateSocketPath(env: NodeJS.ProcessEnv): string {
   if (env.OPENDAISUGI_GATE_SOCK) return env.OPENDAISUGI_GATE_SOCK;
-  if (!env.HOME) return "";
-  return path.join(env.HOME, ".opendaisugi", "gate", "gate.sock");
+  const home = dataHome(env);
+  if (!home) return "";
+  return path.join(home, "gate", "gate.sock");
 }
 
 // This process's own coppice/Herdr pane identity, read from ITS OWN
@@ -196,13 +223,14 @@ function sendGateRequest(
 // gate's socket. This is the one path
 // that reaches evaluate_call and returns a real allow or deny. There is no
 // --mode on the wire, so the gate resolves the mode from config.yaml.
-// --root is the socket's own directory, as gate_client.py derives it.
+// No --root: the server's root is fixed when it starts, and it denies a
+// request that names one (FN-R-21).
 // --verify-timeout 4 keeps the gate's verify budget under this client's
 // 5 s socket timeout. Exit 0 is the only allow. Exit 2 is a deny with the
 // gate's reason. Any other answer, or none, is a deny that names the fix.
 async function askGate(payload: Record<string, unknown>, env: NodeJS.ProcessEnv): Promise<Verdict> {
   const sockPath = gateSocketPath(env);
-  const argv = ["--format", "opencode", "--root", path.dirname(sockPath), "--verify-timeout", "4"];
+  const argv = ["--format", "opencode", "--verify-timeout", "4"];
   const reply = await sendGateRequest(sockPath, argv, payload, GATE_TIMEOUT_MS, callerPaneFields(env));
   if (reply === null) return { allow: false, reason: UNREACHABLE_REASON };
   if (reply.exitCode === 0) return { allow: true, reason: "" };

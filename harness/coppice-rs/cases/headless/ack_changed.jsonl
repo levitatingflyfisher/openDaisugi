@@ -1,0 +1,13 @@
+# pane.ack_changed ends the hold a fenced run's change to a watched file put
+# on new starts in a workspace (FN-R-24). With no hold it acks nothing. It
+# takes an absolute cwd, and only the operator runs it.
+{"id":"a1","cmd":"pane.ack_changed","cwd":"{START}"}
+{"id":"$id","ok":true,"result":{"acked":[]}}
+{"id":"a2","cmd":"pane.ack_changed","cwd":"rel/dir"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"pane.ack_changed takes cwd, an absolute directory."}}
+{"id":"a3","cmd":"pane.ack_changed"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"pane.ack_changed takes cwd, an absolute directory."}}
+{"id":"a4","cmd":"hello","role":"pane","pane":"w1:p9"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"a5","cmd":"pane.ack_changed","cwd":"{START}"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator acks a changed workspace."}}
