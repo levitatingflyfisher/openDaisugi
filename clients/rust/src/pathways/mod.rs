@@ -8,6 +8,7 @@ pub mod blake2b;
 pub mod dumped;
 pub mod export;
 pub mod find;
+pub mod jsonbytes;
 pub mod importer;
 pub mod literal;
 pub mod lexical;

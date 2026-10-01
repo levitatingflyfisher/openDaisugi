@@ -1,0 +1,40 @@
+# What a headless pane refuses before it starts, and a start that fails:
+# no harness, a harness with no adapter, a binary not on PATH or not
+# executable, sprig with no --session-dir, opencode with --pure or with
+# no gate plugin where its config dir says, a codex binary that is not
+# there (refused at the first prompt, which is when codex starts), and a
+# fork of a pty pane.
+#!env COPPICE_CLAUDE_BIN=coppice-no-such-claude
+#!env COPPICE_CODEX_BIN={WORK}/no-such-codex
+#!env COPPICE_PI_BIN={FIXTURES}/adapters/claude-stream.jsonl
+#!env COPPICE_SPRIG_BIN={FIXTURES}/adapters/fake-sprig.sh
+#!env COPPICE_OPENCODE_BIN={FIXTURES}/adapters/fake-opencode.py
+{"id":"1","cmd":"pane.create","kind":"headless","cwd":"{WORK}"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"a headless pane needs harness. Known adapters: claude, codex, opencode, pi, sprig"}}
+{"id":"2","cmd":"pane.create","kind":"headless","harness":"nope","cwd":"{WORK}"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"no adapter registered for this harness \"nope\". Known adapters: claude, codex, opencode, pi, sprig"}}
+{"id":"3","cmd":"pane.create","kind":"headless","harness":"claude","cwd":"{WORK}"}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"cannot start coppice-no-such-claude: exec: \"coppice-no-such-claude\": executable file not found in $PATH"}}
+{"id":"4","cmd":"pane.create","kind":"headless","harness":"pi","cwd":"{WORK}"}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"*"}}
+{"id":"5","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{WORK}","cmd_argv":["--session","x"]}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"sprig needs --session-dir in the pane's argv. That file is where its state comes from"}}
+{"id":"6","cmd":"pane.create","kind":"headless","harness":"opencode","cwd":"{WORK}","cmd_argv":["--pure"]}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"opencode: --pure makes OpenCode skip the gate plugin. Remove --pure from the pane's argv"}}
+{"id":"7","cmd":"pane.create","kind":"headless","harness":"opencode","cwd":"{WORK}","env":{"XDG_CONFIG_HOME":"{WORK}/xdg"}}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"opencode: the gate plugin is not at {WORK}/xdg/opencode/plugins/daisugi-gate.ts, so OpenCode would run ungated. Run: daisugi install --harness opencode"}}
+{"id":"8","cmd":"pane.create","kind":"headless","harness":"codex","cwd":"{WORK}","label":"nocodex"}
+{"id":"$id","ok":true,"result":{"pane":"$nocodex"}}
+{"id":"9","cmd":"agent.prompt","pane":"$nocodex","text":"hi"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"*"}}
+{"id":"10","cmd":"agent.prompt","pane":"$nocodex","text":"hi again"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"*"}}
+{"id":"11","cmd":"pane.create","kind":"headless","harness":"claude","cwd":"{WORK}/missing"}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"the directory {WORK}/missing does not exist. Pick another directory."}}
+{"id":"12","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sleep","600"],"label":"tty"}
+{"id":"$id","ok":true,"result":{"pane":"$tty"}}
+{"id":"13","cmd":"pane.fork","pane":"$tty"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"a pty pane cannot fork a session"}}
+{"id":"14","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":"*"}
+#!tree

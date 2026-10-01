@@ -1,6 +1,6 @@
 # Documentation
 
-Organized on the [Diátaxis](https://diataxis.fr/) model — four kinds of docs for
+Organized on the [Diátaxis](https://diataxis.fr/) model: four kinds of docs for
 four different needs. Find what you need by *what you're trying to do*, not by
 guessing a filename.
 
@@ -22,15 +22,15 @@ their name). Plans, research and ADRs dated before that day keep the old names.
 ---
 
 ## Tutorials
-*Learning-oriented — take me by the hand through my first success.*
+*Learning-oriented: take me by the hand through my first success.*
 
 This is the quadrant we're actively growing. Today the entry points are:
-- **[Protect an agent you're already running](tutorials/protect-your-existing-session.md)**
-  — one command to a working audit-mode gate over a live session, then one flag
+- **[Protect an agent you're already running](tutorials/protect-your-existing-session.md)**:
+  one command to a working audit-mode gate over a live session, then one flag
   to enforce.
-- The **[README quickstart](../README.md)** — install, then verify an LLM's plan and
+- The **[README quickstart](../README.md)**: install, then verify an LLM's plan and
   watch an out-of-envelope action refused (no API key).
-- The runnable **[examples/](../examples/)** — end-to-end scripts you can read and
+- The runnable **[examples/](../examples/)**: end-to-end scripts you can read and
   run (orchestrator, safe sub-agent, swarm tasking, robotics sims, the
   [injection-denied](../examples/injection-denied/) live demo).
 
@@ -39,66 +39,67 @@ reject an unsafe one in 10 minutes" tutorial, and a "distill your first pathway"
 tutorial. If you write one, put it in `docs/tutorials/`.
 
 ## How-to guides
-*Task-oriented — how do I accomplish X (assumes you know the basics)?*
+*Task-oriented: how do I accomplish X (assumes you know the basics)?*
 
-- **[Deployment](deployment.md)** — run it in the modes it supports.
-- **[Integrations](integrations.md)** — wire it into a harness (per-harness adapters).
-- **[Hook integration](hook-integration.md)** — the passive-hook path.
-- **[Gate a live session](how-to/gate.md)** — the call-time gate: audit → report → enforce → disarm.
+- **[Deployment](deployment.md)**: run it in the modes it supports.
+- **[Integrations](integrations.md)**: wire it into a harness (per-harness adapters).
+- **[Hook integration](hook-integration.md)**: the passive-hook path.
+- **[Gate a live session](how-to/gate.md)**: the call-time gate runs audit → report → enforce → disarm.
 - **[Use the phone](how-to/phone.md)**: the PWA coppice serves, both certificate paths, the token QR, and ntfy push.
+- **[Train a LoRA adapter from the Go or Rust daisugi](how-to/ml-pack.md)**: `daisugi pack install train`, then `daisugi lora train`; bundles for machines with no network, and the AUR `daisugi-ml`.
 - **[Record anywhere, land it in a pane](how-to/voice.md)**: `daisugi voice serve|ptt|arm|disarm`, previewed by default, direct send only when a pane is armed.
 - **[Hand model choice to NeMo Switchyard](how-to/router-switchyard.md)**: `daisugi gateway --router switchyard` runs Switchyard behind the gateway, and the gateway meters each turn by the target that served it.
-- **[Let `a && b` through](how-to/compound-shell.md)** — the compound-shell opt-in: what it admits, what stays rejected, what it recovers.
-- **[π0 / VLA integration](pi-vla-integration.md)** — the robotics integration path.
+- **[Let `a && b` through](how-to/compound-shell.md)**: the compound-shell opt-in. It shows what it admits, what stays rejected, what it recovers.
+- **[π0 / VLA integration](pi-vla-integration.md)**: the robotics integration path.
 - Agent-guidance for working *in* this repo: **[AGENTS.md](../AGENTS.md)**.
 
 ## Reference
-*Information-oriented — tell me exactly, precisely, completely.*
+*Information-oriented: tell me exactly, precisely, completely.*
 
-- **[Step vocabulary](step-vocabulary.md)** — every step type + its metadata keys.
-- **[Pathway / skill bundle format](pathway-skill-format.md)** — the on-disk contract.
-- **[Feature status](feature-status.md)** — what's shipped, per version.
-- **[Formal specification (yellow paper)](spec/yellow-paper.md)** — the rigorous
+- **[Step vocabulary](step-vocabulary.md)**: every step type + its metadata keys.
+- **[Pathway / skill bundle format](pathway-skill-format.md)**: the on-disk contract.
+- **[Feature status](feature-status.md)**: what's shipped, per version.
+- **[Formal specification (yellow paper)](spec/yellow-paper.md)**: the rigorous
   verification semantics (envelope algebra, subsumption soundness, fail-closed law).
 - **[Concepts across fields](correspondence.md)**: each openDaisugi term mapped to its name in
   functional programming, formal methods, compilers, control theory and machine learning, with
   a glossary, the gaps, and rename candidates.
-- **[Conformance protocol](spec/conformance.md)** — the language-neutral corpus,
+- **[Conformance protocol](spec/conformance.md)**: the language-neutral corpus,
   wire protocol, and differential runner that independent verifier clients
   (Rust, Go, Lean4, TypeScript) are checked against.
 - The public API is the `opendaisugi` package surface (`Daisugi`, `verify`,
-  `generate_envelope`, `orchestrate`) — see the docstrings and the
+  `generate_envelope`, `orchestrate`). See the docstrings and the
   [architecture module map](architecture/OVERVIEW.md#module-map-where-to-look).
 - **[coppice](../harness/coppice/README.md)**, the Go floor daemon: panes, harness
   processes and merged pane state over a uid-checked unix socket. Its own
   [PINS.md](../harness/coppice/PINS.md) names what it depends on and why.
-- **[Harness research](harness/)** — the comparison, design and synthesis notes
+- **[Harness research](harness/)**: the comparison, design and synthesis notes
   from choosing coppice's and sprig's own shape.
 
 ## Explanation
-*Understanding-oriented — help me understand the ideas and the why.*
+*Understanding-oriented: help me understand the ideas and the why.*
 
-- **[Vision](../VISION.md)** — the one idea, the invariants, the honest scorecard.
-- **[Roadmap](roadmap.md)** — the problems we cannot yet solve, each paired with
+- **[Vision](../VISION.md)**: the one idea, the invariants, the honest scorecard.
+- **[Roadmap](roadmap.md)**: the problems we cannot yet solve, each paired with
   the evidence that would prove it solved.
-- **[Architecture overview](architecture/OVERVIEW.md)** — the spine + diagrams.
-- **[Architecture Decision Records](adr/)** — why each load-bearing choice was made.
-- **[Concepts](concepts.md)** — envelopes, the predicate algebra, Z3 compilation,
+- **[Architecture overview](architecture/OVERVIEW.md)**: the spine + diagrams.
+- **[Architecture Decision Records](adr/)**: why each load-bearing choice was made.
+- **[Concepts](concepts.md)**: envelopes, the predicate algebra, Z3 compilation,
   subsumption, verification stages.
-- **[Security model](security-model.md)** — the threat model and fail-closed posture.
-- **[Robotics](robotics.md)** — the runtime-assurance-for-VLA thesis (experimental).
-- **[Limitations](limitations.md)** — read before adopting. What it does *not* do.
-- **[Case study: AI council](case-studies/ai-council.md)** — a worked example.
-- **[Verifier client diversity](client-diversity.md)** — the verifier built five
+- **[Security model](security-model.md)**: the threat model and fail-closed posture.
+- **[Robotics](robotics.md)**: the runtime-assurance-for-VLA thesis (experimental).
+- **[Limitations](limitations.md)**: read before adopting. What it does *not* do.
+- **[Case study: AI council](case-studies/ai-council.md)**: a worked example.
+- **[Verifier client diversity](client-diversity.md)**: the verifier built five
   times over in five languages; the differential harness that found three oracle
   bugs; and the gated campaign that took the machine-checked Lean client from
   8,882 to 11,097 / 11,450 without ever letting an unsafe case through.
-- **[Exploration: the blind-design gauntlet](exploration/2026-08-blind-design-gauntlet/)**
-  — the convergence experiment (five independent, closed-book architects) that
+- **[Exploration: the blind-design gauntlet](exploration/2026-08-blind-design-gauntlet/)**:
+  the convergence experiment (five independent, closed-book architects) that
   reframed openDaisugi as a substrate + cost levers ([ADR-0011](adr/0011-verifiable-execution-substrate.md)).
-- **[Research: the token-saving landscape](research/token-saving-landscape-2026-08.md)**
-  — an external survey of routing/caching/serving economics, and
-  **[its mapping onto openDaisugi](research/token-saving-landscape-mapping.md)** —
+- **[Research: the token-saving landscape](research/token-saving-landscape-2026-08.md)**:
+  an external survey of routing/caching/serving economics, and
+  **[its mapping onto openDaisugi](research/token-saving-landscape-mapping.md)**:
   the routing ladder, which levers we ship, which we deliberately reject, and why
   verification is the column every router comparison table is missing.
 
@@ -107,10 +108,10 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 ### The white paper & yellow paper
 
 Two long-form documents complement this tree:
-- **[White paper](whitepaper.md)** — the conceptual/strategic case (why this
-  matters, the RTA lineage, the layer-not-harness position).
-- **[Yellow paper / formal spec](spec/yellow-paper.md)** — the rigorous
+- **[White paper](whitepaper.md)**: the conceptual/strategic case (why this
+  matters, the RTA lineage, the position that daisugi is not a harness).
+- **[Yellow paper / formal spec](spec/yellow-paper.md)**: the rigorous
   specification of the verification semantics.
 
-*(A "beige paper" — a plain-language restatement of the yellow paper — would live
+*(A "beige paper", a plain-language restatement of the yellow paper, would live
 here too, if/when the formal spec warrants an accessible companion.)*

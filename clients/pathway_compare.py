@@ -113,9 +113,11 @@ def compare_cli(
     expect = case["expect"]
     err = "\n".join(got["stderr"])
     if case.get("go_refuses") or (got["exit"] == 2 and NOT_YET in err):
+        # A ruled refusal is worded either way: a command not in the
+        # binary, or an input it does not read ("Nothing was changed.").
         ok = (
             got["exit"] == 2
-            and NOT_YET in err
+            and (NOT_YET in err or "Nothing was changed." in err)
             and len(got["stderr"]) == 1
             and got["tree"] == before
         )

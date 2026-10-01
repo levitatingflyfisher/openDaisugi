@@ -24,7 +24,7 @@ export const NAMES_COMMAND = /\b(?:coppice|daisugi) [a-z][a-z-]*/;
 // after the command never gets typed.
 export const KNOWN = [
   'coppice server start', 'coppice server status', 'coppice server stop',
-  'coppice web token', 'coppice web serve', 'coppice task list',
+  'coppice web token', 'coppice web serve', 'coppice web cert tailscale', 'coppice task list',
   'coppice agent allow', 'coppice agent deny', 'coppice pane list',
   'daisugi voice serve', 'daisugi gateway', 'daisugi gate',
 ];
@@ -85,7 +85,15 @@ export const MESSAGES = {
   noToken: () => message('No token. Open Settings and paste one.', [settings()]),
   notConnected: () => message('Not connected. Check the token in Settings.', [reconnect(), settings()]),
   timeout: () => message('The server did not answer in 15 s. Check that coppice-server is running, then try again.', [reconnect()]),
+  // reconnecting is what the page says while it reconnects. A page that
+  // cannot reach the box at all says cannotReach instead (app.js).
   reconnecting: () => message('Reconnecting.', [reconnect()]),
+  // micNeedsHttps is what the mic says on a page that is not a secure
+  // context: the browser gives it no microphone, and the fix is on the box.
+  micNeedsHttps: () => message('The mic needs https here. ' + cap(AWAY) + ', run coppice web serve --tls tailscale, then open the address it prints on this phone.', [], true),
+  // phoneCert is the header's warning when the phone's tailscale
+  // certificate is close to its end. Renew types the command in a shell.
+  phoneCert: (days) => message(phoneCertText(days), [shell('coppice web cert tailscale', 'Renew')]),
   banned: () => message('Too many bad tokens. Waiting one minute.', [], false, true),
   // gateNotInstalled is the floor header's hint when no harness has a
   // daisugi gate hook and no agent is guarded. Its button types the
@@ -113,6 +121,42 @@ export const MESSAGES = {
 
 // voiceRetry is the action that asks the server to start voice again.
 export const voiceRetry = () => ({ kind: 'voice', label: 'Retry' });
+
+// pageHost is the host name the page was loaded from, or '' when there is
+// no location to read.
+export function pageHost() {
+  try {
+    return (typeof location !== 'undefined' && location && location.hostname) || '';
+  } catch {
+    return '';
+  }
+}
+
+// isOwnBox is true for a host name that is this computer: the page then
+// runs on the box itself, so there is no other machine to wake.
+function isOwnBox(host) {
+  const h = String(host || '').replace(/^\[|\]$/g, '');
+  return h === '' || h === 'localhost' || h === '::1' || /^127\./.test(h);
+}
+
+// cannotReach is the line the page shows while it cannot reach the box.
+// On a phone it says the two fixes that are on the phone: Tailscale on,
+// when the page came from a .ts.net name, and the box asleep or off. On
+// the box itself it only says it reconnects. Both carry Retry.
+export function cannotReach(host) {
+  if (isOwnBox(host)) return message('Reconnecting.', [reconnect()]);
+  const ts = /\.ts\.net\.?$/i.test(String(host)) ? ' Turn on Tailscale on this phone.' : '';
+  return message('Cannot reach the box.' + ts + ' The box may be asleep or off.', [reconnect()]);
+}
+
+// phoneCertText is the warning for days left on the phone's certificate.
+function phoneCertText(days) {
+  const n = Number(days);
+  if (!Number.isFinite(n)) return 'The phone certificate runs out soon.';
+  if (n < 0) return 'The phone certificate has run out. The phone cannot reach the box until it is renewed.';
+  if (n === 0) return 'The phone certificate runs out today.';
+  return 'The phone certificate runs out in ' + n + (n === 1 ? ' day.' : ' days.');
+}
 
 function cap(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);

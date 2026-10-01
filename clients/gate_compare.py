@@ -37,6 +37,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from fixture_paths import fixed_root  # noqa: E402 - sibling module, run as a script
 from gate_cases import (  # noqa: E402 - sibling module, run as a script
     FIXTURE_DIR,
     REPO,
@@ -657,7 +658,7 @@ def main() -> int:
         if trace.exists():
             trace.unlink()
         env = dict(py_env, DAISUGI_GATE_TRACE=str(trace))
-        got, secs = run_case(c, [str(args.binary.resolve())], work / "go", env)
+        got, secs = run_case(c, [str(args.binary.resolve())], fixed_root(SCRATCH, "c/go"), env)
         rows = [json.loads(x) for x in trace.read_text().splitlines()] if trace.exists() else []
         path = rows[-1]["path"] if rows else "?"
         why = rows[-1].get("why", "") if rows else "no trace line"
@@ -683,7 +684,7 @@ def main() -> int:
             for line in d["diffs"][:6]:
                 print(f"    {line}")
         if args.oracle:
-            live, psecs = run_case(c, python_gate_cmd(), work / "py")
+            live, psecs = run_case(c, python_gate_cmd(), fixed_root(SCRATCH, "c/py"))
             py_t.append(psecs)
             stale = compare(c["expect"], live)
             if stale:

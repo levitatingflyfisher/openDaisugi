@@ -558,6 +558,8 @@ def run_proxy(case: dict[str, Any], cmd: list[str], work: Path) -> dict[str, Any
         ports = {"{GW}": str(gw), "{UP}": str(up.port), "{SY}": str(sy)}
         if case.get("fake_proxy") is not None:
             ports["{PX}"] = str(px.port)
+            # The proxy's port in fullwidth digits, which int() reads.
+            ports["{PXFW}"] = "".join(chr(0xFF10 + int(d)) for d in str(px.port))
             ports["{DEAD}"] = str(pool.take())
 
         def subst(s: str) -> str:
@@ -683,9 +685,34 @@ _PID = re.compile(r'(\\?"pid\\?": |\bpid )([0-9]+)')
 _ELAPSED = re.compile(r'((?<![a-z_])elapsed_ms(?:\\)*":\s?)-?[0-9][0-9.eE+-]*')
 
 
+_WARN = re.compile(r"^.*?:\d+: (\w*Warning): (.*)$")
+
+
+def _warnings(stderr: list[str]) -> list[str]:
+    """Python prints a warning as `file:line: UserWarning: text` and the
+    source line; keep `UserWarning: text` (the file is the oracle's), as
+    k2_cases does."""
+    out: list[str] = []
+    skip = False
+    for line in stderr:
+        if skip:
+            skip = False
+            if line.startswith("  "):
+                continue
+        m = _WARN.match(line)
+        if m:
+            out.append(f"{m.group(1)}: {m.group(2)}")
+            skip = True
+            continue
+        out.append(line)
+    return out
+
+
 def normalize(
     result: dict[str, Any], home: str, t0: float, ports: dict[str, str]
 ) -> dict[str, Any]:
+    if isinstance(result.get("stderr"), list):
+        result = {**result, "stderr": _warnings(result["stderr"])}
     text = json.dumps(result, ensure_ascii=True)
     text = text.replace(json.dumps(home)[1:-1], "{HOME}")
     text = text.replace(json.dumps(str(Path(home).parent))[1:-1], "{WORK}")
@@ -2330,7 +2357,58 @@ def build_switchyard_cases() -> list[dict[str, Any]]:
             "mine.toml": {"text": "[routes\nid = 1\n"},
         },
         argv=["--switchyard-config", "{HOME}/mine.toml"],
-        go_refuses=True,
+    )
+    # GW-9: every TOML 1.0 file tomllib reads (multi-line and literal
+    # strings, dates and times, arrays of tables, multi-line arrays, CRLF).
+    extras = (
+        '\n[[extras]]\nnote = """\nmulti\nline \\\n  joined"""\n'
+        "when = 1979-05-27T07:32:00-07:00\nday = 1979-05-27\nat = 07:32:00.5\n"
+        "raw = 'C:\\x'\n[[extras]]\nlist = [\n  1,\n  2, # two\n]\n"
+        "[targets.s.meta]\ntags.a = { x = 1 }\n"
+    )
+    full = (own.replace('id = "claude-sonnet-5"', "id = '''claude-sonnet-5'''") + extras).replace(
+        "\n", "\r\n"
+    )
+    for name, text, runs in [
+        ("full toml", full, True),
+        (
+            "key env a date",
+            own.replace("forward_auth = true", "api_key_env = 1979-05-27 07:32:00Z"),
+            True,
+        ),
+        (
+            "big int",
+            own.replace('id = "daisugi"', 'id = "daisugi"\nn = 99999999999999999999'),
+            True,
+        ),
+        (
+            "target named by a date",
+            own.replace("strong_target = 's'", "strong_target = 1979-05-27"),
+            False,
+        ),
+        # S6: int() past Python's 4300-digit limit raises a ValueError that
+        # tomllib does not wrap and the gateway does not catch.
+        (
+            "int too long",
+            own.replace('id = "daisugi"', 'id = "daisugi"\nn = ' + "1" * 4301),
+            False,
+        ),
+    ]:
+        add(
+            f"switchyard own config {name}",
+            [req(easy)] if runs else [],
+            [["/v1/messages", via, routed("qwen3", "qwen3")]] if runs else [],
+            before={CONFIG: {"text": "gateway_router: switchyard\n"}, "mine.toml": {"text": text}},
+            argv=["--switchyard-config", "{HOME}/mine.toml"],
+        )
+    add(
+        "switchyard own config not utf-8",
+        [],
+        before={
+            CONFIG: {"text": "gateway_router: switchyard\n"},
+            "mine.toml": {"hex": b"x = '\xff'\n".hex()},
+        },
+        argv=["--switchyard-config", "{HOME}/mine.toml"],
     )
     add(
         "switchyard own config key auth",
@@ -2586,6 +2664,228 @@ def router_measure_cases(add: Any, turns: str) -> None:
         add(f"router status delegate {label} json", ["router", "status", "--json"], extra)
 
 
+def router_trial_cases(add: Any) -> None:
+    """The promotion meter in `router status`: the arms a graft trial
+    recorded in the gate's audit logs, the operator's labels, and each
+    session's billed cost from its transcript (SW-13 to SW-15)."""
+    grafts = ".opendaisugi/gate/grafts"
+    audit = ".opendaisugi/gate/audit"
+    labels = ".opendaisugi/router/labels.jsonl"
+    rule = {
+        "id": "big-read",
+        "version": 1,
+        "shape": "deny_redirect",
+        "state": "trial",
+        "match": {"tool": "Read", "file_lines_over": 400},
+        "trial": {"seed": 3},
+    }
+
+    def assistant(mid: Any, model: str, i: Any = 0, o: Any = 0, cr: Any = 0, cw: Any = 0) -> str:
+        msg: dict[str, Any] = {
+            "model": model,
+            "usage": {
+                "input_tokens": i,
+                "output_tokens": o,
+                "cache_read_input_tokens": cr,
+                "cache_creation_input_tokens": cw,
+            },
+        }
+        if mid is not None:
+            msg["id"] = mid
+        return json.dumps({"type": "assistant", "message": msg})
+
+    def rec(session: str, arm: str, tp: str | None = "same", version: Any = 1) -> str:
+        r: dict[str, Any] = {
+            "at": 1700000000.0,
+            "session_id": session,
+            "tool_name": "Read",
+            "graft": {
+                "rule_id": "big-read",
+                "version": version,
+                "shape": "deny_redirect",
+                "state": "trial",
+                "arm": arm,
+                "applied": arm == "graft",
+            },
+        }
+        if tp == "same":
+            r["transcript_path"] = "{HOME}/tx/" + session + ".jsonl"
+        elif tp is not None:
+            r["transcript_path"] = tp
+        return json.dumps(r)
+
+    def session(name: str, arm: str, model: str = "claude-sonnet-5", i: int = 1000, **kw: Any):
+        return {
+            f"{audit}/{name}.jsonl": {"text": rec(name, arm, **kw) + "\n"},
+            f"tx/{name}.jsonl": {"text": assistant("m1", model, i=i, o=10) + "\n"},
+        }
+
+    def label_rows(*rows: tuple[str, str]) -> dict[str, Any]:
+        text = "".join(json.dumps({"session": s, "outcome": o}) + "\n" for s, o in rows)
+        return {labels: {"text": text}}
+
+    trial_rule = {f"{grafts}/big-read.json": {"text": json.dumps(rule)}}
+    six: dict[str, Any] = {**trial_rule}
+    for k in range(3):
+        six.update(session(f"g{k}", "graft", i=1000))
+        six.update(session(f"c{k}", "control", i=3000))
+    all_pass = label_rows(
+        *((f"g{k}", "pass") for k in range(3)), *((f"c{k}", "pass") for k in range(3))
+    )
+    cases: dict[str, dict[str, Any]] = {
+        "empty": trial_rule,
+        "audit rule": {f"{grafts}/big-read.json": {"text": json.dumps({**rule, "state": "audit"})}},
+        "active rule": {
+            f"{grafts}/big-read.json": {"text": json.dumps({**rule, "state": "active"})}
+        },
+        "no seed": {
+            f"{grafts}/big-read.json": {
+                "text": json.dumps({k: v for k, v in rule.items() if k != "trial"})
+            }
+        },
+        "bad seed": {
+            f"{grafts}/big-read.json": {"text": json.dumps({**rule, "trial": {"seed": -1}})}
+        },
+        "unlabeled": six,
+        "promote": {**six, **all_pass},
+        "keep": {
+            **six,
+            **session("g0", "graft", i=9000),
+            **all_pass,
+        },
+        "retire": {
+            **six,
+            **label_rows(
+                ("g0", "pass"),
+                ("g1", "fail"),
+                ("g2", "fail"),
+                ("c0", "pass"),
+                ("c1", "pass"),
+                ("c2", "pass"),
+            ),
+        },
+        "relabeled": {
+            **six,
+            **label_rows(
+                ("g0", "fail"),
+                ("g1", "fail"),
+                ("g2", "fail"),
+                ("c0", "pass"),
+                ("c1", "pass"),
+                ("c2", "pass"),
+                ("g0", "pass"),
+                ("g1", "pass"),
+                ("g2", "pass"),
+            ),
+        },
+        "no success": {
+            **six,
+            **label_rows(
+                *((f"g{k}", "fail") for k in range(3)), *((f"c{k}", "fail") for k in range(3))
+            ),
+        },
+        "cost unknown": {
+            **six,
+            **all_pass,
+            f"{audit}/g3.jsonl": {"text": rec("g3", "graft", tp=None) + "\n"},
+            **label_rows(
+                *((f"g{k}", "pass") for k in range(4)), *((f"c{k}", "pass") for k in range(3))
+            ),
+        },
+        "both arms": {
+            **trial_rule,
+            f"{audit}/x.jsonl": {"text": rec("x", "graft") + "\n" + rec("x", "control") + "\n"},
+        },
+        "fallback price": {
+            **six,
+            **session("g1", "graft", model="claude-new-9"),
+            **all_pass,
+        },
+        "remote worker": {
+            **six,
+            f"{grafts}/big-read.json": {
+                "text": json.dumps({**rule, "worker": {"allow_remote": True}})
+            },
+            **all_pass,
+        },
+        "other version": {
+            **trial_rule,
+            f"{audit}/v.jsonl": {"text": rec("v", "graft", version=2) + "\n"},
+        },
+        "bad labels": {
+            **six,
+            labels: {
+                "text": "not json\n"
+                + json.dumps({"session": "g0/x", "outcome": "pass"})
+                + "\n"
+                + json.dumps({"session": "g1", "outcome": "maybe"})
+                + "\n"
+                + json.dumps(["g2"])
+                + "\n"
+                + json.dumps({"session": "c0", "outcome": "pass"})
+                + "\n"
+            },
+        },
+        "relative transcript": {
+            **six,
+            f"{audit}/g0.jsonl": {"text": rec("g0", "graft", tp="tx/g0.jsonl") + "\n"},
+            **all_pass,
+        },
+        "transcript a dir": {
+            **six,
+            f"{audit}/g0.jsonl": {"text": rec("g0", "graft", tp="{HOME}/tx") + "\n"},
+            **all_pass,
+        },
+        "transcript rows": {
+            **six,
+            "tx/g0.jsonl": {
+                "text": "\n".join(
+                    [
+                        json.dumps({"type": "user", "message": {"content": "hi"}}),
+                        assistant("m1", "claude-sonnet-5", i=10, o=1),
+                        assistant("m1", "claude-sonnet-5", i=10, o=50, cr=1000, cw=100),
+                        assistant(None, "claude-haiku-4-5", i=20, o=20),
+                        assistant(None, "claude-haiku-4-5", i=20, o=20),
+                        "not json",
+                        "[1, 2]",
+                        assistant("m2", "claude-opus-4-8", i=True, o=2.5, cr=-3, cw=2**60),
+                        json.dumps({"type": "assistant", "message": {"id": "m3"}}),
+                        json.dumps({"type": "assistant", "message": "x"}),
+                        "\u00e9 bad \ufffd",
+                    ]
+                )
+                + "\n"
+            },
+            **all_pass,
+        },
+        "transcript latin": {
+            **six,
+            "tx/g0.jsonl": {
+                "hex": (assistant("m1", "claude-sonnet-5", i=7) + "\n").encode().hex() + "e90a"
+            },
+            **all_pass,
+        },
+    }
+    for label, before in cases.items():
+        add(f"router status trial {label}", ["router", "status"], before)
+        add(f"router status trial {label} json", ["router", "status", "--json"], before)
+    # The operator's label (SW-10).
+    lab = ["router", "label"]
+    add("router label pass", [*lab, "s1", "pass"])
+    add("router label fail note", [*lab, "s1", "fail", "--note", "the tests failed \u00e9"])
+    add("router label json", [*lab, "s1", "pass", "--json"])
+    add("router label json note", [*lab, "s1", "pass", "--note", "ok", "--json"])
+    add("router label appends", [*lab, "g0", "fail"], {**six, **all_pass})
+    add("router label bad outcome", [*lab, "s1", "maybe"])
+    add("router label bad session", [*lab, "a/b", "pass"])
+    add("router label dot session", [*lab, ".s", "pass"])
+    add("router label long session", [*lab, "s" * 129, "pass"])
+    add("router label long note", [*lab, "s1", "pass", "--note", "x" * 501])
+    add("router label note at limit", [*lab, "s1", "pass", "--note", "x" * 500])
+    add("router label no outcome", [*lab, "s1"])
+    add("router label cannot write", [*lab, "s1", "pass"], {".opendaisugi/router": {"text": "x"}})
+
+
 def build_cli_cases() -> list[dict[str, Any]]:
     C: list[dict[str, Any]] = []
     turns = ".opendaisugi/gateway/turns.jsonl"
@@ -2745,6 +3045,23 @@ def build_cli_cases() -> list[dict[str, Any]]:
         ["route", "run unit tests now", "--threshold", "0.99"],
         {**lex, **store},
     )
+    # S9: a row embedded under another version makes find warn, once.
+    stale = {
+        ".opendaisugi/pathways.db": {
+            "db": {
+                "rows": [
+                    row_spec(
+                        put_row(pathway(1, "run the unit tests", lexical("run the unit tests")))
+                    ),
+                    row_spec(
+                        put_row(pathway(2, "deploy docs", lexical("deploy docs"), emb_version="2"))
+                    ),
+                ]
+            }
+        }
+    }
+    add("route stale store", ["route", "run the unit tests"], {**lex, **stale})
+    add("route stale store json", ["route", "deploy docs", "--json"], {**lex, **stale})
     add("route unicode", ["route", "ΣΑΣ résumé İstanbul " * 30, "--json"])
     # --- router status / stop ---
     add("router status nothing", ["router", "status"])
@@ -2855,6 +3172,7 @@ def build_cli_cases() -> list[dict[str, Any]]:
         {"dd/config.yaml": {"text": "gateway_router: 'off'\n"}, "dd/gateway/turns.jsonl": text(sy)},
     )
     router_measure_cases(add, turns)
+    router_trial_cases(add)
     add("router stop nothing", ["router", "stop"])
     add(
         "router stop live child",
@@ -3181,6 +3499,19 @@ def build_env_proxy_cases() -> list[dict[str, Any]]:
         ok,
     )
     add("unknown scheme", {"HTTP_PROXY": "ftp://127.0.0.1:{PX}"}, turn, ok)
+    # Proxy URLs and NO_PROXY entries as httpx's URL parser reads them
+    # (PX-9): a port int() reads, and the InvalidURL that stops the client.
+    add("port with a plus", {"HTTP_PROXY": "http://127.0.0.1:+{PX}"}, turn, ok)
+    add("port after a space", {"HTTP_PROXY": "http://127.0.0.1: {PX}"}, turn, ok)
+    add("port in fullwidth digits", {"HTTP_PROXY": "http://127.0.0.1:{PXFW}"}, turn, ok)
+    add("port not a number", {"HTTP_PROXY": "http://127.0.0.1:x"}, turn, ok)
+    add("ipv4 with a leading zero", {"HTTP_PROXY": "http://127.0.0.01:{PX}"}, turn, ok)
+    add("ipv6 not closed", {"HTTP_PROXY": "http://[::1:{PX}"}, turn, ok)
+    add("idna host not valid", {"HTTP_PROXY": "http://b\u00fc_cher:{PX}"}, turn, ok)
+    add("no_proxy percent", {"HTTP_PROXY": px, "NO_PROXY": "x%y"}, turn, ok)
+    add("no_proxy bad port", {"HTTP_PROXY": px, "NO_PROXY": "a:b"}, turn, ok)
+    add("no_proxy non-ascii", {"HTTP_PROXY": px, "NO_PROXY": "b\u00fccher.example"}, turn, ok)
+    add("no_proxy with a path", {"HTTP_PROXY": px, "NO_PROXY": "http://127.0.0.1/x"}, turn, ok)
     add("https scheme proxy", {"HTTP_PROXY": "https://127.0.0.1:{PX}"}, turn, ok)
     # The Switchyard child is reached through the proxy too: the health
     # probe (urllib) and each turn (httpx).

@@ -1,0 +1,45 @@
+# The one question before the alternate screen. Each floor runs in a pane
+# of the alt server with its own empty config dir and its own PATH, under a
+# shell that prints the floor's exit code and stays, so the screen can be
+# read after the floor ends. The fake claude and codex on PATH are never
+# run; the question only finds them. Floors on the alt server: w1:p1 no
+# harness, w1:p2 two harnesses, w1:p3 one harness.
+{"id": "a1", "cli": ["server", "start"], "alt": true, "autostart": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# No harness on PATH: the app-only note, no file, exit 1.
+{"id": "f1", "cli": ["pane", "create", "--json", "--kind", "pty", "--cols", "100", "--rows", "30", "--cwd", "{START}", "--", "/bin/sh", "-c", "env -u COPPICE_PANE XDG_CONFIG_HOME=\"$1\" PATH=\"$2\" \"$3\" --socket \"$4\" --data-dir \"$5\"; echo EXIT=$?; exec sleep 600", "floor", "{WORK}/fr1", "/usr/bin:/bin", "{BIN}", "{SOCK}", "{DATA}"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "none", "screen": "w1:p1", "alt": true, "until": "EXIT=1"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "f1l", "ls": "{WORK}/fr1"}
+{"id": "$id", "ok": true, "result": {"tree": []}}
+# Two harnesses: one numbered question; the answer picks codex.
+{"id": "f2", "cli": ["pane", "create", "--json", "--kind", "pty", "--cols", "100", "--rows", "30", "--cwd", "{START}", "--", "/bin/sh", "-c", "env -u COPPICE_PANE XDG_CONFIG_HOME=\"$1\" PATH=\"$2\" \"$3\" --socket \"$4\" --data-dir \"$5\"; echo EXIT=$?; exec sleep 600", "floor", "{WORK}/fr2", "{FIXTURES}/tui/bin:/usr/bin:/bin", "{BIN}", "{SOCK}", "{DATA}"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "question", "screen": "w1:p2", "alt": true, "until": "Pick a number [1]:"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "f2a", "cli": ["pane", "send-text", "w1:p2", "2", "--no-enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "f2e", "cli": ["pane", "send-keys", "w1:p2", "enter"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "picked", "screen": "w1:p2", "alt": true, "until": "Nothing running. Enter opens codex here."}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "f2c", "file": "{WORK}/fr2/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": {"mode": "0o600"}}
+{"id": "f2q", "cli": ["pane", "send-keys", "w1:p2", "ctrl+c"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "vocabulary", "screen": "w1:p2", "alt": true, "until": "EXIT=0"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+# One harness: no question; it is the default.
+{"id": "f3", "cli": ["pane", "create", "--json", "--kind", "pty", "--cols", "100", "--rows", "30", "--cwd", "{START}", "--", "/bin/sh", "-c", "env -u COPPICE_PANE XDG_CONFIG_HOME=\"$1\" PATH=\"$2\" \"$3\" --socket \"$4\" --data-dir \"$5\"; echo EXIT=$?; exec sleep 600", "floor", "{WORK}/fr3", "{FIXTURES}/cli/bin:/usr/bin:/bin", "{BIN}", "{SOCK}", "{DATA}"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "one", "screen": "w1:p3", "alt": true, "until": "Nothing running. Enter opens pi here."}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "f3c", "file": "{WORK}/fr3/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": {"mode": "0o600"}}
+{"id": "f3q", "cli": ["pane", "send-keys", "w1:p3", "ctrl+c"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "one-vocabulary", "screen": "w1:p3", "alt": true, "until": "EXIT=0"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "z", "cli": ["server", "stop"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}

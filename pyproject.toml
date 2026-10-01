@@ -9,7 +9,6 @@ license = { text = "MIT" }
 dependencies = [
     "pydantic>=2.5,<3",
     "z3-solver>=4.13",
-    "networkx>=3.2",
     "pyyaml>=6.0",
     "typer>=0.12,<1",
     # cli.py imports click for click.Choice. typer 0.27 no longer depends on
@@ -40,9 +39,8 @@ dev = [
     # fail in CI a commit that passed here.
     "ruff==0.16.6",
     "build>=1.2",
-    "twine>=5.0",
     # Not [search]: it pulls torch and the CUDA wheels, about 5.3 GB, into
-    # every dev and CI venv (docs/research/dependency-sweep-2026-09-26.md).
+    # every dev and CI venv (docs/reference/dependencies.md).
     # Its tests skip, or stub it with the sentence_transformers_installed
     # fixture in tests/conftest.py. [mcp] is small and lights up about 50
     # tests via test_mcp_server. Heavy extras (lora=torch+peft+trl,
@@ -74,6 +72,8 @@ search = [
 potion = [
     "numpy>=1.26",
     "model2vec>=0.9",
+    # _search.py fetches the model with snapshot_download at a pinned revision.
+    "huggingface_hub>=0.21",
 ]
 # v0.46: the second torch-free pathway-reuse embedder. MiniLM itself, quantized
 # to int8 and run through onnxruntime, with no torch and no transformers. Needs
@@ -90,24 +90,20 @@ int8 = [
 ]
 # v0.45: the voice bridge. faster-whisper runs on CTranslate2, not torch, so it
 # runs on a CPU-only box or on a box whose GPU cannot safely take torch workloads.
-# `av` is PyAV, the webm or opus decode fallback for when the `ffmpeg` binary is
-# absent. A WAV already at 16 kHz mono, or a box with ffmpeg present, never needs
-# it. ADR-0019 sets the same torch-free precedent for a different codec.
+# Our code decodes webm or opus with the `ffmpeg` binary only and never imports
+# `av`. faster-whisper itself depends on `av` (PyAV), whose wheel bundles GPL
+# x264/x265: see docs/reference/dependencies.md.
 voice = [
     "faster-whisper>=1.1",
     "sounddevice>=0.5",
     "numpy>=1.26",
-    "av>=13.0",
+    # voice/engines.py reads huggingface_hub's cache-miss error.
+    "huggingface_hub>=0.21",
 ]
 mcp = [
     # mcp 2 renamed FastMCP to MCPServer and changed other APIs that
     # mcp_server.py uses. Lift the bound when the server moves to 2.x.
     "mcp>=1.27,<2",
-]
-# v0.45: the opt-in second engine, NeMo Parakeet-TDT via sherpa-onnx. Its model is a
-# roughly 460MB download. The voice bridge never fetches it automatically. See pins.py.
-voice-parakeet = [
-    "sherpa-onnx>=1.10",
 ]
 # v0.44: the token-saving gateway's async transport — an OpenAI/Anthropic-compatible proxy
 # any harness points at via base_url. Pure-Python (httpx); the ASGI app runs under any
@@ -137,6 +133,21 @@ robotics = [
     "mujoco>=3.0,<4.0",
     "numpy>=1.24",
 ]
+# The Python SmolVLA executor (vla_executor.py, TransformersVLAExecutor). The
+# torch wheels pull NVIDIA's CUDA wheels under NVIDIA's own licence: install
+# this per user, never in a bundle (see NOTICE). The Go and Rust executors run
+# the ONNX export instead and need none of this.
+vla = [
+    "torch>=2.1",
+    "transformers>=4.44",
+]
+# `daisugi models pin`: model_registry.py resolves and fetches a file from the
+# Hugging Face Hub, pinned to its commit.
+hub = [
+    "huggingface_hub>=0.21",
+]
+# torch pulls NVIDIA's CUDA wheels under NVIDIA's own licence: install this
+# per user, never in a bundle (see NOTICE). The same holds for [search].
 lora = [
     "torch>=2.1",
     "transformers>=4.44",
@@ -163,9 +174,16 @@ artifacts = [
     "src/opendaisugi/skills/**/*.md",
     "src/opendaisugi/install_assets/**/*",
     "src/opendaisugi/viz_dag_template.html",
+    "src/opendaisugi/tui_web/*.html",
+    "src/opendaisugi/model_catalog.json",
     "src/opendaisugi/harness_pi/**/*",
     "src/opendaisugi/harness_opencode/**/*",
 ]
+
+# The pack catalog and locks (opendaisugi.pack.catalog finds them here in a
+# wheel install, and in packs/ in a checkout).
+[tool.hatch.build.targets.wheel.force-include]
+"packs" = "opendaisugi/pack/packs"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

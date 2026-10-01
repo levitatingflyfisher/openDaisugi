@@ -17,6 +17,7 @@ import (
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/sqlpath"
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/transcript"
 )
@@ -58,7 +59,12 @@ func readSplitCache(path string) (*splitCache, error) {
 	if _, err := os.Stat(path); err != nil {
 		return c, nil
 	}
-	db, err := sql.Open("sqlite3", "file:"+path+"?mode=ro")
+	// sqlite3.connect takes the path as a plain file name.
+	dsn, err := sqlpath.DSN(path, "mode=ro")
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +117,11 @@ func (c *splitCache) write() error {
 	if err := os.MkdirAll(filepath.Dir(c.path), 0o777); err != nil {
 		return err
 	}
-	db, err := sql.Open("sqlite3", c.path)
+	dsn, err := sqlpath.DSN(c.path, "")
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return err
 	}
@@ -319,7 +329,7 @@ func (e *Env) onboard(args []string) error {
 	dry := p.flag("--dry-run")
 	asJSON := p.flag("--json")
 	model := p.str("--model", splitDefaultModel)
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	if err := e.renamedBackendAt(cmd, dataDir); err != nil {
 		return err
 	}

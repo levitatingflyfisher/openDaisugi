@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opendaisugi/coppice/internal/datahome"
 	"github.com/opendaisugi/coppice/internal/pane"
 	"github.com/opendaisugi/coppice/internal/proto"
 	"github.com/opendaisugi/coppice/internal/toolchain"
@@ -74,13 +75,29 @@ func roundTrip(t *testing.T, s *Server, lines ...string) []proto.Response {
 }
 
 func TestSocketPathPrefersXDGRuntimeDir(t *testing.T) {
+	// The test home's OPENDAISUGI_HOME is a canary; this test reads the
+	// rule with none.
+	t.Setenv("OPENDAISUGI_HOME", "")
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
 	if got := SocketPath(); got != "/run/user/1000/coppice/server.sock" {
 		t.Fatalf("SocketPath() = %q, want the XDG path", got)
 	}
 	t.Setenv("XDG_RUNTIME_DIR", "")
-	if got := SocketPath(); !strings.HasSuffix(got, "/.opendaisugi/coppice/server.sock") {
-		t.Fatalf("SocketPath() = %q, want the ~/.opendaisugi fallback", got)
+	if got, want := SocketPath(), filepath.Join(datahome.Default(), "coppice", "server.sock"); got != want {
+		t.Fatalf("SocketPath() = %q, want the data home fallback %q", got, want)
+	}
+	// With no ~/.opendaisugi, XDG_DATA_HOME moves the data home.
+	t.Setenv("XDG_DATA_HOME", "/xdg")
+	t.Setenv("HOME", t.TempDir())
+	if got := SocketPath(); got != "/xdg/opendaisugi/coppice/server.sock" {
+		t.Fatalf("SocketPath() = %q, want the XDG data home", got)
+	}
+	t.Setenv("OPENDAISUGI_HOME", "/od")
+	if got := SocketPath(); got != "/od/coppice/server.sock" {
+		t.Fatalf("SocketPath() = %q, want OPENDAISUGI_HOME", got)
+	}
+	if got := DataDir(); got != "/od/coppice" {
+		t.Fatalf("DataDir() = %q, want OPENDAISUGI_HOME", got)
 	}
 }
 

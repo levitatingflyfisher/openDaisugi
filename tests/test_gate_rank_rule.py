@@ -2,7 +2,8 @@
 
 A vote recorded as the owner outweighs the model judges, so an agent that
 recorded one for its own attempt would decide its own ranking. The rule
-runs before any envelope, and no operator ask turns it.
+runs before any envelope, and no operator ask turns it. The line is read
+per simple command (``owner_rule``).
 """
 
 from __future__ import annotations
@@ -31,8 +32,6 @@ HITS = [
     "dai\\sugi rank rec\\ord",
     "'dai'sugi \"ra\"nk record",
     "ls; daisugi rank record",
-    "true && daisugi\trank\nrecord",
-    "daisugi rank record",
     "echo daisugi rank record",
 ]
 
@@ -47,6 +46,12 @@ MISSES = [
     "daisugi ranked record",
     "daisugi rank recorder",
     "grep 'rank record' daisugi.log",
+    # A newline ends a command: this runs `daisugi rank`, then `record`.
+    "true && daisugi\trank\nrecord",
+    "daisugi status && rank record",
+    # The shell does not split at a no-break space: the head is the word
+    # "daisugi<NBSP>rank", so no daisugi command runs.
+    "daisugi\u00a0rank record",
     "ls",
 ]
 

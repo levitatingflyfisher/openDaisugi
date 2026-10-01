@@ -1,0 +1,30 @@
+{
+  "v": 1,
+  "protocol": "daisugi-pack-1",
+  "platform": "x86_64-linux",
+  "python": {
+    "version": "3.12.99",
+    "file": "cpython-fake-x86_64-linux.tar.gz",
+    "url": "http://127.0.0.1:{PORT}/python/cpython-fake-x86_64-linux.tar.gz",
+    "sha256": "9ea06a2b9d3c2761dc76c3408d80831510cb36f2053bdad1e04e91cfe88235ca",
+    "size": 333
+  },
+  "packs": [
+    {
+      "name": "train",
+      "gpu": false,
+      "summary": "The pack of the golden cases: two tiny wheels.",
+      "lock": "fake.lock",
+      "index_url": "http://127.0.0.1:{PORT}/simple",
+      "extra_index_urls": [],
+      "check": [
+        "fakepkg"
+      ]
+    },
+    {
+      "name": "train-cuda",
+      "gpu": true,
+      "summary": "A GPU pack, listed only."
+    }
+  ]
+}

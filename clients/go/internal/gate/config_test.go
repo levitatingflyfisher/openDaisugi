@@ -55,8 +55,9 @@ func TestConfigLoadsAsLoadConfigDoes(t *testing.T) {
 			t.Errorf("%q: %s, want a raise", text, kind)
 		}
 	}
-	if kind, _ := loadOutcome(t, "gate_mode: [enforce]\n"); kind != "unported" {
-		t.Errorf("a flow sequence was read")
+	// A list where a str belongs: Config raises, as for a bool.
+	if kind, _ := loadOutcome(t, "gate_mode: [enforce]\n"); kind != "exc" {
+		t.Errorf("a flow sequence for gate_mode: %s, want a raise", kind)
 	}
 }
 

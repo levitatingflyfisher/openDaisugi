@@ -42,6 +42,12 @@ type Edit struct {
 	Warning string
 	// PreWarning is said before the write, which still happens.
 	PreWarning string
+	// Kind is "" for a file written; else an edit of layers.go ("skill",
+	// "plugin", "md", "remove", "md-unpatch").
+	Kind string
+	// Listed is an edit reported among the files written even when it
+	// changes nothing (the skill, as _link_skill returns its target).
+	Listed bool
 }
 
 // readState is how Python's json.loads(path.read_text()) went.
@@ -174,9 +180,15 @@ func dumpSettings(v any) string { return pyjson.DumpsIndent(v, 2, true) + "\n" }
 // `-m opendaisugi.gate` hook to gate_client never matches the Go command,
 // so such a hook is warned about and left as it is.
 func PlanClaudeGate(settingsPath string, entry *pyjson.Object) (*Edit, error) {
+	return PlanClaudeGateOn(settingsPath, entry, nil)
+}
+
+// PlanClaudeGateOn is PlanClaudeGate on the content an earlier edit of
+// this run left (prior), or the file.
+func PlanClaudeGateOn(settingsPath string, entry *pyjson.Object, prior *Edit) (*Edit, error) {
 	cmdV, _ := entry.Value("hooks").([]any)[0].(*pyjson.Object).Get("command")
 	gateCommand := cmdV.(string)
-	v, st, err := readJSON(settingsPath)
+	v, st, err := jsonOf(settingsPath, prior)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +230,7 @@ func PlanClaudeGate(settingsPath string, entry *pyjson.Object) (*Edit, error) {
 		if config.GateHookKind(c) != config.KindNone {
 			return &Edit{Path: settingsPath, Warning: "a gate hook is already installed in " + settingsPath +
 				" with a different mode/config; run `daisugi install --uninstall` first if you want to " +
-				"change it (idempotent by presence, not content)."}, nil
+				"change it (idempotent by presence, not content)." + notIsolatedNote(existing)}, nil
 		}
 	}
 	hooks.Set("PreToolUse", append(pre, entry))
@@ -441,6 +453,9 @@ func Backup(p string) error {
 func Apply(e *Edit) (followed string, err error) {
 	if e == nil || e.Warning != "" {
 		return "", nil
+	}
+	if e.Kind != "" {
+		return applyLayerEdit(e)
 	}
 	if e.Existed {
 		if err := Backup(e.Path); err != nil {

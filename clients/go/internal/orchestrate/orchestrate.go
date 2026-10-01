@@ -28,7 +28,9 @@ type Options struct {
 	VEnv         verify.Envelope
 	Budget       *int64
 	StrictBudget bool
-	SynthLLM     bool
+	// MaxParallel is max_parallel (1: sequential).
+	MaxParallel int
+	SynthLLM    bool
 	// Store, MatcherKey, Potion and Threshold are Tier-0 reuse.
 	Store          *pathways.Store
 	MatcherKey     string
@@ -43,6 +45,12 @@ type Options struct {
 	Fallback supervise.Fallback
 	// Environ is the shell steps' environment (with --llm's setting).
 	Environ []string
+	// Warn prints the store's stale-embeddings warning (once per process);
+	// nil prints nothing.
+	Warn func(string)
+	// Agentic runs agentic steps (a reused delegated pathway has them);
+	// nil leaves them with no executor.
+	Agentic supervise.Executor
 }
 
 // Result is orchestrator.OrchestrationResult.
@@ -65,6 +73,9 @@ func (o *Options) maybeReuse() *pyjson.Object {
 		return nil
 	}
 	r, err := o.Store.Find(o.Prompt, o.MatcherKey, o.Potion, o.Threshold)
+	if o.Warn != nil {
+		o.Warn(r.Warning)
+	}
 	if err != nil || r.Match == nil {
 		return nil
 	}
@@ -106,6 +117,9 @@ func Run(o Options) (*Result, error) {
 	executors["task"] = task
 	executors["skill"] = SkillExecutor{}
 	executors["mcp"] = MCPExecutor{}
+	if o.Agentic != nil {
+		executors["agentic"] = o.Agentic
+	}
 	vp, err := verify.ParsePlan([]byte(pathways.DumpJSON(plan)))
 	if err != nil {
 		return nil, fmt.Errorf("the plan does not read: %v: %w", err, ErrUnported)
@@ -123,7 +137,7 @@ func Run(o Options) (*Result, error) {
 	}
 	sup := &supervise.Supervisor{Executors: executors, Approval: supervise.Always{}, Journal: o.Journal,
 		Z3TimeoutMs: o.Z3TimeoutMs, StepTimeoutS: o.StepTimeoutS, MaxOutputBytes: 10 * 1024 * 1024,
-		Fallback: o.Fallback}
+		Fallback: o.Fallback, MaxParallel: o.MaxParallel}
 	sess := sup.Run(plan, o.Env, o.VEnv, verification)
 	realized := map[string]Sizing{}
 	for _, s := range task.Live {

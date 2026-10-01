@@ -17,7 +17,9 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	code := m.Run()
+	// OPENDAISUGI_HOME names a canary: a test that fell back to a default
+	// data home wrote there, and fails the run.
+	code := testhome.CheckCanary(m.Run())
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }

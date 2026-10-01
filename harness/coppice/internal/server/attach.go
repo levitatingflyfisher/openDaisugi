@@ -425,10 +425,10 @@ func (s *Server) handleSubscribe(c *Client, r *proto.Request) proto.Response {
 	}
 	for _, k := range kinds {
 		switch k {
-		case "state", "layout", "frame", "note", "child", "presence":
+		case "state", "layout", "frame", "note", "child", "presence", "messages":
 		default:
 			return proto.ErrResp(r.ID, proto.ErrBadRequest,
-				fmt.Sprintf("kind %q is not state, layout, frame, note, child or presence", k))
+				fmt.Sprintf("kind %q is not state, layout, frame, note, child, presence or messages", k))
 		}
 	}
 	var panes []string
@@ -474,5 +474,10 @@ func (s *Server) handleSubscribe(c *Client, r *proto.Request) proto.Response {
 		}
 	}
 	c.mu.Unlock()
+	for _, k := range kinds {
+		if k == "messages" {
+			s.watchMessages()
+		}
+	}
 	return proto.OKResp(r.ID, map[string]any{"kinds": kinds, "panes": panes})
 }

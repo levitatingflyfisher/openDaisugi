@@ -3,11 +3,13 @@
 
 ffmpeg is the primary path when it is on PATH. It decodes webm and opus and
 resamples in one step. It is a correct, anti-aliased resampler and needs no
-Python decoder library. The av package, installed by the voice extra, is the
-fallback for webm decode when the ffmpeg binary is absent. A WAV already at
-16 kHz mono needs no conversion. A WAV at another rate with neither ffmpeg
-nor av available falls back to a plain numpy linear-interpolation resample.
-That fallback sounds worse. It skips anti-aliasing. A live check on this box
+Python decoder library. With no ffmpeg, a compressed clip (webm, opus) is
+refused with a message that names ffmpeg, as in the Go and Rust ports. The
+av package is never imported here: faster-whisper needs it, but its wheel
+bundles GPL codecs. A WAV already at 16 kHz mono needs no conversion. A WAV
+at another rate with no ffmpeg falls back to a plain numpy
+linear-interpolation resample. That fallback sounds worse. It skips
+anti-aliasing. A live check on this box
 raised one fixture's word error rate from 0.111 to 0.222 under this
 fallback. The fallback is never wrong in a silent way, and it is never the
 primary path. ffmpeg is common enough that the fallback only matters on a
@@ -121,40 +123,6 @@ def _ffmpeg_to_wav_16k_mono(raw: bytes) -> bytes:
     return write_wav_16k_mono(samples, sample_rate=sr)
 
 
-def _av_to_wav_16k_mono(raw: bytes) -> bytes:
-    """Decode with the av package and resample to 16 kHz mono.
-
-    Every error past the import itself, a missing decoder, a corrupt
-    container, a codec av does not build, is wrapped and re-raised as
-    AudioFormatUnsupported naming ffmpeg. That keeps one clear message for
-    every unsupported clip, whether or not av happens to be installed on
-    this host.
-    """
-    try:
-        import av
-    except ImportError as exc:
-        raise AudioFormatUnsupported(
-            "cannot decode this audio format. Neither the ffmpeg binary nor the "
-            "av package is available. Install ffmpeg, or run: "
-            "pip install 'opendaisugi[voice]'"
-        ) from exc
-    try:
-        container = av.open(io.BytesIO(raw))
-        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
-        chunks: list[np.ndarray] = []
-        for frame in container.decode(audio=0):
-            for out_frame in resampler.resample(frame):
-                chunks.append(out_frame.to_ndarray().flatten())
-        container.close()
-    except Exception as exc:
-        raise AudioFormatUnsupported(
-            "cannot decode this audio format with the av package. "
-            "Install ffmpeg for a more reliable decode."
-        ) from exc
-    merged = np.concatenate(chunks).astype(np.float64) if chunks else np.zeros(0)
-    return write_wav_16k_mono(merged)
-
-
 def to_wav_16k_mono(raw: bytes, content_type: str = "") -> bytes:
     """Normalize any supported audio clip to 16 kHz mono 16-bit PCM WAV bytes."""
     if _is_wav(raw):
@@ -166,4 +134,9 @@ def to_wav_16k_mono(raw: bytes, content_type: str = "") -> bytes:
         return write_wav_16k_mono(_resample_linear(samples, sr, 16000))
     if shutil.which("ffmpeg"):
         return _ffmpeg_to_wav_16k_mono(raw)
-    return _av_to_wav_16k_mono(raw)
+    # Compressed audio needs the ffmpeg binary. The av package that
+    # faster-whisper pulls in is never imported here: its wheel bundles GPL
+    # codecs, and the Go and Rust ports refuse the same way.
+    raise AudioFormatUnsupported(
+        "cannot decode this audio format. The ffmpeg binary is not on PATH. Install ffmpeg."
+    )

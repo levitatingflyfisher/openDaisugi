@@ -84,7 +84,7 @@ impl Env {
     }
 
     fn default_registry(&self) -> String {
-        join(&self.home, ".opendaisugi/registry")
+        join(&self.data_home(), "registry")
     }
 
     fn registry_init(&mut self, args: &[String]) -> Res {
@@ -263,7 +263,7 @@ impl Env {
             Ok(t) => t,
             Err(e) => return self.raise(CMD, e),
         };
-        let data_dir = path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let found = (|| -> Result<Option<crate::pathways::pathway::Pathway>, LErr> {
             let local = LocalStore::open(&join(&data_dir, "pathways.db"))?;
             let all = local.read_all(&|x| x == id)?;
@@ -362,7 +362,7 @@ impl Env {
         };
         drop(s);
         self.out(&format!("pulled; {n} new pathway(s) cached\n"));
-        let data_dir = path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         if let Some(rep) = self.run_tend_quiet(&data_dir)? {
             self.out(&format!(
                 "tend: created={} updated={} skipped={}\n",

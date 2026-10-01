@@ -58,6 +58,13 @@ pub struct Options<'a> {
     pub shell_env: HashMap<String, String>,
     /// The whole-plan verify; a test swaps it.
     pub check: PlanCheck,
+    /// `max_parallel` (1: sequential).
+    pub max_parallel: usize,
+    /// Prints the store's stale-embeddings warning (once per process).
+    pub warn: Option<Rc<dyn Fn(&str)>>,
+    /// Runs agentic steps (a reused delegated pathway has them); None
+    /// leaves them with no executor.
+    pub agentic: Option<Box<dyn Executor>>,
 }
 
 /// `orchestrator.OrchestrationResult`.
@@ -79,7 +86,11 @@ impl Options<'_> {
     fn maybe_reuse(&self) -> Option<Object> {
         let store = self.store?;
         let pe = self.potion?;
-        let r = store.find(&self.prompt, &self.matcher_key, pe, None, &mut FindCache::default()).ok()?;
+        let r = store.find(&self.prompt, &self.matcher_key, pe, None, &mut FindCache::default());
+        if let (Some(w), Ok(r)) = (&self.warn, &r) {
+            w(&r.warning);
+        }
+        let r = r.ok()?;
         let (p, _) = r.matched?;
         let typed = matches!(p.obj.value("parameters"), Value::List(l) if !l.is_empty());
         if typed {
@@ -131,7 +142,7 @@ pub fn run(mut o: Options) -> Result<Outcome, DecomposeErr> {
         plan.set("steps", Value::List(out));
     }
     let live = Rc::new(RefCell::new(vec![]));
-    let task = executors::TaskExecutor { llm: o.llm.clone(), tracker: tracker.clone(), ladder: o.ladder.clone(), live: live.clone() };
+    let task = executors::TaskExecutor { llm: o.llm.clone(), tracker: tracker.clone(), ladder: o.ladder.clone(), live: live.clone(), pending: Default::default() };
     let mut exs: BTreeMap<String, Box<dyn Executor>> = BTreeMap::new();
     for (k, ex) in supervise::default_executors(o.shell_env.clone()) {
         exs.insert(k, ex);
@@ -139,6 +150,9 @@ pub fn run(mut o: Options) -> Result<Outcome, DecomposeErr> {
     exs.insert("task".into(), Box::new(task));
     exs.insert("skill".into(), Box::new(executors::SkillExecutor));
     exs.insert("mcp".into(), Box::new(executors::McpExecutor));
+    if let Some(a) = o.agentic.take() {
+        exs.insert("agentic".into(), a);
+    }
     let pv = Value::Obj(plan.clone());
     let t0 = Instant::now();
     let mut vr = (o.check)(&pv, &env_v, None, o.z3_timeout_ms)
@@ -154,6 +168,7 @@ pub fn run(mut o: Options) -> Result<Outcome, DecomposeErr> {
     sup.z3_timeout_ms = o.z3_timeout_ms;
     sup.step_timeout_s = o.step_timeout_s;
     sup.fallback = o.fallback.take();
+    sup.max_parallel = o.max_parallel;
     let sess = sup.run(&plan, &o.env, verification);
     let log_error = sup.log_err.take();
     drop(sup);

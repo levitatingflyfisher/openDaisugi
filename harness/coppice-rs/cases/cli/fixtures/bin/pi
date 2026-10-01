@@ -1,0 +1,3 @@
+#!/bin/sh
+# A fake pi on PATH, so coppice open finds a harness. It never runs.
+exit 0

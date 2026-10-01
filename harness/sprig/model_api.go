@@ -31,8 +31,13 @@ type APIModel struct {
 	// Session is one id for the whole run, sent on every request.
 	// OpenCode Go refuses a call without it; other endpoints ignore it.
 	Session string
-	httpDo  func(*http.Request) (*http.Response, error) // overridable for tests
+	// Tools is the wall: the tools the request offers. Empty offers all four.
+	Tools  []string
+	httpDo func(*http.Request) (*http.Response, error) // overridable for tests
 }
+
+// ModelName is the model this backend asks for.
+func (m *APIModel) ModelName() string { return m.Model }
 
 // apiSystemPrompt is deliberately tiny — the reason E exists.
 const apiSystemPrompt = "You are sprig, a minimal coding agent. Use the tools " +
@@ -88,11 +93,15 @@ type apiMessage struct {
 }
 
 func (m *APIModel) Next(history []Message) (Message, error) {
+	wall := m.Tools
+	if len(wall) == 0 {
+		wall = AllToolNames
+	}
 	reqBody := map[string]any{
 		"model":      m.Model,
 		"max_tokens": m.maxTokens(),
-		"system":     apiSystemPrompt,
-		"tools":      apiTools(),
+		"system":     apiSystemPromptFor(wall),
+		"tools":      apiToolsFor(wall),
 		"messages":   buildMessages(history),
 	}
 	body, _ := json.Marshal(reqBody)
@@ -236,6 +245,27 @@ func parseAPIResponse(data []byte) (Message, error) {
 		return Message{Role: "assistant", Calls: calls, Model: r.Model, Usage: usage}, nil
 	}
 	return Message{Role: "assistant", Text: strings.TrimSpace(text.String()), Model: r.Model, Usage: usage}, nil
+}
+
+// apiToolsFor is the tools of the wall, in sprig's order, in Anthropic
+// tool-definition form.
+func apiToolsFor(wall []string) []map[string]any {
+	var tools []map[string]any
+	for _, t := range apiTools() {
+		for _, name := range wall {
+			if t["name"] == name {
+				tools = append(tools, t)
+			}
+		}
+	}
+	return tools
+}
+
+// apiSystemPromptFor is the system prompt naming the tools of the wall.
+// The full wall gives apiSystemPrompt itself.
+func apiSystemPromptFor(wall []string) string {
+	return "You are sprig, a minimal coding agent. Use the tools (" + strings.Join(wall, ", ") +
+		") to complete the task. When finished, reply with your final answer as plain text."
 }
 
 // apiTools is sprig's four tools in Anthropic tool-definition form (input_schema).

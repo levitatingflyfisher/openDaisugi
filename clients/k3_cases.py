@@ -90,7 +90,25 @@ def _source_hashes(result: dict[str, Any], home: str) -> dict[str, str]:
     return out
 
 
+# The model-host probe's paths. Its requests go out with the HTTP client
+# library's own user-agent and accept-encoding, which name the library,
+# not the request (ruling SR-1); the rest is compared.
+_PROBE_PATHS = ("/api/tags", "/api/show", "/v1/models")
+
+
+def _probe_headers(result: dict[str, Any]) -> None:
+    for r in result.get("requests") or []:
+        if not isinstance(r, dict) or r.get("kind") != "http":
+            continue
+        probe = r.get("path") in _PROBE_PATHS or '"daisugi-probe"' in str(r.get("body", ""))
+        if probe and isinstance(r.get("headers"), dict):
+            for h in ("user-agent", "accept-encoding"):
+                if h in r["headers"]:
+                    r["headers"][h] = "{CLIENT}"
+
+
 def normalize(result: dict[str, Any], home: str, t0: float) -> dict[str, Any]:
+    _probe_headers(result)
     hashes = _source_hashes(result, home)
     out = _k2_normalize(result, home, t0)
     text = json.dumps(out, ensure_ascii=True)
@@ -438,6 +456,72 @@ def build_protocol_cases() -> list[dict[str, Any]]:
             .req("prompts/list", {"cursor": "x"}),
         )
     )
+    # The requests the ports once answered with -32000 (K3-3).
+    for name, method, params in [
+        ("resources read", "resources/read", {"uri": "file:///x"}),
+        ("resources read http", "resources/read", {"uri": "HTTP://Example.COM"}),
+        ("resources read https port", "resources/read", {"uri": "https://a.b:443/c?q=1#f"}),
+        ("resources read http port", "resources/read", {"uri": "http://a.b:8080"}),
+        ("resources read custom", "resources/read", {"uri": "Custom:Thing/x"}),
+        ("resources read mailto", "resources/read", {"uri": "mailto:A@B.c"}),
+        ("resources read no scheme", "resources/read", {"uri": "notaurl"}),
+        ("resources read empty host", "resources/read", {"uri": "http://"}),
+        ("resources read empty", "resources/read", {"uri": ""}),
+        ("resources subscribe bad uri", "resources/subscribe", {"uri": 5}),
+        ("tasks list cursor", "tasks/list", {"cursor": "c"}),
+        ("tasks get bad id", "tasks/get", {"taskId": 5}),
+        (
+            "completion complete context",
+            "completion/complete",
+            {
+                "ref": {"type": "ref/prompt", "name": "p"},
+                "argument": {"name": "a", "value": "b"},
+                "context": {"arguments": {"x": "y"}},
+            },
+        ),
+        (
+            "completion complete no argument",
+            "completion/complete",
+            {"ref": {"type": "ref/prompt", "name": "p"}},
+        ),
+        ("resources read no uri", "resources/read", {}),
+        ("resources read bad uri", "resources/read", {"uri": 5}),
+        ("resources subscribe", "resources/subscribe", {"uri": "file:///x"}),
+        ("resources unsubscribe", "resources/unsubscribe", {"uri": "file:///x"}),
+        ("resources subscribe no params", "resources/subscribe", None),
+        (
+            "completion complete",
+            "completion/complete",
+            {"ref": {"type": "ref/prompt", "name": "p"}, "argument": {"name": "a", "value": "b"}},
+        ),
+        (
+            "completion complete resource",
+            "completion/complete",
+            {
+                "ref": {"type": "ref/resource", "uri": "file:///x"},
+                "argument": {"name": "a", "value": ""},
+            },
+        ),
+        ("completion complete bad", "completion/complete", {"ref": {"type": "x"}}),
+        ("tasks get", "tasks/get", {"taskId": "t1"}),
+        ("tasks list", "tasks/list", {}),
+        ("tasks cancel", "tasks/cancel", {"taskId": "t1"}),
+        ("tasks result", "tasks/result", {"taskId": "t1"}),
+        ("tasks get no id", "tasks/get", {}),
+    ]:
+        add(mcp(f"mcp {name}", Session().req(method, params).req("ping")))
+    for version in ("2025-06-18", "2025-11-25"):
+        add(
+            mcp(
+                f"mcp task-augmented call {version}",
+                Session(version=version)
+                .call("find_pathway", {"task": "x"}, task={"ttl": 60000})
+                .call("find_pathway", {"task": "x"}, task={})
+                .call("find_pathway", {"task": "x"}, task={"ttl": None})
+                .call("find_pathway", {"task": "x"}, task=5)
+                .req("ping"),
+            )
+        )
     add(mcp("mcp tools list with cursor", Session().req("tools/list", {"cursor": "c"})))
     add(mcp("mcp tools list bad cursor", Session().req("tools/list", {"cursor": 5})))
     add(mcp("mcp prompts get unknown", Session().req("prompts/get", {"name": "x"})))
@@ -1052,6 +1136,32 @@ def build_tool_cases() -> list[dict[str, Any]]:
     )
     # verify_completed_step.
     exit0 = [{"type": "exit_code", "expected": 0}]
+    # B4: stage 2 over ints past 2^63 (RF-14): Python compares them exactly.
+    p63, p64 = 2**63, 2**64
+    for name, n, pred in [
+        ("2^63+5 equals 2^63-1", p63 + 5, {"op": "equals", "value": p63 - 1}),
+        ("2^63-1 equals 2^63+5", p63 - 1, {"op": "equals", "value": p63 + 5}),
+        ("2^64-1 in set 2^63", p64 - 1, {"op": "in_set", "values": [p63]}),
+        ("2^63 not in set 2^64-1", p63, {"op": "not_in_set", "values": [p64 - 1]}),
+        ("2^63 equals float 2^63", p63, {"op": "equals", "value": float(p63)}),
+        ("2^64-1 range to 1e19", p64 - 1, {"op": "numeric_range", "min": 0, "max": 1e19}),
+        ("2^64+5 equals 2^64", p64 + 5, {"op": "equals", "value": p64}),
+    ]:
+        post = [
+            {
+                "type": "n_rule",
+                "expr": {"op": "forall_steps", "pred": {**pred, "path": "metadata.n"}},
+            }
+        ]
+        add(
+            mcp(
+                f"mcp step big int {name}",
+                Session().call(
+                    "verify_completed_step",
+                    {"step": sh("s1", "echo", metadata={"n": n}), "envelope": env_doc(post=post)},
+                ),
+            )
+        )
     add(
         mcp(
             "mcp step no postconditions",
@@ -1207,6 +1317,109 @@ def build_tool_cases() -> list[dict[str, Any]]:
                 {
                     "step": sh("s1", "echo", metadata={"output": "ERROR: x"}),
                     "envelope": env_doc(post=[no_err]),
+                },
+            ),
+        )
+    )
+    # A postcondition that asks a model, an alias no registry resolves,
+    # and an expr that is not a dict.
+    judge = {"type": "judge", "expr": {"op": "llm_check", "rule": "is the output kind"}}
+    yes = json.dumps({"satisfied": True, "rationale": "kind"})
+    no = json.dumps({"satisfied": False, "rationale": "rude"})
+    out_step = sh("s1", "echo", metadata={"output": "fine", "rc": 0})
+    for name, replies, env in [
+        ("holds", [{"http": yes}], API),
+        ("not satisfied", [{"http": no}], API),
+        ("not json", [{"http": "maybe"}], API),
+        ("claude holds", [{"claude_raw": yes}], CC),
+        ("claude fails", [], CC),
+    ]:
+        add(
+            mcp(
+                f"mcp step llm_check {name}",
+                Session().call(
+                    "verify_completed_step", {"step": out_step, "envelope": env_doc(post=[judge])}
+                ),
+                env=env,
+                replies=replies or None,
+            )
+        )
+    add(
+        mcp(
+            "mcp step llm_check physical",
+            Session().call(
+                "verify_completed_step",
+                {"step": out_step, "envelope": env_doc(post=[judge], stakes="physical")},
+            ),
+            env=API,
+        )
+    )
+    alias = {"op": "alias", "name": "no_secrets", "args": {}}
+    add(
+        mcp(
+            "mcp step alias",
+            Session().call(
+                "verify_completed_step",
+                {
+                    "step": out_step,
+                    "envelope": env_doc(
+                        post=[
+                            {"type": "named", "expr": alias},
+                            {"type": "nested", "expr": {"op": "not", "child": alias}},
+                        ]
+                    ),
+                },
+            ),
+        )
+    )
+    add(
+        mcp(
+            "mcp step expr not a dict",
+            Session().call(
+                "verify_completed_step",
+                {
+                    "step": out_step,
+                    "envelope": env_doc(
+                        post=[{"type": "s", "expr": "x"}, {"type": "l", "expr": [1]}]
+                    ),
+                },
+            ),
+        )
+    )
+    add(
+        mcp(
+            "mcp verify llm_check invariant",
+            Session().call(
+                "verify_plan",
+                {
+                    "plan": plan_doc([sh("s1", "echo hi")]),
+                    "envelope": {
+                        **ECHO,
+                        "invariants": [
+                            {
+                                "type": "judge",
+                                "description": "d",
+                                "expr": {"op": "llm_check", "rule": "is it kind"},
+                            }
+                        ],
+                    },
+                },
+            ),
+            env=API,
+            replies=[{"http": no}],
+        )
+    )
+    add(
+        mcp(
+            "mcp verify alias invariant",
+            Session().call(
+                "verify_plan",
+                {
+                    "plan": plan_doc([sh("s1", "echo hi")]),
+                    "envelope": {
+                        **ECHO,
+                        "invariants": [{"type": "named", "description": "d", "expr": alias}],
+                    },
                 },
             ),
         )
@@ -1558,6 +1771,100 @@ def setup(name: str, *flags: str, **kw: Any) -> dict[str, Any]:
     return c
 
 
+def remote_cases(add: Any) -> None:
+    """`tiers setup --remote`: probe a model host on the fake server and
+    record it. The fake answers each request in turn: a GET by its path,
+    a POST by its body."""
+
+    def ok(body: Any) -> dict[str, Any]:
+        return {"http_status": 200, "body": body if isinstance(body, str) else json.dumps(body)}
+
+    nf = {"http_status": 404, "body": '{"error": "not found"}'}
+    tags = ok({"models": [{"name": "llama3.2:3b"}, {"name": "qwen:7b"}, {"x": 1}]})
+    show = ok(
+        {
+            "modelfile": "FROM x\nPARAMETER num_ctx 8192\n",
+            "model_info": {"general.arch": "llama", "llama.context_length": 131072},
+        }
+    )
+    show_info = ok({"model_info": {"general.arch": "llama", "llama.context_length": 65536}})
+    show_params = ok({"parameters": "stop <x>\nnum_ctx 40960", "model_info": {}})
+    remote = ("--remote", "127.0.0.1:{PORT}")
+    cases = [
+        ("setup remote ollama", (), [tags, show]),
+        ("setup remote ollama auto", ("--kind", "auto"), [tags, show_info]),
+        ("setup remote ollama parameters", ("--kind", "ollama"), [tags, show_params]),
+        ("setup remote ollama show fails", ("--kind", "ollama"), [tags, nf]),
+        ("setup remote ollama show not json", ("--kind", "ollama"), [tags, ok("nope")]),
+        ("setup remote ollama no models", ("--kind", "ollama"), [ok({"models": []})]),
+        (
+            "setup remote ollama model and context",
+            ("--kind", "ollama", "--model", "mine:1b", "--context", "4096"),
+            [tags, show],
+        ),
+        ("setup remote ollama tags not a list", ("--kind", "ollama"), [ok({"models": "x"})]),
+        (
+            "setup remote openai",
+            (),
+            [
+                nf,
+                ok(
+                    {
+                        "data": [
+                            {"id": "m-a", "max_model_len": 32768},
+                            {"id": "m-b", "context_length": 9},
+                        ]
+                    }
+                ),
+            ],
+        ),
+        ("setup remote openai kind", ("--kind", "openai"), [ok({"data": [{"id": "m-a"}]})]),
+        (
+            "setup remote openai context key order",
+            ("--kind", "openai"),
+            [ok({"data": [{"id": "m", "n_ctx_train": 4096, "context_window": 50000}]})],
+        ),
+        ("setup remote openai empty", ("--kind", "openai"), [ok({"data": []})]),
+        (
+            "setup remote anthropic",
+            (),
+            [nf, nf, ok({"type": "message", "model": "local-claude", "content": []})],
+        ),
+        (
+            "setup remote anthropic echo",
+            ("--kind", "anthropic"),
+            [ok({"type": "message", "model": "daisugi-probe"})],
+        ),
+        ("setup remote anthropic not message", ("--kind", "anthropic"), [ok({"type": "error"})]),
+        ("setup remote unknown", (), [nf, nf, nf]),
+        ("setup remote unknown kind answered", ("--kind", "openai"), [nf]),
+    ]
+    for name, flags, replies in cases:
+        add(setup(name, *remote, *flags, smi=smi("8192"), replies=replies))
+    add(
+        setup(
+            "setup remote ollama keeps config",
+            *remote,
+            smi=smi("8192"),
+            replies=[tags, show],
+            before={CONFIG: {"text": "matcher_model: lexical\nz3_timeout_ms: 900\n"}},
+        )
+    )
+    add(setup("setup remote scheme", "--remote", "http://box:11434", smi=smi("8192")))
+    add(setup("setup remote bad kind", "--remote", "box:1", "--kind", "grpc", smi=smi("8192")))
+    add(setup("setup remote unreachable auto", "--remote", "127.0.0.1:1", smi=smi("8192")))
+    add(
+        setup(
+            "setup remote bad context",
+            "--remote",
+            "127.0.0.1:1",
+            "--context",
+            "big",
+            smi=smi("8192"),
+        )
+    )
+
+
 def build_setup_cases() -> list[dict[str, Any]]:
     C: list[dict[str, Any]] = []
     add = C.append
@@ -1578,6 +1885,7 @@ def build_setup_cases() -> list[dict[str, Any]]:
         )
     )
     add(setup("setup remote", "--remote", "127.0.0.1:1", "--kind", "ollama", smi=smi("8192")))
+    remote_cases(add)
     add(
         setup(
             "setup endpoint without model",
@@ -1698,16 +2006,189 @@ def build_setup_cases() -> list[dict[str, Any]]:
     C.append(
         {"kind": "cli", "name": "setup moved with flags", "argv": ["setup", "--json"], "before": {}}
     )
-    C.append(
-        {
-            "kind": "cli",
-            "name": "tiers stats",
-            "argv": ["tiers", "stats"],
-            "before": {},
-            "go_refuses": True,
-        }
-    )
+    C.extend(build_tiers_stats_cases())
+    C.extend(build_viz_cases())
+    C.extend(build_lora_export_cases())
     return C
+
+
+def build_lora_export_cases() -> list[dict[str, Any]]:
+    """`lora export`: the journal's successful traces as training JSONL."""
+
+    def tr(i: int, task: str, days_ago: float = 1, **kw: Any) -> dict[str, Any]:
+        t: dict[str, Any] = {
+            "id": f"t{i}",
+            "task": task,
+            "created_at": "{ISO:" + str(int(-86400 * days_ago)) + "}",
+            "envelope": env_doc(i, shell=True, shell_allowlist=["echo"]),
+            "plan": plan_doc([sh("s1", "echo hi")], i),
+        }
+        t.update(kw)
+        return t
+
+    traces = [
+        tr(1, "Run the unit tests and report"),
+        tr(2, "  short  "),
+        tr(3, "Read the log file é and summarize it", 5),
+        tr(4, "A failed one that is long enough", ok=False),
+        tr(5, "Gone trace with a long enough task"),
+        tr(6, "An old one that is long enough", 40),
+    ]
+    jt = {".opendaisugi": {"journal": {"traces": traces, "remove_yaml": ["t5"]}}}
+
+    def le(name: str, *flags: str, before: Any = jt) -> dict[str, Any]:
+        c: dict[str, Any] = {
+            "kind": "cli",
+            "name": name,
+            "argv": ["lora", "export", *flags],
+            "before": before or {},
+        }
+        if before is jt:
+            # t5's YAML is gone on purpose: the compare's read-back guard
+            # (k3_compare) cannot load this journal, whoever wrote it.
+            c["guard"] = False
+        return c
+
+    return [
+        le("lora export alpaca", "out.jsonl"),
+        le("lora export chat", "out.jsonl", "--format", "chat"),
+        le(
+            "lora export chat system",
+            "sub/dir/out.jsonl",
+            "--format",
+            "chat",
+            "--system-prompt",
+            "Be brief.",
+        ),
+        le("lora export days", "out.jsonl", "--days", "2"),
+        le("lora export min chars", "out.jsonl", "--min-task-chars", "3"),
+        le("lora export bad format", "out.jsonl", "--format", "csv"),
+        le("lora export empty journal", "out.jsonl", before=None),
+        le("lora export no output", before=None),
+        le("lora export bad days", "out.jsonl", "--days", "x", before=None),
+    ]
+
+
+def build_viz_cases() -> list[dict[str, Any]]:
+    """`daisugi viz`: a distilled pathway's plan as a standalone page."""
+    from pathway_cases import envelope, lexical, pathway
+
+    from opendaisugi.models import (
+        ActionPlan,
+        FileReadStep,
+        FileWriteStep,
+        MCPStep,
+        NetworkStep,
+        ShellStep,
+        SkillStep,
+        TaskStep,
+    )
+
+    wide = ActionPlan(
+        id="plan_00000003",
+        source="script",
+        task="task 3",
+        steps=[
+            ShellStep(id="s1", command="make test"),
+            FileReadStep(id="s2", path="/work/out.txt"),
+            NetworkStep(id="s3", url="https://example.com/x", depends_on=["s1"]),
+            MCPStep(id="s4", server="fs", tool="read", arguments={"p": 1}),
+            TaskStep(id="s5", prompt="summarize </script><b>it</b> é", depends_on=["s2", "s3"]),
+            SkillStep(id="s6", skill_id="sk-1", depends_on=["s5"]),
+            FileWriteStep(id="s7", path="/etc/x", content="y", depends_on=["s1"]),
+            ShellStep(id="s8", command="rm -rf /", depends_on=["s5", "s7"]),
+        ],
+    )
+    pw_wide = pathway(
+        3,
+        "a wide plan with every kind of step, and a task description that runs long",
+        lexical("a wide plan"),
+        pl=wide,
+        env=envelope(3, network=True, network_allowlist=["example.com"], mcp_allowlist=["fs/*"]),
+    )
+    frozen = pathway(1, "run the unit tests", lexical("run the unit tests"))
+    store = db_of(frozen, pw_wide)
+
+    def viz(name: str, *flags: str, before: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {"kind": "cli", "name": name, "argv": ["viz", *flags], "before": before or {}}
+
+    return [
+        viz("viz list", before=store),
+        viz("viz list empty", before=db_of()),
+        viz("viz no store"),
+        viz("viz wide", "pw_0003", before=store),
+        viz("viz frozen out", "pw_0001", "-o", "page.html", before=store),
+        viz("viz output long flag", "pw_0001", "--output", "p2.html", before=store),
+        viz("viz unknown id", "pw_9999", before=store),
+        viz("viz output dir missing", "pw_0001", "-o", "no/such/dir.html", before=store),
+        viz(
+            "viz data dir",
+            "pw_0003",
+            "--data-dir",
+            "{HOME}/.opendaisugi",
+            "-o",
+            "{HOME}/w.html",
+            before=store,
+        ),
+    ]
+
+
+def build_tiers_stats_cases() -> list[dict[str, Any]]:
+    """`tiers stats`: per-tier counts over the journal's successful traces."""
+
+    def tr(i: int, gb: str, days_ago: float = 1, **kw: Any) -> dict[str, Any]:
+        env = env_doc(i, shell=True, shell_allowlist=["echo"])
+        env["generated_by"] = gb
+        t: dict[str, Any] = {
+            "id": f"t{i}",
+            "task": f"task {i}",
+            "created_at": "{ISO:" + str(int(-86400 * days_ago)) + "}",
+            "envelope": env,
+            "plan": plan_doc([sh("s1", "echo hi")], i),
+        }
+        t.update(kw)
+        return t
+
+    traces = [
+        tr(1, "compiled-pathway:pw1"),
+        tr(2, "compiled-pathway:pw2", 2),
+        tr(3, "tier1:llamafile"),
+        tr(4, "tier1:llamafile", 3),
+        tr(5, "tier1:ollama"),
+        tr(6, "tier1:"),
+        tr(7, "anthropic/claude-sonnet"),
+        tr(8, "distilled"),
+        tr(9, "tier1:skipped-bad", ok=False),
+        tr(10, "tier1:skipped-failed", run_status="failed", run_id="r10"),
+        tr(11, "compiled-pathway:old", 40),
+        tr(12, "tier1:ran", run_status="succeeded", run_id="r12"),
+        tr(13, "tier1:gone"),
+    ]
+    jt = {".opendaisugi": {"journal": {"traces": traces, "remove_yaml": ["t13"]}}}
+    one = {".opendaisugi": {"journal": {"traces": [tr(1, "tier1:x")]}}}
+
+    def ts(name: str, *flags: str, before: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "kind": "cli",
+            "name": name,
+            "argv": ["tiers", "stats", *flags],
+            "before": before or {},
+        }
+
+    return [
+        ts("tiers stats empty"),
+        ts("tiers stats empty json", "--json"),
+        ts("tiers stats", before=jt),
+        ts("tiers stats json", "--json", before=jt),
+        ts("tiers stats window 2", "--days", "2", before=jt),
+        ts("tiers stats window 2 json", "--days", "2", "--json", before=jt),
+        ts("tiers stats window 100", "--days", "100", before=jt),
+        ts("tiers stats window 0", "--days", "0", before=jt),
+        ts("tiers stats one tier1", before=one),
+        ts("tiers stats data dir", "--data-dir", "{HOME}/.opendaisugi", before=jt),
+        ts("tiers stats other data dir", "--data-dir", "{HOME}/elsewhere"),
+        ts("tiers stats bad days", "--days", "x"),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -2205,7 +2686,7 @@ def build_delegate_cases() -> list[dict[str, Any]]:
     d("relative path", call({**q, "path": "work/big.py"}))
     d("tilde path", call({**q, "path": "~/work/big.py"}))
     d("empty question", call({**q, "question": "  "}))
-    d("code write mode", call({**q, "mode": "code_write"}))
+    d("unknown mode", call({**q, "mode": "edit"}))
     d("missing file", call({**q, "path": "{HOME}/work/none.py"}))
     d("a directory", call({**q, "path": "{HOME}/work"}))
     d(
@@ -2283,6 +2764,129 @@ def build_delegate_cases() -> list[dict[str, Any]]:
         env={**KEY, **px},
         fake_proxy={"mode": "forward"},
         replies=[{"http": reply(quotes=["def f2():"])}],
+    )
+    # Code write: the worker returns a draft; nothing is written.
+    w = {"path": big, "question": "Make f2 return 22.", "mode": "code_write"}
+
+    def draft(form: Any = "diff", text: Any = None, **extra: Any) -> str:
+        body: dict[str, Any] = {"form": form}
+        if text is not None:
+            body["text"] = text
+        body.update(extra)
+        return json.dumps(body)
+
+    ok_diff = (
+        "--- a/big.py\n+++ b/big.py\n@@ -5,2 +5,2 @@\n def f2():\n-    return 2\n+    return 22\n"
+    )
+    for name, reply_text in (
+        ("diff", draft(text=ok_diff)),
+        (
+            "diff two hunks",
+            draft(text="@@\n def f0():\n-    return 0\n+    return 9\n@@\n def f3():\n"),
+        ),
+        ("diff no match", draft(text="@@\n def f9():\n")),
+        ("diff second hunk no match", draft(text="@@\n-    return 1\n+    return 1\n@@\n def f\n")),
+        ("diff removes the last newline", draft(text="@@\n-\n")),
+        ("diff out of order", draft(text="@@\n def f3():\n@@\n def f1():\n")),
+        ("diff no hunk", draft(text="--- a\n+++ b\n")),
+        ("diff empty", draft(text="")),
+        ("diff only added", draft(text="@@\n+x\n")),
+        ("diff header junk", draft(text="Here is the diff:\n@@\n def f0():\n")),
+        ("diff bad line", draft(text="@@\n def f0():\n*x\n")),
+        ("diff backslash line", draft(text="@@\n-    return 3\n\\ No newline at end of file\n")),
+        ("diff blank context", draft(text="@@\n    return 0\n\n def f1():\n")),
+        ("diff no final newline", draft(text="@@\n def f1():")),
+        ("file", draft("file", "def f():\n    return 1\n")),
+        ("file empty", draft("file", "")),
+        ("file with ticks", draft("file", "x = '```'\ny = '````'\n")),
+        ("file unicode", draft("file", "s = '\u00e9\u4e2d'\n")),
+        ("fenced reply", "```json\n" + draft("file", "x\n") + "\n```"),
+        ("reply bad form", draft("patch", "x")),
+        ("reply form not a string", draft(1, "x")),
+        ("reply no text", draft("file")),
+        ("reply text not a string", draft("file", 5)),
+        ("reply not json", "here you go"),
+        ("reply a list", "[]"),
+    ):
+        d(f"code write {name}", call(w), replies=[{"chat": reply_text}])
+    new_target = {**w, "path": "{HOME}/work/sub/new.py", "question": "Write a hello function."}
+    d(
+        "code write new file",
+        call(new_target),
+        replies=[{"chat": draft("file", "def hello():\n    pass\n")}],
+    )
+    d("code write new file diff", call(new_target), replies=[{"chat": draft(text="@@\n+x\n")}])
+    d(
+        "code write crlf",
+        call({**w, "path": "{HOME}/work/crlf.py"}),
+        before={**local, "work/crlf.py": {"hex": "610d0a620d0a"}},
+        replies=[{"chat": draft(text="@@\n-a\r\n+c\r\n b\r\n")}],
+    )
+    d(
+        "code write crlf plain diff",
+        call({**w, "path": "{HOME}/work/crlf.py"}),
+        before={**local, "work/crlf.py": {"hex": "610d0a620d0a"}},
+        replies=[{"chat": draft(text="@@\n-a\n+c\n")}],
+    )
+    d(
+        "code write diff two places",
+        call({**w, "path": "{HOME}/work/twice.py"}),
+        before={**local, "work/twice.py": {"text": "a\nb\na\nb\n"}},
+        replies=[{"chat": draft(text="@@\n a\n-b\n+c\n")}],
+    )
+    d("code write a directory", call({**w, "path": "{HOME}/work"}))
+    d(
+        "code write link",
+        call({**w, "path": "{HOME}/work/link.py"}),
+        before={**local, "work/link.py": {"link": "{HOME}/work/big.py"}},
+        replies=[{"chat": draft(text=ok_diff)}],
+    )
+    # The draft limit counts characters: one two-byte character puts the
+    # draft over 512 KiB in bytes and leaves it at the limit in characters.
+    limit = 512 * 1024
+    d(
+        "code write draft at the limit",
+        call(w),
+        replies=[{"chat": draft("file", "\u00e9" + "x" * (limit - 1))}],
+    )
+    d(
+        "code write draft over the limit",
+        call(w),
+        replies=[{"chat": draft("file", "\u00e9" + "x" * limit)}],
+    )
+    d(
+        "code write latin file",
+        call({**w, "path": "{HOME}/work/latin.txt"}),
+        before={**local, "work/latin.txt": {"hex": "63616fe90a"}},
+    )
+    d("code write empty question", call({**w, "question": " "}))
+    d("code write relative path", call({**w, "path": "work/big.py"}))
+    d("code write no worker", call(w), before={k: v for k, v in local.items() if k != tier1})
+    d("code write worker http 500", call(w), replies=[{"http_status": 500, "body": "{}"}])
+    d(
+        "code write physical stakes",
+        call(w),
+        before={**local, f"{gate}/envelopes/default.json": env_file(stakes="physical")},
+    )
+    d(
+        "code write messages wire",
+        call(w),
+        before={**local, tier1: {"text": json.dumps({"model": "anthropic/claude-haiku-4-5"})}},
+        env=KEY,
+        replies=[{"http": draft(text=ok_diff)}],
+    )
+    d(
+        "code write remote granted",
+        call(w),
+        before=granted,
+        env={**px},
+        fake_proxy={"mode": "forward"},
+        replies=[{"chat": draft(text=ok_diff)}],
+    )
+    d(
+        "code write then read",
+        call(w).call("delegate", q),
+        replies=[{"chat": draft(text=ok_diff)}, {"chat": reply(quotes=["def f2():"])}],
     )
     return C
 

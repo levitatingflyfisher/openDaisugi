@@ -71,4 +71,4 @@ delegation edges, GEPA tuning, recall. sprig owns only what needs the loop.
   and replace output; branching inside pi's loop is not possible from an extension).
 - The branching signal: which uncertainty signals are reliable enough to spend tokens on.
 - Whether the sprig loop speaks pi's RPC, or its own.
-- Gate on by default in sprig (owner: yes, once it runs smoothly).
+- Gate on by default in sprig (owner: yes, once it runs smoothly). daisugi's agentic executor always passes `--gate`, with the gate pinned to its own root and session (SX-R-2).

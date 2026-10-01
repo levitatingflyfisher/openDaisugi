@@ -1,4 +1,4 @@
-# openDaisugi — Yellow Paper
+# openDaisugi: Yellow Paper
 
 *A formal specification of the verification semantics: the envelope algebra,
 subsumption, and the fail-closed guarantees.*
@@ -8,7 +8,7 @@ formal specification (after Wood's *Ethereum Yellow Paper*). This document plays
 that role for openDaisugi's verification core. It is precise about *intent and
 current behavior*; it is **not** a machine-checked proof. Where a property is
 tested-and-intended rather than mechanically verified, it says so. The code it
-describes was authored by an AI assistant — treat it as the current implementation
+describes was authored by an AI assistant. Treat it as the current implementation
 to be checked against this spec, not as an oracle. A machine-checked proof of the
 whole checker (Coq/Lean) remains aspirational. The Lean 4 client
 (`clients/lean/DaisugiVerify/Theorems.lean`) proves a few properties of the Core
@@ -66,10 +66,11 @@ trajectory steps (§5.3).
 
 ### 2.2 Envelope
 
-An `Envelope` `E = ⟨P, I, Q, stakes, parent⟩` where `P` is a Permission, `I` a set of
+An `Envelope` `E = ⟨P, I, Q, stakes, parent, deadline⟩` where `P` is a Permission, `I` a set of
 *invariants* (predicates that must hold over all steps), `Q` a set of
 *postconditions* (predicates over completed-step evidence), `stakes ∈
-{low, medium, high, physical}`, and `parent` an optional parent envelope. `strict`
+{low, medium, high, physical}`, `parent` an optional parent envelope, and `deadline` an optional
+time (seconds since the epoch) after which it starts no new work (§5.5). `strict`
 is a derived mode, on by default for `stakes ∈ {high, physical}` (§6).
 
 An envelope's admitted set is the permission's set *intersected* with the invariants:
@@ -198,7 +199,11 @@ warning (`dialect audit: …`); the verdict is the one the opaque invariant gets
 pin equal to the dialect hash (`config.yaml` `dialect_enforce`) enforces the word: the
 word decides the invariant. A pin that names another hash makes every word use `⊥`.
 The pin lives in the operator's config, not in the envelope (DL-4), and a hard-deny
-rule stops an agent's tool call from writing or naming that config (DL-15).
+rule stops an agent's tool call from writing or naming that config (DL-15). A second
+hard-deny rule stops every agent write the gate can place under the gate's own state:
+the gate root (the disarm marker, envelopes, graft rules, asks, audit logs) and each
+data dir's `router`, `journal`, `tree`, `gateway`, `weave` and `envelope_cache.db`
+(SW-17). Reads stay allowed.
 
 **Kernel.** Let `K` be the kernel: the `Permission` record (§2.1), the predicate
 algebra without definition references, and the envelope and plan objects of §2.2 and §2.3.
@@ -310,9 +315,9 @@ obligation (§6) is one-directional and fail-closed:
 > **(Soundness, intended.)** `verify(π, E) = ok ⟹ E ⊨ π`.
 > Equivalently: if any step of `π` lies outside `⟦E⟧`, `verify` returns `⊥`.
 
-The converse (completeness — that every admitted plan verifies) is **not** claimed:
+The converse (completeness, that every admitted plan verifies) is **not** claimed:
 `verify` may reject an admitted plan it cannot *prove* admitted (e.g. an unsupported
-glob). That asymmetry is deliberate — see §6.
+glob). That asymmetry is deliberate. See §6.
 
 ## 4. The verification pipeline
 
@@ -321,33 +326,33 @@ returns `ok` iff **all** stages pass; the first violating stage yields `⊥` wit
 diagnostic. Stages are ordered cheap→expensive; SMT runs only after set/string
 checks pass.
 
-### 4.1 Stage 0.5 — delegation safety
+### 4.1 Stage 0.5: delegation safety
 Reject a plan that delegates a physical-stakes action to a probabilistic/contained
 leaf that carries no verification story. (Guards the boundary between deterministic
 and stochastic execution.)
 
-### 4.2 Stage 1 — permissions
+### 4.2 Stage 1: permissions
 For each step `s` and its capability dimension `d`, require `s ∈ ⟦P⟧_d`. Set/glob/
 scheme membership; no SMT. **Default rule (fail-closed):** a step whose type has no
 permission surface and no handler (an unknown custom `@step_type`) is *rejected*
 under `strict`, never waved through.
 
-### 4.3 Stage 1b — skill-delegation subsumption
+### 4.3 Stage 1b: skill-delegation subsumption
 Each `SkillStep` carries a contract envelope `E_c`; require `envelope_subsumes(E,
 E_c)` (§5). A skill may run only within authority the caller already holds.
 
-### 4.4 Stage 2 — Z3 (self-consistency + plan-vs-envelope)
+### 4.4 Stage 2: Z3 (self-consistency + plan-vs-envelope)
 Two SMT queries: (i) `E` is internally satisfiable (its invariants aren't mutually
-contradictory / vacuous — see §6 vacuity); (ii) no step of `π` can violate `E`'s
+contradictory / vacuous, see §6 vacuity); (ii) no step of `π` can violate `E`'s
 predicate constraints. Encoded via §5.
 
-### 4.5 Stage 3 — DAG
+### 4.5 Stage 3: DAG
 `(V,D)` has unique ids, all dependencies resolve, and is acyclic. Duplicate ids are
 rejected (they would collapse graph nodes and defeat the receipt-integrity check).
 
 Post-execution, **Stage 2b** re-checks each completed step's evidence against `Q`
 (postconditions), and a **run-integrity** predicate requires that the set of
-executed steps (in topological order) is exactly covered by receipts — a silently
+executed steps (in topological order) is exactly covered by receipts. A silently
 skipped step falsifies it.
 
 ## 5. Subsumption (delegation safety)
@@ -374,7 +379,7 @@ glob→SMT translation ⟹ `⊥` (deny). MCP scope uses the same construction.
 
 ### 5.3 Robotics dimensions
 `workspace_bounds` (inner AABB ⊆ outer AABB), `velocity`/`torque` (inner ≤ outer),
-`joint_limits` (inner ⊆ outer), `obstacles` (inner ⊇ outer — inner must forbid at
+`joint_limits` (inner ⊆ outer), `obstacles` (inner ⊇ outer: inner must forbid at
 least what outer forbids). **An undeclared bound where outer constrains it ⟹ deny**
 (you cannot delegate into an unbounded region).
 
@@ -385,10 +390,10 @@ free-text `LLMCheck`) present in `E_out` but not `E_in` is treated as an
 unverifiable outer constraint the inner doesn't share ⟹ `⊑` fails (fail-closed).
 
 > **(Delegation safety, intended.)** If `envelope_subsumes(E_out, E_in) = holds` and
-> `verify(π, E_in) = ok`, then `verify(π, E_out)` would also hold — running `π` under
+> `verify(π, E_in) = ok`, then `verify(π, E_out)` would also hold. Running `π` under
 > a delegation bounded by `E_in` cannot exceed `E_out`.
 
-### 5.5 Delegation edges (partly built, partly Proposed)
+### 5.5 Delegation edges (Built for daisugi; coppice and sprig Proposed)
 
 A parent that starts a child agent delegates authority to a second model. The edge
 rule ([design-delegation-tree.md](../plans/2026-09-24-omarchy/design-delegation-tree.md)) is:
@@ -415,23 +420,44 @@ budget, or N children spend N times the parent's budget.
 
 | Field that grants authority | Required relation | State |
 |---|---|---|
-| file globs, hosts, shell heads, MCP tools, compiled invariants, robot bounds | §5.1 to §5.4 | Built (Python; Go and Rust) |
-| `stakes` | `stakes_child ≥ stakes_parent` in `low < medium < high < physical` (a lower stakes turns strict mode off) | Built in Python (`subsumption._budget_and_stakes_violation`); Go and Rust in progress |
-| `custom_step_allowlist` | child ⊆ parent (strict runs a custom step only if listed) | Built in Python; Go and Rust in progress |
-| per-step caps `max_execution_time_s`, `max_output_size_mb` | child ≤ parent | Built in Python; Go and Rust in progress |
-| aggregate tokens, turns, deadline | child's reservation ≤ parent's remaining budget; child deadline ≤ parent's | Open. Provisional ruling: tokens and turns in a tree ledger outside the envelope, the deadline as an envelope field |
-| Z3 `unknown` or timeout in the final query | `⊥` in every mode | Built in Python (`timed_out`); Go and Rust in progress |
-| invariants and postconditions, by value | parent's ⊆ child's | Proposed at any depth; today only `verify_inheritance`, depth 1 |
-| `shell_interpreter_policy` | child not looser than parent | Proposed; today read from the outer only |
-| an opaque skill (no envelope) | `⊥` at every stakes level | Proposed for edges; `check_skill_delegations` still allows it with a warning in lenient mode |
+| file globs, hosts, shell heads, MCP tools, compiled invariants, robot bounds | §5.1 to §5.4 | Built, all three clients |
+| `stakes` | `stakes_child ≥ stakes_parent` in `low < medium < high < physical` (a lower stakes turns strict mode off) | Built, all three |
+| `custom_step_allowlist` | child ⊆ parent (strict runs a custom step only if listed) | Built, all three |
+| per-step caps `max_execution_time_s`, `max_output_size_mb` | child ≤ parent | Built, all three |
+| deadline (an envelope field, seconds since the epoch) | `deadline_child ≤ deadline_parent`; a child with none takes the parent's | Built: proved per edge (TR-R-1). Not enforced at call time |
+| aggregate tokens, turns | child's reservation ≤ parent's remaining budget, kept in the tree ledger outside the envelope | Built (TR-R-5). Not proved: the counts are the starter's estimates and reports |
+| Z3 `unknown` or timeout in the final query | `⊥` in every mode | Built, all three |
+| invariants and postconditions, by value | parent's enforced ⊆ child's, at any depth | Built (TR-R-2) |
+| `shell_interpreter_policy` | child not looser than parent | Built (TR-R-2) |
+| an opaque skill or a child with no envelope | `⊥` at every stakes level | Built for edges (TR-R-2); `check_skill_delegations` still allows an opaque skill with a warning in lenient mode, and an edge never calls it |
 | sequence invariants (`forall_steps`, `exists_step` over a plan) | not compared | Open; subsumption reasons over one symbolic step |
 
-**Induction.** If every edge satisfies `edge_ok`, then by transitivity of `⊑` (§5)
-every node satisfies `E_node ⊑ E_root`. There is no depth limit, and strict mode is
-on at every edge whatever the stakes.
+**What the edge proves, exactly** (`tree.edge_ok`, rulings TR-R-2 and TR-R-3). Every step a
+child's envelope admits, as one symbolic step, its parent's admits: the scope axes by Z3 one
+child pattern at a time, the shell heads by the head rule (a child head is a parent head, or a
+parent head and a space), and, when either side has an enforced invariant with an expression,
+the whole step by `envelope_subsumes(strict = ⊤)`. With no such invariant the Z3 query over one
+step reduces to the head rule, which decides it exactly, so Z3 does not run there. The reasons
+name the part that fails, never a solver model.
 
-**Registration** (Proposed). Only the operator registers an envelope with no parent (a
-root). Any other registration names its parent and runs `edge_ok`. The starter, not the
+**What it does not prove.** That the child stays inside its envelope at run time (the gate checks
+that, call by call); that a plan's order or count properties hold (sequence invariants are not
+compared); that the budgets the starter reports are true (tokens and turns are estimates in a
+ledger, not a proof); that the deadline is kept after it passes (the gate does not read it yet);
+that a child the operator allowed after a refusal fits inside its parent (it is marked not
+proved; it is proved inside the root of its branch, so the induction below still holds, TR-R-7).
+
+**Induction.** If every edge satisfies `edge_ok`, then by transitivity of `⊑` (§5)
+every node satisfies `E_node ⊑ E_root`. A node the operator allowed after a refusal is
+proved against its branch's root instead of its parent (TR-R-7), so the induction holds
+through it. There is no depth limit, and strict mode is on at every edge whatever the stakes.
+
+**Registration** (Built for daisugi, TR-R-8 and TR-R-9). Only the operator registers an envelope
+with no parent (a root): the gate denies an agent's shell line that runs `gate register`,
+`gate init`, `start` or a tree verb that writes. `gate disarm` and the other verbs that
+change enforcement are denied too (SW-1), and so is a write to the disarm marker or an
+envelope file (SW-17). Any other registration names its parent and runs `edge_ok`
+(`gate register --parent`, `tree spawn`). The starter, not the
 child, binds the child's session. A child session with no exact registered envelope is
 `⊥`, never the `default` envelope. What is built today: a hook payload's session id
 never selects an envelope; an unpinned gate checks every call against `default`, and a
@@ -453,7 +479,7 @@ constraint could masquerade as enforcement:
   caught before the solver: a "safety" invariant that is vacuously true enforces
   nothing. A recognized robotics invariant declared *without its backing bound*
   (e.g. `end_effector_in_workspace` with `workspace_bounds = ⊥`) is rejected as
-  vacuous — its handler would no-op.
+  vacuous. Its handler would no-op.
 - **Soft-node polarity.** A soft (unverifiable) node must be handled so that it can
   never *weaken* a constraint under negation. In particular an outer deny-rule that
   degrades to a soft node is failed closed, not silently dropped.
@@ -490,7 +516,7 @@ of stage 0 (§2.4), built: a target glob outside the supported set, and an enfor
 pin that names a hash this build does not have, are each `⊥`; `writes(s) = ?` makes
 `forall_writes` false (§2.3.1).
 
-## 7. What is guaranteed — and what is not
+## 7. What is guaranteed, and what is not
 
 **Guaranteed (by construction + test):**
 - Soundness-for-what-it-checks (§3): a plan that `verify`s `ok` has every step inside
@@ -499,20 +525,20 @@ pin that names a hash this build does not have, are each `⊥`; `writes(s) = ?` 
 - Delegation is transitive containment (§5), so skills-as-contracts, safe
   sub-agents, inheritance, and pathway reuse all reduce to one checked relation.
 
-**A law for the cost levers (Stages 8–10), stated now:**
-- **Admissibility-preservation.** The cost levers — within-instance batch
+**A law for the cost levers (Stages 8-10), stated now:**
+- **Admissibility-preservation.** The cost levers, namely within-instance batch
   compilation, model routing, pathway reuse, and the deed / rationale ledgers
-  ([ADR-0011](../adr/0011-verifiable-execution-substrate.md)) — change *which* model or
+  ([ADR-0011](../adr/0011-verifiable-execution-substrate.md)), change *which* model or
   script produces an action, never *what is admitted*. Each reused, batched, or routed
   action is re-verified against the **caller's** envelope (§5; VISION invariant 3), so
   no lever can widen `⟦E⟧`. The two ledgers are observational: they record deeds and
   rationale but never gate an action. The one lever that touches authority is
-  *constraint promotion* — a mid-task invariant captured into the envelope — and it is
+  *constraint promotion* (a mid-task invariant captured into the envelope), and it is
   admitted only through the monotone-narrowing subsumption of §5, so it may only
   tighten. A lever that cannot exhibit this reduction is a design regression, not an
   optimization. (The **deed ledger** is built and observes this law by construction: a
-  reversal only ever writes to a path the run itself wrote — restoring a prior state or
-  deleting a file the run created — so it cannot widen `⟦E⟧`, and it is valid only
+  reversal only ever writes to a path the run itself wrote: it restores a prior state or
+  deletes a file the run created. So it cannot widen `⟦E⟧`, and it is valid only
   against the run's own ledger. Batch compilation (v0.42) and the rationale store
   with constraint promotion (v0.43) are built to the mechanism line; a batch proves
   each write inside both the envelope and its declared footprint before it runs. The
@@ -545,7 +571,7 @@ pin that names a hash this build does not have, are each `⊥`; `writes(s) = ?` 
   call-time gate (§8) soundly enforces that every executed action is in `⟦E⟧`,
   but cannot establish plan-structure or liveness properties (no plan exists to
   range over), cannot enforce information-flow (a hyperproperty), and does not
-  make an in-envelope *trajectory* benign — individually-admitted calls compose
+  make an in-envelope *trajectory* benign. Individually-admitted calls compose
   into harm (§8.3). Its guarantee is additionally conditioned on the host
   invoking it and on a working deny path (§8.5).
 - **Physical-stakes caveats.** Swarm deconfliction is analytic AABB geometry, not a
@@ -556,7 +582,7 @@ pin that names a hash this build does not have, are each `⊥`; `writes(s) = ?` 
 
 Everything above concerns **plan-time** verification: a declared plan `π` is
 handed to `verify(π, E)` before any step runs. A second checkpoint operates
-where no `π` exists — an agent already running inside a host harness, emitting
+where no `π` exists: an agent already running inside a host harness, emitting
 tool calls one at a time. The **call-time gate** (ADR-0007) intercepts each
 call, synthesizes it into a one-step plan `⟨aᵢ⟩`, and evaluates
 `verify(⟨aᵢ⟩, E) ` before the call executes, preventing `aᵢ` when
@@ -574,9 +600,9 @@ it enforces is
 P(a₁ … aₙ)  ≝  ∀ i ≤ n .  aᵢ ∈ ⟦E⟧
 ```
 
-`P` is **prefix-closed** — if a trace satisfies it, so does every prefix, and a
+`P` is **prefix-closed**: if a trace satisfies it, so does every prefix, and a
 single out-of-envelope action falsifies it irrecoverably. A prefix-closed trace
-property is a **safety property** (Alpern–Schneider [AS85]), and safety
+property is a **safety property** (Alpern-Schneider [AS85]), and safety
 properties are exactly the class an execution monitor can soundly enforce
 [Sch00]. So the gate's guarantee is real and not weaker than its mechanism:
 *every executed action lies in `⟦E⟧`.* Whether the target **halts** after a
@@ -586,12 +612,12 @@ the per-action guarantee holds either way.
 
 ### 8.2 What plan-time has that call-time structurally cannot (class limit)
 
-Two properties are provable at plan time and **not** at call time — the first
-by construction of this codebase, the second by the enforceability class.
+Two properties are provable at plan time and **not** at call time. The first
+fails by construction of this codebase, the second by the enforceability class.
 
 - **No cross-step structure at call time.** A call-time evaluation has no `π`:
   the gate builds a *singleton* plan per call. Exactly the checks that quantify
-  over multiple steps therefore have nothing to range over and are not run —
+  over multiple steps therefore have nothing to range over and are not run:
   DAG ordering (§4.5), the predicate invariants `exists_step` / `forall_steps`
   (§4.4, §2b), and postconditions spanning more than one step. This is not a
   gap to be closed later; it is what "one call at a time, no plan" means, and
@@ -599,8 +625,8 @@ by construction of this codebase, the second by the enforceability class.
   stages). Ordering, completeness, and "the plan as a whole establishes X" are
   **plan-time properties**.
 - **Liveness and hyperproperties are outside the monitor class.** An execution
-  monitor cannot enforce a **liveness** property — "eventually returns to
-  base," "the task is eventually completed" — because no finite prefix
+  monitor cannot enforce a **liveness** property ("eventually returns to
+  base," "the task is eventually completed") because no finite prefix
   witnesses its violation [AS85]. Nor can it enforce a **hyperproperty**:
   information-flow / non-interference is 2-safety over *pairs* of traces
   [CS10], not a property of the single trace in front of the monitor, so no
@@ -620,7 +646,7 @@ a₁ = read  /work/secret           a₁ ∈ ⟦E⟧
 a₂ = POST  api.github.com  ⟨secret⟩ a₂ ∈ ⟦E⟧
 ```
 
-— each call is inside the envelope, the composition is exfiltration. Nothing is
+Each call is inside the envelope. The composition is exfiltration. Nothing is
 broken: this is **not** an enforcement failure but the difference between
 *per-action authorization* and a *trajectory specification*. A gate cannot make
 `⟦E⟧` say more than it says; tightening the envelope (drop the network grant,
@@ -634,13 +660,13 @@ envelope does not make the trajectory benign.**
   instructions injected into the model's context (prompt injection); a
   sub-agent that attempts to widen its own authority.
 - **Assumed trusted (out of scope):** the verifier and its translation layer
-  (§7 — a soundness bug there is a silent fail-open); the envelope's provenance
-  being independent of the plan's author (VISION invariant 4 — a self-authored
+  (§7: a soundness bug there is a silent fail-open); the envelope's provenance
+  being independent of the plan's author (VISION invariant 4: a self-authored
   envelope authorizes nothing meaningfully); and the host faithfully invoking
   the gate.
 - **Mediation boundary.** The gate sees only what the host routes through the
   **hooked tool surface**. An action taken over a channel the host does not
-  hook is unmediated — outside the gate's view and therefore outside its
+  hook is unmediated. It is outside the gate's view and therefore outside its
   guarantee. Enforcement is per-harness and per-version (roadmap Stage 5).
 
 ### 8.5 The conditioned guarantee, and the fail-open edges
@@ -650,12 +676,12 @@ invokes the gate on *every* tool call; (ii) the host's deny path actually
 blocks; (iii) the action traverses a hooked surface (§8.4). Where a condition
 can fail outside our control, it is named here, not buried:
 
-- **Host outer hook timeout** — fails open on every harness measured. Mitigated,
+- **Host outer hook timeout**: fails open on every harness measured. Mitigated,
   not eliminated: the gate owns an *inner* timeout that denies first (§6's
   fail-closed law applied to the clock).
-- **A harness that silently stops firing hooks** — condition (i) fails with no
+- **A harness that silently stops firing hooks**: condition (i) fails with no
   signal; only a per-version contract test detects it (Stage 5).
-- **Gate-process death / import failure** — would make condition (ii) fail
+- **Gate-process death / import failure**: would make condition (ii) fail
   (a non-deny exit is non-blocking on the host). Closed at the process
   boundary: the emitted hook command maps every non-deny exit to a deny.
 
@@ -664,7 +690,7 @@ can fail outside our control, it is named here, not buried:
 The two-checkpoint design descends from Simplex runtime assurance [Sha01]:
 a trusted safety layer vetoing an untrusted controller. The lineage is
 **inspirational, and the call-time guarantee is strictly weaker.** Simplex
-guarantees the system remains in a *recoverable safe state over time* — a
+guarantees the system remains in a *recoverable safe state over time*. This is a
 trajectory-level, liveness-flavored property delivered by a safety controller
 that can *act*. The call-time gate only **prevents** individual actions; it
 provides no recoverable-state guarantee over the trajectory (indeed §8.2 says
@@ -674,16 +700,16 @@ here.
 ### References
 
 Standard citations, given for provenance; verify wording and venue against the
-sources (this document is AI-authored — the grain-of-salt law applies).
+sources (this document is AI-authored, so the grain-of-salt law applies).
 
 - **[Sch00]** F. B. Schneider. *Enforceable Security Policies.* ACM TISSEC 3(1), 2000. (Execution monitors enforce safety properties.)
 - **[AS85]** B. Alpern, F. B. Schneider. *Defining Liveness.* Information Processing Letters 21(4), 1985. (safety / liveness decomposition.)
 - **[CS10]** M. R. Clarkson, F. B. Schneider. *Hyperproperties.* Journal of Computer Security 18(6), 2010. (information flow as 2-safety.)
-- **[LBW05]** J. Ligatti, L. Bauer, D. Walker. *Edit automata: enforcement mechanisms for run-time security policies.* Int. J. Information Security 4(1–2), 2005. (suppression/insertion beyond truncation.)
+- **[LBW05]** J. Ligatti, L. Bauer, D. Walker. *Edit automata: enforcement mechanisms for run-time security policies.* Int. J. Information Security 4(1-2), 2005. (suppression/insertion beyond truncation.)
 - **[Sha01]** L. Sha. *Using Simplicity to Control Complexity.* IEEE Software 18(4), 2001. (the Simplex architecture.)
 
 ---
 
 *This specification describes the current implementation as authored by an AI
 assistant. Discrepancies between this document and the code are bugs in one or the
-other — verify against the tests before relying on any stated property.*
+other. Verify against the tests before relying on any stated property.*

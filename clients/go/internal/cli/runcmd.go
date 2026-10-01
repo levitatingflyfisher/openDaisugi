@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -54,25 +53,29 @@ func loadModelYAML(path, title string, m *pmodel.Model) (dump *pyjson.Object, pa
 	if !utf8.Valid(raw) {
 		return nil, "", path + " is not UTF-8"
 	}
-	v, exc, why := pyyaml.Load(string(raw))
+	text := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
+	v, exc, why := pyyaml.Load(text)
 	if why != nil {
-		// Text in the form yaml.safe_dump writes, which the config reader
-		// above does not take.
-		var why2 *pyyaml.Unsupported
-		if v, why2 = pyyaml.LoadDumped(string(raw)); why2 != nil {
-			return nil, "", fmt.Sprintf("%s holds YAML this binary does not read (%s)", path, why.Why)
-		}
-		exc = nil
+		return nil, "", fmt.Sprintf("%s holds YAML this binary does not read (%s)", path, why.Why)
 	}
 	if exc != nil {
-		return nil, "", fmt.Sprintf("%s holds YAML the oracle rejects with a %s, whose text this binary does not word", path, exc.Type)
+		if pyyaml.Caught(exc) {
+			return nil, pyyaml.FirstLine(exc), ""
+		}
+		return nil, "", fmt.Sprintf("%s holds YAML the oracle rejects with a %s, which it does not catch", path, exc.Type)
 	}
 	o, ok := v.(*pyjson.Object)
 	if !ok {
 		return nil, "", path + " does not hold a mapping"
 	}
+	if !pyyaml.Plain(o) {
+		return nil, "", path + " holds a date or a key that is not text"
+	}
 	out, verr := pmodel.Validate(title, m, o, pmodel.Python)
 	if verr != nil {
+		if why := verr.Unreadable(); why != "" {
+			return nil, "", path + ": " + why
+		}
 		return nil, strings.SplitN(verr.String(), "\n", 2)[0], ""
 	}
 	return out.(*pyjson.Object), "", ""
@@ -130,6 +133,7 @@ func (e *Env) runCmd(args []string) error {
 		{names: []string{"--dry-run"}, help: "Use DryRunExecutor — no real subprocesses."},
 		{names: []string{"--yes", "-y"}, help: "Auto-approve every step (sets DAISUGI_APPROVE=always for this run)."},
 		{names: []string{"--json"}, help: "Emit the run session as JSON on stdout."},
+		agentOpt,
 	}
 	p, err := parseArgs(args, opts, 1)
 	if err != nil {
@@ -152,7 +156,11 @@ func (e *Env) runCmd(args []string) error {
 	if err := clickPath("'--envelope' / '-e'", envPath); err != nil {
 		return e.usageArgs(cmd, "PLAN_PATH", err)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	agent, err := e.checkAgent(p)
+	if err != nil {
+		return err
+	}
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	env, perr, refusal := loadModelYAML(envPath, "Envelope", pmodel.Envelope)
 	if refusal != "" {
 		return e.refuse(cmd, fmt.Errorf("%s", refusal))
@@ -191,9 +199,15 @@ func (e *Env) runCmd(args []string) error {
 	executors := supervise.DefaultExecutors()
 	if dry {
 		d := supervise.DryRun{}
-		executors = map[string]supervise.Executor{"shell": d, "file_read": d, "file_write": d, "network": d}
+		executors = map[string]supervise.Executor{"shell": d, "file_read": d, "file_write": d, "network": d,
+			"agentic": d}
 	} else {
 		executors["shell"] = supervise.Shell{Environ: e.Environ}
+		agentic, err := e.agentic(pre.env, agent)
+		if err != nil {
+			return e.fail(cmd, err)
+		}
+		executors["agentic"] = agentic
 	}
 	sup := &supervise.Supervisor{Executors: executors, Journal: j, Z3TimeoutMs: 500, StepTimeoutS: 30,
 		MaxOutputBytes: 10 * 1024 * 1024, Fallback: fallback,

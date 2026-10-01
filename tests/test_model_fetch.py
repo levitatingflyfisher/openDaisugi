@@ -163,3 +163,31 @@ def test_fetch_dying_chunked_body_raises_oserror(tmp_path, dying_server):
         fetch(dying_server, SHA, dest, size=len(BLOB))
     assert not isinstance(info.value, FetchVerificationError)
     assert not dest.exists()
+
+
+class _AgentCheckingHandler(_RangeHandler):
+    """Refuses Python-urllib's default User-Agent with 403, as the Moonshine
+    model host does."""
+
+    agents: list[str] = []
+
+    def do_GET(self):
+        agent = self.headers.get("User-Agent", "")
+        type(self).agents.append(agent)
+        if agent.startswith("Python-urllib"):
+            self.send_response(403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        super().do_GET()
+
+
+def test_fetch_names_itself_so_a_host_that_refuses_urllib_serves_it(tmp_path):
+    httpd = _serve(_AgentCheckingHandler)
+    try:
+        dest = tmp_path / "model.bin"
+        fetch(f"http://127.0.0.1:{httpd.server_port}/blob", SHA, dest, size=len(BLOB))
+    finally:
+        httpd.shutdown()
+    assert dest.read_bytes() == BLOB
+    assert _AgentCheckingHandler.agents == ["opendaisugi"]

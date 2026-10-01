@@ -423,3 +423,59 @@ def test_a_permanent_step_below_an_open_choice_is_asked_even_under_yes(tmp_path,
     denied = ask.decide(by["s"], None)
     assert not denied.approved and "ch_1" in denied.reason
     assert ask.decide(by["w"], None).approved
+
+
+def test_a_resumed_run_that_picks_up_an_open_card_records_its_run(tmp_path):
+    from opendaisugi import rank
+    from opendaisugi.models import ActionPlan
+
+    steps = [
+        {"id": "t", "type": "task", "prompt": "p", "attempts": 2},
+        {
+            "id": "w",
+            "type": "file_write",
+            "path": f"{tmp_path}/x",
+            "content": "",
+            "depends_on": ["t"],
+        },
+    ]
+    plan = ActionPlan(**_plan(steps))
+    dd = tmp_path / "dd"
+    hook = weave.WeaveHook(
+        weave.read_slots(steps, plan),
+        state=tmp_path / "st",
+        prior=None,
+        rerun=set(),
+        plan=plan,
+        data_dir=dd,
+        digest="sha256:" + "ab" * 32,
+    )
+    rid = hook.ranking_id("t")
+    rank.append_rows(
+        dd,
+        [
+            {
+                "choice_id": "ch_000000000003",
+                "ranking_id": rid,
+                "event": "opened",
+                "options": {
+                    "survivors": [
+                        {"id": "t#1", "content_hash": "h1"},
+                        {"id": "t#2", "content_hash": "h2"},
+                    ],
+                    "eliminated": [],
+                },
+                "chosen": "t#1",
+                "status": "provisional",
+                "facts": {"run": {"run_id": "run_a", "step": "t", "downstream": ["w"]}},
+                "ts": rank.now(),
+            }
+        ],
+    )
+    by = {s.id: s for s in plan.steps}
+    hook._open_card_of(by["t"])
+    assert hook.choices["t"]["choice_id"] == "ch_000000000003"
+    assert hook.started(by["w"], "run_b") is None
+    assert hook.started(by["w"], "run_b") is None
+    (card,) = rank.read_cards(dd)
+    assert card.resumed == ["run_b"]

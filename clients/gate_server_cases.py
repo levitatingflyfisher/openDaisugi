@@ -823,6 +823,20 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
             tags=["client"],
         )
     )
+    # The envelope's deadline holds on the resident path too.
+    for name, deadline in (
+        ("client deadline passed", 1000000000),
+        ("client deadline ahead", 4000000000),
+    ):
+        add(
+            req(
+                name,
+                client_argv(),
+                payload("Read", {"file_path": "/work/a"}),
+                st=state(envelopes={"default": envelope(deadline=deadline)}),
+                tags=["client", "deadline"],
+            )
+        )
     add(req("client empty stdin", client_argv(), "", tags=["client", "deny"]))
     add(req("client not json stdin", client_argv(), "{x", tags=["client", "deny"]))
     add(
@@ -918,6 +932,23 @@ def build_cases() -> list[dict[str, Any]]:  # noqa: PLR0915 - a flat list of cas
             tags=["data_dir", "deny"],
         )
     )
+    # On a resident call the caller's data dir is its pane's
+    # COPPICE_DATA_DIR, in any parameter expansion.
+    for name, line in (
+        ("var chat", "cat $COPPICE_DATA_DIR/chat/*"),
+        ("braced default chat", "cat ${COPPICE_DATA_DIR:-x}/chat/*"),
+        ("var cp journal", "cp -r $COPPICE_DATA_DIR/journal /work/x"),
+        ("var web", "cat $COPPICE_DATA_DIR/web/*"),
+    ):
+        add(
+            req(
+                f"data dir {name}",
+                client_argv(),
+                bash(line),
+                fields={"coppice_data_dir": "/srv/cdata"},
+                tags=["data_dir", "deny"],
+            )
+        )
 
     # -- reports: coppice and herdr -------------------------------------------
     rd = payload("Read", {"file_path": "/work/a"})

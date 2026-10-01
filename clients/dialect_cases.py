@@ -336,6 +336,61 @@ def verify_cases() -> list[dict]:
             cases.append(_verify_case(steps, env, {}))
             if expr_name == "forall_no_src" and name in ("redirect_src", "ls"):
                 cases.append(_verify_case(steps, env, {"strict": True}))
+    # Numbers compare as Python compares them (RF-13): ints exactly, an
+    # int with a float exactly. Ints to 64 bits, which every client's JSON
+    # reader holds.
+    p53, p63 = 2**53, 2**63
+    for n, op, value in [
+        (p53 + 1, "equals", p53),
+        (-(p53 + 1), "equals", -p53),
+        (p53 + 1, "in_set", [p53]),
+        (p53 + 1, "not_equals", p53),
+        (p53 + 1, "not_in_set", [p53]),
+        (p53 + 1, "equals", float(p53)),
+        (p53, "equals", float(p53)),
+        (p53 + 1, "not_equals", float(p53)),
+        (p63 - 1, "equals", p63 - 2),
+        (p63 - 1, "equals", float(p63)),
+        (2**64 - 1, "equals", 2**64 - 2),
+        (True, "equals", 1),
+        (3.5, "equals", 3),
+    ]:
+        key = "values" if op.endswith("in_set") else "value"
+        expr = {"op": "forall_steps", "pred": {"op": op, "path": "metadata.n", key: value}}
+        steps = [_shell("s1", "ls", metadata={"n": n})]
+        cases.append(_verify_case(steps, _envelope([_inv("k_number", expr=expr)]), {}))
+
+    # Skill delegation: the contract is proved inside the caller's envelope
+    # by Z3, whose numerals Python builds exactly (RF-14).
+    def n_rule(pred):
+        return _inv(
+            "n_rule",
+            expr={
+                "op": "forall_steps",
+                "pred": {
+                    "op": "implies",
+                    "a": {"op": "equals", "path": "type", "value": "shell"},
+                    "b": {**pred, "path": "metadata.n"},
+                },
+            },
+        )
+
+    p60 = 2**60
+    for outer, inner in [
+        ({"op": "equals", "value": p53}, {"op": "equals", "value": p53 + 1}),
+        ({"op": "in_set", "values": [p53]}, {"op": "in_set", "values": [p53 + 1]}),
+        ({"op": "not_in_set", "values": [p53 + 1]}, {"op": "not_in_set", "values": [p53]}),
+        (
+            {"op": "numeric_range", "min": 0, "max": p53},
+            {"op": "numeric_range", "min": 0, "max": p53 + 2},
+        ),
+        ({"op": "in_set", "values": [1152921504606847000]}, {"op": "equals", "value": p60}),
+        ({"op": "numeric_range", "min": 0, "max": 1e19}, {"op": "equals", "value": 2**64 - 1}),
+        ({"op": "equals", "value": p53 + 1}, {"op": "equals", "value": p53 + 1}),
+    ]:
+        contract = _envelope([n_rule(inner)]).model_dump(mode="json")
+        steps = [{"id": "s1", "type": "skill", "skill_id": "k", "contract_envelope": contract}]
+        cases.append(_verify_case(steps, _envelope([n_rule(outer)]), {}))
     return cases
 
 

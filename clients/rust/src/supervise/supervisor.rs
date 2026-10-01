@@ -1,6 +1,6 @@
 //! `supervisor.Supervisor`: one plan run step by step under the envelope.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::executors::Executor;
 use super::fallback::Fallback;
@@ -35,6 +35,9 @@ pub struct Supervisor<'a> {
     pub verify_step: StepCheck,
     /// A runner's per-step hook (weave); None changes nothing.
     pub hook: Option<&'a mut dyn Hook>,
+    /// `max_parallel`: above 1, a dependency level's parallel-safe steps
+    /// run at once, at most this many at a time.
+    pub max_parallel: usize,
 }
 
 /// What a hook's `prepare` returns for a step.
@@ -58,7 +61,14 @@ pub trait Hook {
     fn started(&mut self, step: &Object, run_id: &str) -> Option<String>;
     /// Gets each executed step's outcome; returns the outcome to record.
     fn finish(&mut self, step: &Object, out: Outcome) -> Outcome;
+    /// `prefetchable`: a step this says false for is never prefetched.
+    fn prefetchable(&mut self, _step: &Object) -> bool {
+        true
+    }
 }
+
+/// `Supervisor._PARALLEL_SAFE_TYPES`.
+const PARALLEL_SAFE_TYPES: &[&str] = &["shell", "file_read", "file_write", "network"];
 
 impl<'a> Supervisor<'a> {
     pub fn new(executors: BTreeMap<String, Box<dyn Executor>>, approval: Box<dyn Approver>, journal: Option<&'a Journal>) -> Self {
@@ -74,6 +84,7 @@ impl<'a> Supervisor<'a> {
             log_err: None,
             verify_step: crate::pathways::verify::verify_step,
             hook: None,
+            max_parallel: 1,
         }
     }
 }
@@ -182,8 +193,26 @@ impl Supervisor<'_> {
             return sess;
         }
         sess.status = RUNNING.into();
-        let ordered: Vec<Object> = match topo_order(plan) {
-            Ok(o) => o.into_iter().cloned().collect(),
+        let mut level_list: Option<Vec<Vec<Object>>> = None;
+        let mut step_level: HashMap<String, usize> = HashMap::new();
+        let got: Result<Vec<Object>, _> = if self.max_parallel > 1 {
+            crate::tracejournal::dag::levels(plan).map(|lv| {
+                let lv: Vec<Vec<Object>> = lv.into_iter().map(|l| l.into_iter().cloned().collect()).collect();
+                let mut flat = vec![];
+                for (i, l) in lv.iter().enumerate() {
+                    for st in l {
+                        step_level.insert(str_of(st, "id"), i);
+                        flat.push(st.clone());
+                    }
+                }
+                level_list = Some(lv);
+                flat
+            })
+        } else {
+            topo_order(plan).map(|o| o.into_iter().cloned().collect())
+        };
+        let ordered: Vec<Object> = match got {
+            Ok(o) => o,
             Err(_) => {
                 // A plan that verified has no cycle; fail closed if it has.
                 sess.status = FAILED.into();
@@ -196,9 +225,24 @@ impl Supervisor<'_> {
             ex.configure(env);
         }
         let mut completed = true;
+        let mut prefetched: HashMap<String, ExecResult> = HashMap::new();
+        let mut prefetched_approved: HashMap<String, Decision> = HashMap::new();
+        let mut prefetched_level: Option<usize> = None;
         for step in ordered {
             let mut step = step;
-            if let Some(h) = self.hook.as_mut() {
+            if let Some(lv) = &level_list {
+                // Parallel mode: on entering a new dependency level, run its
+                // independent parallel-safe steps at once. The loop still
+                // approves, receipts and halts on each step in order.
+                let l = step_level.get(&str_of(&step, "id")).copied().unwrap_or(0);
+                if prefetched_level != Some(l) {
+                    let level = lv[l].clone();
+                    (prefetched, prefetched_approved) = self.prefetch(&level, env, &sess.id);
+                    prefetched_level = Some(l);
+                }
+            }
+            let pre = prefetched.get(&str_of(&step, "id")).cloned();
+            if let (Some(h), true) = (self.hook.as_mut(), pre.is_none()) {
                 match h.prepare(&step) {
                     Prepared::Run(next) => step = next,
                     Prepared::Skip(o) => {
@@ -213,7 +257,8 @@ impl Supervisor<'_> {
                     }
                 }
             }
-            let res = self.step_check(&step, env);
+            // A prefetched step already passed its verify and ran.
+            let res = if pre.is_some() { StepResult { ok: true, violations: vec![] } } else { self.step_check(&step, env) };
             if !res.ok {
                 let Some(replacement) = self.on_rejection(&sess.id, &step, &res.violations, env) else {
                     let msg = match res.violations.first() {
@@ -256,7 +301,7 @@ impl Supervisor<'_> {
                     break;
                 }
             }
-            if let Some(h) = self.hook.as_mut() {
+            if let (Some(h), true) = (self.hook.as_mut(), pre.is_none()) {
                 if let Some((o, status)) = h.checked(&step) {
                     sess.steps.push(o);
                     sess.status = status.into();
@@ -293,7 +338,7 @@ impl Supervisor<'_> {
                 completed = false;
                 break;
             }
-            if let Some(h) = self.hook.as_mut() {
+            if let (Some(h), true) = (self.hook.as_mut(), pre.is_none()) {
                 if let Some(why) = h.started(&step, &sess.id) {
                     // The runner could not record that the step starts, so
                     // the step does not run.
@@ -310,7 +355,7 @@ impl Supervisor<'_> {
                     break;
                 }
             }
-            let mut out = self.execute_one(&step, started, &decision);
+            let mut out = self.execute_one(&step, started, &decision, pre);
             if out.status == SUCCEEDED {
                 if let Some(msg) = self.stage2(&step, &out, env) {
                     out.status = FAILED.into();
@@ -332,6 +377,21 @@ impl Supervisor<'_> {
         }
         if completed {
             sess.status = SUCCEEDED.into();
+        }
+        if let (Some(lv), Some(l)) = (&level_list, prefetched_level) {
+            // A prefetched step of the last level that ran but that the
+            // loop never reached gets its outcome and receipt.
+            let done: Vec<String> = sess.steps.iter().map(|o| o.step_id.clone()).collect();
+            for step in &lv[l] {
+                let id = str_of(step, "id");
+                let (Some(r), Some(d)) = (prefetched.get(&id), prefetched_approved.get(&id)) else { continue };
+                if done.contains(&id) {
+                    continue;
+                }
+                let out = self.execute_one(step, now_iso(), d, Some(r.clone()));
+                self.write_receipt(step, &out, &sess.id);
+                sess.steps.push(out);
+            }
         }
         sess.ended_at = Some(now_iso());
         self.check_integrity(&mut sess, plan);
@@ -388,9 +448,98 @@ impl Supervisor<'_> {
         replacement.map(|(s, _)| s)
     }
 
-    fn execute_one(&mut self, step: &Object, started: String, d: &Decision) -> Outcome {
+    /// `Supervisor._parallel_safe`.
+    fn parallel_safe(&mut self, step: &Object) -> bool {
+        if let Some(h) = self.hook.as_mut() {
+            if !h.prefetchable(step) {
+                return false;
+            }
+        }
         let kind = str_of(step, "type");
-        let r = match self.executors.get_mut(&kind) {
+        PARALLEL_SAFE_TYPES.contains(&kind.as_str()) || self.executors.get(&kind).is_some_and(|e| e.parallel_safe())
+    }
+
+    /// `Supervisor._prefetch_independent`: a level's parallel-safe steps
+    /// that pass their verify and approval, run at once (at most
+    /// `max_parallel` at a time) when there are two or more. The results
+    /// of the runs that ended without an executor error, and their
+    /// approvals.
+    fn prefetch(&mut self, level: &[Object], env: &Object, run_id: &str) -> (HashMap<String, ExecResult>, HashMap<String, Decision>) {
+        let none = || (HashMap::new(), HashMap::new());
+        let mut cands: Vec<Object> = vec![];
+        let mut approvals: HashMap<String, Decision> = HashMap::new();
+        for step in level {
+            if !self.parallel_safe(step) || !self.step_check(step, env).ok {
+                continue;
+            }
+            match self.approval.decide(step, env) {
+                Ok(d) if d.approved => {
+                    approvals.insert(str_of(step, "id"), d);
+                    cands.push(step.clone());
+                }
+                _ => continue,
+            }
+        }
+        if cands.len() < 2 {
+            return none();
+        }
+        if let Some(h) = self.hook.as_mut() {
+            // A step whose start mark fails is left to the main loop.
+            cands.retain(|c| h.started(c, run_id).is_none());
+            if cands.len() < 2 {
+                return none();
+            }
+        }
+        let n = cands.len();
+        let mut results: Vec<Option<Result<ExecResult, String>>> = (0..n).map(|_| None).collect();
+        let mut jobs: std::collections::VecDeque<(usize, super::executors::Job)> = Default::default();
+        for (i, c) in cands.iter().enumerate() {
+            let Some(ex) = self.executors.get_mut(&str_of(c, "type")) else { continue };
+            match ex.job(c, self.step_timeout_s, self.max_output_bytes) {
+                Some(j) => jobs.push_back((i, j)),
+                None => results[i] = Some(ex.run(c, self.step_timeout_s, self.max_output_bytes)),
+            }
+        }
+        let queue = std::sync::Mutex::new(jobs);
+        let done = std::sync::Mutex::new(Vec::new());
+        std::thread::scope(|sc| {
+            for _ in 0..self.max_parallel.min(n) {
+                sc.spawn(|| loop {
+                    let next = queue.lock().map(|mut q| q.pop_front()).unwrap_or(None);
+                    let Some((i, job)) = next else { break };
+                    let r = job();
+                    if let Ok(mut d) = done.lock() {
+                        d.push((i, r));
+                    }
+                });
+            }
+        });
+        for (i, r) in done.into_inner().unwrap_or_default() {
+            results[i] = Some(r);
+        }
+        let mut out = HashMap::new();
+        let mut approved = HashMap::new();
+        for (i, c) in cands.iter().enumerate() {
+            let Some(Ok(r)) = results[i].take() else { continue };
+            if let Some(ex) = self.executors.get_mut(&str_of(c, "type")) {
+                if ex.job_done(c, &r).is_err() {
+                    continue;
+                }
+            }
+            let id = str_of(c, "id");
+            if let Some(d) = approvals.remove(&id) {
+                approved.insert(id.clone(), d);
+            }
+            out.insert(id, r);
+        }
+        (out, approved)
+    }
+
+    fn execute_one(&mut self, step: &Object, started: String, d: &Decision, pre: Option<ExecResult>) -> Outcome {
+        let kind = str_of(step, "type");
+        let r = match (pre, self.executors.get_mut(&kind)) {
+            (Some(r), _) => r,
+            (None, ex) => match ex {
             None => ExecResult { rc: 1, stdout: format!("no executor for kind '{kind}'"), ..Default::default() },
             Some(ex) => match ex.run(step, self.step_timeout_s, self.max_output_bytes) {
                 Ok(r) => r,
@@ -404,6 +553,7 @@ impl Supervisor<'_> {
                         ..Default::default()
                     }
                 }
+            },
             },
         };
         let status = if r.rc == 0 && !r.timed_out { SUCCEEDED } else { FAILED };

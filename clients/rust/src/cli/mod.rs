@@ -21,23 +21,37 @@ mod hookcmd;
 mod generatecmd;
 mod gatecmds;
 mod gatewaycmd;
+mod helpall_gen;
+mod helpcmd;
 mod graftcmd;
+mod pywarn;
 mod rankcmd;
+mod treecmd;
+mod voicecmd;
 pub mod gateroot;
 pub mod install;
 mod installcmd;
+pub mod port;
+mod layers;
+mod loraexport;
+mod modelspin;
 mod installgw;
 mod installrouter;
 pub mod journal;
 mod journalcmd;
 mod journalparse;
 pub mod lprobe;
+#[cfg(feature = "mujoco")]
+pub mod robotprobe;
 mod mcpcmd;
+mod modelscmd;
 mod modulescmd;
 mod onboardcmd;
+mod packcmd;
 mod orchestratecmd;
 mod pathwayscmd;
 mod registrycmd;
+mod replaycmd;
 mod releasecmd;
 mod routecmd;
 mod routercmd;
@@ -45,9 +59,13 @@ mod routermeasure;
 mod runcmd;
 mod servecmd;
 mod setupcmd;
+mod setupremote;
 mod startcmd;
 mod statuscmd;
 mod tendcmd;
+mod tierstats;
+mod verifycmd;
+mod vizcmd;
 mod weaveattempts;
 mod weavecmd;
 pub mod words;
@@ -95,6 +113,13 @@ fn exit(code: i32) -> Res {
 }
 
 impl Env {
+    /// `opendaisugi.datahome.data_home()` for this command's environment
+    /// and home: OPENDAISUGI_HOME, else XDG_DATA_HOME/opendaisugi when
+    /// ~/.opendaisugi does not exist, else ~/.opendaisugi.
+    pub fn data_home(&self) -> String {
+        crate::datahome::dir(|k| self.env.get(k).cloned(), &self.home, crate::datahome::exists)
+    }
+
     fn out(&mut self, s: &str) {
         self.out.extend_from_slice(s.as_bytes());
     }
@@ -146,10 +171,17 @@ impl Env {
 
     /// `typer.confirm(text, default=False)` on a piped stdin.
     fn confirm(&mut self, text: &str) -> Result<bool, Stop> {
+        self.confirm_default(text, false)
+    }
+
+    /// `typer.confirm(text, default=def)` on a piped stdin: an empty line
+    /// is the default.
+    fn confirm_default(&mut self, text: &str, def: bool) -> Result<bool, Stop> {
         let stdin = std::io::stdin();
         let mut lock = stdin.lock();
+        let hint = if def { "[Y/n]" } else { "[y/N]" };
         loop {
-            self.out(&format!("{text} [y/N]: "));
+            self.out(&format!("{text} {hint}: "));
             self.flush();
             let mut line = String::new();
             let n = lock.read_line(&mut line).unwrap_or(0);
@@ -159,7 +191,8 @@ impl Env {
             }
             match line.trim_end_matches(['\r', '\n']).trim().to_lowercase().as_str() {
                 "y" | "yes" => return Ok(true),
-                "n" | "no" | "" => return Ok(false),
+                "n" | "no" => return Ok(false),
+                "" => return Ok(def),
                 _ => {}
             }
             self.out("Error: invalid input\n");
@@ -400,10 +433,9 @@ More
 /// Every other command of the Python CLI, so --help shows what this binary
 /// does not carry.
 const NOT_IN_BINARY: &[&str] = &[
-    "help", "bench",
+    "bench",
     "conformance", "coppice",
-    "lora", "models",
-    "verify", "viz", "voice", "gate replay", "gate audit",
+    "gate audit",
 ];
 
 const ROOT_HELP: &str = "Usage: daisugi [OPTIONS] COMMAND [ARGS]...
@@ -427,6 +459,7 @@ Start here:
   status           Show day-one readiness: are token savings live and are actions verified?
   config           Show every setting as daisugi will use it, and where each one came from.
   dashboard        The live floor: the module map with gauges read from the stores.
+  help             Show the short start-here text, or every command with --all.
 
 View:
   modules          Show the module wiring: what is active, available, or an open slot.
@@ -442,6 +475,7 @@ Gate:
   gate report      Summarize the audit log: what an enforcing gate would have denied.
   gate settings    Print the Claude Code hooks-settings JSON that wires in the gate.
   gate proposals   List recorded envelope-edit proposals.
+  gate replay      Replay a captured session through the gate offline (nothing executes).
   gate serve       Run the resident gate in the foreground (Ctrl-C to stop).
   install          Wire the gate into agent harnesses (--gate, --harness).
 
@@ -452,6 +486,7 @@ Pathways:
   pathways delete  Delete a compiled pathway.
   pathways export  Export a pathway: json, skill, mermaid, md or smtlib.
   pathways import  Import a pathway bundle, re-verify it, and admit it.
+  viz              Render a distilled pathway's plan as a standalone page.
 
 Garden:
   gardener prune   Evict stale / failure-dominated pathways.
@@ -476,10 +511,19 @@ Envelopes:
 Run:
   orchestrate      Run a prompt end to end: decompose, size, supervised execute, synthesize.
   run              Execute a plan against an envelope under runtime supervision.
+  verify           Verify an action plan against a safety envelope.
 
 Setup:
   onboard          Turn existing agent transcripts into verified traces and pathways.
   tiers setup      Detect hardware, recommend a local model, and optionally qualify and wire it.
+  tiers stats      Show per-tier call counts, estimated tokens, and pathway hit rate.
+  models list      List the curated models, the default for this box, and the one in use.
+  models search    Search the Hugging Face API for models, filtered by size and license.
+  models use       Record the model the garden uses. Any id, path or GGUF file is accepted.
+  pack list        List the ML packs and which are installed.
+  pack install     Install a pack: a pinned Python, a venv, the locked wheels.
+  pack run         Run one job (selftest, train, vla-chunk) in a pack's worker.
+  lora train       Train a LoRA adapter in the train pack.
   mcp serve        Serve the openDaisugi tools over MCP stdio.
 
 Registry and release:
@@ -531,7 +575,7 @@ const CHECK_HELP: &str = "Usage: daisugi gate check --mode audit|enforce [OPTION
 
 Options:
   --mode audit|enforce      audit observes and logs; enforce denies.
-  --root PATH               Gate state directory (default ~/.opendaisugi/gate).
+  --root PATH               Gate state directory (default: the data directory's gate).
   --format NAME             Host contract: claude | pi | opencode | hermes | openclaw.
   --verify-timeout SECONDS  Inner verifier budget; running out of it denies.
   --captures-root PATH      Also mirror each call into this captures directory.
@@ -635,8 +679,16 @@ impl Env {
             }
         };
         self.home = home;
+        // Every verify this command runs asks a model for an llm_check, as
+        // the oracle's evaluator does.
+        crate::gate::llm::set_command_check(crate::gate::llm::CommandCheck {
+            env: self.env.clone(),
+            home: self.home.clone(),
+        });
         match args[0].as_str() {
             "gate" => return self.gate(&args[1..]),
+            "help" => return self.help_cmd(&args[1..]),
+            "viz" => return self.viz_cmd(&args[1..]),
             "install" => return self.install(&args[1..]),
             "pathways" => return self.pathways(&args[1..]),
             "gardener" => return self.gardener(&args[1..]),
@@ -648,6 +700,7 @@ impl Env {
             "router" => return self.router(&args[1..]),
             "graft" => return self.graft(&args[1..]),
             "rank" => return self.rank_cmd(&args[1..]),
+            "tree" => return self.tree_cmd(&args[1..]),
             "route" => return self.route(&args[1..]),
             "config" => return self.config_cmd(&args[1..]),
             "status" => return self.status_cmd(&args[1..]),
@@ -655,11 +708,15 @@ impl Env {
             "journal" => return self.journal(&args[1..]),
             "generate-envelope" => return self.generate_envelope(&args[1..]),
             "run" => return self.run_cmd(&args[1..]),
+            "verify" => return self.verify_cmd(&args[1..]),
             "weave" => return self.weave_cmd(&args[1..]),
             "orchestrate" => return self.orchestrate_cmd(&args[1..]),
             "mcp" => return self.mcp_cmd(&args[1..]),
             "onboard" => return self.onboard(&args[1..]),
             "tiers" => return self.tiers(&args[1..]),
+            "models" => return self.models(&args[1..]),
+            "pack" => return self.pack(&args[1..]),
+            "lora" => return self.lora(&args[1..]),
             "setup" => return self.setup_moved(&args[1..]),
             "modules" => return self.modules_cmd(&args[1..]),
             "dashboard" => return self.dashboard_cmd(&args[1..]),
@@ -667,6 +724,7 @@ impl Env {
             "registry" => return self.registry_cmd(&args[1..]),
             "batch" => return self.batch_cmd(&args[1..]),
             "release" => return self.release_cmd(&args[1..]),
+            "voice" => return self.voice_cmd(&args[1..]),
             _ => {}
         }
         if NOT_IN_BINARY.contains(&args[0].as_str()) {
@@ -715,7 +773,8 @@ impl Env {
             "settings" => self.gate_settings(rest),
             "proposals" => self.gate_proposals(rest),
             "serve" => self.gate_serve(rest),
-            "replay" | "audit" => self.not_yet(&format!("daisugi gate {sub}")),
+            "replay" => self.gate_replay(rest),
+            "audit" => self.not_yet(&format!("daisugi gate {sub}")),
             _ => {
                 self.errf(&format!(
                     "Usage: daisugi gate [OPTIONS] COMMAND [ARGS]...\nTry 'daisugi gate --help' for help.\n\nError: No such command '{sub}'.\n"

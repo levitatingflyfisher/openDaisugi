@@ -52,7 +52,12 @@ def _ghostty_prefix() -> Path:
     prefix = os.environ.get("COPPICE_GHOSTTY_PREFIX")
     if prefix:
         return Path(prefix)
-    return Path.home() / ".local" / "ghostty-vt"
+    # The rule of internal/toolchain.GhosttyPrefix.
+    legacy = Path.home() / ".local" / "ghostty-vt"
+    if (legacy / "share" / "pkgconfig" / "libghostty-vt-static.pc").exists():
+        return legacy
+    data = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(data) / "opendaisugi" / "ghostty-vt"
 
 
 def toolchain_skip_reason() -> str | None:

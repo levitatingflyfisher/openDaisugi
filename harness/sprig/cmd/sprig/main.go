@@ -52,11 +52,26 @@ func main() {
 		// Default backend: claude -p (subscription, no API key — respects the
 		// exposure freeze). SPRIG_BACKEND=api opts into the direct Messages API
 		// (Design E): a minimal prompt, but it needs ANTHROPIC_API_KEY.
-		NewModel: func() (sprig.Model, error) {
+		// --model overrides the backend's default model (and SPRIG_MODEL on
+		// the API); --tools sets the tools the backend offers.
+		NewModel: func(o sprig.ModelOptions) (sprig.Model, error) {
 			if os.Getenv("SPRIG_BACKEND") == "api" {
-				return sprig.NewAPIModel()
+				m, err := sprig.NewAPIModel()
+				if err != nil {
+					return nil, err
+				}
+				if o.Model != "" {
+					m.Model = o.Model
+				}
+				m.Tools = o.Tools
+				return m, nil
 			}
-			return sprig.NewClaudeCodeModel(), nil
+			m := sprig.NewClaudeCodeModel()
+			if o.Model != "" {
+				m.Model = o.Model
+			}
+			m.Tools = o.Tools
+			return m, nil
 		},
 	}
 	os.Exit(cli.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))

@@ -1,0 +1,15 @@
+{"type":"summary","summary":"FAKE-SUMMARY","leafUuid":"fake-leaf"}
+{"type":"user","uuid":"fake-u1","timestamp":"2099-01-01T00:00:00Z","cwd":"/fake"                                                                                                                                                                                                                                                ,"message":{"role":"user","content":"fix the fake test, it fails on CI"}}
+{"type":"assistant","uuid":"fake-a1","timestamp":"2099-01-01T00:00:01.500Z","message":{"id":"msg_fake_1","model":"claude-fake-1","role":"assistant","content":[{"type":"thinking","thinking":"FAKE-THOUGHT"}]}}
+{"type":"assistant","uuid":"fake-a2","timestamp":"2099-01-01T00:00:02Z","message":{"id":"msg_fake_1","model":"claude-fake-1","role":"assistant","content":[{"type":"text","text":"The test reads a clock.\r\nI give it a fake one.\u001b[31m\u0007\u009b"}]}}
+{"type":"assistant","uuid":"fake-a3","timestamp":"2099-01-01T00:00:03Z","message":{"id":"msg_fake_2","model":"claude-fake-1","role":"assistant","content":[{"type":"text","text":"Running the suite."},{"type":"tool_use","id":"toolu_fake_1","name":"Bash","input":{"command":"pytest tests/test_fake.py\n   -q","description":"run the fake suite"}}]}}
+{"type":"user","uuid":"fake-u2","timestamp":"2099-01-01T00:00:04Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fake_1","content":"FAKE-SECRET-OUTPUT"}]},"toolUseResult":{"stdout":"FAKE-SECRET-OUTPUT"}}
+{"type":"user","uuid":"fake-u3","timestamp":"2099-01-01T00:00:05Z","isMeta":true,"message":{"role":"user","content":"FAKE-META"}}
+{"type":"user","uuid":"fake-u4","timestamp":"2099-01-01T00:00:06Z","message":{"role":"user","content":"<local-command-stdout>FAKE-SECRET-OUTPUT</local-command-stdout>"}}
+{"type":"user","uuid":"fake-u5","timestamp":"2099-01-01T00:00:06Z","message":{"role":"user","content":"<bash-stdout>FAKE-SECRET-OUTPUT</bash-stdout>"}}
+{"type":"assistant","uuid":"fake-a4","timestamp":"2099-01-01T00:00:07Z","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"FAKE-SIDECHAIN"}]}}
+{"type":"user","uuid":"fake-u6","timestamp":"2099-01-01T00:00:08Z","isCompactSummary":true,"message":{"role":"user","content":"FAKE-COMPACT"}}
+{"type":"user","uuid":"fake-u7","timestamp":"2099-01-01T00:00:09Z","message":{"role":"user","content":[{"type":"text","text":"  now push it,\tplease  "},{"type":"image","source":{"type":"base64","data":"RkFLRQ=="}}]}}
+{"type":"assistant","uuid":"fake-a5","timestamp":"2099-01-01T00:00:10+01:00","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fake_2","name":"Read","input":{"file_path":"/fake/src/clock.py"}},{"type":"tool_use","id":"toolu_fake_3","name":"Glob","input":{"pattern":"   "}}]}}
+{"type":"assistant","uuid":"fake-a6","timestamp":"not a time","message":{"role":"assistant","content":"A fake reply with no time."}}
+{"type":"assistant","uuid":"fake-a7","timestamp":"2099-01-01T00:00:12Z","message":{"role":"assistant","content":[{"type":"text","text":"   "}]}}

@@ -135,8 +135,9 @@ func inputsMD(p *Pathway) string {
 
 // ParseSkill is parse_bundle for skill markdown: the frontmatter between
 // the first "---\n" and the next "\n---\n", read as yaml.safe_load reads
-// it, and its daisugi key taken as the bundle. A frontmatter not in the
-// form yaml.safe_dump writes is not read by this binary (ErrNotYet).
+// it, and its daisugi key taken as the bundle. A frontmatter that makes
+// the oracle crash, or holds a value the result model does not hold, is
+// ErrNotYet.
 func ParseSkill(text, source string) (*Pathway, error) {
 	text = lstrip(text)
 	_, rest, ok := strings.Cut(text, "---\n")
@@ -147,9 +148,17 @@ func ParseSkill(text, source string) (*Pathway, error) {
 	if !ok {
 		return nil, &ImportError{"SCHEMA_INCOMPATIBLE", "unterminated YAML frontmatter"}
 	}
-	data, why := pyyaml.LoadDumped(front)
+	data, exc, why := pyyaml.Load(front)
 	if why != nil {
 		return nil, errors.Join(ErrNotYet, why)
+	}
+	if exc != nil {
+		// safe_load's error goes up uncaught: the oracle crashes.
+		return nil, errors.Join(ErrNotYet, errors.New("the frontmatter does not parse"))
+	}
+	if !pyjson.Truthy(data) {
+		// `yaml.safe_load(...) or {}`
+		data = pyjson.NewObject()
 	}
 	o, isObj := data.(*pyjson.Object)
 	if !isObj {
@@ -158,6 +167,9 @@ func ParseSkill(text, source string) (*Pathway, error) {
 	bundle, present := o.Get("daisugi")
 	if !present {
 		return nil, &ImportError{"SCHEMA_INCOMPATIBLE", "skill frontmatter is missing the 'daisugi' key"}
+	}
+	if !pyyaml.Plain(bundle) {
+		return nil, errors.Join(ErrNotYet, errors.New("the frontmatter holds a date or a key that is not text"))
 	}
 	return pathwayFromBundle(bundle, source)
 }

@@ -18,7 +18,25 @@ pub trait Executor {
     fn run(&mut self, step: &Object, timeout_s: u64, max_output_bytes: usize) -> Result<ExecResult, String>;
     /// `configure_from_envelope`, for an executor that has one.
     fn configure(&mut self, _env: &Object) {}
+    /// A truthy `parallel_safe`: this executor's steps may run at once
+    /// (the step types of `_PARALLEL_SAFE_TYPES` are safe whatever this
+    /// says).
+    fn parallel_safe(&self) -> bool {
+        false
+    }
+    /// The step's run as a job another thread may take, for an executor
+    /// whose steps may run at once; None runs it in order instead.
+    fn job(&mut self, _step: &Object, _timeout_s: u64, _max_output_bytes: usize) -> Option<Job> {
+        None
+    }
+    /// Called in order, on this thread, with a job's result.
+    fn job_done(&mut self, _step: &Object, _res: &ExecResult) -> Result<(), String> {
+        Ok(())
+    }
 }
+
+/// One step's run, to be made on another thread.
+pub type Job = Box<dyn FnOnce() -> Result<ExecResult, String> + Send>;
 
 /// `executor.MAX_REVERSAL_BYTES`.
 const MAX_REVERSAL_BYTES: usize = 1_000_000;
@@ -79,6 +97,12 @@ impl Executor for DryRun {
                 str_of(step, "server"),
                 str_of(step, "tool"),
                 r(step.value("arguments"))
+            ),
+            "agentic" => format!(
+                "[dry-run] would agentic: {} in {} tools={}",
+                repr(&str_of(step, "prompt")),
+                str_of(step, "workspace"),
+                r(step.value("tools"))
             ),
             _ => format!("[dry-run] unknown step kind: {}", repr(&str_of(step, "type"))),
         };
@@ -184,12 +208,17 @@ fn globs_of(env: &Object, key: &str) -> Vec<String> {
 }
 
 /// `executor.FileReadExecutor`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct FileRead {
     globs: Option<Vec<String>>,
 }
 
 impl Executor for FileRead {
+    fn job(&mut self, step: &Object, timeout_s: u64, max_out: usize) -> Option<Job> {
+        let mut me = self.clone();
+        let step = step.clone();
+        Some(Box::new(move || me.run(&step, timeout_s, max_out)))
+    }
     fn configure(&mut self, env: &Object) {
         self.globs = Some(globs_of(env, "file_read"));
     }
@@ -305,12 +334,17 @@ pub fn capture_pre_image(path: &str, parent: &str) -> Option<Object> {
 }
 
 /// `executor.FileWriteExecutor`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct FileWrite {
     globs: Option<Vec<String>>,
 }
 
 impl Executor for FileWrite {
+    fn job(&mut self, step: &Object, timeout_s: u64, max_out: usize) -> Option<Job> {
+        let mut me = self.clone();
+        let step = step.clone();
+        Some(Box::new(move || me.run(&step, timeout_s, max_out)))
+    }
     fn configure(&mut self, env: &Object) {
         self.globs = Some(globs_of(env, "file_write"));
     }
@@ -456,6 +490,7 @@ fn url_scheme(url: &str) -> String {
 }
 
 /// `executor.NetworkExecutor`: one GET, no proxy, no redirect followed.
+#[derive(Clone)]
 pub struct Network;
 
 enum GetFail {
@@ -522,6 +557,11 @@ fn http_get(url: &str, headers: &[(String, String)], timeout_s: u64, cap: usize)
 }
 
 impl Executor for Network {
+    fn job(&mut self, step: &Object, timeout_s: u64, max_out: usize) -> Option<Job> {
+        let mut me = self.clone();
+        let step = step.clone();
+        Some(Box::new(move || me.run(&step, timeout_s, max_out)))
+    }
     fn run(&mut self, step: &Object, timeout_s: u64, max_out: usize) -> Result<ExecResult, String> {
         let start = Instant::now();
         let url = str_of(step, "url");
@@ -568,12 +608,18 @@ impl Executor for Network {
 /// `executor.SubprocessExecutor`: /bin/sh -c in a new session, stderr
 /// merged into stdout, the group killed on a timeout or when the output
 /// passes its cap.
+#[derive(Clone)]
 pub struct Shell {
     /// The child's environment.
     pub env: HashMap<String, String>,
 }
 
 impl Executor for Shell {
+    fn job(&mut self, step: &Object, timeout_s: u64, max_out: usize) -> Option<Job> {
+        let mut me = self.clone();
+        let step = step.clone();
+        Some(Box::new(move || me.run(&step, timeout_s, max_out)))
+    }
     fn run(&mut self, step: &Object, timeout_s: u64, max_out: usize) -> Result<ExecResult, String> {
         let start = Instant::now();
         let mut fds = [0i32; 2];
@@ -604,25 +650,40 @@ impl Executor for Shell {
         // The parent's copies of the write end close with cmd.
         drop(cmd);
         let pgid = child.id() as i32;
-        let (tx, rx) = std::sync::mpsc::channel::<(Vec<u8>, bool)>();
+        // The reader appends to the buffer as it reads, so the output read
+        // so far is there even when a writer outlives the step and the
+        // reader is left.
+        let shared = std::sync::Arc::new(std::sync::Mutex::new((Vec::<u8>::new(), false)));
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
         let mut reader = reader;
+        let sink = shared.clone();
         std::thread::spawn(move || {
-            let mut buf = Vec::new();
             let mut chunk = vec![0u8; 64 * 1024];
-            while buf.len() < max_out {
-                let want = (64 * 1024).min(max_out - buf.len());
+            loop {
+                let room = max_out.saturating_sub(sink.lock().map(|g| g.0.len()).unwrap_or(max_out));
+                if room == 0 {
+                    break;
+                }
+                let want = (64 * 1024).min(room);
                 match reader.read(&mut chunk[..want]) {
                     Ok(0) | Err(_) => {
-                        let _ = tx.send((buf, false));
+                        let _ = tx.send(());
                         return;
                     }
-                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    Ok(n) => {
+                        if let Ok(mut g) = sink.lock() {
+                            g.0.extend_from_slice(&chunk[..n]);
+                        }
+                    }
                 }
             }
             unsafe {
                 libc::kill(-pgid, libc::SIGKILL);
             }
-            let _ = tx.send((buf, true));
+            if let Ok(mut g) = sink.lock() {
+                g.1 = true;
+            }
+            let _ = tx.send(());
         });
         let limit = Duration::from_secs(timeout_s);
         let mut timed_out = false;
@@ -637,7 +698,17 @@ impl Executor for Shell {
                 Err(_) => break None,
             }
         };
-        let (buf, truncated) = rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
+        // Read to EOF. A background child the shell left can hold the pipe
+        // open after the shell exits, so the wait is bounded by the step's
+        // own time; past it the group is killed and the output read so far
+        // is kept.
+        if rx.recv_timeout(limit.saturating_sub(start.elapsed())).is_err() {
+            unsafe {
+                libc::kill(-pgid, libc::SIGKILL);
+            }
+            let _ = rx.recv_timeout(Duration::from_secs(2));
+        }
+        let (buf, truncated) = shared.lock().map(|g| (g.0.clone(), g.1)).unwrap_or_default();
         use std::os::unix::process::ExitStatusExt;
         let rc = match status {
             Some(s) => match (s.code(), s.signal()) {

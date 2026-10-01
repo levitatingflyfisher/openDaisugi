@@ -16,13 +16,21 @@ shown as one: the frontier tokens a delegation kept off the context, and the
 dollars they would have cost. No escalation path is built, so no
 turn escalates yet. A task's outcome is unknown until something labels it;
 unknown is shown as unknown.
+
+The promotion meter (GR-6, GR-7) reads three more: the graft arm each
+session was put in (the gate's audit records), the operator's labels
+(``<data dir>/router/labels.jsonl``, written by ``daisugi router label``)
+and each session's Claude Code transcript, priced at the gateway's list
+prices. It prints what promotion would do and changes nothing.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import stat
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -126,6 +134,7 @@ def _empty(week: str) -> dict[str, Any]:
         "task_pass": 0,
         "task_fail": 0,
         "task_unknown": 0,
+        "delegate_estimated": 0,
         "tokens_saved": 0,
         "dollars_saved": 0.0,
         "estimated": False,
@@ -219,6 +228,8 @@ def weekly(data_dir: Path) -> list[dict[str, Any]]:
         r["worker_tokens"] += _int(d.get("worker_input_tokens")) + _int(
             d.get("worker_output_tokens")
         )
+        if d.get("ok") is True and d.get("estimated") is True:
+            r["delegate_estimated"] += 1
         if d.get("ok") is True:
             wd = _num(d.get("worker_dollars"))
             if wd is None:
@@ -241,7 +252,7 @@ def weekly(data_dir: Path) -> list[dict[str, Any]]:
         r["dollars_saved"] = (
             r["turn_dollars_saved"] + r["delegate_dollars_kept"] - r["worker_dollars"]
         )
-        r["estimated"] = r["turns_estimated"] > 0 or r["delegate_ok"] > 0
+        r["estimated"] = r["turns_estimated"] > 0 or r["delegate_estimated"] > 0
         out.append(r)
     return out
 
@@ -324,7 +335,10 @@ def delegate_lines(state: dict[str, Any]) -> list[str]:
     if rule is None:
         out.append("  rule: none. Reads are not redirected (a rule file in <gate root>/grafts).")
     else:
-        verb = "go to" if rule["state"] == "active" else "would go to (audit: not denied)"
+        verb = {
+            "active": "go to",
+            "trial": "go to, in the trial's graft arm only,",
+        }.get(rule["state"], "would go to (audit: not denied)")
         out.append(
             f"  rule: {rule['id']} v{rule['version']} ({rule['file']}), {rule['state']}: "
             f"reads over {rule['file_lines_over']} lines {verb} the delegate tool"
@@ -340,4 +354,304 @@ def delegate_lines(state: dict[str, Any]) -> list[str]:
         out.append(f"  worker: none. {state['worker_reason']}.")
         if rule is not None:
             out.append("  With no worker, reads over the threshold go through the normal gate.")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# The promotion meter (GR-6, GR-7)
+# ---------------------------------------------------------------------------
+
+#: Each arm needs this many labeled sessions before promotion can be judged.
+MIN_LABELED = 3
+#: The largest transcript read, in bytes.
+MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024
+#: The longest label note.
+MAX_NOTE_CHARS = 500
+OUTCOMES = ("pass", "fail")
+
+
+def labels_path(data_dir: Path) -> Path:
+    return data_dir / "router" / "labels.jsonl"
+
+
+def session_ok(session: Any) -> bool:
+    """True when ``session`` is a session id as the gate names its audit
+    files: equal to its own safe form."""
+    from opendaisugi.hook import _safe_session_id
+
+    return isinstance(session, str) and _safe_session_id(session) == session
+
+
+def write_label(data_dir: Path, session: str, outcome: str, note: str | None) -> dict[str, Any]:
+    """Append one label row; raises OSError when it cannot be written."""
+    row = {"at": delegate.now_iso(), "session": session, "outcome": outcome, "note": note}
+    path = labels_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new = not path.exists()
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row) + "\n")
+    if new:
+        os.chmod(path, 0o600)
+    return row
+
+
+def read_labels(data_dir: Path) -> dict[str, str]:
+    """The outcome of each labeled session: the last good row wins."""
+    out: dict[str, str] = {}
+    for row in _read_jsonl(labels_path(data_dir)):
+        session, outcome = row.get("session"), row.get("outcome")
+        if session_ok(session) and outcome in OUTCOMES:
+            out[session] = outcome
+    return out
+
+
+def _count(v: Any) -> int:
+    if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= _INT_LIMIT:
+        return v
+    return 0
+
+
+def _read_capped(path: str) -> bytes | None:
+    """The bytes of a regular file of at most ``MAX_TRANSCRIPT_BYTES``,
+    opened without blocking and checked on the open descriptor, or None."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    except (OSError, ValueError):
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_TRANSCRIPT_BYTES:
+            return None
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_TRANSCRIPT_BYTES:
+                return None
+            chunks.append(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
+
+
+def session_cost(path: Any) -> dict[str, Any] | None:
+    """A session's billed cost from its Claude Code transcript, or None when
+    the transcript cannot be read (SW-14)."""
+    from opendaisugi.gateway import _CACHE_READ_MULT, _CACHE_WRITE_MULT, _FALLBACK_PRICE
+    from opendaisugi.gateway import _PRICES_PER_MTOK as prices
+
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return None
+    data = _read_capped(path)
+    if data is None:
+        return None
+    messages: dict[Any, tuple[str, dict[str, Any]]] = {}
+    for n, line in enumerate(data.decode("utf-8", "replace").split("\n")):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(row, dict) or row.get("type") != "assistant":
+            continue
+        msg = row.get("message")
+        if not isinstance(msg, dict) or not isinstance(msg.get("usage"), dict):
+            continue
+        mid = msg.get("id")
+        key: Any = ("id", mid) if isinstance(mid, str) else ("line", n)
+        model = msg.get("model")
+        messages[key] = (model if isinstance(model, str) else "", msg["usage"])
+    dollars = 0.0
+    quota = 0
+    estimated = False
+    for model, u in messages.values():
+        fresh = _count(u.get("input_tokens"))
+        read = _count(u.get("cache_read_input_tokens"))
+        write = _count(u.get("cache_creation_input_tokens"))
+        out = _count(u.get("output_tokens"))
+        price = prices.get(model)
+        if price is None:
+            price = _FALLBACK_PRICE
+            estimated = True
+        dollars += (
+            fresh * price[0]
+            + read * price[0] * _CACHE_READ_MULT
+            + write * price[0] * _CACHE_WRITE_MULT
+            + out * price[1]
+        ) / 1_000_000
+        quota += fresh + read + write + out
+    return {"dollars": dollars, "quota_tokens": quota, "estimated": estimated}
+
+
+def _read_audit(data_dir: Path) -> list[dict[str, Any]]:
+    """Every audit record, from every audit log, by file name then line."""
+    d = data_dir / "gate" / "audit"
+    try:
+        names = sorted(p.name for p in d.iterdir() if p.name.endswith(".jsonl"))
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        out.extend(_read_jsonl(d / name))
+    return out
+
+
+def _arm_row() -> dict[str, Any]:
+    return {
+        "sessions": 0,
+        "labeled": 0,
+        "passed": 0,
+        "failed": 0,
+        "unlabeled": 0,
+        "cost_unknown": 0,
+        "billed_dollars": 0.0,
+        "quota_tokens": 0,
+        "estimated": False,
+        "success_rate": None,
+        "dollars_per_success": None,
+        "quota_per_success": None,
+    }
+
+
+def trial_state(data_dir: Path) -> dict[str, Any] | None:
+    """The graft trial of the rule in force (SW-15), or None when no rule in
+    audit or trial is in force."""
+    rules, _ = delegate.load_rules(data_dir / "gate")
+    rule = next((r for r in rules if r.state in delegate.RULE_STATES_ACTING), None)
+    if rule is None or rule.state not in ("audit", "trial"):
+        return None
+    arms: dict[str, set[str]] = {}
+    transcripts: dict[str, str] = {}
+    for rec in _read_audit(data_dir):
+        session = rec.get("session_id")
+        if not isinstance(session, str):
+            continue
+        tp = rec.get("transcript_path")
+        if isinstance(tp, str) and os.path.isabs(tp):
+            transcripts[session] = tp
+        g = rec.get("graft")
+        if (
+            isinstance(g, dict)
+            and g.get("rule_id") == rule.id
+            and _count(g.get("version")) == rule.version
+            and g.get("arm") in ("graft", "control")
+        ):
+            arms.setdefault(session, set()).add(g["arm"])
+    labels = read_labels(data_dir)
+    rows = {"graft": _arm_row(), "control": _arm_row()}
+    conflicting = 0
+    for session in sorted(arms):
+        if len(arms[session]) > 1:
+            conflicting += 1
+            continue
+        r = rows[next(iter(arms[session]))]
+        r["sessions"] += 1
+        outcome = labels.get(session)
+        if outcome is None:
+            r["unlabeled"] += 1
+            continue
+        r["labeled"] += 1
+        r["passed" if outcome == "pass" else "failed"] += 1
+        cost = session_cost(transcripts.get(session))
+        if cost is None:
+            r["cost_unknown"] += 1
+            continue
+        r["billed_dollars"] += cost["dollars"]
+        r["quota_tokens"] += cost["quota_tokens"]
+        if cost["estimated"]:
+            r["estimated"] = True
+    if rule.allow_remote:
+        # A remote worker's cost is not in any session's cost.
+        rows["graft"]["estimated"] = True
+    for r in rows.values():
+        if r["labeled"]:
+            r["success_rate"] = r["passed"] / r["labeled"]
+        if r["passed"] and not r["cost_unknown"]:
+            r["dollars_per_success"] = r["billed_dollars"] / r["passed"]
+            r["quota_per_success"] = r["quota_tokens"] / r["passed"]
+    verdict, text = _verdict(rule, rows["graft"], rows["control"])
+    return {
+        "rule": rule.id,
+        "version": rule.version,
+        "state": rule.state,
+        "seed": rule.seed,
+        "min_labeled": MIN_LABELED,
+        "arms": rows,
+        "conflicting": conflicting,
+        "verdict": verdict,
+        "verdict_text": text,
+    }
+
+
+def _verdict(rule: delegate.Rule, g: dict[str, Any], c: dict[str, Any]) -> tuple[str, str]:
+    if rule.state == "audit":
+        return (
+            "none",
+            "nothing: the rule is in audit, so both arms only record. "
+            "Set its state to trial to compare them.",
+        )
+    if g["labeled"] < MIN_LABELED or c["labeled"] < MIN_LABELED:
+        return (
+            "wait",
+            f"wait: each arm needs {MIN_LABELED} labeled sessions "
+            f"(graft {g['labeled']}, control {c['labeled']}).",
+        )
+    if g["success_rate"] < c["success_rate"]:
+        return (
+            "retire",
+            f"retire rule {rule.id}: the graft arm's success rate {g['success_rate']:.2f} "
+            f"is below the control arm's {c['success_rate']:.2f}.",
+        )
+    gd, cd = g["dollars_per_success"], c["dollars_per_success"]
+    if gd is None or cd is None:
+        return (
+            "wait",
+            "wait: a labeled session's billed cost is unknown, or an arm has no success.",
+        )
+    if gd < cd:
+        return (
+            "promote",
+            f"promote: set rule {rule.id} to active (billed cost per success "
+            f"${gd:.4f} against ${cd:.4f}).",
+        )
+    return (
+        "keep",
+        f"keep the trial: billed cost per success ${gd:.4f} is not below ${cd:.4f}.",
+    )
+
+
+def _arm_line(name: str, r: dict[str, Any]) -> str:
+    est = " (estimated)" if r["estimated"] else ""
+    if r["dollars_per_success"] is None:
+        per = "per success: unknown"
+    else:
+        per = (
+            f"per success ${r['dollars_per_success']:.4f}{est}, "
+            f"{r['quota_per_success']:.0f} quota tokens"
+        )
+    unknown = f", {r['cost_unknown']} with no cost" if r["cost_unknown"] else ""
+    return (
+        f"  {name} arm: {r['sessions']} sessions, {r['labeled']} labeled "
+        f"({r['passed']} passed, {r['failed']} failed), {r['unlabeled']} unlabeled{unknown}; "
+        f"billed ${r['billed_dollars']:.4f}{est}, {r['quota_tokens']:,} quota tokens; {per}"
+    )
+
+
+def trial_lines(t: dict[str, Any]) -> list[str]:
+    """The trial section as ``router status`` prints it."""
+    out = [
+        f"trial (rule {t['rule']} v{t['version']}, {t['state']}, seed {t['seed']}): "
+        "promotion is the operator's; nothing is changed here."
+    ]
+    out.append(_arm_line("graft", t["arms"]["graft"]))
+    out.append(_arm_line("control", t["arms"]["control"]))
+    if t["conflicting"]:
+        out.append(f"  {t['conflicting']} sessions with both arms recorded are left out.")
+    out.append(f"  promotion would: {t['verdict_text']}")
     return out

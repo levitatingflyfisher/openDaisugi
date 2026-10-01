@@ -44,6 +44,9 @@ type Result struct {
 	Reason     string
 	Plan       any // the plan as model_dump(mode="json") gives it
 	Provenance *Provenance
+	// Warning is the stale-embeddings warning find gave, or "" (not in
+	// Python's result: its find prints it).
+	Warning string
 }
 
 // DefaultModel is gateway_recall._DEFAULT_MODEL, the model that binds.
@@ -52,7 +55,7 @@ const DefaultModel = "anthropic/claude-sonnet-4-20250514"
 // Recall is gateway_recall.recall for a store and the caller's envelope.
 // c is the model client that binds a typed pathway (nil: no model).
 func Recall(store *pathways.Store, matcherKey string, pe potion.Env, task string, envelope json.RawMessage, z3ms int,
-	c *llm.Client, model string) (Result, error) {
+	c *llm.Client, model string) (res Result, err error) {
 	env, err := verify.ParseEnvelope(envelope)
 	if err != nil {
 		return Result{}, fmt.Errorf("the caller's envelope does not parse: %w", err)
@@ -61,6 +64,7 @@ func Recall(store *pathways.Store, matcherKey string, pe potion.Env, task string
 	if err != nil {
 		return Result{}, err
 	}
+	defer func() { res.Warning = r.Warning }()
 	if r.Match == nil {
 		return Result{Reason: "no matching pathway"}, nil
 	}

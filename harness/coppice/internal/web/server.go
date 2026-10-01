@@ -35,6 +35,22 @@ type Options struct {
 	Events *EventRing
 	Log    *slog.Logger
 	Now    func() time.Time
+	// Listening, when set, gets the addresses Serve listens on, once every
+	// one of them is bound.
+	Listening func(addrs []string)
+	// CertCheckEvery is how often Serve checks a tailscale certificate
+	// again while it runs. Zero means CertCheckEvery, once a day.
+	CertCheckEvery time.Duration
+	// WaitForTailnet is true for a saved phone server at boot: when the
+	// tailnet is not up yet, loopback serves at once and the tailnet is
+	// bound when it comes. A foreground serve fails instead.
+	WaitForTailnet bool
+	// TailnetRetry is the first wait between two tries to bind the
+	// tailnet. Zero means TailnetRetryFirst.
+	TailnetRetry time.Duration
+	// ServingFile, when set, is where a tailscale serve says which
+	// certificate it serves, for floor.facts.
+	ServingFile string
 }
 
 // Server is the HTTP surface for the websocket that carries coppice's own

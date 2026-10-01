@@ -1,0 +1,6 @@
+{
+  "id": "myview",
+  "kind": "view",
+  "page": "index.html",
+  "ring": true
+}

@@ -158,6 +158,9 @@ fn a_run_whose_z3_check_did_not_finish_is_rejected() {
         fallback: None,
         shell_env: HashMap::new(),
         check: second_unknown,
+        max_parallel: 1,
+        warn: None,
+        agentic: None,
     })
     .map_err(|e| format!("{e:?}"))
     .unwrap();

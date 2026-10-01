@@ -195,3 +195,11 @@ Except as contained in this notice, the name of a copyright holder
 shall not be used in advertising or otherwise to promote the sale,
 use or other dealings in these Data Files or Software without prior
 written authorization of the copyright holder.
+
+Not in the shipped binaries: a build with the mujoco build tag (Go) or
+Cargo feature (Rust), such as the robot-probe test instrument, links
+MuJoCo 3.12.0 dynamically (libmujoco.so, the official release that
+clients/go/scripts/native.sh --mujoco installs, checked against its published
+SHA-256) and the system's libEGL.
+  License: Apache License 2.0
+  Copyright 2021 DeepMind Technologies Limited

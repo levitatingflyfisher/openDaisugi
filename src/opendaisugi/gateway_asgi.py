@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from opendaisugi.datahome import data_home
 from opendaisugi.gateway import _strictly_cheaper, estimate_prefix_tokens
 from opendaisugi.gateway_openai import (
     OpenAIUsageSniffer,
@@ -693,7 +694,7 @@ def serve_gateway(
             "(or: pip install 'opendaisugi[gateway]')"
         ) from None
 
-    resolved_dir = data_dir or (Path.home() / ".opendaisugi")
+    resolved_dir = data_dir or data_home()
     config_path = resolved_dir / "config.yaml"
 
     def _rebuild(config):

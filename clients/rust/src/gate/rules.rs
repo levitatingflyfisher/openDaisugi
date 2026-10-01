@@ -17,6 +17,37 @@ use super::{catch, Runner, R};
 use crate::interpreter_parse::shlex_split;
 
 pub const PANE_REFUSAL: &str = "a pane can propose. It cannot allow.";
+/// `pane_rule.CHAT_REFUSAL`: the chat verbs read, they do not allow.
+pub const CHAT_REFUSAL: &str = "the chat and an agent's messages are the operator's to read.";
+
+/// `pane_rule.json_unescaped`: JSON string escapes decoded once. A
+/// \uXXXX that is not a surrogate becomes its character, and a backslash
+/// before any other character drops.
+pub fn json_unescaped(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            if chars[i + 1] == 'u' && i + 6 <= chars.len() {
+                let hex: String = chars[i + 2..i + 6].iter().collect();
+                if hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    if let Some(c) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                        out.push(c);
+                        i += 6;
+                        continue;
+                    }
+                }
+            }
+            out.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
 pub const FLOOR_REFUSAL: &str = "this is the floor's own config. Edit it yourself.";
 pub const OPENCODE_REFUSAL: &str = "this is OpenCode's config or gate plugin. Edit it yourself.";
 pub const DAISUGI_REFUSAL: &str = "this is daisugi's own config. Edit it yourself.";
@@ -62,20 +93,37 @@ static WIRE_TEXT: Rule = Rule::new(
     &[],
     r##"['\"]?(cmd|method)\\?['\"]?\s*[:=]\s*\\?['\"]agent\.(allow)\\?['\"]|['\"]agent['\"]\s*,\s*['\"](allow)['\"]"##,
 );
+/// `pane_rule._CHAT_WIRE_TEXT`: the chat verbs on the wire.
+static CHAT_WIRE_TEXT: Rule = Rule::new(
+    &[],
+    &["floor", "pane"],
+    r##"['\"]?(cmd|method)\\?['\"]?\s*[:=]\s*\\?['\"](floor\.chat|pane\.messages)\\?['\"]"##,
+);
 static WEB_TOKEN_CMD: Rule =
     Rule::new(&["coppice", "web", "token"], &[], r##"\bcoppice\b[^\n;&|]*?\bweb\b[\s'\"]+token\b"##);
 /// `pane_rule._SECRET_FILE`: every secret file a coppice data directory
-/// holds, wherever the data directory lives.
+/// holds, wherever the data directory lives, and the chat day files and
+/// the journal.
 static SECRET_FILE: Rule = Rule::new(
     &[],
-    &["token", ".key"],
-    r##"(^|[^A-Za-z0-9_])(web/token|web/ca/ca\.key|web/ca/leaf\.key|web/tls/tailscale\.key|voice/token)\b"##,
+    &["token", ".key", ".jsonl"],
+    r##"(^|[^A-Za-z0-9_])(web/token|web/ca/ca\.key|web/ca/leaf\.key|web/tls/tailscale\.key|voice/token|chat/[0-9]{4}-[0-9]{2}-[0-9]{2}\.jsonl|journal/verdicts\.jsonl)\b"##,
+);
+/// `pane_rule._PRIVATE_DIR_TEXT`: the chat and journal directories under
+/// the default data directory, in any text.
+static PRIVATE_DIR_TEXT: Rule = Rule::new(
+    &["opendaisugi/coppice/"],
+    &[],
+    r##"opendaisugi/coppice/(chat|journal)($|[/ \t\n\r'\"`;&|)])"##,
 );
 static ASK_PATH_TEXT: Rule = Rule::new(&["gate/"], &[], r##"(^|[\s'\"=:(/])gate/(asks|answers)\b"##);
 static ASK_NAMES: Rule = Rule::new(&[], &["asks", "answers"], r##"\b(asks|answers)\b"##);
 /// `floor_config._VARS`.
-static HOME_VARS: Rule =
-    Rule::new(&["$"], &[], r##"\$\{(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME)\}|\$(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME)\b"##);
+static HOME_VARS: Rule = Rule::new(
+    &["$"],
+    &[],
+    r##"\$\{(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME|COPPICE_DATA_DIR|OPENDAISUGI_HOME)(?:[^A-Za-z0-9_}][^}]*)?\}|\$(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME|COPPICE_DATA_DIR|OPENDAISUGI_HOME)\b"##,
+);
 /// `floor_config._OPENCODE_TEXT`.
 static OPENCODE_TEXT: Rule = Rule::new(
     &[],
@@ -93,7 +141,7 @@ static DENY_TEXT: Rule = Rule::new(
 );
 /// `pane_rule._OTHER_SERVER`: another server or socket than the pane's own.
 static OTHER_SERVER: Rule =
-    Rule::new(&[], &[], r##"(^|[\s'\"])--(remote|socket)(=|[\s'\"]|$)|\bXDG_RUNTIME_DIR\b|\bHOME="##);
+    Rule::new(&[], &[], r##"(^|[\s'\"])--(remote|socket)(=|[\s'\"]|$)|\bXDG_RUNTIME_DIR\b|\bHOME=|\bOPENDAISUGI_HOME=|\bXDG_DATA_HOME="##);
 /// `pane_rule._WRAPPER_HEAD`: a wrapper at the head of a command, after a
 /// quote, or after env assignments or a prefix such as env or exec.
 static WRAPPER_HEAD: Rule = Rule::new(
@@ -119,7 +167,7 @@ fn shell_denies_from_outside(command: &str) -> bool {
 
 /// `pane_rule._SECRET_DIRS`: each directory under a coppice data directory
 /// that holds a secret file.
-const SECRET_DIRS: &[&str] = &["", "web", "web/ca", "web/tls", "voice"];
+const SECRET_DIRS: &[&str] = &["", "web", "web/ca", "web/tls", "voice", "chat", "journal"];
 
 const WEB_ANSWER_ROUTE: &str = "/api/ask/answer";
 const VALUE_OPTIONS: &[&str] = &["--socket", "--remote", "--data-dir"];
@@ -150,7 +198,10 @@ fn secret_file(text: &str) -> bool {
 /// `pane_rule.web_door`.
 fn web_door(text: &str) -> bool {
     let _f = frame();
-    WEB_TOKEN_CMD.is_match(text) || secret_file(text) || text.contains(WEB_ANSWER_ROUTE)
+    WEB_TOKEN_CMD.is_match(text)
+        || secret_file(text)
+        || PRIVATE_DIR_TEXT.is_match(text)
+        || text.contains(WEB_ANSWER_ROUTE)
 }
 
 /// `pane_rule._under_ask_dirs`.
@@ -175,6 +226,12 @@ pub enum Guard {
 pub struct GuardRoots {
     kind: Guard,
     fixed: Option<Vec<String>>,
+}
+
+/// A guard over fixed roots with no name or text rule, as
+/// `floor_config.Guard(lambda: roots)` builds one.
+pub(super) fn fixed_floor_guard(roots: Vec<String>) -> GuardRoots {
+    GuardRoots { kind: Guard::Floor, fixed: Some(roots) }
 }
 
 /// `floor_config._opencode_path`.
@@ -331,7 +388,7 @@ impl Runner {
     /// `pane_rule.shell_allows`.
     fn shell_allows(&self, command: &str) -> R<bool> {
         let _f = frame();
-        if web_door(command) {
+        if web_door(command) || web_door(&self.expand_home(command)?) {
             return Ok(true);
         }
         for c in &self.pane_commands(command)? {
@@ -343,7 +400,9 @@ impl Runner {
                 return Ok(true);
             }
         }
-        Ok(ALLOW_TEXT.is_match(command) || WIRE_TEXT.is_match(command))
+        Ok(ALLOW_TEXT.is_match(command)
+            || WIRE_TEXT.is_match(command)
+            || WIRE_TEXT.is_match(&json_unescaped(command)))
     }
 
     /// `pane_rule._roots`: the gate root in force and the default, each as
@@ -465,6 +524,20 @@ impl Runner {
 
     /// `pane_rule.pane_rule_hit`, less its catch (the caller reads any
     /// error as a hit).
+    /// `pane_rule.chat_wire_hit`: a shell line that sends floor.chat or
+    /// pane.messages on the coppice wire, as typed or with its JSON escapes
+    /// decoded.
+    pub fn chat_wire_hit(&self, rec: Option<&Record>) -> R<bool> {
+        let _f = frame();
+        let Some(rec) = rec else {
+            return Ok(false);
+        };
+        if rec.step_type != "shell" {
+            return Ok(false);
+        }
+        Ok(CHAT_WIRE_TEXT.is_match(&rec.command) || CHAT_WIRE_TEXT.is_match(&json_unescaped(&rec.command)))
+    }
+
     pub fn pane_rule_hit(&self, p: &Object, cwd: &str, rec: Option<&Record>) -> R<bool> {
         let _f = frame();
         let rec = match rec {
@@ -561,6 +634,28 @@ impl Runner {
         self.env.get(k).filter(|v| !v.is_empty()).cloned()
     }
 
+    /// `opendaisugi.datahome.data_home()` for this run's environment, with
+    /// `home` as Path.home() gave it.
+    pub(super) fn data_home_at(&self, home: &str) -> String {
+        crate::datahome::dir(|k| self.env.get(k).cloned(), home, crate::datahome::exists)
+    }
+
+    /// `data_home()` with this run's home.
+    pub(super) fn data_home(&self) -> R<String> {
+        Ok(self.data_home_at(&self.path_home()?))
+    }
+
+    /// `opendaisugi.datahome.guarded_data_dirs()`: every directory the data
+    /// home can be, guarded with no exists check.
+    pub(super) fn guarded_data_dirs(&self) -> R<Vec<String>> {
+        Ok(crate::datahome::guarded(|k| self.env.get(k).cloned(), &self.path_home()?))
+    }
+
+    /// `[d / name for d in guarded_data_dirs()]`.
+    fn guarded_under(&self, name: &str) -> R<Vec<String>> {
+        Ok(self.guarded_data_dirs()?.iter().map(|d| path_join(d, name)).collect())
+    }
+
     /// `floor_config._roots` or `floor_config.opencode_config_roots`, in the
     /// frame the caller opened for it.
     fn compute_roots(&self, kind: Guard) -> R<Vec<String>> {
@@ -568,7 +663,9 @@ impl Runner {
         if kind == Guard::Daisugi {
             // floor_config.daisugi_config_roots, called from the lambda.
             let _f = frame();
-            return self.spellings(vec![self.config_path(), path_join(&home, ".opendaisugi/config.yaml")]);
+            let mut roots = vec![self.config_path()];
+            roots.extend(self.guarded_under("config.yaml")?);
+            return self.spellings(roots);
         }
         let mut out = Vec::new();
         for base in [self.env_nonempty("XDG_CONFIG_HOME"), Some(path_join(&home, ".config"))].into_iter().flatten() {
@@ -579,7 +676,7 @@ impl Runner {
             {
                 out.push(path_join(&base, "coppice"));
             }
-            out.push(path_join(&home, ".opendaisugi/coppice"));
+            out.extend(self.guarded_under("coppice")?);
             out.extend(self.custom_data_dirs());
         }
         self.spellings(out)
@@ -622,7 +719,7 @@ impl Runner {
     /// the caller's pane names, each as written and as resolved.
     pub(super) fn coppice_data_dirs(&self) -> R<Vec<String>> {
         let _f = frame();
-        let mut data = vec![path_join(&self.path_home()?, ".opendaisugi/coppice")];
+        let mut data = self.guarded_under("coppice")?;
         data.extend(self.custom_data_dirs());
         self.spellings(data)
     }
@@ -638,6 +735,12 @@ impl Runner {
                     let name = m.group(s, 1).or_else(|| m.group(s, 2)).unwrap_or_default();
                     if name == "HOME" {
                         home.clone()
+                    } else if name == "COPPICE_DATA_DIR"
+                        && self.caller.data_dir.as_deref().is_some_and(|d| !d.is_empty())
+                    {
+                        // On a resident call the caller's own data dir is
+                        // its pane's COPPICE_DATA_DIR.
+                        self.caller.data_dir.clone().unwrap_or_default()
                     } else {
                         self.env.get(&name).cloned().unwrap_or_default()
                     }
@@ -673,7 +776,7 @@ impl Runner {
     }
 
     /// `floor_config.path_in_floor`.
-    fn path_in_floor(&self, raw: &str, cwd: &str, g: &GuardRoots) -> R<bool> {
+    pub(super) fn path_in_floor(&self, raw: &str, cwd: &str, g: &GuardRoots) -> R<bool> {
         let _f = frame();
         if raw.is_empty() {
             return Ok(false);
@@ -712,7 +815,7 @@ impl Runner {
     }
 
     /// `floor_config._shell_hit`.
-    fn shell_hit(&self, command: &str, cwd: &str, g: &GuardRoots) -> R<(bool, Vec<String>)> {
+    pub(super) fn shell_hit(&self, command: &str, cwd: &str, g: &GuardRoots) -> R<(bool, Vec<String>)> {
         let _f = frame();
         let d = match catch(self.decompose(command))? {
             Ok(d) => d,
@@ -886,6 +989,22 @@ mod tests {
             assert!(!web_door(&format!("/home/user/.opendaisugi/coppice/{public}")), "{public}");
         }
         assert!(!web_door("myweb/token") && !web_door("web/tokens"));
+        for private in ["chat/2026-10-09.jsonl", "journal/verdicts.jsonl"] {
+            assert!(web_door(&format!("/home/user/.opendaisugi/coppice/{private}")), "{private}");
+            assert!(web_door(&format!("cat {private}")), "{private}");
+        }
+        for text in ["rg x ~/.opendaisugi/coppice/chat", "cat ~/.opendaisugi/coppice/journal/*"] {
+            assert!(web_door(text), "{text}");
+        }
+        for text in [
+            "cat /work/src/chat/notes.md",
+            "cat chat/readme.md",
+            "cat harness/coppice/chat.go",
+            "cat /work/journal/2026.md",
+            "ls /work/coppice/chat",
+        ] {
+            assert!(!web_door(text), "{text}");
+        }
         assert!(opencode_text("ls .opencode/plugins/x") && opencode_text("cat .opencode") && opencode_text("opencode.json"));
         assert!(!opencode_text("ls a.opencode/plugin") && !opencode_text("x.opencodez"));
         assert_eq!(

@@ -123,9 +123,11 @@ def test_gate_settings_enforce_mode_with_registered_envelope(tmp_path, spy_call)
     assert hook["matcher"] == "*"
     cmd = hook["hooks"][0]["command"]
     assert "--mode enforce" in cmd
-    # The gate root named in the command has the envelope registered as default.
+    # The gate root named in the command has the envelope registered for the
+    # session the executor chose, never as default.
     root = Path(cmd.split("--root ")[1].split(" --")[0])
-    assert (root / "envelopes" / "default.json").exists()
+    assert (root / "envelopes" / "agentic-a1.json").exists()
+    assert not (root / "envelopes" / "default.json").exists()
     assert exe.last_gate_root == root
 
 
@@ -196,7 +198,7 @@ def test_capture_false_omits_captures_root(tmp_path, spy_call):
     assert "--captures-root" not in cmd
 
 
-def test_sub_agent_gate_is_pinned_to_the_default_envelope(tmp_path, spy_call):
+def test_sub_agent_gate_is_pinned_to_a_session_the_executor_chose(tmp_path, spy_call):
     """The sub-agent's gate must not honor a session id from the payload —
     the envelope is pinned from outside, like the gate root itself."""
     exe = AgenticExecutor(envelope=_envelope())
@@ -204,4 +206,57 @@ def test_sub_agent_gate_is_pinned_to_the_default_envelope(tmp_path, spy_call):
     args = spy_call["extra_args"]
     settings = json.loads(args[args.index("--settings") + 1])
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-    assert "--session default" in cmd
+    assert "--session agentic-a1" in cmd
+
+
+def _registered(spy_call) -> dict:
+    args = spy_call["extra_args"]
+    settings = json.loads(args[args.index("--settings") + 1])
+    cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    root = Path(cmd.split("--root ")[1].split(" --")[0])
+    return json.loads((root / "envelopes" / "agentic-a1.json").read_text())
+
+
+def test_a_narrower_child_envelope_is_proved_and_registered(tmp_path, spy_call):
+    parent = _envelope(shell=True, shell_allowlist=["git", "ls"], file_write=["/work/**"])
+    child = Envelope(
+        generated_by="test",
+        task="child",
+        permissions=Permission(file_read=["/work/src/**"], shell=True, shell_allowlist=["git"]),
+    )
+    exe = AgenticExecutor(envelope=parent)
+    res = _run(exe, _step(tmp_path, tools=["Read", "Bash", "Write"], child_envelope=child))
+    assert res.rc == 0, res.stdout
+    args = spy_call["extra_args"]
+    # The tool wall comes from the child: it may not write.
+    assert args[args.index("--allowedTools") + 1] == "Read Bash"
+    reg = _registered(spy_call)
+    assert reg["permissions"]["shell_allowlist"] == ["git"]
+    assert reg["parent_envelope"] == parent.id
+
+
+def test_a_wider_child_envelope_is_refused_before_anything_runs(tmp_path, monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        "opendaisugi.agentic_executor.call_claude_p_sync", lambda *a, **k: called.append(1)
+    )
+    parent = _envelope(shell=True, shell_allowlist=["git"])
+    child = Envelope(
+        generated_by="test",
+        task="child",
+        permissions=Permission(file_read=["/etc/**"], shell=True, shell_allowlist=["rm"]),
+    )
+    res = _run(AgenticExecutor(envelope=parent), _step(tmp_path, child_envelope=child))
+    assert res.rc == 1
+    assert res.stdout == (
+        'the child envelope is refused: file_read: the child\'s "/etc/**" is not inside '
+        'the parent\'s; shell_allowlist: the child adds ["rm"]'
+    )
+    assert not called
+
+
+def test_a_step_with_no_child_envelope_restates_the_parents(tmp_path, spy_call):
+    parent = _envelope()
+    _run(AgenticExecutor(envelope=parent), _step(tmp_path))
+    reg = _registered(spy_call)
+    assert reg["permissions"] == json.loads(parent.model_dump_json())["permissions"]

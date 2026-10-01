@@ -1,0 +1,97 @@
+#!/bin/sh
+# A fake tailscale for the web cases and the unit tests. It never touches
+# a network or a real tailnet.
+#
+#   tailscale status --json
+#       Prints this box as tailscale does: BackendState, Self.DNSName with
+#       its trailing dot, Self.TailscaleIPs, and CertDomains.
+#   tailscale cert --cert-file C --key-file K NAME
+#       Writes a self-signed certificate for NAME and its key, made with
+#       openssl, that runs out in FAKE_TS_DAYS days and one more day. A name that starts
+#       with "fail" exits 1, as tailscale does when HTTPS is off.
+#
+# The knobs, all environment variables:
+#   FAKE_TS_NAME   the MagicDNS name, default box.tail1.ts.net
+#   FAKE_TS_IPS    the tailnet addresses, comma separated, default
+#                  127.0.0.2, a loopback address a test can bind and reach
+#   FAKE_TS_STATE  BackendState, default Running
+#   FAKE_TS_HTTPS  off leaves CertDomains empty, as when HTTPS is off
+#   FAKE_TS_DAYS   how long a new certificate lasts, default 90
+#   FAKE_TS_LOG    a file that gets one line per call: the arguments
+#   FAKE_TS_CERT_FAIL  set: tailscale cert fails, as when the certificate
+#                  service does not answer
+#   FAKE_TS_CERT_FAIL_FILE  the same while this file says fail
+#   FAKE_TS_UP_FILE  while this file does not say up, tailscale is still
+#                  starting: BackendState Starting and no address
+name_default="${FAKE_TS_NAME:-box.tail1.ts.net}"
+if [ -n "$FAKE_TS_LOG" ]; then
+  printf '%s\n' "$*" >> "$FAKE_TS_LOG"
+fi
+case "$1" in
+  status)
+    ips=""
+    old_ifs="$IFS"; IFS=','
+    for ip in ${FAKE_TS_IPS:-127.0.0.2}; do
+      [ -n "$ips" ] && ips="$ips, "
+      ips="$ips\"$ip\""
+    done
+    IFS="$old_ifs"
+    domains="\"$name_default\""
+    [ "$FAKE_TS_HTTPS" = off ] && domains=""
+    state="${FAKE_TS_STATE:-Running}"
+    # Tailscale still starting, as at boot: no address until the file
+    # FAKE_TS_UP_FILE names says up.
+    if [ -n "$FAKE_TS_UP_FILE" ] && [ "$(cat "$FAKE_TS_UP_FILE" 2>/dev/null)" != up ]; then
+      state=Starting
+      ips=""
+    fi
+    cat <<EOF
+{
+  "Version": "1.90.0-fake",
+  "BackendState": "$state",
+  "TailscaleIPs": [$ips],
+  "Self": {
+    "HostName": "box",
+    "DNSName": "$name_default.",
+    "TailscaleIPs": [$ips]
+  },
+  "MagicDNSSuffix": "tail1.ts.net",
+  "CertDomains": [$domains]
+}
+EOF
+    exit 0
+    ;;
+  cert) ;;
+  *) echo "fake tailscale: unknown command $1" >&2; exit 2 ;;
+esac
+for a in "$@"; do
+  case "$a" in
+    --cert-file=*) cert="${a#--cert-file=}" ;;
+    --key-file=*) key="${a#--key-file=}" ;;
+    -*|cert) ;;
+    *) name="$a" ;;
+  esac
+done
+case "$name" in fail*) echo "fake tailscale: HTTPS is off" >&2; exit 1 ;; esac
+if [ -n "$FAKE_TS_CERT_FAIL" ] || { [ -n "$FAKE_TS_CERT_FAIL_FILE" ] && [ "$(cat "$FAKE_TS_CERT_FAIL_FILE" 2>/dev/null)" = fail ]; }; then
+  echo "fake tailscale: the certificate service did not answer" >&2
+  exit 1
+fi
+# The certificate runs out FAKE_TS_DAYS days and one more day from now, so
+# the whole days left (rounded down) read FAKE_TS_DAYS however many seconds a
+# case takes. -days works on every openssl; -not_after needs 3.4 or later.
+days=$(( ${FAKE_TS_DAYS:-90} + 1 ))
+if ! openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -keyout "$key.new" -out "$cert.new" -days "$days" \
+  -subj "/CN=$name" -addext "subjectAltName=DNS:$name" >/dev/null 2>&1; then
+  echo "fake tailscale: openssl failed" >&2
+  exit 1
+fi
+# Wait one second, so a check in the same second reads under FAKE_TS_DAYS + 1
+# days on a clock of whole seconds (Rust) and on one of nanoseconds (Go).
+sleep 1
+chmod 600 "$key.new"
+mv "$key.new" "$key"
+mv "$cert.new" "$cert"
+echo "Wrote public cert to $cert"
+echo "Wrote private key to $key"

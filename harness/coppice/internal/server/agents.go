@@ -151,6 +151,13 @@ func (s *Server) handleReportState(c *Client, r *proto.Request) proto.Response {
 	if err != nil {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest, err.Error())
 	}
+	// A transcript path names the file the server reads as this pane's
+	// messages, so only a process inside the pane may name it, and only a
+	// file no other pane named first and that began after the pane did.
+	// A refused transcript refuses only itself: the rest of the report,
+	// the state, the ask, the verdict and the session id, still counts, and
+	// the reply's transcript names the refusal.
+	real, refusal := s.checkTranscript(c, id, ev.Harness, extras.TranscriptPath)
 	ev.Pane = &id
 	// Only the server marks an ask as held by a harness: when the pane's
 	// live harness owns the ask the report names, as it does when the gate
@@ -193,7 +200,7 @@ func (s *Server) handleReportState(c *Client, r *proto.Request) proto.Response {
 	// not a plugin, not a peer nobody could place.
 	ro := c.roleOf()
 	own := ro.pane && !ro.unknown && ro.plugin == "" && ro.paneID == id
-	s.noteReport(id, ev.Harness, extras, own)
+	s.noteReport(id, extras, real)
 	if own && ev.HarnessSessionID != nil {
 		s.noteHarnessSession(id, ev.Harness, *ev.HarnessSessionID)
 	}
@@ -206,6 +213,9 @@ func (s *Server) handleReportState(c *Client, r *proto.Request) proto.Response {
 	}
 	if downgraded {
 		res["note"] = "source became gate. Attach to this pane to speak as the operator."
+	}
+	if refusal != "" {
+		res["transcript"] = refusal
 	}
 	return proto.OKResp(r.ID, res)
 }

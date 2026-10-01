@@ -415,3 +415,50 @@ func TestKeysAndClicksWithNoTilesDoNotPanic(t *testing.T) {
 		t.Fatal("space with no server gave no error")
 	}
 }
+
+// A terminal in mode 1000 sends a release after every press. A press on a
+// close mark asks whether to stop the agent, and the release that follows
+// must not answer that question, nor may motion. Only a key or a new press
+// answers it (CP-R-44).
+func TestAReleaseOrMotionDoesNotAnswerTheCloseQuestion(t *testing.T) {
+	m := tiledModel()
+	Render(m, 140, 20)
+	f := testFloor(m, 140)
+	send := func(c Click) {
+		t.Helper()
+		if _, err := f.handle(key{kind: keyMouse, click: c}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := Click{X: m.TileX[0] + m.TileW[0], Y: m.HeaderY + 1}
+	send(at)
+	if m.Confirm != "a" {
+		t.Fatalf("a press on the header close mark asked %q", m.Confirm)
+	}
+	release := at
+	release.Release = true
+	send(release)
+	if m.Confirm != "a" {
+		t.Fatalf("the release after the press answered the question (confirm %q)", m.Confirm)
+	}
+	send(Click{Button: 32, X: 5, Y: 5})
+	if m.Confirm != "a" {
+		t.Fatalf("motion answered the question (confirm %q)", m.Confirm)
+	}
+	send(Click{Button: 0, X: 5, Y: 5})
+	if m.Confirm != "" {
+		t.Fatalf("a new press did not answer the question (confirm %q)", m.Confirm)
+	}
+
+	m.ClearAll = true
+	send(Click{Button: 0, X: 5, Y: 5, Release: true})
+	if !m.ClearAll {
+		t.Fatal("a release answered the clear-all question")
+	}
+	if _, err := f.handle(key{kind: keyEsc}); err != nil {
+		t.Fatal(err)
+	}
+	if m.ClearAll {
+		t.Fatal("Esc did not answer the clear-all question")
+	}
+}

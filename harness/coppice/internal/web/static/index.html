@@ -33,8 +33,20 @@
     <p id="gate-hint" role="note" hidden></p>
     <ul id="needs" class="cards" aria-label="Needs you" hidden></ul>
     <section id="quiet" class="quiet" aria-live="polite" hidden></section>
-    <ul id="roster" class="cards" aria-label="Agents"></ul>
-    <p id="roster-empty" class="empty" hidden>No agents yet. Press New to start one.</p>
+    <button id="agents-fold" type="button" class="ghost" aria-controls="agents" aria-expanded="false">&#9656; No agents yet</button>
+    <section id="agents">
+      <ul id="roster" class="cards" aria-label="Agents"></ul>
+      <p id="roster-empty" class="empty" hidden>No agents yet. Press New to start one.</p>
+    </section>
+    <section id="chat" aria-label="Chat with the foreman">
+      <ol id="chat-list" aria-live="polite"></ol>
+    </section>
+    <form id="tell" autocomplete="off">
+      <label for="tell-text">Tell the foreman</label>
+      <input id="tell-text" type="text" enterkeyhint="send" placeholder="Tell the foreman…" title="A sentence goes to the foreman. To open or close an agent, start with a slash: /claude, /close NAME.">
+      <button id="tell-mic" type="button">Mic</button>
+      <button id="tell-send" type="submit">Send</button>
+    </form>
     <details id="recent" hidden>
       <summary>Recent <span id="recent-count" class="count">0</span></summary>
       <p class="recent-all">
@@ -44,12 +56,6 @@
       <p id="recent-confirm" class="confirm" hidden></p>
       <ul id="recent-list" aria-label="Ended agents"></ul>
     </details>
-    <form id="tell" autocomplete="off">
-      <label for="tell-text">Tell the floor</label>
-      <input id="tell-text" type="text" enterkeyhint="send" placeholder="claude, close docs, or a sentence for the foreman">
-      <button id="tell-mic" type="button">Mic</button>
-      <button id="tell-send" type="submit">Send</button>
-    </form>
     <ul id="view-list" class="views" aria-label="Views" hidden></ul>
     <footer id="rail-foot" hidden></footer>
     <iframe id="minimap-frame" title="Minimap" sandbox="allow-scripts" hidden></iframe>

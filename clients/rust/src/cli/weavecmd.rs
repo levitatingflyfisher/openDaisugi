@@ -13,7 +13,7 @@ use super::gateroot::{join, path_str};
 use super::pathwayscmd::py_int;
 use super::runcmd::{prepare, tty};
 use super::weaveattempts::{ChoiceAsk, Shared};
-use super::{exit, parse_args, Env, Opt, Res};
+use super::{exit, parse_args, Env, Opt, Parsed, Res, Stop};
 use crate::delegate::strip_fence;
 use crate::distill::params::capability_head_any;
 use crate::gate::py::text::{rstrip, splitlines, strip};
@@ -332,6 +332,12 @@ impl WeaveHook<'_> {
 }
 
 impl Hook for WeaveHook<'_> {
+    /// `WeaveHook.prefetchable`: no step of a plan with attempts, no step
+    /// that reads a slot, and only a step that runs on resume.
+    fn prefetchable(&mut self, step: &Object) -> bool {
+        self.spec.attempts.is_empty() && !self.spec.inputs.contains_key(&str_of(step, "id")) && self.verdict(step) == "run"
+    }
+
     fn prepare(&mut self, step: &Object) -> Prepared {
         let (sid, kind) = (str_of(step, "id"), str_of(step, "type"));
         match self.verdict(step) {
@@ -435,6 +441,28 @@ impl Hook for WeaveHook<'_> {
 
     fn started(&mut self, step: &Object, run_id: &str) -> Option<String> {
         self.shared.borrow_mut().run_id = run_id.to_string();
+        {
+            let mut sh = self.shared.borrow_mut();
+            if !sh.resumed_cards.is_empty() && !sh.data_dir.is_empty() {
+                let t = crate::rank::now();
+                let rows: Vec<Object> = sh
+                    .resumed_cards
+                    .iter()
+                    .map(|(cid, rid)| {
+                        Object::new()
+                            .with("choice_id", cid.as_str())
+                            .with("ranking_id", rid.as_str())
+                            .with("event", "resumed")
+                            .with("run_id", run_id)
+                            .with("ts", t)
+                    })
+                    .collect();
+                if let Err(e) = crate::rank::append_rows(&sh.data_dir, &rows) {
+                    return Some(format!("the resume of the open choice was not recorded: {e}"));
+                }
+                sh.resumed_cards.clear();
+            }
+        }
         let line = dumps(&Value::Obj(Object::new().with("run", run_id).with("step", str_of(step, "id").as_str())), true) + "\n";
         let res = (|| -> std::io::Result<()> {
             if let Some(dir) = std::path::Path::new(&self.state).parent() {
@@ -516,6 +544,7 @@ impl Env {
             Opt::flag(&["--resume"], "Skip steps an earlier run of this plan file finished."),
             Opt { multiple: true, ..Opt::val(&["--rerun"], "TEXT", "On resume, run this started step again (repeatable).") },
             Opt::val(&["--max-parallel"], "INTEGER", "Run up to this many independent steps of a level at once."),
+            AGENT_OPT,
         ];
         let p = match parse_args(args, &opts, 1) {
             Ok(p) => p,
@@ -550,7 +579,8 @@ impl Env {
         if let Some(m) = Self::click_path("'--envelope' / '-e'", &env_path) {
             return self.usage_args(CMD, "PLAN_PATH", &m);
         }
-        let data_dir = path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")));
+        let agent = self.check_agent(&p)?;
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let env = match Self::load_model_yaml(&env_path, Id::Envelope) {
             Ok(o) => o,
             Err(Err(why)) => return self.refuse(CMD, &why),
@@ -586,7 +616,12 @@ impl Env {
         let mut plan = match validate_model(Id::ActionPlan, &obj, Mode::Python) {
             Ok(Value::Obj(o)) => o,
             Ok(_) => return plan_fail(self, "the plan is not a JSON object"),
-            Err(e) => return plan_fail(self, e.text().split('\n').next().unwrap_or("")),
+            Err(e) => {
+                if let Some(why) = e.unreadable() {
+                    return self.refuse(CMD, &format!("{plan_path}: {why}"));
+                }
+                return plan_fail(self, e.text().split('\n').next().unwrap_or(""));
+            }
         };
         let steps: Vec<Object> = list(plan.value("steps")).into_iter().filter_map(|s| s.as_obj().cloned()).collect();
         let spec = match read_slots(&list(po.value("steps")), &steps) {
@@ -598,12 +633,6 @@ impl Env {
         if max_par < 1 {
             self.echo_err("Error: --max-parallel must be 1 or more.\n");
             return exit(2);
-        }
-        if max_par > 1 {
-            return self.refuse(CMD, "--max-parallel above 1 is not in this binary yet (K2-4)");
-        }
-        if steps.iter().any(|s| str_of(s, "type") == "agentic") {
-            return self.refuse(CMD, "an agentic step: this binary does not run one (K2-7)");
         }
         let mut models = Object::new();
         let mut routed = vec![];
@@ -663,6 +692,7 @@ impl Env {
             steps: list(plan.value("steps")).into_iter().filter_map(|s| s.as_obj().cloned()).collect(),
             attempts: spec.attempts.clone(),
             outputs: spec.outputs.clone(),
+            resumed_cards: vec![],
         }));
         let mut hook = WeaveHook {
             spec: &spec,
@@ -683,6 +713,11 @@ impl Env {
         }
         let llm = Rc::new(RefCell::new(self.llm_client()));
         executors.insert("task".into(), Box::new(WeaveTask { llm, outputs: spec.outputs.clone(), shared: shared.clone() }));
+        let agentic = match self.agentic(&env, &agent) {
+            Ok(a) => a,
+            Err(e) => return self.fail(CMD, &e),
+        };
+        executors.insert("agentic".into(), Box::new(agentic));
         let terminal = tty(0) && tty(1);
         if terminal {
             self.flush();
@@ -696,6 +731,7 @@ impl Env {
         let mut sup = Supervisor::new(executors, approval, Some(&j));
         sup.fallback = fallback;
         sup.hook = Some(&mut hook);
+        sup.max_parallel = usize::try_from(max_par).unwrap_or(usize::MAX);
         let sess = sup.run(&plan, &env, pre.verification);
         let log_err = sup.log_err.take();
         drop(sup);
@@ -784,4 +820,67 @@ impl Env {
             _ => exit(1),
         }
     }
+}
+
+/// The --agent option of weave, run and orchestrate: the runtime of
+/// agentic steps.
+pub(super) const AGENT_OPT: Opt =
+    Opt::val(&["--agent"], "TEXT", "The runtime of agentic steps: claude (claude -p) or sprig.");
+
+impl Env {
+    /// `cli._check_agent`: an --agent value that names no runtime is
+    /// refused in one line, exit 2.
+    pub(super) fn check_agent(&mut self, p: &Parsed) -> Result<String, Stop> {
+        let agent = p.str("--agent", "claude");
+        if agent != "claude" && agent != "sprig" {
+            self.errf(&format!(
+                "Invalid --agent {}; choose from ['claude', 'sprig'].\n",
+                crate::gate::py::text::repr(&agent)
+            ));
+            return Err(Stop::Exit(2));
+        }
+        Ok(agent)
+    }
+
+    /// `AgenticExecutor(envelope=env, runtime=agent)`: the executor of
+    /// agentic steps for this run. sprig is DAISUGI_SPRIG, else sprig on
+    /// PATH.
+    pub(super) fn agentic(&mut self, env: &Object, agent: &str) -> Result<supervise::agentic::Agentic, String> {
+        let me = self.self_path()?;
+        Ok(supervise::agentic::Agentic {
+            envelope: env.clone(),
+            model: "haiku".into(),
+            claude: self.llm_client(),
+            self_path: me,
+            temp_dir: gettempdir(&self.env),
+            runtime: agent.into(),
+            sprig: self.env.get("DAISUGI_SPRIG").cloned().unwrap_or_else(|| "sprig".into()),
+            env: self.env.clone(),
+        })
+    }
+}
+
+/// `tempfile.gettempdir()`: the first of $TMPDIR, $TEMP, $TMP, /tmp,
+/// /var/tmp and /usr/tmp that is a directory a file can be made in, made
+/// absolute.
+fn gettempdir(env: &std::collections::HashMap<String, String>) -> String {
+    let mut dirs: Vec<String> =
+        ["TMPDIR", "TEMP", "TMP"].iter().filter_map(|k| env.get(*k).filter(|v| !v.is_empty()).cloned()).collect();
+    dirs.extend(["/tmp", "/var/tmp", "/usr/tmp"].iter().map(|s| s.to_string()));
+    for d in dirs {
+        let abs = if d.starts_with('/') {
+            d
+        } else {
+            match std::env::current_dir() {
+                Ok(c) => format!("{}/{d}", c.display()),
+                Err(_) => continue,
+            }
+        };
+        let probe = format!("{abs}/.daisugi-probe-{}", std::process::id());
+        if std::fs::OpenOptions::new().write(true).create_new(true).open(&probe).is_ok() {
+            let _ = std::fs::remove_file(&probe);
+            return abs;
+        }
+    }
+    "/tmp".into()
 }

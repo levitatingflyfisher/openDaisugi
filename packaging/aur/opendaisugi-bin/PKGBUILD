@@ -1,8 +1,16 @@
-# Installs the three openDaisugi binaries from the release tarball that
-# scripts/release.sh builds. Not published: this file waits for a release.
+# Installs the openDaisugi binaries from the two release tarballs that
+# `scripts/release.sh VERSION --rust` builds. Not published: this file
+# waits for a release.
+#
+# What it installs (ruling PK-R-15), the same files as the source package
+# opendaisugi: coppice and sprig (Go), daisugi (the Go build, the
+# default), daisugi-rs (the Rust build) and daisugi-gate-rs (the Rust hook
+# entry alone). The Python daisugi is the package daisugi-py.
+# DAISUGI_PORT=rust or python makes `daisugi install` hand the install to
+# that port, which then writes hooks that run it directly.
 #
 # To update for a release: set pkgver, then run `updpkgsums` (it writes the
-# sha256 from the published tarball, which must match the release's
+# sha256 of each published tarball, which must match the release's
 # SHA256SUMS), then `makepkg --printsrcinfo > .SRCINFO`.
 
 pkgname=opendaisugi-bin
@@ -12,18 +20,29 @@ pkgdesc='Agent floor (coppice), loop (sprig) and tool-call gate (daisugi) for AI
 arch=('x86_64')
 url='https://github.com/levitatingflyfisher/openDaisugi'
 license=('MIT')
-depends=('glibc')
+# The Rust binaries link libgcc_s; Arch splits it out of gcc-libs as libgcc.
+depends=('glibc' 'libgcc')
+optdepends=('daisugi-py: the Python daisugi, to check the Go and Rust ones against'
+            'moonshine-cli: the Moonshine speech engine for daisugi voice'
+            'parakeet-cli: the Parakeet speech engine for daisugi voice')
 provides=('opendaisugi' 'coppice' 'sprig')
 conflicts=('opendaisugi')
 options=('!strip' '!debug')
-source=("https://github.com/levitatingflyfisher/openDaisugi/releases/download/v${pkgver}/opendaisugi-${pkgver}-linux-x86_64.tar.gz")
-# Fails closed until updpkgsums fills it in from the published tarball.
-sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+source=("https://github.com/levitatingflyfisher/openDaisugi/releases/download/v${pkgver}/opendaisugi-${pkgver}-linux-x86_64.tar.gz"
+        "https://github.com/levitatingflyfisher/openDaisugi/releases/download/v${pkgver}/opendaisugi-rust-${pkgver}-linux-x86_64.tar.gz")
+# Fails closed until updpkgsums fills them in from the published tarballs.
+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000'
+            '0000000000000000000000000000000000000000000000000000000000000000')
 
 package() {
-  cd "opendaisugi-${pkgver}-linux-x86_64"
+  cd "${srcdir}/opendaisugi-${pkgver}-linux-x86_64"
   install -Dm755 coppice sprig daisugi -t "${pkgdir}/usr/bin/"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
   install -Dm644 NOTICE-coppice NOTICE-sprig NOTICE-daisugi -t "${pkgdir}/usr/share/licenses/${pkgname}/"
   install -Dm644 README "${pkgdir}/usr/share/doc/${pkgname}/README"
+  cd "${srcdir}/opendaisugi-rust-${pkgver}-linux-x86_64"
+  install -Dm755 daisugi "${pkgdir}/usr/bin/daisugi-rs"
+  install -Dm755 daisugi-gate "${pkgdir}/usr/bin/daisugi-gate-rs"
+  install -Dm644 NOTICE-rust "${pkgdir}/usr/share/licenses/${pkgname}/NOTICE-daisugi-rs"
+  install -Dm644 README "${pkgdir}/usr/share/doc/${pkgname}/README-rust"
 }

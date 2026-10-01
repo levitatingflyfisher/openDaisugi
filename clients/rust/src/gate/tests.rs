@@ -251,6 +251,9 @@ fn a_read_of_a_coppice_secret_is_a_pane_rule_deny() {
         ("web//ca/./ca.key", true),
         ("web/x/../ca/leaf.key", true),
         ("voice/./token", true),
+        ("chat/2026-10-09.jsonl", true),
+        ("journal/verdicts.jsonl", true),
+        ("chat//2026-10-09.jsonl", true),
     ] {
         let p = format!(
             r#"{{"session_id":"s","tool_name":"Read","cwd":"/work","tool_input":{{"file_path":"/home/user/.opendaisugi/coppice/{secret}"}}}}"#

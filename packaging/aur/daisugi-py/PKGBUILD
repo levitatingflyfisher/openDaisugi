@@ -1,0 +1,51 @@
+# The Python daisugi, the oracle the Go and Rust ports are checked
+# against, installed as daisugi-py beside the opendaisugi package's daisugi
+# (Go) and daisugi-rs (ruling PK-R-15). Built from the wheel of one pinned
+# commit with the Arch Python packages; it builds no virtual environment
+# and runs no pip. Not published.
+#
+# It is its own package, not a split of opendaisugi, so installing it
+# builds no Go, Rust or Z3 (ruling PK-R-16).
+#
+# Every name in depends was checked on 2026-10-08: python-tree-sitter
+# (0.26.0) and python-tree-sitter-bash (0.25.1) are in the AUR, at the
+# versions the gate pins; the rest are in extra. Arch's python-z3-solver
+# was 4.16.0, where the Go and Rust ports link Z3 5.1.0; the gate's cases
+# were measured with 5.1.0.
+#
+# _commit is the commit the opendaisugi package pins. Until one exists,
+# the empty _commit makes makepkg stop at the source step, the intent.
+
+pkgname=daisugi-py
+pkgver=0.43.0
+pkgrel=1
+_commit=
+pkgdesc='The Python daisugi CLI, the tool-call gate the Go and Rust ports are checked against'
+arch=('any')
+url='https://github.com/levitatingflyfisher/openDaisugi'
+license=('MIT')
+depends=('python' 'python-pydantic' 'python-z3-solver' 'python-networkx' 'python-yaml'
+         'python-typer' 'python-click' 'python-numpy'
+         'python-tree-sitter' 'python-tree-sitter-bash')
+optdepends=('python-httpx: model calls over HTTP (envelope generation, orchestrate, tend on the API backend)'
+            'python-mcp: daisugi-py mcp serve'
+            'python-cryptography: signed pathway bundles and releases'
+            'python-sounddevice: push-to-talk (daisugi-py voice ptt), in the AUR'
+            'opendaisugi: the Go daisugi and daisugi-rs, to check this one against')
+makedepends=('git' 'python-build' 'python-installer' 'python-hatchling')
+source=("openDaisugi::git+${url}.git#commit=${_commit}")
+sha256sums=('SKIP')
+
+build() {
+  cd "${srcdir}/openDaisugi"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "${srcdir}/openDaisugi"
+  python -m installer --destdir="${pkgdir}" dist/opendaisugi-*-py3-none-any.whl
+  # The console script is daisugi; this package's name for it is
+  # daisugi-py, so it sits beside the Go daisugi.
+  mv "${pkgdir}/usr/bin/daisugi" "${pkgdir}/usr/bin/daisugi-py"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

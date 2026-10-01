@@ -72,7 +72,7 @@ func pathwayFromBundle(bundle any, source string) (*Pathway, error) {
 	if verr != nil {
 		for _, e := range verr.Errs {
 			if e.Type == pmodel.UnreadableStep {
-				return nil, fmt.Errorf("%w: a plan step is a string", ErrUnreadable)
+				return nil, fmt.Errorf("%w: %s", ErrUnreadable, e.Msg)
 			}
 		}
 		// parse_bundle's refusal: a NaN or an infinity in the envelope or

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"daisugi-verify/internal/netproxy"
 	"daisugi-verify/internal/pyjson"
@@ -244,12 +245,19 @@ func (e *MeterError) Error() string { return e.Msg }
 
 var tierKeys = [][2]string{{"capable_target", "efficient_target"}, {"strong_target", "weak_target"}}
 
+// readTOML is tomllib.loads(Path(path).read_text(encoding="utf-8")): the
+// text decoded as UTF-8 (a UnicodeDecodeError otherwise) with universal
+// newlines, then parsed.
 func readTOML(path string) (*Table, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return ParseTOML(string(raw))
+	if !utf8.Valid(raw) {
+		return nil, &TOMLDecodeError{"'utf-8' codec can't decode the file"}
+	}
+	text := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
+	return ParseTOML(text)
 }
 
 func findRoute(doc *Table, routeID string) *Table {
@@ -272,7 +280,13 @@ func findRoute(doc *Table, routeID string) *Table {
 func RouteTargets(path, routeID string) (string, string, error) {
 	doc, err := readTOML(path)
 	if err != nil {
-		if errors.Is(err, ErrTOML) {
+		var te *TOMLDecodeError
+		if errors.As(err, &te) {
+			return "", "", &MeterError{fmt.Sprintf("cannot read %s: %s", path, te.Msg)}
+		}
+		var ve *TOMLValueError
+		if errors.As(err, &ve) {
+			// Not caught by route_targets_from_toml: a traceback.
 			return "", "", err
 		}
 		return "", "", &MeterError{fmt.Sprintf("cannot read %s: %s", path, pyOSError(err))}
@@ -337,7 +351,19 @@ func pyRepr(v any) string {
 		return "False"
 	case int64:
 		return strconv.FormatInt(x, 10)
+	case BigInt:
+		return x.Text
+	case DateTime:
+		return x.Repr()
 	case float64:
+		switch {
+		case math.IsInf(x, 1):
+			return "inf"
+		case math.IsInf(x, -1):
+			return "-inf"
+		case math.IsNaN(x):
+			return "nan"
+		}
 		return pyjson.FloatRepr(x)
 	case []any:
 		parts := make([]string, len(x))
@@ -438,12 +464,23 @@ func AuthFromTOML(path, routeID string) *Auth {
 		if !ok {
 			return nil
 		}
-		cname, ok := target.Vals["llm_client"].(string)
-		if !ok {
+		// clients.get(name, {}): a name of another hashable type is no
+		// client; a list or a table raises TypeError (None here).
+		var cname string
+		switch n := target.Vals["llm_client"].(type) {
+		case string:
+			cname = n
+		case []any, *Table:
 			return nil
+		case nil:
+			if _, has := target.Vals["llm_client"]; !has {
+				return nil // KeyError
+			}
 		}
 		var client *Table
-		if c, has := ct.Vals[cname]; has {
+		if _, isStr := target.Vals["llm_client"].(string); !isStr {
+			client = newTable()
+		} else if c, has := ct.Vals[cname]; has {
 			if client, ok = c.(*Table); !ok {
 				return nil
 			}
@@ -483,8 +520,11 @@ func truthy(v any) bool {
 
 // pyStr is str() of a TOML value.
 func pyStr(v any) string {
-	if s, ok := v.(string); ok {
-		return s
+	switch x := v.(type) {
+	case string:
+		return x
+	case DateTime:
+		return x.Str()
 	}
 	return pyRepr(v)
 }

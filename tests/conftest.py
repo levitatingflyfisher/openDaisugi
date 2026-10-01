@@ -8,7 +8,48 @@ import os
 # variables go before anything imports typer.
 for _name in ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS", "TTY_COMPATIBLE"):
     os.environ.pop(_name, None)
-from pathlib import Path
+
+
+def _isolate_home() -> tuple[str, str]:
+    """Point HOME at a new scratch directory before anything imports
+    opendaisugi, so no test reads or writes the operator's own config, gate
+    root, data dirs, ~/.claude or ~/.codex. The XDG homes and the data dir
+    variables go, so their defaults fall under the scratch home too. The
+    tool caches stay where they are (Go, Cargo, rustup, uv, Hugging Face),
+    so a test that builds or loads a model does not fetch it again.
+    Returns the real home and the scratch home."""
+    import tempfile
+
+    real = os.path.expanduser("~")
+    for var, default in (
+        ("GOPATH", os.path.join(real, "go")),
+        ("GOCACHE", os.path.join(real, ".cache", "go-build")),
+        ("GOMODCACHE", os.path.join(real, "go", "pkg", "mod")),
+        ("CARGO_HOME", os.path.join(real, ".cargo")),
+        ("RUSTUP_HOME", os.path.join(real, ".rustup")),
+        ("UV_CACHE_DIR", os.path.join(real, ".cache", "uv")),
+        ("HF_HOME", os.path.join(real, ".cache", "huggingface")),
+    ):
+        os.environ.setdefault(var, default)
+    home = tempfile.mkdtemp(prefix="daisugi-test-home-")
+    os.environ["HOME"] = home
+    os.environ["DAISUGI_TEST_REAL_HOME"] = real
+    for var in (
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_RUNTIME_DIR",
+        "OPENDAISUGI_HOME",
+        "COPPICE_DATA_DIR",
+    ):
+        os.environ.pop(var, None)
+    return real, home
+
+
+REAL_HOME, TEST_HOME = _isolate_home()
+
+from pathlib import Path  # noqa: E402 - after the home moves
 from typing import Any
 
 import pytest
@@ -126,6 +167,16 @@ def _clear_floor_pane_env(monkeypatch):
     binary instead of the test's own fixtures. Cleared before every test.
     """
     for var in ("COPPICE_SOCK", "COPPICE_PANE", "HERDR_PANE_ID", "HERDR_PANE"):
+        monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _clear_data_home_env(monkeypatch):
+    """OPENDAISUGI_HOME and XDG_DATA_HOME pick the data directory
+    (opendaisugi.datahome). A test that points HOME at a tmp dir with no
+    ~/.opendaisugi would otherwise follow either one into a real directory.
+    A test that needs them sets them itself."""
+    for var in ("OPENDAISUGI_HOME", "XDG_DATA_HOME"):
         monkeypatch.delenv(var, raising=False)
 
 

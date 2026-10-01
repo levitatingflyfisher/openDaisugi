@@ -110,7 +110,10 @@ func classifyPeer(pid, self int, leader bool, panes, plugins map[int]string,
 }
 
 // panePIDs maps the child pid of every live pty pane, and every root pid a
-// headless pane's adapter names, to its pane id.
+// headless pane's adapter names, to its pane id. A pty pane whose process
+// ended drops out at once, and so does a pid that now belongs to another
+// process, told by its start time, so a process that gets an old pane's
+// pid again is not placed in that pane.
 func (s *Server) panePIDs() map[int]string {
 	out := map[int]string{}
 	s.liveMu.RLock()
@@ -119,7 +122,15 @@ func (s *Server) panePIDs() map[int]string {
 		pid := 0
 		switch {
 		case lp.PTY != nil:
+			if lp.ptyGone() {
+				continue
+			}
 			pid = lp.PTY.Pid()
+			if lp.ptyStart != 0 {
+				if st, ok := procStartTime(pid); !ok || st != lp.ptyStart {
+					continue
+				}
+			}
 		case lp.Adapter != nil:
 			if p, ok := lp.Adapter.(pane.Pider); ok {
 				for _, root := range p.Pids() {
@@ -381,6 +392,7 @@ const TalkRefusal = "only the operator talks to the floor's foreman."
 // each with its refusal.
 var operatorVerbs = map[string]string{
 	"task.set_foreman": ForemanRefusal, "floor.talk": TalkRefusal, "floor.foreman": ForemanRefusal,
+	"floor.chat": TalkRefusal,
 	"pane.trust": TrustRefusal,
 }
 
@@ -508,6 +520,12 @@ func (s *Server) guard(c *Client, r *proto.Request) (proto.Response, bool) {
 	ro := c.roleOf()
 	if msg, ok := operatorVerbs[r.Cmd]; ok && ro.noAllow {
 		return proto.ErrResp(r.ID, proto.ErrUnauthorized, msg), false
+	}
+	if resp, ok := s.chatGuard(c, ro, r); !ok {
+		return resp, false
+	}
+	if resp, ok := s.sprigGuard(ro, r); !ok {
+		return resp, false
 	}
 	if ro.noAllow && (takesForemanLabel(r) || s.resumesForemanLabel(r)) {
 		return proto.ErrResp(r.ID, proto.ErrUnauthorized, ForemanLabelRefusal), false

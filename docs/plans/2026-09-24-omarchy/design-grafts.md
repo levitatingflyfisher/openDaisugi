@@ -286,11 +286,16 @@ rules.
    Audit gives match counts and an **estimated** saving only, marked `estimated=True` as the
    gateway meter marks its counterfactual (`gateway.py`, `TurnSaving`). Audit cannot measure
    extra turns or task success, because nothing changed.
-4. **Trial (A/B with outcomes).** The rule acts on a random half of **sessions**, not of calls.
+4. **Trial (A/B with outcomes).** Built 2026-10-01 in its smallest form (SW-13 to SW-15): a rule
+   in `trial` acts on the sessions whose seeded hash puts them in the graft arm, the arm is on
+   the graft audit record, and `router status` reports each arm against the operator's labels.
+   The rule acts on a random half of **sessions**, not of calls.
    Per-call splits are confounded by the cache and by extra turns later in the same session.
    Both arms are journaled with the measures below.
 5. **Promote or retire.** Promote on measured lower billed cost per successful task, with no drop
-   in task success. Retire a rule whose saving goes away or whose sessions fail more.
+   in task success. Retire a rule whose saving goes away or whose sessions fail more. Built
+   2026-10-01 as a report only: `router status` prints what promotion would do; the operator
+   changes the rule.
 
 How it joins the other designs:
 
@@ -394,7 +399,7 @@ this and links here.
 | PostToolUse or any output hook | Missing | `install.py` wires none |
 | pi, OpenCode rewrite (reading `stdout`) | Missing | |
 | Tool result size in any capture | Missing | |
-| Graft A/B with outcomes | Missing; `ab_test.py` has no caller | `gardener/ab_test.py` |
+| Graft A/B with outcomes | Built 2026-10-01, smallest form: arms per session, operator labels, cost per success (SW-13 to SW-15) | `router_report.py`, `gate.py` `_maybe_graft` |
 | Rival rewriting hook detection | Missing | |
 
 ## Staged plan

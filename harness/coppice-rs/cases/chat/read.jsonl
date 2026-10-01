@@ -1,0 +1,46 @@
+# floor.chat holds the tracked foreman's replies even when no chat line
+# names it, as for a foreman floor.foreman started. An owner line carries
+# read: false until that foreman's transcript records the line as the
+# owner's, at or after the time the line was written, and read: true
+# after. A line typed while the turn before it holds stays unread, and an
+# older line with the same words never reads a new one. The foreman runs
+# chat-foreman.py as claude: it names its own invented transcript, and
+# records each typed line only once the case writes {WORK}/turn.
+#!config default = "claude"
+#!config [harness.claude]
+#!config command = "/usr/bin/python3"
+#!config args = ["{FIXTURES}/transcripts/chat-foreman.py", "{WORK}/claude/projects/chat/{pane}.jsonl", "--hold", "{WORK}/turn"]
+#!env CLAUDE_CONFIG_DIR={WORK}/claude
+{"id":"1","cmd":"floor.foreman"}
+{"id":"$id","ok":true,"result":{"pane":"$f","label":"foreman","started":true}}
+{"id":"2","cmd":"pane.wait_output","pane":"$f","contains":"LOGGED Run:","timeout_ms":20000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"3","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"role":"agent","text":"The fake foreman is ready.","pane":"$f"}]}}
+{"id":"4","cmd":"floor.talk","text":"one"}
+{"id":"$id","ok":true,"result":{"pane":"$f","started":false}}
+{"id":"5","cmd":"floor.talk","text":"two"}
+{"id":"$id","ok":true,"result":{"pane":"$f","started":false}}
+{"id":"6","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"role":"agent"},{"role":"owner","text":"one","read":false},{"role":"owner","text":"two","read":false}]}}
+# The first turn starts: "one" is read, and "two" waits behind it.
+{"id":"w1","write":"{WORK}/turn","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 10000
+{"id":"7","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"role":"agent"},{"role":"owner","text":"one","read":true},{"role":"owner","text":"two","read":false}]}}
+{"id":"w2","write":"{WORK}/turn","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 10000
+{"id":"8","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"role":"agent"},{"role":"owner","text":"one","read":true},{"role":"owner","text":"two","read":true}]}}
+# The same words again: the transcript's older "one" does not read it.
+{"id":"9","cmd":"floor.talk","text":"one"}
+{"id":"$id","ok":true,"result":{"pane":"$f","started":false}}
+{"id":"10","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"role":"agent"},{"text":"one","read":true},{"text":"two","read":true},{"role":"owner","text":"one","read":false}]}}
+{"id":"w3","write":"{WORK}/turn","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 10000
+{"id":"11","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"role":"agent"},{"text":"one","read":true},{"text":"two","read":true},{"role":"owner","text":"one","read":true}]}}

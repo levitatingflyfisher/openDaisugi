@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, element, TOKEN, freshApp, lastSocket, liveTimers } from './browser-stub.mjs';
 import { endedMessage, ENDED_CLEAR_MS } from '../floor.js';
+import { readFileSync } from 'node:fs';
+import { foldLine } from '../dock.js';
 
 // The whole page at phone size: the overview is home, an agent's sheet
 // slides in over it and never hides it, the sheet goes back, and an agent
@@ -273,4 +275,147 @@ test('a good exit\'s ended line on the status line clears after its time, a bad 
   status('Allowed.');
   older.fn();
   assert.equal(element('status').textContent, 'Allowed.', 'an old timer cleared a newer line');
+});
+
+// The phone's home with the chat. From the top: the facts line, the cards
+// that need you, the agents fold, the chat. The chat bar is docked at the
+// bottom. On a wide page the bar sits at the foot of the rail, above
+// Recent, and no chat shows there yet.
+
+const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../app.css', import.meta.url), 'utf8');
+
+test('home reads from the top: facts, the cards that need you, the agents fold, the chat, then the bar above Recent', () => {
+  const at = (id) => {
+    const i = html.indexOf('id="' + id + '"');
+    assert.ok(i >= 0, id + ' is not in index.html');
+    return i;
+  };
+  assert.ok(at('facts') < at('needs'));
+  assert.ok(at('needs') < at('agents-fold'));
+  assert.ok(at('agents-fold') < at('roster'));
+  assert.ok(at('roster') < at('chat'));
+  assert.ok(at('chat') < at('tell'));
+  assert.ok(at('tell') < at('recent'), 'the bar is not above Recent');
+  assert.match(html, /placeholder="Tell the foreman…"/);
+});
+
+test('the chat bar is docked at the bottom of a phone, above the keyboard, and the chat is on a phone only', () => {
+  assert.match(css, /body\.phone #tell \{[^}]*position: fixed;[^}]*bottom: var\(--kb, 0px\)/);
+  assert.match(css, /body:not\(\.phone\) #chat, body:not\(\.phone\) #agents-fold \{ display: none; \}/);
+  // The facts line shows on a phone.
+  assert.doesNotMatch(css, /body\.phone #facts \{ display: none; \}/);
+});
+
+test('the fold line counts the agents and their projects', () => {
+  assert.equal(foldLine([]), 'No agents yet');
+  assert.equal(foldLine([{ id: 'a', cwd: '/x' }]), '1 agent · 1 project');
+  assert.equal(foldLine([{ id: 'a', cwd: '/x' }, { id: 'b', cwd: '/y' }, { id: 'c', cwd: '/y' }, { id: 'd', cwd: '/y', closed: true }]), '3 agents · 2 projects');
+  // The foreman's scratch directory is no project.
+  assert.equal(foldLine([{ id: 'a', cwd: '/x' }, { id: 'f', cwd: '/state/foreman' }], 'f'), '2 agents · 1 project');
+});
+
+test('the chat chips are 44 px tall to tap, and the minimap does not draw on a phone', () => {
+  assert.match(css, /button\.chip-agent \{[^}]*min-height: 44px;/);
+  assert.match(css, /body\.phone #minimap-frame \{ display: none; \}/);
+  assert.match(html, /<label for="tell-text">Tell the foreman<\/label>/);
+  assert.doesNotMatch(html, /[Pp]lumbing/);
+});
+
+test('words typed in a sheet say which agent they went to, and opening a sheet clears an older line', async () => {
+  const { ws, sent } = await boot(390, 844);
+  global.window.coppice.status('Sent to foreman.');
+  global.location.hash = '#/pane/a';
+  route();
+  await settle();
+  assert.equal(element('status').textContent, '', 'the old line stayed over the sheet');
+  const attach = sent.filter((m) => m.cmd === 'pane.attach').pop();
+  ws.fire('message', { data: JSON.stringify({ id: attach.id, ok: true, result: {} }) });
+  await settle();
+  element('text').value = 'ls';
+  element('send-enter').dispatchEvent({ type: 'click' });
+  await settle();
+  const send = sent.filter((m) => m.pane === 'a' && m.cmd !== 'pane.attach' && m.cmd !== 'pane.detach').pop();
+  assert.ok(send, 'nothing was sent');
+  ws.fire('message', { data: JSON.stringify({ id: send.id, ok: true, result: {} }) });
+  await settle();
+  await settle();
+  assert.equal(element('status').textContent, 'Sent to a.');
+});
+
+test('a phone folds the agents shut, and a tap opens the fold in place', async () => {
+  await boot(390, 844);
+  const fold = element('agents-fold');
+  assert.match(fold.textContent, /4 agents · 4 projects/);
+  assert.equal(fold.getAttribute('aria-expanded'), 'false');
+  assert.equal(element('rail').getAttribute('data-fold'), 'shut');
+  fold.dispatchEvent({ type: 'click' });
+  assert.equal(fold.getAttribute('aria-expanded'), 'true');
+  assert.equal(element('rail').getAttribute('data-fold'), 'open');
+});
+
+// chatBoot boots a phone and answers its first floor.chat read.
+async function chatBoot(messages) {
+  const b = await boot(390, 844);
+  await settle();
+  await settle();
+  const read = b.sent.filter((m) => m.cmd === 'floor.chat').pop();
+  assert.ok(read, 'the phone never read the chat');
+  b.ws.fire('message', { data: JSON.stringify({ id: read.id, ok: true, result: { messages, more: false } }) });
+  await settle();
+  return b;
+}
+
+test('a phone subscribes to messages, reads the chat, and reads it again on a messages event for the chat', async () => {
+  const { ws, sent } = await chatBoot([{ id: 'c1', at: 1, role: 'owner', text: 'hi', pane: 'f' }]);
+  assert.ok(sent.some((m) => m.cmd === 'events.subscribe' && Array.isArray(m.kinds) && m.kinds.includes('messages')), 'no subscribe to messages');
+  assert.match(element('chat-list').textContent, /you.*hi/);
+  const before = sent.filter((m) => m.cmd === 'floor.chat').length;
+  ws.fire('message', { data: JSON.stringify({ event: 'messages', pane: 'f', chat: true, ts: 2 }) });
+  await settle();
+  await settle();
+  assert.equal(sent.filter((m) => m.cmd === 'floor.chat').length, before + 1);
+});
+
+test('a chip in a foreman message opens that agent\'s sheet over home, and the sheet goes back', async () => {
+  await chatBoot([{ id: 'a1', at: 1, role: 'agent', text: 'Started a on the parser.', pane: 'f' }]);
+  const chip = element('chat-list').querySelector('.chip-agent');
+  assert.ok(chip, 'no chip in the reply');
+  chip.dispatchEvent({ type: 'click', preventDefault() {} });
+  assert.equal(global.location.hash, '#/pane/a');
+  route();
+  await settle();
+  assert.equal(element('screen-pane').hidden, false);
+  assert.equal(element('screen-roster').hidden, false, 'the sheet hid home');
+  element('sheet-edge').dispatchEvent({ type: 'click' });
+  assert.equal(global.location.hash, '#/roster');
+});
+
+test('a sentence sent from the bar shows in the chat at once, then as sent, and nothing of it is stored', async () => {
+  const { ws, sent } = await chatBoot([]);
+  const stored = [];
+  const real = global.localStorage.setItem;
+  global.localStorage.setItem = (k, v) => { stored.push(String(k) + '=' + String(v)); real(k, v); };
+  try {
+    element('tell-text').value = 'SECRET check the parser';
+    element('tell').dispatchEvent({ type: 'submit', preventDefault() {} });
+    await settle();
+    assert.match(element('chat-list').textContent, /sending.*SECRET check the parser/);
+    const talk = sent.filter((m) => m.cmd === 'floor.talk').pop();
+    assert.equal(talk.text, 'SECRET check the parser');
+    ws.fire('message', { data: JSON.stringify({ id: talk.id, ok: true, result: { pane: 'f', label: 'foreman', queued: 1 } }) });
+    await settle();
+    await settle();
+    assert.match(element('chat-list').textContent, /sent.*SECRET check the parser/);
+  } finally {
+    global.localStorage.setItem = real;
+  }
+  assert.ok(!stored.some((s) => /SECRET/.test(s)), 'chat text was stored: ' + stored.join(' | '));
+});
+
+test('a wide page reads no chat', async () => {
+  const { sent } = await boot(1440, 900);
+  await settle();
+  await settle();
+  assert.equal(sent.filter((m) => m.cmd === 'floor.chat').length, 0);
 });

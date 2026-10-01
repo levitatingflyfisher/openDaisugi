@@ -1437,8 +1437,9 @@ refused, with no case yet: tags, block scalars, several documents,
 quoted scalars over several lines; an uninstall of a settings shape Python's reverse would raise on (its
 exception text is printed and cannot be matched).
 
-Status: in force.
-Retires when: the binaries' YAML reader takes these shapes.
+Status: retired 2026-10-07 by YM-1: both ports read these shapes as
+PyYAML does (the uninstall refusal stays, under IN-1).
+Retires when: retired (see Status).
 
 **C-8. Fix round 1 (review of the Go CLI).**
 - *Hooks by their words.* Python found a gate hook by the substring
@@ -2093,8 +2094,11 @@ refusal on such a store leaves the migrated table. Two refusals remain
 where Python admits: a step given as a string, and a number past 64 bits
 inside a plan or envelope (the verifier's JSON reader takes neither).
 
-Status: in force.
-Retires when: the binary reads a string step and a number past 64 bits the Python way.
+Status: retired 2026-10-08. Its skill-frontmatter refusal retired
+2026-10-07 by YM-1; its string-step refusal 2026-10-08 by RF-1 (what
+stays refused there is listed in RF-1); its refusal of a number past 64
+bits 2026-10-08 by RF-2; its BLOB and `?` refusals 2026-10-08 by RF-3.
+Retires when: met (see Status).
 
 **PW-7 (ruling): no `find` command.** The Python CLI has none, so neither
 has the binary; `cmd/pathway-probe` is the test instrument that runs
@@ -2628,8 +2632,12 @@ checked storable before the store is opened, so every such refusal
 leaves the tree as it was (Go's PW-6 gap, a store migrated before the
 refusal, does not arise here for import).
 
-Status: in force; its refusal of a number past 64 bits retired 2026-09-26 by GD-R-3.
-Retires when: the binary reads a string step and an import's `llm_check` predicate the Python way.
+Status: retired 2026-10-08 by RF-1: import reads a string step as
+coerce_step reads it (case `import string steps`). Its refusal of a
+number past 64 bits retired 2026-09-26 by GD-R-3, its `llm_check`
+refusal 2026-10-02 by PG-1 (import asks the model as the oracle does; 3
+cases), and its skill-frontmatter refusal 2026-10-07 by YM-1.
+Retires when: met (see Status).
 
 **PW-R-6 (as PW-11 and PW-15): import on the linked Z3.** The two ground
 checks (envelope self-consistency, plan-vs-envelope) run on the linked
@@ -2839,8 +2847,8 @@ step after an item that is no step is the error pydantic reports. The
 Rust reply model does the same (`pmodel::tests::a_reply_names_the_invalid_step_first`,
 the oracle's text), and so does the Go reply model since `25e9dc9a`. The
 case `tend claude reply names invalid step first` covers it on both
-binaries. Stored input (not a model reply) still takes the older order in
-both binaries; no case reaches that shape.
+binaries. Since RF-1 (2026-10-08) stored input takes the same order: both
+binaries read every plan through one coerce_step path.
 
 Status: in force.
 Retires when: does not retire.
@@ -2971,8 +2979,8 @@ floats, booleans, one-line arrays and inline tables). A file outside that
 (or invalid) is refused, exit 2, and no child starts; the oracle prints
 tomllib's error and exits 1 (case `switchyard own config not toml`).
 
-Status: in force.
-Retires when: the binaries read every TOML file `tomllib` reads.
+Status: retired 2026-10-08 by RF-5.
+Retires when: met (the binaries read every TOML file `tomllib` reads).
 
 **GW-10 (ruling): install --gateway and the router config.** The binary
 writes the gate and base_url layers (Claude Code's `ANTHROPIC_BASE_URL`,
@@ -3027,8 +3035,8 @@ fuzz and the recall cases. Where the Rust binary rules as Go does, the
 entry says so; the rest are its own.
 
 **GW-R-1 (as GW-1 to GW-13).** Every Go ruling holds for the Rust
-binary. It refuses the same two cases, `report float tokens` (GW-8) and
-`switchyard own config not toml` (GW-9), and no other. GW-13's
+binary. It refuses the same case, `report float tokens` (GW-8), and no
+other (`switchyard own config not toml`, GW-9, agrees since RF-5). GW-13's
 compensated sum is now also in the Rust `distill-repeats`, which added
 dollars with a plain `+=`.
 
@@ -3397,7 +3405,10 @@ model call with the binary's "this model call is not in this binary ..."
 text (LLM-11; before, "only the claude-code backend ..."); the gate
 leaves the `llm_check` undecided. No case holds one.
 
-Status: in force.
+Status: narrowed 2026-10-07 by PX-9: the case clash is read in the
+environment's order, a NO_PROXY entry with `%` and a proxy URL httpx
+rejects are read as httpx reads them; what stays refused is listed in
+PX-9.
 Retires when: the binaries read each refused setting the oracle's way.
 
 **PX-6 (ruling): litellm's cost map.** Importing litellm fetches its
@@ -3507,7 +3518,8 @@ whose last path part is `daisugi` or `opendaisugi`, or starts with
 `echo` of those words is denied too. Words the shell builds at run time
 (variables, substitution, eval) are not seen.
 
-Status: in force.
+Status: in force. Since 2026-10-01 the line is read per simple command
+(SW-2); the word reading above is its fallback.
 Retires when: does not retire.
 
 **SEC-6 (note, for the grafts work): Codex shares `--format claude`.**
@@ -4136,17 +4148,17 @@ dumping it gives the same text back). A file in any other form, and a file PyYAM
 rejects, is refused with exit 2 before anything is written: the binary does not
 word PyYAML's errors (3 cases).
 
-Status: in force.
-Retires when: the Go YAML reader covers the YAML a user writes by hand and words
-PyYAML's parse errors.
+Status: retired 2026-10-07 by YM-1: both ports load the files as
+`yaml.safe_load` does and word its errors (the 3 cases agree).
+Retires when: retired (see Status).
 
 **K2-4 (ruling, Go): `orchestrate --max-parallel` above 1 is not in this binary
 yet.** The oracle then prefetches a level's steps through `asyncio.gather`, so the
 order of outcomes and receipts can change from run to run (1 case).
 
-Status: in force.
-Retires when: the binary runs a level's independent steps concurrently and the
-compare reads receipts as a set.
+Status: retired 2026-10-03 by MP-1: both ports run a level's independent
+steps concurrently.
+Retires when: retired (see Status).
 
 **K2-5 (ruling, Go): a stale-embeddings warning from the pathway store is
 refused before anything is written.** `PathwayStore.find` warns (a UserWarning,
@@ -4154,8 +4166,9 @@ whose text names the oracle's source file) when stored pathways were embedded
 under another model. `orchestrate` reads the store without a write first and
 refuses when find would warn (1 case).
 
-Status: in force.
-Retires when: the binary prints the warning as Python's warnings module does.
+Status: retired 2026-10-08 by RF-4: both ports print the warning (in the
+form the compare reads) under PYTHONWARNINGS as Python reads it.
+Retires when: met (see Status).
 
 **K2-6 (ruling, Go): a refusal after the data directory is set up says so.** A
 verifier warning this binary does not word, or a violation whose detail it does
@@ -4175,11 +4188,12 @@ orchestrator adds task, skill and mcp). An agentic step fails with "no executor
 for kind 'agentic'" and makes no model call, so no case has the fake `claude`
 answer one. The binary does not port `AgenticExecutor`.
 
-Status: retired for the oracle 2026-09-30; in force for `run` and
-`orchestrate`, which still wire none.
-Retires when: a CLI command wires an agentic executor. `daisugi weave` wires
-`AgenticExecutor` in the oracle (WV-R-9); the ports do not port it and
-refuse a plan with an agentic step (WV-R-10).
+Status: retired 2026-10-09 (SX-R-1). For `weave` it was retired for the
+oracle 2026-09-30 and for the ports 2026-10-02 by PG-3; for `run` and
+`orchestrate` 2026-10-09 by SX-R-1, when the oracle and both ports wired
+`AgenticExecutor` there too (cases `run agentic step runs`, `run agentic
+step sprig`, `run agentic dry run`, `orchestrate reuses delegated pathway`
+and its sprig twin).
 
 **K2-8 (ruling, Go): an envelope the binary cannot check the oracle's way is
 refused before the run.** An invariant whose `expr` asks a model (`llm_check`),
@@ -4191,9 +4205,15 @@ refusal comes after the data directory is set up and is worded as K2-6. The thre
 (`exit_code`, `file_exists`, `file_size_range`) and predicate exprs run as in
 `stage2.verify_completed_step`.
 
-Status: in force.
-Retires when: the binary evaluates `llm_check` and resolves aliases as the oracle
-does.
+Status: narrowed 2026-10-02 by PG-1 and PG-2: the ports ask the model for
+an `llm_check` and word an unresolved alias as the oracle does, in every
+verify and at stage 2, and check a postcondition expr that is not a dict
+as the oracle does. In force for an enforced invariant or postcondition
+whose `expr` is a dict that does not parse as a predicate: the oracle
+raises a ValidationError out of verify there (a traceback, exit 1), and
+the ports refuse with exit 2 before anything is written (1 case, `run
+postcondition expr does not parse`).
+Retires when: does not retire.
 
 **K2-9 (harness): typer.echo drops ANSI sequences on a stream that is not a
 terminal.** A step's output with colour codes printed differently until the
@@ -4226,7 +4246,7 @@ the Rust port's own:
   `URLError: [Errno N] <strerror>` in both. No case reaches a server that
   answers.
 
-Status: in force.
+Status: in force; its K2-5 clause retired 2026-10-08 by RF-4.
 Retires when: K2-3, K2-4, K2-5 and K2-8 retire for both ports.
 
 
@@ -4278,7 +4298,7 @@ reaches one; a Go test does. The compare takes a refused request when every
 line before it is the oracle's and the binary wrote no file the oracle did
 not.
 
-Status: in force.
+Status: in force, narrowed 2026-10-03 by MX-1 (`resources/read`, `resources/subscribe`, `resources/unsubscribe`, `completion/complete`, the `tasks/*` methods and a task-augmented call are answered); its postcondition half narrowed 2026-10-02 by PG-1 and PG-2: `verify_completed_step` and `verify_plan` now answer an `llm_check`, an unresolved alias and an expr that is not a dict as the oracle does (10 cases); a dict expr that does not parse and an evaluation error the binary does not word stay refused.
 Retires when: each of these is ported.
 
 **K3-4 (ruling, Go): stdin that closes while a tool call runs.** The oracle
@@ -4331,12 +4351,13 @@ MemTotal. Every K3 case puts a fake `nvidia-smi` first on PATH, so no case
 probes the box's GPU; the budget comes from the fake GPU, and the CPU count
 and memory are placeholders. The CPU-only recommendation depends on the
 box's memory, so a Go test holds the oracle's answers for fixed profiles.
-`--remote` and `tiers stats` are not in this binary yet (2 cases). The
-"all attempts errored" hint is unreachable in both: the Tier-1 provider
-declines rather than raises.
+`--remote` and `tiers stats` were not in this binary (2 cases); both are
+ported now (TS-1, SR-1). The "all attempts errored" hint is unreachable
+in both: the Tier-1 provider declines rather than raises.
 
-Status: in force.
-Retires when: the binary carries `--remote` and `tiers stats`.
+Status: in force (the probe of the box); the `--remote` and `tiers stats`
+half retired 2026-10-03.
+Retires when: the probe reads the box another way.
 
 **K3-10 (ruling, oracle and Go): onboard's embedder check reads the matcher
 in effect.** The oracle refused when the `sentence_transformers` package was
@@ -4406,8 +4427,8 @@ high stakes`). It now keeps the detail of the `opaque_unrecognized`
 violation, as the Go port does; every other predicate violation is still
 refused where a caller writes it. The other compares do not change.
 
-Status: in force.
-Retires when: the verifier keeps every predicate violation's detail.
+Status: retired 2026-10-02 by PG-1: the verifier keeps every predicate violation's detail, and the Go port words the same details.
+Retires when: the verifier keeps every predicate violation's detail (done).
 
 **K3-R-3 (ruling, Rust): onboard walks the transcript roots in name order
 and does not read a file name that is not UTF-8.** The directories are
@@ -4597,7 +4618,7 @@ carry. `hook report` is reached through gate.sock, which `gate serve`
 answers. `hook list`, `hook to-trace` and the command-line `hook report`
 are in no hook and stay refused with exit 2.
 
-Status: in force for the command-line `hook report` in both binaries; `hook list` and `hook to-trace` retired 2026-09-28 by stage F, for the Go binary and for the Rust binary.
+Status: retired. `hook list` and `hook to-trace` retired 2026-09-28 by stage F, for the Go binary and for the Rust binary; the command-line `hook report` retired 2026-10-02 by PG-6.
 Retires when: the binaries carry them.
 
 
@@ -5409,8 +5430,9 @@ config that names `all-MiniLM-L6-v2` keeps its refusal in the ports
 traceback and the port refuses and rewrites nothing. The guard is 4 in
 the workflow.
 
-Status: in force.
-Retires when: the ports carry MiniLM, `--remote` and `tiers stats`.
+Status: in force, narrowed 2026-10-03: `setup remote` and `tiers stats`
+are ported (TS-1, SR-1), and the guard is 2.
+Retires when: the ports carry MiniLM.
 
 **DL-11 (ruling): the operand writes.** `write_paths.WRITERS` names 15
 commands whose operands are write paths: `cp`, `mv`, `ln`, `install`,
@@ -5837,8 +5859,14 @@ second copy of the root, and a machine path reaches the fixture. The case
 `graft delegate call dotdot out` was written again from a short root
 (`DAISUGI_GATE_SCRATCH`), which gives the fixture's text as it was.
 
-Status: in force.
-Retires when: the gate cases normalize a cut root.
+Status: retired 2026-10-08. Python, Go and Rust write the same cut text
+(each cuts at 200 characters after the path is normalized), so no port
+had a bug: the harness did. Every gate, K2 and weave case root now has
+one length, `fixture_paths.ROOT_LEN` (56), whatever the scratch
+directory, and a root the gate cut short is written as `{ROOT-CUT}`. The
+two dotdot cases were written again at that length. A scratch directory
+too long for it stops the run with a message.
+Retires when: retired.
 
 ## 2026-09-30: `daisugi weave` (ADR-0022, WV-1 to WV-5)
 
@@ -5984,18 +6012,20 @@ Status: in force.
 Retires when: the owner confirms or overturns WV-4.
 
 **WV-R-10 (port): what the ports refuse.** Go and Rust refuse, before
-anything is written, a plan with an agentic step (K2-7 holds in the ports),
-`--max-parallel` above 1 (K2-4), a plan or state file that is not UTF-8, and
-plan JSON their readers do not model (nesting past 900, an int past the
-digit limit). Of 108 weave cases each agrees on 106 and refuses the 2
-ruled.
+anything is written, `--max-parallel` above 1 (K2-4), a plan or state file
+that is not UTF-8, and plan JSON their readers do not model (nesting past
+900, an int past the digit limit). Of 120 weave cases each agrees on 119
+and refuses the 1 ruled. (Until 2026-10-02 they also refused a plan with
+an agentic step; PG-3 retired that.)
 The text of a start mark's write error is each language's own; no case
 reaches it.
 
-Status: in force.
-Retires when: a port wires an agentic executor, or runs a level's steps concurrently.
+Status: in force for the UTF-8 and JSON-reader refusals; its agentic half
+retired 2026-10-02 by PG-3, its `--max-parallel` half 2026-10-03 by MP-1.
+Retires when: the readers take the rest.
 
-**WV-R-11 (harness): earlier runs in a case.** A weave case may hold `pre`
+**WV-R-11 (harness): earlier runs in a case.** (Since 2026-10-09 a weave
+case may also put a fake or a real sprig on PATH, SX-R-7.) A weave case may hold `pre`
 commands, run with the same binary before its command, so a resume case
 finds the receipts that binary wrote; and a `weave_marks` entry, a state
 file with start marks for the laid-out plan file, named by that file's
@@ -6203,8 +6233,8 @@ Status: in force.
 Retires when: does not retire.
 
 **RK-R-9 (ruling): switch cost, decay and the queue.** The switch cost of a
-card, from the ledger only: the receipts of `facts.run.run_id` for the steps
-in `facts.run.downstream`, read from `<data dir>/journal/index.db` opened
+card, from the ledger only: the receipts of `facts.run.run_id` (and of each
+run that resumed it, RK-R-16) for the steps in `facts.run.downstream`, read from `<data dir>/journal/index.db` opened
 read-only (none when it is missing or does not read). A receipt whose
 reversibility is not `none` or `reversible` makes it `follow_up_only` (it
 fired at that receipt's time); so does an alternative set whose every
@@ -6310,6 +6340,4492 @@ holds the plan hash, and a plan that names a path under the scratch HOME
 hashes differently on every run, so the weave cases mint `weave:<16 hex>:`
 and `ch_<12 hex>` like a run id. The rank cases do not: their choice ids are
 the same on every run.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-09-30: rank and executor follow-ups
+
+**RK-R-16 (ruling): a resumed run counts in the switch cost.** When `weave
+--resume` skips a step with attempts and picks up its open card (RK-R-14),
+the run appends one row to `choices.jsonl` when its first step starts:
+`choice_id`, `ranking_id`, `event` `resumed`, `run_id` (this run's id) and
+`ts`. A row that cannot be written stops the step ("the resume of the open
+choice was not recorded: " and the error). The card fold (RK-R-8) keeps,
+per card, the `run_id` of each `resumed` row that reads as a string, once
+each, in file order; a `resumed` row does not close the card and is not an
+answer. The switch cost (RK-R-9) reads the receipts of `facts.run.run_id`
+and of each resumed run, keeps those of the steps in
+`facts.run.downstream`, and orders them by time and then step id; the rest
+of RK-R-9 is unchanged. So a later step a resumed run ran on the choice
+makes the card `costly`, and one it cannot undo makes it `follow_up_only`
+and decays it. The weave case "attempts resumed run counts in the switch
+cost" shows it.
+
+Status: in force.
+Retires when: does not retire.
+
+**EX-R-1 (ruling): the shell step reads its output to EOF.** The shell
+executor reads the merged stdout and stderr until EOF or until the output
+cap (`max_output_size_mb`, unchanged). The reader keeps what it has read
+as it goes. A background child the shell left can hold the pipe open after
+the shell exits, so the wait for EOF is bounded by the step's own time
+(`max_execution_time_s` from the step's start). Past it the executor kills
+the process group and keeps the output read so far; `timed_out` stays
+false when the shell itself exited in time. Before this, Python closed the
+pipe while its reader was still reading (the close waited for EOF with no
+bound, and the reader's result could be read before it was set), and Go
+and Rust gave up two seconds after the exit and kept nothing. Unit tests
+in all three languages: a late background writer is read to EOF, and a
+writer that outlives the step keeps the output read so far.
+
+Status: in force.
+Retires when: does not retire.
+
+**RF-3 (looked for, not reproduced, Rust): k3 "mcp run live failed step".**
+The case disagreed once in about three Rust runs during the rank job. It
+agreed in 10 runs of 10 in one capped run (2026-09-30, after EX-R-1), and
+in the full k3 compare on both ports. Three causes were looked at. (1) The
+shell executor gave up reading output 2 s after the exit and kept nothing
+(fixed by EX-R-1); the case's step is `false`, which prints nothing, so
+this could change only a step with output. (2) The supervisor's per-step
+verify has a 500 ms Z3 budget (`Supervisor(z3_timeout_ms=500)`, the MCP
+`run_plan` path); a cold or starved Z3 can answer unknown, which halts the
+run with "rejected: Z3 returned unknown" instead of failing the step. This
+is the likeliest cause, since it depends on load, and it can hit the oracle
+too. (3) Time normalization rounds to the minute, so it needs 30 s of skew;
+not likely. Nothing was changed for (2): a longer budget for one case would
+hide a real timeout elsewhere.
+
+Status: in force.
+Retires when: the case disagrees again with the full output kept (the compare prints each DISAGREE with its problems).
+
+## 2026-09-30: the delegation tree, steps 1 to 3 (edge_ok, the deadline, the tree ledger)
+
+The design is `docs/plans/2026-09-24-omarchy/design-delegation-tree.md`.
+The owner adopted every recommendation in its open questions (AT-1 to
+AT-7 below). These rulings fix what the oracle (`src/opendaisugi/tree.py`,
+`tree_rule.py`) does, so Go (`internal/tree`) and Rust (`src/tree.rs`)
+follow them as a spec.
+
+**AT-1 (owner): build before sprig.** Steps 1 to 3 of the recommendation do
+not need sprig and are built. Step 4 (coppice: an envelope on a task, the
+proof on `task.create` and `pane.create`) is not built; the adversarial
+test of the session binding in coppice comes first. Step 5 (sprig's
+`spawn` tool) waits for sprig.
+
+Status: in force.
+Retires when: the owner changes it.
+
+**AT-2 (owner): where the budgets live.** Tokens and turns are estimates,
+so they live in a tree ledger the starter keeps (option B). The deadline is
+exact, so it is an envelope field (option A), proved per edge.
+
+Status: in force.
+Retires when: the owner changes it.
+
+**AT-3 (owner): asks go to the nearest foreman, then the operator.** No
+code here changes coppice's holds.
+
+Status: in force.
+Retires when: the owner changes it.
+
+**AT-4 (owner): strict at every edge,** whatever the stakes.
+
+Status: in force.
+Retires when: the owner changes it.
+
+**AT-5 (owner): keep the refusal under physical stakes.** A parent with
+`stakes: physical` starts no agent through the tree (TR-R-6).
+
+Status: in force.
+Retires when: the owner changes it.
+
+**AT-6 (owner): three narrower proposals, then the human.** TR-R-7.
+
+Status: in force.
+Retires when: the owner changes it.
+
+**AT-7 (owner): sprig fleet's operator override** folds into coppice's rules
+when sprig resumes. Nothing built.
+
+Status: in force.
+Retires when: the owner changes it.
+
+**TR-R-1 (ruling): the deadline field.** `Envelope.deadline` is a number,
+seconds since the Unix epoch, read as pydantic reads `float | None` (so `1`,
+`true` and `"1900000000"` read as floats, and NaN or an infinity is
+refused by the finite-number check). It is left out of the JSON schema a
+model sees (`SkipJsonSchema`) and out of every dump when absent
+(`exclude_if`), so prompts, traces and fixtures without one are unchanged;
+the ports' models leave it out the same way (`OmitNone`, `omit_none`). A
+child with no deadline under a parent with one takes the parent's: the
+proof fills it in, and the registered child holds it (inherit, not refuse,
+since the child is still bounded). A child's later deadline is refused.
+The gate does not yet deny a call after the deadline: the deadline is
+proved per edge, not enforced at call time. An `AgenticStep` may carry a
+`child_envelope`, hidden and left out the same way.
+
+Status: retired 2026-10-01 for its last part: the gate enforces the
+deadline at call time (SW-4). The rest is in force.
+Retires when: the gate enforces the deadline at call time.
+
+**TR-R-2 (ruling): `edge_ok` and its parts.** `tree.edge_ok(parent,
+child)` holds when no part below fails. Every failing part is reported, in
+this order, one reason each (values printed by `json.dumps`): a missing
+envelope ("envelope: the parent has no envelope", "envelope: the child
+declares no envelope"; nothing else is checked); `stakes` (lower than the
+parent's); `custom_step_allowlist` (the extra names, sorted);
+`max_execution_time_s`, then `max_output_size_mb` (more than the parent's);
+`deadline` (after the parent's); `shell_interpreter_policy` (looser, in
+the order strict, surface, allow); `invariants`, then `postconditions` (the
+parent's enforced ones the child lacks, compared by their whole dumped
+value, `enforce` included, so a copy with `enforce: false` is dropped; the
+missing types listed); the robot bounds (the first of workspace_bounds,
+velocity_limit, torque_limit, each joint in the parent's order, and the
+count of dropped obstacles); `shell_allow_decomposition`; `file_read`,
+`file_write` and `mcp_allowlist` (a parent pattern of a shape the proof
+cannot read, else the first child pattern that does not fit, each pattern
+proved on its own by Z3, or "the proof for ... did not finish"); the
+network (none in the parent, any host under a list, the extra hosts,
+compared in lower case); `shell` (none in the parent), `shell_allowlist`
+(each child head that is neither a parent head nor a parent head and a
+space; a head with a metacharacter admits nothing and is skipped);
+`shell_interpreter_policy` again when the parent is strict and the child
+allows interpreters (sorted); and the child's enforced invariants with no
+expr whose type is not one of the recognized opaque types. No reason names
+a solver model, since Python, Go and Rust may find different witnesses; a
+Python caller still gets Z3's counterexample on `EdgeResult`, for a parent
+model to read.
+
+Status: in force.
+Retires when: does not retire.
+
+**TR-R-3 (ruling): when Z3 decides the edge.** When every part above holds
+and either envelope has an enforced invariant with an expr, the edge runs
+`envelope_subsumes(parent, child, strict=True)`: a timeout is "proof: the
+proof did not finish in N ms", a failure is "proof: the child admits a step
+the parent does not". With no such invariant, the Z3 query over one shell
+step reduces to the head rule of TR-R-2, which decides it exactly, so Z3
+does not run: Z3's string solver took 1.4 to 2.3 s on a two-word head under
+a one-word parent, close to the 2 s budget, which would make the edge
+depend on load. The lenient paths of `check_skill_delegations` (an opaque
+skill or a timeout as a warning) do not apply: an edge never calls it.
+
+Status: in force.
+Retires when: does not retire.
+
+**TR-R-4 (ruling): the commands.** A hidden group `daisugi tree`: `check
+PARENT CHILD [--json] [--z3-timeout-ms N]` (writes nothing; exit 0 holds, 1
+refused, 2 bad input), `root ENVELOPE --session S [--tokens N] [--turns N]`
+(the operator), `spawn ENVELOPE --parent P --session C [--tokens N]
+[--turns N] [--z3-timeout-ms N]` (the starter; exit 0 started, 1 refused, 3
+sent to the operator as an ask, 2 bad input), `end SESSION [--tokens-used
+N] [--turns-used N]`, `answer ASK allow|deny` (the operator) and `status
+[--json]`. Each takes `--data-dir` (default `~/.opendaisugi`); the writers
+take `--root`, the gate root, default the data directory's `gate`. An
+envelope file is JSON only: a missing file, text that is not UTF-8, JSON
+that does not parse, a document that is not an object, and an envelope that
+does not validate each exit 2 with "Tried to read the envelope in P.", the
+reason and the fix. A session id is 1 to 64 of `A-Z a-z 0-9 . _ -`, no dot
+at either end, never `default` or `no-session`, so it is its own envelope
+file name; a count is 0 to 2**53. A refused spawn prints one line on stderr:
+"not started: the edge from P to C is refused: " and every reason joined by
+"; ". Help texts and click's usage errors are left to the CLI cases.
+
+Status: in force.
+Retires when: does not retire.
+
+**TR-R-5 (ruling): the tree ledger.** `<data dir>/tree/ledger.jsonl`, one
+`json.dumps` line per row, appended and synced, never edited; each writer
+folds, checks and appends under an exclusive `flock` on
+`tree/ledger.lock`, so two starters cannot reserve the same budget. Rows:
+`root` (session, envelope_id, tokens, turns, deadline), `spawn` (parent,
+session, envelope_id, tokens, turns, deadline, proved), `refused` (parent,
+session, reasons), `ask` (ask_id, parent, session, tokens, turns, the child
+envelope as proposed, reasons), `answer` (ask_id, allow or deny) and `end`
+(session, tokens_used, turns_used); each has `ts`. The fold reads rows in
+file order (lines split as `rank._read_rows` splits them); a row that does
+not read or fit is skipped and counted: a root or spawn of a session that
+is a node already, a spawn under a parent that is not running, a refused
+row or an ask from a parent that is not a node, a second ask with one id,
+an answer to no ask or a second answer, an end of a node that is not
+running. A node's `left` on an axis is its budget less, for each child, the
+child's reservation while it runs, or the smaller of its reservation and
+its use once it ended (a child with no use recorded keeps its whole
+reservation); a node with no budget has no `left`. A spawn under a parent
+with a budget must ask an amount, at most `left`. The root's and the
+spawn's registration go into the gate root after the row is appended, so a
+failure in between leaves a node with no envelope, which the gate denies.
+`end` refuses a node with running children and removes the ended node's
+envelope file, so the gate denies its later calls. `status` lists the nodes
+depth first in the order they were made, then the open asks.
+
+Status: in force.
+Retires when: does not retire.
+
+**TR-R-6 (ruling): what a spawn refuses before the proof.** In this order:
+a session id or count that does not read (exit 2); a parent that is not a
+running node; a child session that is a node or has an envelope file
+already; an open ask for the same child session (exit 1 each, no row).
+Then the reasons, each recorded in the refused or ask row: a parent with
+`stakes: physical` ("stakes: the parent's stakes are physical, so it cannot
+start an agent", AT-5, with no edge check), else the edge's reasons (a
+parent whose envelope file is missing or does not validate has no
+envelope), then the budget reasons. `tree check` keeps no such refusal: it
+only proves.
+
+Status: in force.
+Retires when: does not retire.
+
+**TR-R-7 (ruling): three refused proposals, then the operator.** A parent's
+count of refused proposals rises with each `refused` row and goes back to
+0 on a spawn under it or on an answer to one of its asks. The proof always
+runs first: a proposal that holds starts the child whatever the count.
+When the count is 3 or more, a refused proposal is written as an `ask`
+row, not a `refused` row, and the spawn exits 3 with the ask id and the
+command the operator answers it with. The ask id is `ask_` and the first 12
+hex digits of the SHA-256 of `json.dumps([parent, session, envelope, n],
+sort_keys=True, separators=(",", ":"))`, where `envelope` is the child's
+dump and `n` the number of asks before it. `answer deny` closes the ask.
+`answer allow` registers the child as proposed, with the parent's envelope
+id as its `parent_envelope` when the parent has one, and appends the
+answer and a `spawn` row with `proved: false`. In this order the parent
+must still run, the session must still be free, the budget must still fit,
+the parent's stakes must not be physical (AT-5 holds under an allow too:
+"stakes: the parent's stakes are physical, so it cannot start an agent.",
+"Deny the ask."), and the child must fit inside the root of its branch (`edge_ok` from the
+root's registered envelope; "The child does not fit inside the root R: "
+and the reasons, "Deny the ask, or register the child as a root of its
+own."), else it refuses and writes nothing. So an allow never widens the
+tree past its root, and every node stays inside the root the operator set;
+`status` marks such a node "operator allow, not proved", meaning not proved
+against its parent. Under the root itself an allow can start only a child
+whose ask came from the budget, since the root's proof is the parent's.
+
+Status: in force.
+Retires when: coppice carries the ask.
+
+**TR-R-8 (ruling): `gate register --parent P`.** It proves the edge from
+P's registered envelope (P may be `default`) to the file's envelope before
+it registers, and adds no ledger row: budgets are the tree's. It needs
+`--session`, a session id the tree takes, and a child session with no
+envelope registered yet. A refusal is one line on stderr, "not registered:
+" and the reason, exit 1, and nothing is written. The registered child
+holds the parent's envelope id as `parent_envelope` and the deadline as
+proved.
+
+Status: in force.
+Retires when: does not retire.
+
+**TR-R-9 (ruling): who writes the tree.** The gate denies, before any
+envelope check, in every mode, with no operator ask, a shell line that
+names a daisugi word, then `gate`, then `register` or `init`; a daisugi
+word, then `start`; or a daisugi word, then `tree`, then `root`, `spawn`,
+`end` or `answer`, with `rank_rule`'s words (`tree_rule.py`). Each of these
+registers an envelope: an agent that could run one could give itself any
+authority, and one that could spawn could name a wider ancestor as its
+child's parent. `gate init` registers the starter envelope; `start`
+registers one for a new session and runs a harness under it. `tree check`,
+`tree status` and `registry init` pass. As with the rank rule, a line that
+names the words for another reason is denied too (`daisugi status && npm
+start`): run the two apart. Not covered, and not in this job: `daisugi gate
+disarm` switches the gate off and no rule denies an agent's run of it
+today; nor does anything deny `gate arm`. The starter's
+own process is not gated; sprig and coppice will spawn as the starter,
+binding the parent from the caller's pinned session, not from an argument.
+The session binding is the gate's existing pin: a payload never selects an
+envelope, and a pinned session with no envelope of its own is denied,
+never given `default` (SEC-3); the tree only adds that a child session is
+named, never `default`.
+
+Status: in force. Since 2026-10-01 the line is read per simple command
+(SW-2), so `daisugi status && npm start` passes, and `gate disarm` and the
+other verbs that change enforcement are denied (SW-1).
+Retires when: does not retire.
+
+**TR-R-10 (ruling): the agentic step's child envelope.** `AgenticExecutor`
+proves `edge_ok(caller, step.child_envelope)` before anything starts and
+fails the step with "the child envelope is refused: " and the reasons. A
+step with no child envelope restates the caller's own, which the edge
+proves at once. The tool wall comes from the child envelope, which is
+registered under a session the executor picks (`agentic-` and the step id,
+made safe), and the sub-agent's gate is pinned to it; nothing is
+registered as `default` in its gate root. Since 2026-10-02 the ports do
+the same (PG-3).
+
+Status: in force, now for the oracle and both ports.
+Retires when: does not retire.
+
+**TR-R-11 (found and fixed, Rust): an invariant on the command in a
+subsumption proof.** Rust's subsumption seeds the scope's `ctx__command`
+as the shell admission's `ctx_command`, but the scope handed the invariant
+compiler its own name, so Z3 met an undeclared constant, the check failed
+with an error, and any skill delegation or edge with an enforced invariant
+on `command` was refused in Rust and held in Python and Go. Fail closed,
+but a disagreement. The scope now hands back the seeded name. The tree
+cases with invariants show it.
+
+Status: in force.
+Retires when: does not retire.
+
+**TR-R-12 (harness): the tree cases.** `clients/tree_cases.py` writes
+`clients/fixtures/tree`; `clients/tree_compare.py` runs them as the rank
+compare does. A grown tree is laid out as the commands write it: the
+ledger with times relative to the run and the registered envelopes (0600
+in a 0700 directory). Deadlines in the cases lie in 2030, outside the
+normalizer's window. CI compares tree with `--max-refused 0`. 31 gate
+cases (`tree rule ...`) cover TR-R-9.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-01: the owner's verbs, GR-8 in the ports, the deadline at call time
+
+**SW-1 (ruling): the verbs that change how the gate enforces are the
+operator's.** The gate denies, before any envelope check, in every mode,
+with no operator ask, an agent's shell line that runs `daisugi gate
+disarm` (turns the gate off), `gate arm` (turns it on again: the operator's
+switch either way), `gate serve` (starts the resident gate, the process the
+hooks trust for a verdict; an agent's own server could answer from an
+environment it chose), `install` (writes the gate hook, sets its mode,
+removes it with `--uninstall`; the whole verb, so `--dry-run` and
+`--print-skill` are denied too), and `graft install` and `graft remove`
+(write and remove the graft rules). Refusal: `only the operator changes how
+the gate enforces. Run it yourself.` (`owner_rule.py`). The CLI was audited
+command by command (`daisugi help --all`, and the callers of `disarm`,
+`arm`, `register_envelope`, the hook writers and `save_config`). Already
+denied: `gate register`, `gate init`, `start`, the tree verbs (TR-R-9) and
+`rank record` (SEC-5). Considered and not denied: `gate check` (decides one
+payload, changes nothing), `gate settings` (prints JSON), `gate status`,
+`report`, `replay`, `audit` and `proposals` (read only); `tiers setup
+--matcher` and `--wire` (rewrite config.yaml through `save_config`, which
+keeps every setting it reads, `dialect_enforce` and `verifier_client`
+included; the matcher and the model tier do not change a verdict); `voice
+arm` and `voice disarm` (a pane's direct-send grant in the voice bridge,
+not the gate); `coppice *` (an operator answer through the floor is the
+pane rule's); `onboard`, `tend`, `registry`, `gateway`, `router stop`
+(pathways, the proxy, the router: no verdict changes). `router label`
+joins the list when it is built (SW-12). Since 2026-10-01 the file writes are closed too (SW-17).
+Not covered when this ruling was written: the gate did not stop an
+agent whose envelope allows the file writes from doing the same by file:
+checked 2026-10-01 with `file_write: ["/**"]` and `touch` allowed, the
+Python gate allows `touch <gate root>/DISARMED`, a Write to the marker, to
+`<gate root>/grafts/*.json` and to `<gate root>/envelopes/default.json`,
+and `rm` of a rule file. Only `config.yaml` beside the gate root is guarded
+(the daisugi config rule). An envelope that grants writes under the data
+directory grants the operator's switches; a write rule for the gate root is
+the follow-on, for the owner to rule on (its cost is that every shell line
+naming the gate root, reads included, would be denied).
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-2 (ruling): the owner's verbs are read per simple command.** The rank,
+tree and gate-change rules share one reading (`owner_rule.runs_verb`). The
+line goes through `shell_decompose`; each simple command (substitutions
+included) is split with `shlex`. A word whose last path part is `daisugi`,
+`daisugi-py` or `opendaisugi`, or starts with `opendaisugi.`, is a head,
+wherever it stands among the words, so any path, `env`, `nohup`, `uv run`
+and `python -m opendaisugi[.cli]` are seen. The head's arguments are the
+later words that do not start with `-`. The first that names a top-level
+command (`COMMANDS`, every command of the CLI, hidden ones included) is the
+command; for `gate`, `graft`, `rank` and `tree`, the first later argument
+that names one of the group's subcommands is the subcommand. Any other word
+is skipped: the root takes no option with a value, so skipping can only
+find more. A hit is a command, or a command and subcommand, in the rule's
+verb list. A test pins the tables to the CLI. Four fallbacks read words in
+order as SEC-5 does (a head word, then the verb's words): a line that does
+not decompose or whose parse raises, a simple command `shlex` cannot split,
+a simple command that holds a form `shlex` splits differently from bash (a
+backslash-newline line continuation, `$'...'` or `$"..."`), and a word with
+a character outside SEC-5's word set (the payload of `sh -c`, `bash -lc`, a
+quoted message). The word reading now joins a backslash-newline before it
+drops backslashes and quotes, so `daisugi gate dis\<newline>arm`, which
+bash runs as `gate disarm`, is a hit; SEC-5's reading missed it. Without the
+third fallback the per-command reading missed `daisugi $'rank' record` and
+a line continuation inside the verbs, which SEC-5's reading caught; it was
+found in review and closed the same day (`owner rule shlex gap` cases). So `daisugi status && npm start` and
+`daisugi status; yarn start` pass; `npm test && daisugi start`, `x=$(daisugi
+tree end kid)`, `sh -c 'daisugi gate disarm'` and `daisugi gate disarm; (`
+are hits; `echo daisugi gate disarm` and `git commit -m 'daisugi start
+now'` are hits too (the rule does not know what echo or git does with its
+words). A verb built at run time (a variable, a command substitution
+used as a word, `$'\x..'` escapes) is not seen. Changed from the word reading: `daisugi\trank\nrecord` runs
+`daisugi rank` and then `record`, so it is no hit; `daisugi<NBSP>rank
+record` names no daisugi command (the shell does not split at a no-break
+space), so it is no hit.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-3 (port): the frames of the owner rules.** `_decide` calls
+`rank_record_hit`, which calls `shell_hit`, `runs_verb`, `_simple_commands`
+and `decompose_command`: the ports open one frame for each, so a long
+`&&` chain raises RecursionError at the oracle's depth. Measured with the
+depth logs: the rules decompose at the same depth as the floor rules. The
+13 `owner chain` cases (955 to 980 links) agree; at 979 links the floor
+rule's own fallback is the hit.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-4 (ruling): the deadline at call time.** After the hard-deny rules
+and before the envelope, `_decide` denies a call when the envelope that
+checks it has a `deadline` and the time is after it (equal passes):
+`the envelope's deadline D (Unix seconds) has passed; it starts no new
+work`, D as `json.dumps` writes the float. It is an ordinary deny: audit
+mode allows it as a would-deny, its tier is permanent (no clause), and an
+operator ask may allow it; an operator's edit is checked again and denied
+past the deadline. Every path reaches it: each `apply_patch` path goes
+through `_decide`, and the resident gate runs the same code (two
+`gate_server` cases). The clock is `time.time()`, or
+`DAISUGI_GATE_NOW` when that is 1 to 12 ASCII digits with at most a point
+and 1 to 6 digits and is later than the real time. A pin can only add
+denies; it never extends a deadline. Cases use deadlines in 2096 with pins
+on each side.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-5 (note): GR-8 was already in the ports.** The brief asked for the
+operator-edit fix (Python 6a0ad499) in Go and Rust. It landed there with
+the subsumption and session-binding work (Go `recheckEdit`, `ask.go`; Rust
+`recheck_edit`, `ask.rs`), with the `operator edit *` gate cases. This job
+adds two cases, an edit into `daisugi gate disarm` and an edit after the
+deadline, and retires GR-8.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-01: the delegate's code write (RT-1)
+
+**SW-6 (ruling): code_write returns a draft and writes nothing.** The
+`delegate` MCP tool takes `mode` `bulk_read` (the default) or `code_write`;
+any other mode is refused with `mode 'X' is not built; the modes are
+bulk_read and code_write`. For a code write, `question` is the request.
+The checks before the worker are the bulk read's (an absolute path, a
+question, a readable default envelope, not physical stakes). The target
+exists when `os.path.lexists` says so (so a dangling symlink exists); then
+it is measured as a bulk read measures it (a regular UTF-8 text file of at
+most 512 KiB, no NUL) and refused as one when it does not measure; else the
+worker drafts it from the request alone, `lines` is null and nothing is
+read. The worker gets `WRITER_SYSTEM` and the request, the file name and
+the file text (or "The file does not exist yet. Write it whole."), with
+`max_tokens` 8192 and a JSON object reply: `{"form": "file"|"diff",
+"text": "..."}`. The reply is read as the bulk read's (one surrounding
+fence stripped). Refusals, each a journal row: not the JSON object asked
+for; `has no form of file or diff`; `has no draft text`; `the draft is
+longer than 524288 characters`. A file draft applies. A diff against no
+file does not apply: `there is no file to apply a diff to`.
+
+Changed 2026-10-01 (SW-18): a code write opens its target without
+following a symbolic link, so a link there, dangling or not, is refused
+with `it is a symbolic link`.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-7 (ruling): the diff applier.** `delegate.apply_diff` reads the diff's
+text split at each newline, less one empty last line. Before the first
+hunk, empty lines and lines that start with `---`, `+++`, `diff ` or
+`index ` are skipped; any other line does not apply (`line N before the
+first hunk is not a diff header`, N counting from 1). A line that starts
+with `@@` starts a hunk, and the rest of it, the line numbers and counts
+included, is not read: workers get them wrong, and the lines locate the
+hunk. In a hunk a line that starts with a space is context, `-` removed,
+`+` added, and an empty line is an empty context line. A line that starts
+with `\` does not apply (`line N is a \ line (no newline at the end),
+which the applier does not read; send a whole file instead`); any other
+line does not apply (`line N is not a context, removed or added line`). No
+hunk: `the diff has no hunk`. The file's lines are its text split at each
+newline, so line endings are literal (`\r` stays in the line) and a last
+newline gives an empty last line. Each hunk's old lines (context and
+removed) must match the file's lines exactly once at or after where the
+hunk before it ended: `hunk K has no context or removed lines, so it has
+no place in the file`, `hunk K does not match the file`, `hunk K matches M
+places in the file`. They are replaced by its new lines in memory. No
+fuzz, no whitespace folding.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-8 (ruling): the draft's result and its row.** The result has the bulk
+read's keys and four more: `form`, `applies`, `apply_reason` (null when it
+applies) and `draft`, the draft in a fence of backticks one longer than the
+longest backtick run in it and at least three, with info string `diff` for
+a diff and none for a file, and a newline before the closing fence when the
+draft does not end with one. `untrusted` is `DRAFT_NOTE`; `answer`,
+`exact_text` are null and `quotes` empty. A bulk read's result carries the
+four keys as null. The journal row gains `form` and `applied` (null when
+refused or for a bulk read; true for a file draft). A code write's row,
+refused or not, has `estimated` false, `frontier_tokens_kept` and
+`frontier_dollars_kept` null: a draft keeps no frontier tokens off the
+context that could be estimated, since the frontier still writes the file.
+Its worker tokens and billed cost are recorded as a bulk read's. The port
+hands back a draft that holds a lone surrogate, as it does an answer.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-9 (ruling): the gate's check of a code write.** `_decide_delegate_call`
+checks a `code_write` call (the `mode` argument the string `code_write`) as
+a read of the normalized path only when `os.path.lexists` says the target
+exists; for a new file it skips the read. The network send to a remote
+worker, the absolute-path rule and the physical-stakes refusal are as for
+a bulk read; the send now runs in its own function (`_delegate_send`), and
+the ports open a frame for it. Any other mode value is checked as a bulk
+read. The write itself is not checked here: the tool writes nothing, and
+the frontier's own Write or Edit goes through the gate.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-01: the promotion meter (GR-6, GR-7)
+
+**SW-10 (ruling): the operator's label.** `daisugi router label SESSION
+OUTCOME [--note TEXT] [--data-dir D] [--json]` appends one row to
+`<data dir>/router/labels.jsonl` (the directory made as needed, the file
+0600 when new): `{"at": ISO, "session": SESSION, "outcome": OUTCOME,
+"note": TEXT or null}`. OUTCOME is `pass` or `fail`; any other is a usage
+error, exit 2 (`Error: OUTCOME must be pass or fail.`). SESSION must be a
+session id as the gate writes it, that is equal to `_safe_session_id` of
+itself (`Error: SESSION must be a session id as the gate names it: 1 to 128
+of A-Z a-z 0-9 . _ -, with no dot at either end.`, exit 2). A note over 500
+characters is a usage error (`Error: --note must be at most 500
+characters.`). A write that fails prints `Error: the label could not be
+written to PATH.` and exits 1. Output: `labeled SESSION: OUTCOME`, or the
+row as JSON with `--json`. The meter reads the rows that are JSON objects
+with a `session` that passes the same test and an `outcome` of pass or
+fail; the last row for a session wins, so a label can be corrected. A
+session with no label does not count.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-11 (ruling): no weave or rank verdict is keyed by a gate session.**
+The brief asked the meter to read the verdict weave and rank record where a
+session ran one. Checked: weave journals a run under its run id (`traces.run_id`,
+`run_status`), and its agentic steps run their gate under the session
+`agentic-` and the step id, in a temporary gate root (`agentic_executor.py`),
+so none of it reaches the gate audit logs the meter reads, and no id is
+shared. A rank attempt carries tests and features but no session field
+(`rank.py`, `_RESULTS`), and a card's run is a weave run id. A join on
+anything but an equal id would be a guess, so the meter reads only the
+operator's labels. A verdict source keyed by the gate session (a harness
+hook, or weave naming its gate sessions by run) is the follow-on.
+
+Status: in force.
+Retires when: weave, rank or a hook records a verdict under the gate's session id.
+
+**SW-12 (ruling): `router label` is the operator's.** The gate denies an
+agent's shell line that runs `daisugi router label` (SW-2's reading, the
+group `router` with subcommands `label`, `status`, `stop`), with refusal
+`only the operator labels a task's outcome. Label it yourself.` (the
+label rule, after the gate change rule). As with SW-1, an envelope that allowed writes to
+`<data dir>/router/labels.jsonl` let an agent append a label by file; since
+2026-10-01 the gate state rule guards that file (SW-17).
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-13 (ruling): the arm of a session.** A graft rule may have the state
+`trial`, which acts (it joins `audit` and `active`), and an optional
+`"trial": {"seed": N}` (an integer from 0 to 2**53; anything else makes the
+file a bad rule: `trial must be an object with an integer seed from 0 to
+2**53`); the seed is 0 when absent. For a rule in `audit` or `trial`, every
+graft record of a matched read carries `arm`: `graft` when the first 8 hex
+digits of the SHA-256 of `SEED:ID:VERSION:SESSION` (UTF-8) read as an
+integer are even, else `control`. SESSION is the safe session id the audit
+file is named by: the pin, else the payload's. The arm is set as the graft
+record is made, before the worker and envelope checks. In `_maybe_graft`,
+after the envelope check: an audit rule only records; a trial rule only
+records in the control arm (`the session is in the trial's control arm: the
+read is not denied`); an audit-mode gate only records; else the read is
+redirected. The meter reads the recorded arm and never recomputes it.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-14 (ruling): a session's billed cost.** The meter prices a session from
+its Claude Code transcript: the last `transcript_path` string among the
+session's audit records (by file line) that is an absolute path. It is
+opened as the delegate opens a file (read only, non-blocking,
+close-on-exec, checked on the open descriptor), and read only when it is a regular file of at most 64 MiB;
+else the cost is unknown. The bytes are decoded as UTF-8 with replacement
+and split at each newline; each line that reads as a JSON object (other
+lines, too-deep ones included, are skipped) with `type` `assistant`, a
+`message` object and a `usage` object is a message. Messages with the same
+`message.id` string are one message, priced from the last such line (Claude
+Code writes one line per content block with the same usage); a line with no
+id string is its own message. A token count is an integer from 0 to 2**53
+(a bool, a float, a negative or larger number reads as 0): `input_tokens`,
+`cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens`.
+Dollars are the gateway's list prices per million tokens for
+`message.model` (input, cache read at 0.1 of input, cache write at 1.25,
+output), summed in message order; a model the table does not name is priced
+at the fallback (3.0, 15.0) and makes the cost estimated. Quota tokens are
+the four counts summed. These are API list prices: on a subscription the
+binding limit is the quota, shown beside them. Delegation rows carry no
+session, so a remote worker's cost is not in a session's cost: when the
+rule allows a remote worker the graft arm's cost is a lower bound and is
+marked estimated. A local worker costs nothing, so the default is exact.
+
+Status: in force.
+Retires when: a delegation row carries the gate session.
+
+**SW-15 (ruling): the trial table and what promotion would do.** With an
+acting rule in `audit` or `trial`, `router status` adds a `trial` object
+(JSON) and section (text); else `trial` is null and there is no section.
+The trial's sessions are those with at least one graft audit record for the
+rule (same id and version) with an arm of `graft` or `control`, in id
+order; a session whose records name both arms is left out and counted
+(`conflicting`). Per arm: `sessions`, `labeled`, `passed`, `failed`,
+`unlabeled`, `cost_unknown` (labeled sessions with no readable transcript),
+`billed_dollars` and `quota_tokens` (summed over labeled sessions with a
+known cost, in id order), `estimated`, `success_rate` (passed / labeled, or
+null), `dollars_per_success` and `quota_per_success` (the sums over passed,
+null when nothing passed or a labeled cost is unknown). The verdict, first
+that holds: the rule is in audit (`none`); either arm has fewer than 3
+labeled sessions (`wait`); the graft arm's success rate is below the
+control's (`retire`); a cost per success is null (`wait`); the graft arm's
+cost per success is lower (`promote`); else `keep`. Nothing is changed:
+the text says what promotion would do, and the operator does it. Money is
+printed with 4 decimals, rates with 2.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-16 (fix): the weekly `estimated` flag.** A week was marked estimated
+when any delegation in it was ok. A code write's row is not an estimate, so
+the week is now marked when a turn, or an ok delegation row whose own
+`estimated` is true, is in it.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-01: the gate's own state (SW-17 to SW-20)
+
+**SW-17 (ruling, controller): no agent writes the gate's own state.** The
+gate denies, in every mode, with no operator ask that can turn it
+(`pane_rule` true), every agent write it can place under a protected path
+(`gate_state_rule.py`, after the label rule and before the deadline).
+Reads stay allowed. Refusal, one line that names the protected path as
+written: `the gate's own state is under DIR; only the operator writes
+there.`
+
+The data dirs are `~/.opendaisugi`, and the gate root's parent when the
+gate root is named `gate`. A gate root with another name (the temporary
+root of an agentic step, `daisugi-agentic-gate-*` in the temp directory)
+protects only itself, so the temp directory is not a data dir. The
+protected paths, in this order: the gate root in force (the disarm marker,
+`envelopes/`, `grafts/`, `asks/`, `answers/`, `audit/`, `operator.json`);
+then under each data dir `gate` (the default gate root), `router` (labels
+and delegations, which the meter reads), `journal` (the traces and their
+receipts, `index.db`, `rankings/choices.jsonl`), `tree` (the ledger),
+`gateway` (`turns.jsonl`, which the weekly measure reads, and
+`answers.jsonl`, which the gateway serves back), `weave` (the run files a
+resume reads) and `envelope_cache.db` (the envelopes a run reuses).
+`config.yaml` keeps its own rule, which also denies reads (DL-15). Not
+protected: `pathways.db`, `sessions/`, `local_tier1.json`, `alerts.yaml`,
+`split_cache.db`.
+
+A write is placed as the config rule places a path: `~`, `$HOME` and the
+XDG homes expanded, a relative path joined to the call's cwd, and the
+typed and the `realpath` spelling both checked (so `..` and a symlinked
+parent are followed). The protected paths are checked as written and as
+resolved. A write hits when it lands under a protected path, or when a
+protected path lies under it: `rm -r`, `mv` or `chmod -R` of the data dir
+or of any directory above it. So `cp x ~` hits too (cp may replace its
+destination), and so does a Write whose path is `~`.
+
+The writes, by record:
+
+- file_write (Write, Edit, MultiEdit, each `apply_patch` path): the path.
+  `NotebookEdit` is not in the gate's classification map and is denied
+  as an unknown tool before this rule.
+- shell: the rule runs only when the line names a data dir, or a gate root
+  not named `gate`: the path as text with a path boundary after it (end,
+  `/`, white space, a quote, a backtick, `;&|()<>:,`), a word or redirect
+  the floor reading places under it (each cd followed; after a cd the gate
+  cannot follow, a relative word whose parts hold the data dir's last part,
+  `.opendaisugi`), or a cwd under it. A sibling with the same prefix
+  (`<data>2`) is not named. On such a line, the write paths are those
+  `write_paths.step_write_paths` reads (redirects and the operands of its
+  15 writers), plus every operand of `ln` and of `cp` with `-l`, `-s`,
+  `--link` or `--symbolic-link`, since a link made now is a door to a
+  later write (a hard link to an envelope, then a write to the link). The
+  line is denied, naming the data dir it names, when `step_write_paths`
+  cannot read its writes (a variable, a glob, a substitution, a cd before
+  a relative write), when a write is relative and the call has no cwd, or
+  when a simple command is neither one of the 15 writers nor a read-only
+  command (`READ_ONLY`: `cat`, `ls`, `grep`, `head`, `tail`, `jq`, `wc`,
+  `find`, `stat`, `diff`, `echo`, `cd` and 31 more; a `find` with
+  `-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, `-fls` or `-fprint*` is
+  not read-only). So `python`, `git`, `tar`, `curl`, `chmod`, `sh -c` and
+  any command the gate does not know are denied on a line that names a
+  data dir, a read included (`git -C ~/.opendaisugi log`), and follow
+  today's rules elsewhere. `chmod` and `git` were not added to
+  `write_paths.WRITERS`: that table feeds `forall_writes` and the dialect
+  hash.
+- mcp: each string argument placed as a path from the cwd (`/` with none),
+  and the cwd itself; a hit is one under a protected path (a directory
+  above one is not a hit here). An MCP tool's reads and writes look the
+  same, so a read of the state through MCP, the delegate's included, is
+  denied too.
+
+Any error in the check is a hit, named as the gate root. The rule
+decomposes a line no deeper than the floor rule (frame 13 for the names
+pass and the write paths, 12 for the command scan), so it never raises
+where the floor rule passes; an `sh -c` payload is decomposed deeper and
+raises nearer its own limit (gate cases `gate state sh chain N`). The
+ports open the oracle's frames; Go and Rust agree on all 157 `gate state`
+cases and on the whole gate fixture (2,094). The two `daisugi config mv
+dir` cases (`mv {ROOT}/data /tmp/x`) now deny: they move the gate root.
+
+Cost if wrong: an agent cannot edit gate files the owner wanted it to, and
+an unknown command on a line that names the data dir is denied; the
+operator runs it. Reversible.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-18 (ruling): a code write opens its target without following a
+link.** The gate checks a code write's target as a read only when it
+exists at hook time (SW-9). A parallel call could plant a symlink there
+before the tool reads, and the tool would read and send what the link
+names. `delegate.measure(path, follow=False)` adds `O_NOFOLLOW`; `ELOOP`
+gives `it is a symbolic link`, so the tool refuses with `the file cannot
+be delegated: it is a symbolic link`, journals the refusal, and calls no
+worker. A link in a parent directory is still followed (a race there is
+not closed). A bulk read still follows a link, since the gate checked its
+read on the resolved path. The k3 case `code write link` now refuses; Go
+`MeasureFileFollow` and Rust `measure_follow` do the same.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-19 (cases): the 512 KiB draft limit.** `MAX_DRAFT_CHARS` counts
+characters. Two k3 cases give a file draft that starts with one two-byte
+character: at 524,288 characters (524,289 bytes) it applies; at 524,289
+characters it is refused with `the draft is longer than 524288
+characters`. A port that counted bytes would refuse the first. Go and
+Rust agree. The two cases add about 3 MB to the k3 fixture.
+
+Status: in force.
+Retires when: does not retire.
+
+**SW-20 (ruling): `graft install --state trial`.** `--state` takes
+`audit`, `trial` or `active` (`Error: --state must be audit, trial or
+active.`). With `trial` the rule file gets `"trial": {"seed": N}` after
+`worker`, N from `--seed` (default 0). `--seed` without `--state trial` is
+a usage error (`Error: --seed needs --state trial.`), as is a seed below 0
+or above 2**53 (`Error: --seed must be from 0 to 2**53.`); both exit 2,
+after the id and state checks and before the line check. A seed that is
+not an integer is Click's usage error. The install line reads `state
+trial, seed N`. `graft status` shows `state trial (seed N)` and a
+`trial_seed` key on each JSON row (null unless the state is trial). The
+gate denies an agent's run of it (SW-1). 10 cli cases (`graft install
+trial ...`, `graft install seed without trial`, `graft status trial`), and
+the status JSON cases gained the key; Go and Rust agree.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-01: stage H in Go and Rust (the voice bridge)
+
+`daisugi voice serve`, `ptt`, `arm` and `disarm` in both binaries, with the
+`voice-probe` instrument. `clients/voice_cases.py` writes 430 cases from the
+oracle: 271 probes of the pure parts, 118 cli cases and 41 server cases
+(raw HTTP to `voice serve`, a fake `whisper-cli`, a fake coppice socket in
+the scratch directory, a fake upstream for cleanup). Go and Rust each agree
+on all 430. The cases were written before they were run on a port, but
+the ports were written before the cases ran against them: red was shown
+after, on the Go binary of 2026-09-30, which has no voice verbs. There,
+two `arm` cli cases were refused, and of the 59 cases whose name holds
+`serve ` 42 disagreed and 16 were refused. Red was not shown for Rust.
+
+**VO-0 (oracle extension): the whisper.cpp engine.** The oracle ran its
+speech model in process (faster-whisper, or parakeet through sherpa-onnx),
+so it had no engine command line to case, and the ports cannot import a
+Python package. The plan names whisper.cpp. `engines.WhisperCppEngine`
+runs `whisper-cli -m MODEL -f CLIP -l LANG -nt -np` with the clip in a
+temp file (`daisugi-voice-*.wav`, removed after), `-l auto` when no
+language is given, and joins stdout's stripped non-blank lines with a
+space. A missing binary or model file is EngineUnavailable (exit 3 from
+`voice serve`); a nonzero exit names the code and the last stderr line
+(a 500 from the server). `voice_engine: whisper.cpp` names it, with
+`voice_model` the ggml file; no config field was added. `prereq` counts
+`whisper-cli` on PATH as a speech engine. The facts are pinned in
+`pins.py` from the upstream CLI source. `modules` does not list it yet
+(VO-8).
+
+Status: in force.
+Retires when: does not retire.
+
+**VO-1 (ruling): faster-whisper in the ports.** A port cannot load it.
+`voice serve` under `voice_engine: faster-whisper` (the default) exits 3
+with `faster-whisper needs the Python build of daisugi. Set voice_engine:
+whisper.cpp and voice_model to a ggml model file.` The sentence avoids
+"not installed", so coppice does not show its pip hint for it. The prereq
+probe reports `faster_whisper_available` false and `ok` only when
+`whisper-cli` is on PATH (`port_expect` on 5 cases). No case starts the
+oracle's server under faster-whisper: that loads a real model.
+
+Amended 2026-10-01 (VO-13): the sentence is now `faster-whisper needs the
+Python build of daisugi. Set voice_engine: moonshine to use Moonshine
+instead.`, and it applies only where a config names a voice_model other
+than the default `tiny.en` with faster-whisper (`port_expect` on 4 cases).
+A config whose voice settings are unset or at their defaults runs
+Moonshine (VO-13). The oracle now runs with faster_whisper hidden, so the
+prereq cases need no `port_expect`.
+
+Status: in force.
+Retires when: does not retire.
+
+**VO-2 (ruling): parakeet in the ports.** Refused the same way, naming
+sherpa-onnx (`port_expect` on `pick parakeet`).
+
+Status: retired 2026-10-01 by VO-11.
+Retires when: the parakeet engine is removed (done).
+
+**VO-3 (ruling): deliver through coppice only.** The oracle's
+`pick_backend` tries coppice, then herdr, then tmux under `backend: auto`,
+and a named one literally. The ports reach a pane only through coppice,
+with the verbs the oracle uses (`server.status`, then `pane.list` for the
+pane's kind, then `pane.send_text` with `enter: true`, or `agent.prompt`
+with `wait: false` and `timeout_ms: 60000` for a headless pane), each on
+its own connection with ids from 1. Under auto with no coppice answering,
+and under a backend named herdr or tmux, the ports answer 503
+`no_pane_backend` with their own sentence (`port_expect` on 2 cases). A
+send never reaches a backend the oracle would not use; preview and an
+unarmed send reach none.
+
+Status: in force.
+Retires when: herdr and tmux backends are ported.
+
+**VO-4 (ruling): a clip that is not a WAV, with no ffmpeg.** The oracle
+falls back to the av package. The ports have no decoder of their own and
+answer 400 `bad_audio`. Stricter, never looser. The cases give garbage
+bytes, which both sides refuse.
+
+Status: in force.
+Retires when: does not retire.
+
+**VO-5 (ruling): the microphone.** The oracle records through
+sounddevice (PortAudio). The ports record through `arecord` (alsa-utils),
+started on the first space and stopped with SIGINT on the second, the
+whole press read at once; with no `arecord` the session ends with one
+sentence. The state machine (`run_ptt`, `record_and_send`) is cased with
+scripted keys, streams and client answers; the recorder has a unit test
+with a fake `arecord` in each port. Raw terminal mode and a real device
+are not tested.
+
+Status: in force.
+Retires when: a hand check on a real microphone passes.
+
+**VO-6 (ruling): JSON bodies that are not UTF-8.** `json.loads(bytes)`
+reads UTF-16 and UTF-32. Rust reads them too; Go answers such a `/deliver`
+body 500. No case sends one.
+
+Status: in force.
+Retires when: Go decodes UTF-16 and UTF-32.
+
+**VO-7 (ruling): proxies in the ptt client.** urllib honours
+`http_proxy`; the ports' client does not use a proxy. The voice server is
+loopback or a tailnet address.
+
+Status: in force.
+Retires when: does not retire.
+
+**VO-8 (follow-up): `modules` and whisper.cpp.** The module map lists
+faster-whisper and parakeet only, on all three sides. Listing whisper.cpp
+changes the cli and k4 fixtures and both ports' modules; it is left for a
+change of its own.
+
+Status: retired 2026-10-01. The voice engine stage now lists
+faster-whisper, moonshine and whisper.cpp on all three sides, and no
+parakeet. An engine is ACTIVE when it is the one the config means (VO-13:
+with the voice settings unset or at their defaults, faster-whisper where
+it imports, else Moonshine) and it is there (the package, or its binary on
+PATH); AVAILABLE when it is there; POSSIBLE otherwise. 81 k4 cases and 3
+cli cases changed. Red was shown on the binaries of the Moonshine commit,
+built before this change: 81 k4 cases (Go and Rust) and 3 cli cases (Go)
+disagreed. That red came after both ports' modulescmd edits were written,
+not before: the order the rules ask for was not kept here. Go and Rust
+then agreed with the oracle on every k4 and cli case they carry (k4: 188
+agree, 2 not ported, 3 refused; cli: 563 agree, 9 not ported, 9 refused,
+the same refusals as before), and `--oracle` found no stale fixture.
+Retires when: the module map lists whisper.cpp (done).
+
+**VO-10 (ruling): TLS is not cased.** `voice serve --tls-cert --tls-key`
+is cased only for a half-given pair (exit 1 after the bind, both ports
+agree). A full pair is not: Go loads it with `tls.LoadX509KeyPair`, Rust
+with rustls's PEM reader, and neither path runs in a test here. An
+unreadable or bad pair exits 1 with each port's own text, where the
+oracle prints ssl's.
+
+Status: in force.
+Retires when: a case serves over TLS with a certificate the harness makes.
+
+**VO-9 (cases): what the server cases pin.** The check order (411, then
+429, then 401, then 404, then 403); a POST to an unknown path without a
+token is 401; three bad tokens ban the address for every POST, a good
+token included; the token file is read on every request (rotated, or
+removed, mid run); a bearer token or token file that is not ASCII or not
+UTF-8 drops the connection with no reply, as `compare_digest` raising
+does; the text cap counts code points; Content-Length is read as `int()`
+reads it (`1_0`, padded, Unicode digits); `parse_qs` decides `cleanup=1`;
+http.server's own 501 page for other methods; a port already in use
+(`[Errno 98] Address already in use`, exit 1); and the arm grant file name
+is `quote(key, safe="")`. An `expires_at` of `"inf"`, `Infinity` or
+`1e999` reads as armed on every side, as the oracle reads it.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-01: Moonshine in, sherpa-onnx out
+
+**VO-11 (ruling): the parakeet engine is removed.** By owner choice of
+defaults, sherpa-onnx is not used (docs/research/stt-2026-10.md), so the
+engine that ran Parakeet on it is gone from Python (the engine
+class, its pins, the `[voice-parakeet]` extra in pyproject.toml and
+uv.lock, the config comment, the docs) and from both ports' refusal text.
+`voice_engine: parakeet` is now an unknown engine on every side: pick_engine
+raises UnknownEngine (exit 1 from `voice serve`) with one line, `voice_engine
+parakeet was removed. Parakeet will return on a different runtime.` and then the valid names. The `pick parakeet` case lost
+its `port_expect`, and a cli case `serve parakeet removed` was added. Red was
+shown on the Go and Rust binaries of the stage H build: 8 of 431 cases
+disagreed on each (the pins answer, the two parakeet cases, and the five
+unknown-engine messages whose list of valid names changed). The module map
+change is VO-8's.
+
+Status: retired 2026-10-01 by VO-16: Parakeet returns on parakeet-cli
+(CrispASR's Parakeet code and the ggml CPU backend, no other CrispASR
+code). `voice_engine: parakeet` is a valid engine again on every side,
+and REMOVED_ENGINES is gone.
+Retires when: Parakeet returns on another runtime (done).
+
+**VO-13 (ruling): the Moonshine engine.** Checked 2026-10-01, with sources:
+
+- License. The LICENSE of github.com/moonshine-ai/moonshine at v0.1.5
+  (commit 234f60faa0eb388b01cdf7e60aca232af37aefda) says the code, apart
+  from core/third-party, is MIT, and that every streaming model and every
+  English model is MIT; only the legacy non-streaming models for Arabic,
+  Japanese, Korean, Mandarin, Spanish, Ukrainian and Vietnamese stay under
+  the non-commercial Moonshine Community License. The Hugging Face cards of
+  moonshine-ai/moonshine-streaming-tiny, -small and -medium carry
+  `license: mit` in their metadata; those repos hold no LICENSE file of
+  their own. The developer is Moonshine AI (formerly Useful Sensors, US).
+- The C API is core/moonshine-c-api.h: `moonshine_load_transcriber_from_files`
+  (a model directory and an architecture: TINY_STREAMING 2, SMALL_STREAMING
+  4, MEDIUM_STREAMING 5), `moonshine_transcribe_without_streaming` (16 kHz
+  float PCM in, lines of text out), `moonshine_free_transcriber` and
+  `moonshine_error_to_string`. At this commit the architecture only chooses
+  the streaming decoder, so a model directory named by path runs as small.
+- The repo ships no command-line program for a WAV file on Linux (its C++
+  example prints streaming events for a fixed file; the CLI transcriber is
+  a Windows project). So `clients/native/moonshine-cli` is the smallest C
+  program on the C API: `-m MODEL_DIR -a tiny|small|medium -f CLIP`, one
+  transcript line per stdout line, exit 3 when the model does not load, 4
+  for a clip that is not a 16 kHz mono 16-bit WAV, 5 when transcription
+  fails. The engine stays an external process, as whisper.cpp is, and the
+  three sides run it the same way: `moonshine-cli -m DIR -a ARCH -f
+  TMP.wav`, stdout's stripped non-blank lines joined by a space, a nonzero
+  exit named with the last stderr line. The models are English, so no
+  language is passed.
+- The build. `clients/go/scripts/native.sh --moonshine` builds it into a
+  prefix of its own (`$XDG_CACHE_HOME/opendaisugi/native/moonshine-<stamp>`:
+  bin/moonshine-cli, lib/libonnxruntime.so.1, the two licenses), so the
+  Z3 prefix and its stamp are untouched. The Moonshine sources are pinned
+  by commit (a blobless clone of core/). ONNX Runtime is Microsoft's
+  prebuilt 1.23.2 CPU release, pinned by the SHA-256 GitHub publishes for
+  the asset (1fa4dc... for x86_64, 7c63c7... for aarch64); its
+  libonnxruntime.so.1.23.2 is byte for byte the copy Moonshine vendors.
+  A source build of ONNX Runtime was not tried: it is far heavier than this
+  box's memory rules allow. The upstream diarizer (cpp-annote, which
+  compiles kaldi-native-fbank, copyright Xiaomi Corporation) and the
+  ZipVoice text-to-speech engine (a k2-fsa model, with its reference clips
+  embedded in a source file) are replaced by stubs, so no k2-fsa code or
+  data is compiled in. Moonshine's other text-to-speech code (its own) is
+  linked because the C API names it; moonshine-cli never calls it.
+  install.sh links moonshine-cli onto PATH, and goes on without it, with
+  one line, when the build fails. A build from nothing, in fresh build and
+  prefix directories, gave the same moonshine-cli byte for byte.
+- The models. The runtime at that commit loads the quantized .ort files its
+  model catalog names on download.moonshine.ai, under
+  `<name>-streaming-en/quantized_26_08_21/`, not the Hugging Face layout
+  (no tokenizer.bin). So that is where they come from: eight files per
+  model (the word-timestamp decoder is not fetched). Each file's size and
+  CRC32C matched the catalog's
+  (core/moonshine-model-file-metadata.generated.cpp at the commit) when it
+  was first downloaded on this box; the SHA-256 taken then is the pin. That
+  is trust on first use, checked against the vendor's own digest. tiny,
+  small and medium are 45, 142 and 269 MB. medium was downloaded too,
+  only to take its pins.
+- Config. `voice_engine: moonshine`, with `voice_model` tiny, small or
+  medium (a curated model, fetched once into
+  `$XDG_CACHE_HOME/opendaisugi/models/moonshine/...` when XDG_CACHE_HOME is
+  absolute, else `~/.cache`) or a model directory. Moonshine with no
+  voice_model set means small. A curated model's fetch says one line,
+  `Fetching the Moonshine small model (142 MB) into DIR. This happens
+  once.`; a failure says `The Moonshine small model could not be fetched.
+  Check the network, then run daisugi voice serve again.` (or, for a file
+  that fails its pin, that it was deleted and the same command fetches it
+  again). Exit 3. No sentence says "not installed", which coppice reads as
+  a pip hint.
+- No config. A config whose voice_engine and voice_model are unset or at
+  their defaults (`faster-whisper` and `tiny.en`) means faster-whisper when
+  its package imports, and otherwise Moonshine small, after `faster-whisper
+  is not available, so voice uses Moonshine small.` The defaults count as
+  no choice because save_config writes every field: a box that ever saved
+  its config names them without choosing them, so "key absent" could not
+  tell it from a fresh box. A port never imports faster-whisper, so the Go
+  and Rust daisugi serve voice with no config, under coppice too.
+  Moonshine with voice_model unset or `tiny.en` means small. A config that
+  names faster-whisper with another model, or another model alone, is not
+  changed: VO-1 holds there. The Python build's faster-whisper now loads its model
+  from the cache first; only a model that is not there is fetched, after
+  `Fetching the faster-whisper tiny.en model (78 MB). This happens once.`,
+  at the commit pinned for tiny.en (the commit fixes model.bin's LFS
+  digest); a failure names `daisugi voice serve` to retry.
+- The ports fetch with the same pins, URLs and cache paths, and say the
+  same lines. They do not resume a partial download: a stopped one starts
+  again from nothing, where the oracle resumes its `.part` with a Range
+  request. No case starts with a `.part`. `OPENDAISUGI_MOONSHINE_BASE_URL`
+  moves the download host for the cases; every case runs with it pointing
+  at a closed loopback port unless it serves a fake host.
+- Cases: 55 new (the args, picking it, the pinned fetch through a fake host
+  or a closed port, the generic fetch with a caller's digest, a fake
+  moonshine-cli in probe, cli and server cases). No case loads a real
+  model or reaches the real host; the oracle runs with faster_whisper
+  hidden. Red: 64 of 482 cases disagreed on the Go binary of the parakeet
+  commit, shown before the Go code was written; the same 64 disagreed on
+  the Rust stage H binary, but that run came after the Rust code was
+  written and built, so for Rust red did not come first. The change from
+  "key absent" to "at the default" was cased first (10 of 486 cases red on
+  both earlier binaries) but its port code was written before that red run
+  too. Go and Rust then agreed on all 486, and `--oracle` found no stale
+  fixture.
+- Known limits. The ports do not resume a download, so on a slow link a
+  first fetch that runs past coppice's three-minute health wait is killed
+  and starts again from nothing next time. A port's first run says two
+  lines (the engine notice and the fetch line). moonshine-cli is built by
+  install.sh only; the AUR package and the release do not ship it yet, and
+  its message names the repo's native.sh. The pins are trust on first use,
+  checked against the vendor's own CRC32C.
+- One real check, outside the cases, on 2026-10-01: each of the three
+  sides ran `voice serve` with no config, an empty cache on real disk and
+  the real host. Each said the two lines, fetched the eight files of
+  Moonshine small, checked their pins, bound and answered `/health`. No
+  clip was sent, so no model ran. The Python side first failed: the host
+  answers Python-urllib's default User-Agent with 403. All three fetchers
+  now send `User-Agent: opendaisugi`.
+
+Amended 2026-10-01 (VO-16 to VO-20): moonshine-cli now runs as one
+resident child, `moonshine-cli -m DIR -a ARCH --resident`, not once per
+clip (O-1, VO-19), and runs one second of silence before each clip
+(VO-20). A config with no voice choice now gets the engine the hardware
+picks (VO-17), so the "No config" item above and its notice line are
+replaced; the Moonshine small fallback holds where Parakeet is not
+installed or the box is smaller.
+
+Status: in force.
+Retires when: does not retire.
+
+**VO-12 (ruling): the default engine stays faster-whisper.** The brief:
+make `moonshine` with `small` the default if Moonshine small is at least as
+accurate as tiny.en and not slower on this box. It is neither. On six
+espeak-ng clips (the three pinned fixtures and three longer sentences, CPU
+only, `CUDA_VISIBLE_DEVICES=""`), Moonshine small's mean WER was 0.107
+against 0.087 for tiny.en, and its wall time per clip 1.49 s (process
+start, model load and decode; the decode alone 1.16 s) against 0.43 s for
+tiny.en on a loaded model. The table is in docs/research/stt-2026-10.md
+("Measured on this box"). `voice_engine` keeps its default,
+`faster-whisper`, and `voice_model` keeps `tiny.en`. Where faster-whisper
+cannot load (no `[voice]` extra, and every Go and Rust daisugi), a config
+with the voice settings unset or at their defaults runs Moonshine small
+(VO-13).
+
+Amended 2026-10-01: measured again on real speech, 100 utterances each of
+LibriSpeech test-clean and test-other (docs/research/stt-2026-10.md,
+"Measured on this box (real speech)"). Moonshine small is now the more
+accurate (WER 4.85% and 10.39% against 5.26% and 13.77% for tiny.en) but
+still slower: 1.83 to 1.92 s for a 4 to 6 s clip, one process per clip,
+against 0.42 to 0.45 s. The default does not change; the reason is now
+speed alone.
+
+Status: retired 2026-10-01 by VO-17: with no voice choice the engine now
+follows the hardware, and faster-whisper tiny.en is the low tier only.
+Retires when: a measurement with real voices, or Moonshine's streaming
+API, shows Moonshine small at least as accurate as tiny.en and not slower
+(overtaken by VO-17).
+
+## 2026-10-01: CrispASR checked, real-speech bench, no new engine
+
+**VO-14 (ruling, provisional): the curated voice defaults.** Until the
+owner rules, the curated defaults leave out Phonon-1, NVIDIA
+Canary-Qwen-2.5B and CrispASR's Qwen3-ASR and Qwen3-TTS backends. This
+shapes defaults only; a user may still choose any model. No code changes
+with this ruling.
+
+Status: retired 2026-10-01 by owner ruling O-3, which makes it the
+owner's ruling.
+Retires when: the owner rules on the curated voice defaults (done).
+
+**VO-15 (ruling): no engine replaces the default; CrispASR only as a
+Parakeet-only build.** Two checks, both in docs/research.
+
+CrispASR (github.com/CrispStrobe/CrispASR, MIT, commit 7e2b0307): the
+full build is too large for the default, as Moonshine's tree was (VO-13).
+It compiles OmniVoice prompt tables and pypinyin tables into its core
+library, and its one library target links many model ports the voice
+bridge does not use. A program
+on its Parakeet API, built from five CrispASR source files and the ggml CPU
+backend, has none of that: `strings` and `nm` find no such code, and no
+download code. The maintainer says he is Christian Ströbele of Stuttgart,
+Germany; that is self-stated. The GGUFs of `cstr/parakeet-tdt-0.6b-v2-GGUF`
+and `cstr/phonon2-GGUF` are reproducible: CrispASR's own converter, run
+with four small stand-ins for Python packages this box does not have, gave
+the published F16 tensors byte for byte from NVIDIA's .nemo and from
+Fermion's archive (one filterbank tensor within 4e-9, from a stand-in), and
+its quantizer gave the published Parakeet Q8_0 byte for byte. The details
+are in docs/research/stt-2026-10-pass2.md, "CrispASR provenance".
+
+The bench (docs/research/stt-2026-10.md, "Measured on this box (real
+speech)"): the brief's bar for a new default was a lower WER than tiny.en
+on both sets and a median under about 1.0 s for a 5 s utterance on this
+CPU. Parakeet v2 on CrispASR passes the first by far (WER 1.95% and 3.99%
+for Q4_K) and fails the second: 1.22 to 1.30 s for a 4 to 6 s clip as one
+process per clip, the shape a voice engine runs in, and 1.02 to 1.16 s
+even with the model resident. Phonon-2 Q8_0 takes 1.12 s as one process
+per clip and 0.85 to 0.89 s resident. It could not be the default anyway:
+its weights are CC-BY-4.0, so attribution must ship with them, and its
+retraining used SPGISpeech under Kensho's own terms, which the owner has
+not ruled on. Kyutai stt-1b-en_fr was not built: on a CPU its Rust binary
+loads the 1.98 GB bf16 weights as f32 (about 4.0 GB, plus 0.38 GB for the
+codec), over the 4 GB cap of every heavy run here. faster-whisper base.en
+beats tiny.en on both counts but puts Python in the engine path and cannot
+run in the ports (VO-1).
+
+So nothing is wired and no default changes. For the owner: a resident
+engine (one process that keeps the model loaded) would bring Phonon-2
+under 1.0 s, and maybe Parakeet v2 Q4_K; that is a change to how the voice
+bridge runs engines, not a new engine.
+
+Status: retired 2026-10-01 by VO-16. The owner set the bar for a 5 s
+clip at about 1.2 s, with the engine resident (O-1); Parakeet v2 Q4_K
+meets it (1.04 to 1.10 s, VO-16). The CrispASR half of this ruling holds
+and moved into VO-21. The Phonon-2 sentences are history only: O-2
+excludes it.
+Retires when: an engine fit for the curated defaults beats tiny.en on WER on
+both sets and answers a 5 s clip in under about 1.0 s on this CPU, in the
+shape the voice bridge runs it (overtaken by VO-16).
+
+## 2026-10-01: stage I, coppice in Rust, slice 1 (the server core)
+
+`harness/coppice-rs` is the Rust coppice; the map and its six slices are
+in `docs/plans/2026-09-24-omarchy/plan-coppice-rust.md`. Slice 1 is the
+wire codec in both framings, the socket, the start lock and the uid
+check, roles by SO_PEERCRED and the process tree, hello, the guard,
+notes, `agent.allow` and `agent.deny` over the gate's ask files, the
+pane, tab and workspace verbs over pty panes, attach with flow control
+and view-only, events, tasks, `pane.report_state`, the agent verbs, and
+`server start`, `stop`, `status` and `token`. Terminal emulation is the
+same pinned libghostty-vt as Go's, through its C API.
+
+`clients/coppice_compare.py` starts a fresh Go server and a fresh Rust
+server per corpus file, each with its own scratch HOME, socket, data dir
+and start dir, `PATH=/usr/bin:/bin`, and a `coppice.toml` of
+`plugins = []`, `gateway = ""` and `[voice] enabled = false`. Gate A is the corpus matcher
+(`tests/floor/protocol_match.py`); gate B is full reply equality after
+the normalization CP-R-1 and CP-R-2 name. Red was shown first, on the
+skeleton that answered `server.status` only (commit `05956534`): of 70
+cases, 6 agreed, 39 disagreed and 25 were refused, and every file was
+red. On the slice-1 server all 70 cases of all 9 files agree, none is
+refused, and no pane process outlives its server. The Go code, its tests
+and its corpus results were not touched. Gate B was shown to fire on its
+own: a throwaway Rust build that changed only the not-attached message,
+which the corpus masks with `"*"`, passed gate A and disagreed on
+flow.jsonl cases 2 and 7 (the two cases that send that message) and
+nowhere else.
+
+**CP-R-1 (normalization): the known-commands list.** An unknown verb's
+message ends with `Known commands: ` and the server's verbs. The Rust
+list is shorter until every slice lands, so the driver replaces the tail
+with `{COMMANDS}` on both sides. The words before it must match.
+
+Status: retired 2026-10-02 by slice 5. The Rust server registers every
+verb Go does, voice.start and voice.status last, so the whole message is
+the same text in both, and the driver compares it whole.
+
+**CP-R-2 (normalization): per-process values.** Each server's socket,
+data dir, start dir, home and work dir become placeholders, and the
+values of the keys `pid`, `uptime_s`, `ts`, `quiet_for` and `ended_at`
+are masked wherever they appear. Every other value, every message and
+every row's key set is compared.
+
+Status: in force.
+Retires when: does not retire.
+
+**CP-R-3 (ruling): harness and headless panes are refused.** A
+`pane.create` or `pane.split` that names a harness, or asks for a
+headless pane, passes every check Go makes before the record is made and
+is then refused with `bad_request` and one sentence that names the later
+slice. The ready-prompt rules, screen detection, transcript facts and the
+adapters all hang on a harness, so a harness pane here would act
+differently from Go's. Refused, not loose: no pane starts. No corpus case
+names a harness.
+
+Status: narrowed 2026-10-01 by slice 2. A pty pane that names a harness
+now starts, with screen detection and the ready-prompt rules; only a
+headless pane, and pane.fork of one, is refused. Retired 2026-10-02 by
+slice 4, which ports the five adapters, headless panes and pane.fork
+(cases/headless and the adapters suite).
+
+**CP-R-4 (ruling): verbs not in slice 1.** `pane.trust`, `pane.explain`,
+`pane.forget`, `pane.resume`, `pane.report_child`, `floor.facts`,
+`floor.talk`, `floor.foreman`, `project.list`, `voice.start` and
+`voice.status` are not registered, so the Rust server answers them
+`no command` and the driver counts such a case as refused. No corpus case
+sends one.
+
+Status: narrowed 2026-10-01 by slice 2: `pane.trust`, `pane.explain`,
+`pane.report_child`, `floor.facts`, `floor.talk` and `floor.foreman` are
+registered. `pane.forget`, `pane.resume`, `project.list`, `voice.start`
+and `voice.status` are not. Narrowed again 2026-10-02 by slice 3:
+`pane.forget`, `pane.resume` and `project.list` are registered
+(cases/ended). Only `voice.start` and `voice.status` are left.
+Retired 2026-10-02 by slice 5, which ports the voice supervisor
+(cases/cli/voice-*.jsonl).
+
+**CP-R-5 (ruling): no foreman.** `task.set_foreman` with an empty pane
+clears the foreman, as Go does. Naming a live pane is refused with
+`bad_request`, after Go's own no-task, no-pane and closed-pane checks:
+held asks are not ported, and a foreman without them would let asks
+through that Go holds. So no hold ever exists here, and `agent.deny` from
+a pane is always the pane refusal.
+
+Status: retired 2026-10-01 by slice 2, which ports holds, the foreman's
+deny and floor.talk (cases/facts/holds.jsonl and foreman.jsonl).
+
+**CP-R-6 (ruling): no task worktrees.** `task.create` with
+`worktree: true` is refused after Go's needs-cwd check.
+
+Status: retired 2026-10-02 by slice 3, which ports `worktree`
+(cases/ended/worktree.jsonl).
+
+**CP-R-7 (ruling): no restore.** `coppice-rs server start` refuses a data
+dir that holds `layout.json`, since it cannot restore it and its first
+save would write over it. The driver gives each server an empty data dir.
+
+Status: retired 2026-10-02 by slice 3, which ports Restore
+(cases/ended/restart.jsonl and resume.jsonl restart both servers on
+their own data dirs).
+
+**CP-R-8 (ruling): facts in slice 1.** A pane.list row carries `stack`
+(the router, from the pane's `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`
+against the gateway) and `gate` (the last verdict a report carried), as
+Go builds them. Transcripts, tokens and the model are not read: Go reads
+them only for a Claude or sprig pane, which CP-R-3 refuses, so a slice-1
+row never lacks a fact Go would show. The gateway is not dialed.
+
+Status: retired 2026-10-01 by slice 2, which ports the transcript reader,
+claims, floor.facts and the loopback dial (cases/facts/facts.jsonl). The
+one part left is CP-R-17.
+
+**CP-R-9 (ruling): no plugins.** The Rust server runs no plugin, so a
+hello with `role: plugin` is `no plugin X is enabled.` The driver runs Go
+with `plugins = []` too, so neither side starts a policy process.
+
+Status: retired 2026-10-02 by slice 5, which ports the plugin loader, the
+policy runner and the plugin role (cases/cli/plugins.jsonl and
+plugins-default.jsonl). The scratch config still says `plugins = []`
+for every file that does not test plugins.
+
+**CP-R-10 (ruling): two text edges.** Go's `%q` uses `strconv.IsPrint`;
+the Rust port uses a table of the non-printing ranges (controls, format
+characters, separators other than space, private use, noncharacters), so
+an unassigned code point may quote differently. A request line that is
+not UTF-8 is read with one U+FFFD per bad sequence, where Go puts one per
+bad byte. No case reaches either.
+
+Status: in force.
+Retires when: a case shows a difference, which is then fixed.
+
+**CP-R-11 (ruling): events are not compared yet.** The corpus skips every
+line with no id, so frames, `frame_gap`, state, note and presence events
+are ported but not compared in slice 1.
+
+Status: narrowed 2026-10-01 by slice 2. The driver now keeps every line
+with no id, on the case connection and on a second connection a file can
+open with `#!watch`, and compares them once per file through an event
+view. The view leaves out two kinds of state event and one kind of frame,
+whose order and count follow the pty and the tick, not the requests: a
+state event from the process source, a state event from the manifest
+source, and a frame that is not full. A full frame is compared with its
+`seq` masked. The events of `protocol/flow.jsonl` are not compared at
+all: it pauses its pane right after the attach, so whether the first full
+frame goes out first is a race on either server (a Go-against-Go run
+showed it). What the tick read and wrote is still compared: the verdict
+by `pane.explain`, and the state, source and detail the tick applied by
+`agent.get` once the tick's state has won (cases/facts/tick.jsonl).
+Retires when: does not retire. The left-out kinds are timing.
+
+Narrowed again 2026-10-02: the view compares the order of events within
+each kind (frames among frames, notes among notes), not across kinds.
+Events of different kinds come from different goroutines and threads, so
+a note and a full frame can reach the connection in either order. CI on
+737a2a10 showed it once in cases/facts/explain.jsonl (Go sent the note
+first, Rust the frame), while all 307 cases agreed.
+
+**CP-R-12 (ruling): the command line.** The binary is `coppice-rs` and
+carries the server commands only. The floor and the client verbs refuse
+with one line.
+
+Status: narrowed 2026-10-02 by slice 5. The binary is still
+`coppice-rs` and prints Go's usage text. It carries every command of Go's
+command line but two: the floor on a terminal (`coppice` with no
+arguments; on a pipe it prints the usage, as Go does) and `coppice web`.
+Each of the two refuses with one line that names the last slice.
+Narrowed again 2026-10-02 by slice 6a, which ports `coppice web` and
+its subcommands. Only the floor on a terminal is left; it refuses with
+one line that names the last slice.
+Retired 2026-10-02 by slice 6b, which ports the floor on a terminal; the
+Rust binary is named `coppice`.
+
+## 2026-10-01: stage I, coppice in Rust, slice 2 (what the floor knows about a pane)
+
+Slice 2 ports screen detection (`detect` and the manifest tick),
+`pane.explain`, the ready-prompt rules and `pane.trust`, asks held for a
+foreman, the foreman and `floor.talk`, subagents (`pane.report_child`),
+and the facts and stack (the transcript reader, claims, `floor.facts`).
+The 21 Herdr manifests are compiled in from the Go tree. The regex crate
+(=1.13.1, std and unicode) is the one new crate.
+
+`clients/coppice_compare.py` now replays four suites: the protocol
+corpus; hand-written cases in `harness/coppice-rs/cases/facts/` (explain,
+tick, holds, foreman-none, foreman, children, facts); a screens suite built at
+run time from `harness/coppice/testdata/screens`, where each fixture is
+drawn by a fake harness in a pane exactly its size and must get its
+declared state and rule from `pane.explain`, then one prompt; and an
+events suite built from `harness/coppice/testdata/events`, each fixture
+reported for a pane of its own. Case files may set `coppice.toml` lines,
+open an event watch and retry a read-only verb. A Go-against-Go run
+agreed on every case and on every event view but flow.jsonl's (CP-R-11).
+Red was shown first, on the slice-1 build: of 307 cases, 110 agreed (the
+70 protocol cases among them), 168 disagreed and 29 were refused, and 6
+of 20 event views disagreed. On the slice-2 build all 307 cases and all
+20 event views agree, nothing is refused, and no pane process outlives
+its server. The Go code, its tests and its corpus
+results were not touched.
+
+**CP-R-13 (normalization): values that follow a tick or a clock.** The
+values of the keys `received_age_s`, `effective_state`,
+`effective_source` and `tick` (pane.explain), `since` and `until` (a
+hold's held field), and `at` (a gate verdict) are masked wherever they
+appear. Each is read from the manifest tick, the process tick or the
+clock at the moment of the request. `manifest_state`, `rule_id`,
+`evaluated` and `detection_text`, which follow from the screen alone, are
+compared exactly. The mask goes by key name in every reply, so a later
+slice that adds a key with one of these names checks that it follows a
+clock, or scopes the mask to its verb.
+
+Status: in force.
+Retires when: does not retire.
+
+**CP-R-14 (ruling): the text of a manifest load error.** A manifest that
+does not parse is skipped with a warning in `detection_warnings`. Go's
+warning carries BurntSushi/toml's message and lists unknown keys by name;
+Rust's carries the toml crate's message. The checks after a parse (an
+empty id, the engine version, no rules, a bad region or state, a pattern
+that does not compile, the caps) say the same words. Only an operator's
+override file can fail to load, and no case has one.
+
+Status: in force.
+Retires when: a case with a broken override file shows a difference that
+matters, which is then fixed.
+
+**CP-R-15 (ruling): two regex engines.** Go compiles a manifest pattern
+with its RE2-shaped regexp; Rust with the regex crate, after a rewrite to
+Go's meaning: `\d`, `\s`, `\w` and `\b` and their capitals become Go's
+ASCII classes, a `[` or a doubled `&`, `~` or `-` inside a class becomes
+a literal, and `\p{Alphabetic}` becomes `\pL` as Go rewrites it. Left
+over: the two engines' Unicode tables may differ by version, and a
+construct no bundled manifest uses (`\Q...\E`, say) may load in one and
+not the other. Every bundled pattern compiles in both, and every screen
+fixture gets the same verdict and the same `evaluated` rows in both.
+
+Status: in force.
+Retires when: a case shows a difference, which is then fixed.
+
+**CP-R-16 (ruling): which subagent goes first on a tie.** Past 32
+subagents on one pane, the oldest is dropped. Go picks among equally old
+ones in map order, which is random; Rust drops the one with the least
+id. Only a 33rd subagent reported in the same nanosecond as another
+reaches it.
+
+Status: in force.
+Retires when: does not retire. Go's choice is not deterministic.
+
+**CP-R-17 (ruling): sprig session trees.** The transcript reader reads
+both Claude transcripts and sprig session trees, and its tests replay
+`harness/coppice/testdata/facts` for both kinds with Go's own numbers.
+But only a headless sprig pane has a tree to read, and a headless pane
+is refused (CP-R-3), so the server never reads one.
+
+Status: retired 2026-10-02 by slice 4. A headless sprig pane's facts read
+its session tree: cases/headless/sprig.jsonl lists a pane whose tree
+holds a deny verdict and an assistant row with tokens, and both servers
+show the same gate mark and tokens in pane.list and floor.facts.
+
+**CP-R-18 (ruling): what the cases do not reach.** These paths are
+ported but no case drives them, because each needs minutes or a second
+pane connection in one file, or a live gate: a hold that ends after its
+120 s, a prompt queue dropped after 10 min, the foreman's 30 s notes, a
+transcript two panes claim, the read that marks a hung file refused
+after 5 s, and a foreman's deny that succeeds (holds.jsonl reaches the
+deny up to the gate's "no pending ask", since no gate wrote the ask
+file). The
+Rust unit tests cover the reader's own rules (a split message counted
+once, a line not yet ended, a line over the cap, a path that is not a
+regular file, the files a pane lets go of).
+
+Status: in force.
+Retires when: a case reaches each path, with shorter timings that both
+servers would take as a flag.
+
+## 2026-10-02: stage I, coppice in Rust, slice 3 (ended panes, restart, projects, task worktrees)
+
+Slice 3 ports `ended.go` (`pane.forget`, `pane.resume`, the seven-day
+sweep), `restart.go` (Restore and its report), `projects.go`
+(`project.list`; the recent directories and the default cwd were already
+ported), the `worktree` package, and `layout.json` loading with Go's
+repairs. `coppice-rs server start` now restores a data dir as Go does,
+after it listens.
+
+`clients/coppice_compare.py` gains three directives. `#!repo` makes a
+scratch git repo per side at `{WORK}/repo`, with a cleared environment
+(scratch HOME, `PATH=/usr/bin:/bin`, `GIT_CONFIG_NOSYSTEM=1`). `#!tree`
+compares the two data dirs as file trees. `#!restart` stops both servers
+(SIGTERM, then the leak check) and starts them again on the same data
+dirs, on fresh connections, with the names bound so far kept. Each
+server now runs with `GIT_CONFIG_NOSYSTEM=1` and a git ceiling at the
+scratch root, and the scratch root is resolved, since git names a
+directory by its real path. Five files in `harness/coppice-rs/cases/ended`
+hold 100 cases and 9 tree views. A Go-against-Go run agreed on all of
+them. Red was shown first, on the slice-2 build: of the 56 cases it
+reached, 18 agreed, 28 disagreed and 10 were refused, all 4 trees it
+reached disagreed (recent-dirs.json was 0644 where Go makes it 0600), and
+the restart and resume files failed at the start (CP-R-7). One more case
+in cases/facts/holds.jsonl pins the task fold of a held ask (a blocked
+pane whose ask a foreman holds folds as working), which the slice-2
+build got wrong. On the slice-3 build all 408 cases, all 25 event views
+and all 9 tree views agree, nothing is refused, and no pane process
+outlives its server. The Go code, its tests and its corpus results were
+not touched.
+
+**CP-R-19 (normalization): the data dir as a file tree.** A tree view
+maps each path under the data dir to its type, its mode bits, and its
+text after the reply normalization (CP-R-2: each server's paths become
+placeholders). Two values are masked: each `"ended_at"` in a file, the
+clock's second as in a reply, and the pid at the start of `server.lock`.
+Every other byte of `layout.json`, `recent-dirs.json` and any other file
+is compared, so the saved shape, the key order and the indentation are
+checked, not only the values.
+
+Status: in force. Narrowed 2026-10-02 by slice 4: the temp file of a
+save in flight (`.layout-N.json.tmp`) is left out of a tree view. A
+Go-against-Go run once caught that file on one side only, in
+cases/headless/claude-exit.jsonl's tree after its restart. What wrote it
+was not found.
+Retires when: does not retire.
+
+**CP-R-20 (ruling): a headless record at a restart or a resume.** Go
+resumes a headless record that carries a harness session id through its
+adapter, at a restart and on `pane.resume`. This build has no adapters
+(CP-R-3). At a restart such a record comes back closed and unknown, with
+the note Go writes when an adapter refuses the start (`did not resume:`
+and the CP-R-3 sentence); a harness Go has no adapter for gets Go's own
+`no adapter named` note. `pane.resume` of a headless record answers
+`bad_request` with the CP-R-3 sentence and leaves the record as it was,
+as Go does when a start fails. No case reaches either, since no case
+can make a headless pane.
+
+Status: retired 2026-10-02 by slice 4. Both ports resume a headless
+session through its adapter at a restart and on pane.resume, and write
+the same restore report (cases/headless/claude-exit.jsonl and
+opencode.jsonl restart with a live headless pane; claude-exit.jsonl and
+pi.jsonl resume an ended one).
+
+**CP-R-21 (ruling): text edges of a broken file or a missing git.** A
+`layout.json` that does not parse is refused at start in both, with
+`layout file is not readable:` and then the parser's own words, which
+differ: Go's encoding/json against serde_json. Go also matches JSON keys
+without regard to case and keeps a null `children` list as null, where
+this build reads keys exactly and writes `[]`. Only a hand-edited file
+reaches these. When git is not on PATH, the worktree refusal carries
+`exec: "git": executable file not found in $PATH` in both, but another
+spawn error carries the OS words, which differ. The checks after a parse
+(the schema version, the counter repairs) say the same words and are
+unit-tested.
+
+Status: in force.
+Retires when: a case with a broken file shows a difference that matters,
+which is then fixed.
+
+**CP-R-22 (ruling): what the slice-3 cases do not reach.** These paths
+are ported but no case drives them: two `pane.resume` calls of one
+record at once (the claim refuses the second), the hourly sweep and the
+sweep of a record older than seven days (no case can move the clock),
+the resume of the tracked foreman's record, an upstream that cannot be
+set after a worktree add, a worktree that git cannot read at
+`task.close`, and a detached repo (a unit test covers the last).
+
+Status: in force.
+Retires when: a case reaches each path, with a clock or timing that both
+servers would take as a flag.
+
+**CP-R-23 (ruling): a worktree made from inside another worktree.** A
+task made with `worktree: true` and a cwd inside another task's worktree
+gets its worktree beside that worktree (`feat-worktrees/again`), since
+`git rev-parse --show-toplevel` names the worktree. At `task.close`,
+the repo is found through the shared `.git` instead, so the path to
+remove names the main repo (`repo-worktrees/again`), git answers `is not
+a working tree`, and the close fails with `internal` after its panes
+closed. This is a fault in Go. The Rust port keeps it, so the two agree
+(cases/ended/worktree.jsonl case 22), and Go is not changed in this
+slice.
+
+Status: retired 2026-10-02. The cause: `task.close` found the main repo
+through the shared `.git` and then built the path again as
+`<main repo>-worktrees/<label>`, which is not where `task.create` put a
+worktree made from inside another one. Both ports now remove the path
+the task recorded, through the main repo (`worktree.RemoveAt` in Go,
+`worktree::remove_at` in Rust), so the close succeeds whether or not the
+outer task closed first. A Go server test, a Go worktree test and a Rust
+unit test pin it, and case 22 now expects the close to succeed and case
+23 an empty task list.
+
+## 2026-10-02: stage I, coppice in Rust, slice 4 (headless harnesses)
+
+Slice 4 ports `internal/adapters`: claude and pi (one long-lived process,
+JSON lines both ways), codex and sprig (one process per prompt, in its
+own process group, the sprig session tree tailed between turns) and
+opencode (a loopback `opencode serve` with a random password, its HTTP
+API and event stream, the asks it holds itself, the gate plugin check).
+The server gains headless panes and the pump that turns adapter events
+into grid rows and headless states, `pane.fork`, `agent.prompt` and
+`pane.send_text` to an adapter, `agent.allow` and `agent.deny` of a
+harness-held ask, the resume of a headless session at a restart and on
+`pane.resume`, the adapter pids in role placement, and the sprig session
+tree in the facts. Go's encoding/json error words are kept by a small
+decoder (`godec.rs`): the scanner's syntax errors, the struct type
+errors, and the raw text of a json.RawMessage field. No crate is added:
+the HTTP client, SHA-256 and the decoder are written here.
+
+The compare driver gains `#!env` (server environment, so each adapter
+runs its fake through COPPICE_CLAUDE_BIN and the like) and `#!mask`
+(one key masked in one file), copies the fake harnesses into the
+fixtures, and puts the OpenCode gate plugin in each side's scratch HOME.
+Seven files in `harness/coppice-rs/cases/headless` hold 128 cases, and a
+new adapters suite replays each stream fixture of
+`harness/coppice/testdata/adapters` in a headless pane (15 cases). The
+fakes are Go's fake-claude.sh, fake-codex.sh and fake-sprig.sh, and two
+new ones beside the cases: fake-pi.sh and fake-opencode.py (stdlib only;
+it replays Go's captured OpenCode stream). Red was shown first, on the
+slice-3 build: of 552 cases, 415 agreed (all 408 earlier ones among
+them) and 137 disagreed; 9 of 35 event views and 8 of 17 tree views
+disagreed. On the slice-4 build all 552 cases, 35 event views and 17
+tree views agree, nothing is refused, and no pane or harness process
+outlives its server. Go was not changed in this slice past CP-R-23.
+
+**CP-R-24 (normalization): a minted sprig session id.** A sprig pane
+started with no `--session` gets an id the adapter makes: `coppice-` and
+8 random hex digits. The driver writes it as `coppice-{MINTED}` in every
+reply, event and data-dir file (cases/headless/sprig.jsonl, the `mint`
+pane).
+
+Status: in force.
+Retires when: does not retire. The id is random by design.
+
+**CP-R-25 (normalization): an ask's deadline in a headless file.** pi
+and opencode put the time an ask runs out (now plus 90 s, or a dialog's
+own timeout) in the ask's `deadline`. pi.jsonl and opencode.jsonl mask
+that key with `#!mask deadline`. No other file masks it: a reported
+ask's deadline in the other suites comes from the request and is
+compared.
+
+Status: in force.
+Retires when: does not retire.
+
+**CP-R-26 (normalization): the done of an operator close.** When the
+operator closes a headless claude, pi or opencode pane, Go's adapter
+picks between sending its end event and dropping it with a select on two
+ready channels, which Go picks at random. So the done the pump posts says
+`<harness> exited` or `adapter stream ended`, and a Go-against-Go run
+showed both. The event view writes either as `{STOPPED}` for a headless
+done. A done from a harness that exited on its own (`claude exited:
+exit=3`) is compared as it is. The Rust adapters always send the end
+event.
+
+Status: in force.
+Retires when: Go sends the end event every time, or never.
+
+**CP-R-27 (ruling): text edges of the adapters.** These differ, or may,
+and no case reaches them: a type error inside an anonymous struct the
+opencode translator decodes (the error is dropped, so only whether one
+happened counts, and that matches); Go's net/http words for a transport
+fault (a reset, a malformed response); bufio.Scanner's words for a read
+error other than a line over 8 MiB; a pi dialog timeout with a
+fraction of a millisecond (Go cuts it the same way, but the deadline is
+masked anyway, CP-R-25); and a bare harness name resolved on a PATH entry
+that is relative.
+
+Status: in force.
+Retires when: a case shows a difference, which is then fixed.
+
+**CP-R-28 (ruling): what the slice-4 cases do not reach.** These paths
+are ported but no case drives them, because each needs 90 s or more, a
+harness that misbehaves in a way the fakes do not, or a verb no client
+sends: an OpenCode ask that passes its deadline and the reject that
+follows (and a reject that fails); the OpenCode event stream ending while
+its server runs; a codex turn whose background job keeps its stdout open
+(Go's ORPHAN fixture); a harness that ignores stop, so the drain's one
+deadline ends it; the restart of a fork that never named its own session
+(the fork is started again); a pi `switch_session` that fails; and a
+Claude SubagentStart or SubagentStop line, which the unit tests cover.
+An adapter's Steer is not ported, since no verb of Go's server calls it;
+pi's steer flag on a prompt sent while pi streams is ported. The Rust unit tests run
+the claude, sprig and pi adapters on their fakes and replay Go's
+captured OpenCode stream through the translator.
+
+Status: in force.
+Retires when: a case reaches each path, with shorter timings that both
+servers would take as a flag.
+
+## 2026-10-02: stage I, coppice in Rust, slice 5 (the command line)
+
+Slice 5 ports Go's `cli` package but the floor screens and `coppice web`:
+the client verbs with their tables and `--json` output, `server
+start|stop|status|token` with Go's status text, `task list --tree`,
+`skill`, `project add|list|rm`, `open` and `new` with the first-run
+config, `--stdio` and `--remote` over ssh, and autostart. It ports
+`attach` (the status line, the held leave key, whole runes, mouse
+reports, SIGWINCH), the tmux mirror over tmux control mode, the plugin
+loader with the shipped plugins carried in the binary, the policy runner
+and the plugin role in the server, and the voice supervisor with
+`voice.status` and `voice.start`. The config is written back in
+BurntSushi/toml's layout. No crate is added.
+
+`clients/coppice_compare.py` runs local requests beside protocol ones
+(`clients/coppice_local.py`): a run of the side's own binary (`cli`, with
+the socket and data dir the driver names; `pty`, on a pseudo terminal
+read by a small terminal model), tmux on a scratch socket, file reads,
+writes, counts and listings, and the server log. `#!plugins` copies
+plugin directories in, and the leak check now also finds any process that
+names a side's scratch dir. A keys suite sends each key of
+`testdata/keys.json` through `coppice pane send-keys`. Twelve files in
+`harness/coppice-rs/cases/cli` hold 301 cases, with fakes beside them (an
+ssh that runs the side's own binary, a pi on PATH, a daisugi that serves
+voice, 31 plugin directories). A Go-against-Go run agreed on the 300 of
+them there were then. tmux's own output (a window's start command, the
+exit code of a lookup of an unset option) is compared only between the
+two sides, never against a fixed line, so a runner's tmux version cannot
+fail a case. Red
+was shown first for each part on the build before it: of 241 CLI cases
+on the slice-4 build, 52 agreed; of 61 keys cases, 2; of 21 plugin
+cases, 5; of 36 voice cases, 7 agreed and 28 were refused. On the
+slice-5 build all 916 cases, 48 event views and 17 tree views agree,
+nothing is refused, and no process outlives its server.
+
+**CP-R-29 (normalization): what a command prints.** A CLI run's stdout
+and stderr are text, so the key masks of CP-R-2 and CP-R-13 also apply
+inside them: a JSON pair `"pid":123` becomes `"pid":"{MASKED}"` and a
+line `pid 123` becomes `pid {MASKED}`, for each masked key, and the
+status line `up 3s` becomes `up {MASKED}s`. `coppice --version` prints
+the build's own version, which differs by design, so a whole line
+`coppice VERSION` becomes `coppice {VERSION}`. `{BIN}` stands for each
+side's binary, which the tmux mirror's window commands name. The Rust
+side's work dir is named `rs`, two letters as `go` is, so a path wraps at
+the same column on a terminal in both.
+
+Status: in force.
+Retires when: does not retire.
+
+**CP-R-30 (normalization): the voice server's URL.** The managed voice
+server listens on a port the kernel picks, so cases/cli/voice-fake.jsonl
+masks `url` (`#!mask url`). Every other key of voice.status is compared,
+`pid` masked as ever.
+
+Status: in force.
+Retires when: does not retire.
+
+**CP-R-31 (ruling): text edges of the command line.** These differ, or
+may, and no case reaches them: the words of a TOML parse error (Go's
+BurntSushi/toml against the toml crate) after `cannot read coppice.toml:`
+and in voice's off reason; a local date, time or date-time in a
+`[plugin.<id>]` table, which Go turns into the local zone when it writes
+the file back and Rust writes as read, and an offset of zero, which Go
+writes `Z` and Rust `+00:00`; a mixed array of tables and values in a
+plugin table, which Go refuses to encode; the read deadline on a
+`--remote` ssh pipe, which Go sets and Rust does not; the words for a
+plugin file that leaves its directory through a link (Go's os.OpenRoot),
+for a manifest path that is a directory, and for an ssh start that fails
+other than not found; a `/health` that redirects (Go follows it, Rust
+takes only a 200) and an https voice url (Go speaks TLS, Rust reads it as
+not answering); and a policy run as a `.py` that cannot start, where Go
+names the resolved interpreter. Each is a path an operator's own unusual
+file or setup reaches.
+
+Status: in force.
+Retires when: a case shows a difference that matters, which is then fixed.
+
+**CP-R-32 (ruling): what the slice-5 cases do not reach.** These paths
+are ported but no case drives them, because each needs minutes, a
+terminal resize, or a fault the fakes do not make: attach when the
+server goes away (exit 3) and when stdin closes, the SIGWINCH resize, the
+150 s read deadline and a remote ssh's stderr tail, a detached server
+that never answers, a plugin given up on after five tries (about 15 s)
+and the runner's kill two seconds after its stop, a voice server that
+never answers within three minutes or loses its port twice, the mirror
+run inside tmux with no `--session`, a mark tmux refuses, and a tmux that
+stops answering for five seconds. Rust unit tests cover the key reader,
+whole runes, the frame render, `testdata/attach/status-lines.json`, the
+two tmux transcripts of `testdata/tmux`, the mirror's plan and status
+line, the embedded plugin list, manifest errors and slog quoting.
+
+Status: in force.
+Retires when: a case reaches each path, with shorter timings that both
+servers would take as a flag.
+
+## 2026-10-02: stage I, coppice in Rust, slice 6a (tiles and the web floor)
+
+Slice 6a ports `internal/tiles` with Go's tests, `internal/web` and the
+`coppice web` commands: `coppice web` with no verb (the floor on
+loopback, signed in), `web serve`, `web token` and `web cert
+init|show|tailscale`, and the start of the phone server from `web.json`
+in `server start`. The server is written here: an HTTP/1.1 server with
+net/http's framing (a body of 2048 bytes or less gets a Content-Length, a
+longer one goes chunked), Go's ServeMux routing and redirects, http.Error,
+FileServer and ServeContent with ranges; the websocket with
+coder/websocket v1.8.15's handshake checks, read limit and close words;
+the token guard, the ban list and the view refusal; the /proc/net/tcp
+peer check, so a pane process may not answer an ask through the web; the
+event ring; view plugins and the shared library; voice to a `--voice-url`
+or the server's own; ntfy push with the lock-screen deny token; the QR
+code, a port of rsc.io/qr v0.2.0 and qrterminal v3.2.1; and the local CA,
+whose certificates are laid out as Go's x509.CreateCertificate lays them
+out, so one CA directory is read by either port. The page is the Go
+tree's `internal/web/static`, embedded by `build.rs` with Go's embed rule
+(no name that starts with `.` or `_`), one copy for both binaries, and a
+unit test holds the list and the bytes to the tree. Go's flag package is
+copied for these commands' flags and usage text.
+
+`clients/coppice_compare.py` gains a web suite (`--suite web`, the files
+of `harness/coppice-rs/cases/web`) and two local requests: `http` (one
+raw HTTP/1.1 request, plain or TLS checked against a side's own CA,
+compared by status, every header but Date, and the body) and `ws` (a
+websocket client: the handshake, the reply frames, the close code and
+reason). Each side gets two loopback ports from a scratch range (18600 to
+18999) as `{ADDR}` and `{ADDR2}`; no case listens on another address. A
+`cli` run with `"peer": true` runs the other side's binary on this side's
+data dir: Go's `cert init` then Rust's `cert show` and a Rust server on
+Go's leaf, and the reverse, both checked by a TLS client that trusts only
+that CA. Fakes beside the cases: a `tailscale` on PATH (the real one is
+never run), an ntfy server and a voice server (python3, stdlib only, in a
+scratch pane), and a websocket probe that a pane runs. Red was shown
+first: on the slice-5 build, 12 of 89 cases agreed, and every file that
+serves failed at its start. Go against Go agreed on all of them. On the
+slice-6a build all 395 web cases and 13 event views agree; the full
+compare, run in parts, agrees on all 1311 cases (the 916 earlier ones
+among them), 61 event views and 17 tree views, none refused, no leak.
+`harness/coppice/e2e/run.sh web` (`web.sh` in headless Chromium, from a
+scratch copy of `e2e/` with its pinned Playwright from the local npm
+cache) passes all seven checks against each binary.
+
+One fault in the Rust server came out: it left its socket file behind
+when it closed, where Go's listener removes it, so a client that dialed
+after a stop got `connection refused` from Rust and `no such file or
+directory` from Go. Fixed in Rust; every earlier case still agrees.
+
+**CP-R-33 (normalization): a line of Go's default logger.** `web serve`
+and the phone server log through Go's default logger: the date and time
+at the start of a line become `{TIME}`, and a client's address in it
+(`remote=` or `addr=` with a loopback port) has its port masked, since
+the kernel picked it. The CA hand-off logs from its own goroutine in Go,
+so its line and the phone server's first line may come in either order;
+the driver puts the hand-off's first, which is the order Go shows in
+practice and the order Rust writes.
+
+Status: in force.
+Retires when: does not retire.
+
+**CP-R-34 (normalization): a minted token.** A web token coppice mints is
+43 random characters of unpadded base64url; after `token     `, `#t=` or
+`Bearer ` the driver writes it as `{MINTED}`. A push card's deny token,
+64 random hex digits after `Bearer `, becomes `{DENY}`. The cases pin the
+operator's token in `{DATA}/web/token` wherever a token is printed or
+drawn, so the sign-in lines and the QR codes are compared whole.
+
+Status: in force.
+Retires when: does not retire. Tokens are random by design.
+
+**CP-R-35 (normalization): values in a web reply that follow the clock or
+randomness.** The event ring's `from` (the time its subscription was
+answered) is masked with `#!mask from`. A body that holds a masked value
+(a pid, a `quiet_for`, a `ts`) is as long as that value, so its
+Content-Length is masked with it. A PEM file's length follows its random
+key and signature (`mask_headers` on the CA hand-off). A view file on
+disk carries the mtime of its copy in Last-Modified, which is masked;
+Date is left out. Every other header is compared.
+
+Status: in force.
+Retires when: does not retire.
+
+**CP-R-36 (ruling): three crates for TLS and the local CA.** The phone
+server serves TLS by default, and `cert init` makes P-256 keys and ECDSA
+signatures. Writing TLS by hand is the larger risk, so the crate uses the
+versions and features `clients/rust` already locks:
+
+- `rustls` =0.23.45 (Apache-2.0 OR ISC OR MIT; the rustls project), with
+  `default-features = false` and `ring`, `std`, `tls12`: the TLS server,
+  and the client for an https ntfy or voice server. 2.0 MB of source.
+- `ring` =0.17.14 (Apache-2.0 AND ISC; Brian Smith's ring, from
+  BoringSSL): P-256 key generation, ECDSA signing, SHA-256, and rustls's
+  crypto. 8.2 MB of source, most of it pregenerated assembly; its C is
+  built by the `cc` crate with the system compiler.
+- `rustls-pki-types` =1.15.1 (MIT OR Apache-2.0; the rustls project):
+  the key and certificate types. 272 KB.
+
+They bring, all locked at clients/rust's versions: rustls-webpki 0.103.15
+(ISC), untrusted 0.9.0 (ISC), subtle 2.6.1 (BSD-3-Clause), zeroize 1.9.0,
+once_cell 1.21.4, getrandom 0.2.17, cfg-if 1.0.5, and for the build cc
+1.4.3, shlex 2.0.1 and find-msvc-tools 0.1.11 (each MIT OR Apache-2.0),
+about 1.8 MB of source more. The windows crates in the lock are never
+built on Linux. The certificates' DER, SHA-1 for the websocket accept
+key, base64, PEM and the QR code are written here, not taken from crates
+(rcgen and x509-parser were looked at and not used: rcgen writes a
+subject in a way that may not match a Go-made CA's bytes). The binary
+grows from 7.1 MB to 9.6 MB, the page's 400 KB among it.
+
+Status: in force.
+Retires when: does not retire.
+
+**CP-R-37 (ruling): text edges of certificates and keys.** Go reads a
+certificate with crypto/x509 and a key with ParsePKCS8PrivateKey, and its
+error words come from encoding/asn1 (`asn1: structure error: tags don't
+match ...`). This port reads only what it needs (the subject, the key id,
+the validity) and says `x509: malformed certificate` or `<file> is not an
+ECDSA key` where Go says something longer, and it may read a
+certificate Go's stricter parser refuses. A key or certificate that is
+not PEM, the missing files, the partial CA and the key that does not
+match the CA say the same words in both, and each is a case. Loading a
+`--tls files` pair goes through rustls, whose words for a broken pair
+are not Go's crypto/tls words; only a hand-made pair reaches this.
+
+Status: in force.
+Retires when: a case with a broken key shows a difference that matters,
+which is then fixed.
+
+**CP-R-38 (ruling): HTTP, TLS and websocket edges.** These differ, or
+may, and no case reaches them, or they are timing:
+
+- Go's TLS server also offers HTTP/2 (ALPN h2) to a browser; this port
+  serves HTTP/1.1 only. Each side's cipher suites are its own library's;
+  both take TLS 1.2 and 1.3.
+- Go reads each request with a 10 s header timeout and no idle timeout;
+  this port gives every read of a connection 10 s.
+- This port sends 100 Continue before it routes a request that waits for
+  one; Go sends it when the handler first reads the body, so a refused
+  request gets none from Go and the connection closes.
+- A request with several ranges gets the whole body here (200); Go sends
+  multipart/byteranges with a random boundary. A header name or value
+  that Go's httpguts refuses is read here; and an absent Host on
+  HTTP/1.0, a CONNECT, and Go's other ReadRequest refusals are not all
+  ported (a bad version, a missing or malformed Host, a header line with
+  no colon, a bad Content-Length and an unsupported Transfer-Encoding
+  are, with Go's words).
+- A content type no table names is sniffed by a subset of Go's
+  DetectContentType (HTML, XML, PDF, PNG, text, binary). The mime table
+  is Go's builtins, then the system's globs2, as Go loads them, so a file
+  extension types the same on one box.
+- The websocket is read in 20 ms slices on one thread, where Go reads and
+  writes on two goroutines, so a line may reach the browser up to 20 ms
+  later. A close reason over 123 bytes, an unknown opcode's words and a
+  close from the browser in the middle of a fragmented message are not
+  cased.
+- An https voice server or ntfy server is checked against the system's
+  CA bundle by rustls, not Go's crypto/x509; a redirect from either is
+  not followed here.
+
+Status: in force.
+Retires when: a case shows a difference, which is then fixed.
+
+**CP-R-39 (ruling): what the web cases do not reach.** These paths are
+ported but no case drives them, because each needs a value only one side
+can see, minutes, or something a case must not do: a lock-screen deny
+token used on the answer route and its retired 409 (the token is random
+and lives only in the push card the fake ntfy got), an ask a harness
+holds on the answer route and in a push card, a ban lifting after its
+minute, the event ring's caps (10,000 events, two hours) and its retry
+after it loses the server, ntfy and voice over https, a clip over 8 MiB,
+the expiry warning within 14 days, `coppice web` opening a browser (every
+case passes `--no-open` or has no display), the default listen addresses
+`:8443` and `:8080` (no case listens on every address), and the real
+`tailscale` (a fake answers). Rust unit tests cover the QR encoder, the
+DER and the dates, the ranges, the key ids and base64, the flag parser's
+usage text, the ban list, the token rules, and a CA that issues two
+leaves and keeps its root.
+
+Status: in force.
+Retires when: a case reaches each path, with a clock or a timing both
+servers would take as a flag.
+
+**CP-R-40 (ruling): the phone screenshots and the e2e.** `testdata/phone`
+holds five reference screenshots of the page at 360x780 that no Go or
+JavaScript test reads. Both binaries serve the same page bytes, so a
+screenshot can differ only through what the server sends, which the web
+suite compares; the e2e check of a 390x844 page (the roster shows and
+the page does not scroll sideways) runs against each binary.
+`testdata/words.json` is held by a Rust unit test, as Go's push test
+holds it. The e2e is run by hand against each binary with
+`run.sh web`; `tui.sh` waits for slice 6b, and CI runs the e2e against
+the Go tarball only.
+
+Status: narrowed 2026-10-02 by slice 6b: `run.sh tui` passes against
+each binary, and the coppice-rs CI job runs it against the Rust one
+(CP-R-45). The web half is still run by hand against the Rust binary.
+Retires when: CI runs `run.sh web` against the Rust binary too.
+
+## 2026-10-02: stage I, coppice in Rust, slice 6b (the floor on a terminal), and the rename
+
+Slice 6b ports `internal/tui`, the floor on a terminal: the rail grouped
+by task and then by project, with fold headers and their counts; the
+peek, with the ask's answer keys by tier and the trust screen's keys; the
+prompt line and its words (list, read, close, open, swap, rotate, reset,
+lock, unlock, layout, tree, zoom, foreman, a view id alone, and talk to
+the foreman); the tree view and the task path; live windows beside the
+rail on a wide screen, each attached with input rights at its own size,
+the typing window, a headless agent's own input line, and the start
+fill; the mouse (rows, windows, the close mark, drags, the ended line);
+the rail keys from one table that also prints the footer; the Recent
+fold and the ended line; the project picker; `floor.json`; the talk key
+with the kitty keyboard protocol and voice clips; the one-question first
+run before the alternate screen; and `coppice` with no arguments in the
+CLI, with a hand-off to attach for one pane full screen. attach gains a
+caller's key channel, the end-on-exit rule, and a screen's lines and
+cursor; config gains the talk key. No crate is added. Go's code and tests
+are not changed.
+
+The floor is compared as a screen. A case file in `harness/coppice-rs/
+cases/tui` starts a second scratch server for each side (the alt server)
+and runs that side's binary as the floor in one of its panes, at a fixed
+size, against the case's own server by the explicit socket and data dir,
+so the floor's own pane is not on the roster it draws. Keys and words go
+in with `coppice pane send-keys` and `send-text` on the alt server's pane,
+named as in `testdata/keys.json`. A new local request, `screen`, reads the
+pane at a checkpoint through the alt server's own libghostty-vt, the same
+engine both ports link: a view-only attach on a connection with no hello,
+and the first full frame, as plain rows and the cursor. Three files hold
+the checkpoints: `rail.jsonl` (100 by 36: the roster, the peek on an ask
+and on the trust screen, the answer keys, the hint, folding, rename, the
+stop question, the words, `floor.json` compared as a tree, the tree view
+and the task path, the picker, the ended line and Recent, `n` and ctrl-w),
+`windows.jsonl` (200 by 50: two live windows, the start fill, the leave
+key, typing into a pane, the number keys, the layout words, a headless
+pi's own input line on the fake pi, zoom into attach and back, the mouse
+on the close mark, a row and a drag, the wheel) and `firstrun.jsonl` (no
+harness, two harnesses with the numbered question, one harness, and the
+config file each writes). Each file was read on Go alone first, screen
+by screen, before the Rust side was compared. Red was shown first: on the 6a
+build 35 of the 230 tui cases agreed (the setup requests and the steps
+that only send keys) and 195 disagreed, both tree views among them, and
+`e2e/run.sh tui` failed from its first check (no roster). On the 6b build all 230 tui
+cases, 3 event views and 2 tree views agree, and the whole compare, run
+in parts, agrees on 1541 cases, 64 event views and 19 tree views, none
+refused, no leak. `e2e/run.sh tui` passes all six checks against the Go
+and the Rust binary.
+
+CP-R-12 is retired: the Rust binary carries every command of Go's
+command line, the floor on a terminal last, and is named `coppice`, as
+Go's is. CP-R-40 is narrowed.
+
+**CP-R-41 (normalization): the clocks on a floor screen.** A `screen`
+result masks what follows the clock: a row's age (`now`, `3s`, `4m`,
+`2h`) as `{AGE}`, an ended row's age before `ago`, and a held row's wait
+after its foreman's name. An age takes as many cells as its digits, so the
+padding after a masked age on a row that ends with the close mark is cut
+to one space, and the tail of such a row that the narrow rail cuts short
+(it ends with the ellipsis) is masked as `{CUT}`. A screen is read once it
+holds the checkpoint's text and two frames 400 ms apart are the same. A
+checkpoint after a change the 2 s poll draws (a new agent, a stopped one,
+an ended one, the facts row's counts) waits 2.5 s first, and one after a
+pane printed waits 6.5 s, so the process state's five-second window has
+closed on both sides.
+
+Status: in force.
+Retires when: does not retire. Ages are clocks.
+
+**CP-R-42 (ruling): Go's tui tests in Rust.** The Rust unit tests carry
+the Go tests that need no server (the model, the rail, render, the peek
+and its tiers, the trust screen, subagents, holds, looking, views and the
+shared tree fixture, the tree, `testdata/words.json`, the talk key's
+state, the facts row, the windows and the mouse), and a set of the Run
+tests against a Rust server in the same process (the first frame, ctrl-c
+and the end of the keys, the hint and the prompt, the peek, the cursor,
+close, talk with no default harness, the stop question, `floor.json`
+across runs, a server that goes away, the start fill on a wide screen).
+The rest of Go's Run tests, which drive a floor against a live server
+through a recording proxy (typing, the windows' attach and resize
+requests, the headless line, the pause after an agent ends, the
+foreman's promotion, voice clips through a fake recorder and a fake
+voice server), are covered by the screen compare where a checkpoint can
+see them; `testdata/keys.json` is read by no Go tui test, and the cases
+send keys by its names. No case reaches: a voice clip (it needs a
+recorder and a microphone), the kitty keyboard protocol and the device
+query, a terminal resize, a double click into attach, a paste into a
+headless window, the key pause after a typing agent ends, the task
+foreman's promotion (it waits up to 30 s for a harness), and `open
+HARNESS` and talk, which start harnesses. An agent that ends before the
+floor's 2 s poll has seen it live draws no ended line in either port, so
+`rail.jsonl`'s short agent lives past a poll.
+
+Status: in force.
+Retires when: a case reaches each path.
+
+**CP-R-43 (ruling): text and timing edges of the floor.** These differ,
+or may, and no case shows a difference: Go's first-run question reads its
+answer through a buffered reader, which can take keys typed after the
+line, where Rust reads byte by byte; the prompt line holds bytes, and a
+rune not yet whole draws as U+FFFD in Rust where Go writes the raw byte;
+`floor.json` field names are matched exactly, where Go's JSON matches
+them in any case; the Rust floor waits for server lines, side work and
+keys in 20 ms slices where Go selects on all of them, and its key reader
+buffers keys where Go's channel holds none, so a paste is seen as one a
+little sooner; a call's i/o error words are the Rust library's.
+
+Status: in force.
+Retires when: a case shows a difference that matters, which is then fixed.
+
+**CP-R-44 (ruling, a fault in both ports): a click on a close mark.** A
+left press on the close mark of a window header or a live row asks
+whether to stop the agent, and the question takes the next key. A
+terminal in mode 1000 sends a release after the press, and the floor reads
+that release as the next key, so the question is answered no at once: on
+a real terminal a click on the close mark only flashes the question. Go's
+tests send the press alone. Both ports do the same, and
+`windows.jsonl` pins it (`close-released`).
+
+Status: retired 2026-10-02. While the stop question (or the clear-all
+question) is open, a mouse release or a motion report does nothing; a
+key or a new press answers it, as before. The fix is in the rail's key
+handler of each port, before the question takes its key. A Go test and a
+Rust test send the press, then the release, then motion, and the
+question stays open until a new press. `windows.jsonl` now expects the
+question still on screen after the release (`close-released`), and Esc
+to close it (`close-kept-2`); the two pre-fix builds fail that case. A
+wheel report is still a press and still answers the question no.
+
+**CP-R-45 (ruling): the end-to-end suite and the release.** `e2e/run.sh
+tui` passes against each binary, run by hand, and a step of the
+coppice-rs CI job now runs it against the Rust binary (added with this
+slice, not yet run on GitHub); the e2e job runs `run.sh` (web and tui)
+against the Go tarball. `scripts/install.sh` and
+`scripts/release.sh` build either coppice: `COPPICE_PORT=rust` puts the
+Rust one in place of the Go one under the name `coppice`, and Go stays the
+default. The Rust binary links libgcc_s as well as libc, so its release
+check allows that one library more, and its tarball carries
+`harness/coppice-rs/NOTICE`. The Cargo package keeps the name
+`coppice-rs`, the directory CI builds in. The release script's Rust
+branch was checked by a build with its path maps (no build-machine path,
+libc and libgcc_s only, `--version` says the given version); no release
+was made, and `COPPICE_PORT=rust scripts/install.sh` is checked for its
+syntax only, since it installs into the owner's bin directory.
+
+Status: in force.
+Retires when: the owner makes the Rust coppice the default.
+
+## 2026-10-01: the resident engine, Parakeet v2, engines by hardware
+
+**O-1 (owner ruling): the voice server keeps the speech engine loaded
+between clips.** Each external engine runs as one resident child (VO-19).
+
+Status: in force.
+Retires when: the owner rules otherwise.
+
+**O-2 (owner ruling): Phonon-2 is excluded.** Its retraining used
+SPGISpeech under Kensho's restrictive terms. No code, doc or summary offers
+it. The research record of it (docs/research/stt-2026-10.md and
+stt-2026-10-pass2.md, and VO-15) stays as history.
+
+Status: in force.
+Retires when: the owner rules otherwise.
+
+**O-3 (owner ruling): the curated voice defaults.** VO-14 was the
+provisional form of this ruling; it is now the owner's. It shapes defaults
+only: no model is blocked, warned about or labelled.
+
+Status: in force.
+Retires when: the owner rules otherwise.
+
+**O-4 (owner ruling): the engine may differ by hardware.** A phone, a
+desktop CPU and a large GPU may each get their own engine (VO-17).
+
+Status: in force.
+Retires when: the owner rules otherwise.
+
+**VO-16 (ruling): Parakeet v2 on parakeet-cli, the desktop default.**
+
+- The engine. `voice_engine: parakeet` runs `parakeet-cli -m MODEL.gguf
+  --resident`, this repo's own program (clients/native/parakeet-cli) on
+  CrispASR's Parakeet code and the ggml CPU backend (VO-21). `voice_model`
+  is `v2` (the default, and what `tiny.en` means here) or the path of a
+  Parakeet-TDT GGUF file. A missing file says `Parakeet model file missing:
+  PATH. Set voice_model to v2, or to a Parakeet-TDT GGUF file.`; a missing
+  program names `native.sh --parakeet`. The model is English, so no
+  language is passed.
+- The model. NVIDIA Parakeet-TDT-0.6B v2 (CC-BY-4.0; the attribution is in
+  NOTICE and in the module map). The recipe, run once on this box with
+  nothing published: NVIDIA's `parakeet-tdt-0.6b-v2.nemo` from
+  huggingface.co/nvidia/parakeet-tdt-0.6b-v2 (SHA-256
+  d99e39955c9d3d0350d8fb7c75e40c64a2b2eaeb003883d7c941fd2e8747b28c, 2.47 GB,
+  deleted after) went through CrispASR's own
+  `models/convert-parakeet-to-gguf.py` at the pinned commit, run by
+  `scripts/parakeet_convert.py`, which puts a GGUF writer of gguf-py's
+  layout and a SentencePiece piece reader in place of the packages this
+  project does not depend on. The F16 file it wrote has SHA-256
+  c82b001dcb0adecd36f7401e4b77c7257eb352462368b89cf3ee13184206d7f7: byte
+  for byte the file `cstr/parakeet-tdt-0.6b-v2-GGUF` publishes. Then
+  `parakeet-quantize F16 OUT q4_k` (CrispASR's crispasr-quantize, built by
+  `native.sh --parakeet`) made the Q4_K file, SHA-256
+  764c4e6738b0b38c53bbfea040f9e07425d6d742df58b18906053085aea46b1c
+  (396,937,984 bytes); two runs gave the same bytes. The Q4_K file cstr
+  publishes is a different file and is not used.
+- How a box gets it. Because the F16 file is the published one, the voice
+  server fetches it (1,236,861,248 bytes) from
+  `huggingface.co/cstr/parakeet-tdt-0.6b-v2-GGUF/resolve/main` and checks
+  its pin, runs `parakeet-quantize` (found beside the file that
+  `parakeet-cli` on PATH names), checks the Q4_K pin, and deletes the F16
+  file. One line says so first: `Fetching the Parakeet v2 model (1237 MB)
+  into DIR, then making its 397 MB Q4_K file. This happens once.` A
+  mismatch fails closed: a fetched file that fails its pin is deleted; a
+  Q4_K file that fails its pin is deleted with a sentence that names
+  voice_model as the way out. All three sides took this path once on this
+  box, from a loopback host that served the converted file, and each made
+  the pinned Q4_K file. The URL names `main`, not a commit: only a short
+  revision (8878172f) was recorded, so a changed upstream file would fail
+  its pin, not load. The cases reach the fetch only through a closed port
+  or a 404 (fake bytes cannot match the pins).
+- The bench (docs/research/stt-2026-10.md, "Measured again with the
+  resident engines"): resident Parakeet v2 Q4_K answers a 4 to 6 s clip in
+  a median of 1.10 s (test-clean) and 1.04 s (test-other), p90 1.21 s and
+  1.24 s, with WER 2.09% and 3.94%. The owner's bar for the desktop default
+  is a median under about 1.2 s for a 5 s clip, so Parakeet is the
+  desktop default (VO-17).
+
+Status: in force.
+Retires when: does not retire.
+
+**VO-17 (ruling): the engine a box with no voice choice gets follows its
+hardware.** `engines.choose_engine`, the same in Go and Rust. Inputs: total
+RAM, CPUs online and GPU memory, from the probe `tiers setup` uses (Python's
+`hardware`, with the nvidia-smi part split out so no torch import happens;
+Go's and Rust's setup probe), and which engines are installed. Tiers:
+Parakeet v2 with at least 8 GB of RAM and 4 cores (that leaves about 2 GB
+for its model and runtime on a box that also runs agents); Moonshine small
+with at least 2 GB; else the tiny tier, which is faster-whisper tiny.en
+where its package imports and Moonshine small otherwise. whisper.cpp is
+never chosen: this project fetches no whisper.cpp model, so it needs a
+voice_model path. The first tier whose program is on PATH (or whose
+package imports) wins; with none, the first tier, whose engine then says
+what is missing. Total RAM, not free RAM, so a server never changes engine
+from one start to the next. One line says which and why, for example `No
+voice engine is set, so voice uses Parakeet v2: this box has 15.5 GB of
+RAM and 4 cores.`, and, when a tier was skipped, `Parakeet v2 would come
+first, but parakeet-cli is not on PATH.` GPU memory only appears in the
+line (`and a GPU with 6 GB (no GPU engine is built yet)`): no GPU engine is
+built, and Voxtral Realtime, the large-GPU option, is in the research note
+only, untested. `OPENDAISUGI_VOICE_HARDWARE=RAM_GB,CPUS,VRAM_GB` replaces
+the probe; every case suite sets it, so no fixture depends on the box.
+`daisugi modules` marks the chosen engine active the same way. This
+replaces VO-13's "faster-whisper where it imports, else Moonshine small".
+14 `choose` cases, 6 `pick no config hardware` cases.
+
+Status: in force.
+Retires when: a GPU engine is built, or a phone build picks its own.
+
+**VO-18 (ruling): whisper.cpp stays one process per clip.** O-1 asks for a
+resident child for every external engine, and for a wrapper over the C API
+where an engine has no resident mode. whisper.cpp's own resident mode is
+its HTTP server, not this protocol, and a wrapper needs whisper.cpp's
+sources, which were not on this task's list of downloads. A wrapper built
+from the copy inside CrispASR's tree would blur the provenance VO-21 rests
+on. So `whisper-cli` runs as before (VO-0). whisper.cpp is never the
+engine a box gets without a choice (VO-17).
+
+Status: in force.
+Retires when: a resident wrapper over whisper.cpp's C API is built from
+ggml-org/whisper.cpp at a pinned commit.
+
+**VO-19 (ruling): the resident protocol and lifecycle.** Defined once, in
+`src/opendaisugi/voice/resident.py`; `clients/native/common/daisugi-native.h`
+is the child side; Go (`internal/voice/resident.go`) and Rust
+(`src/voice/resident.rs`) follow it. The child writes `{"ready":
+"daisugi-voice-1"}` once its model is loaded, or `{"error": WHY}` and
+exits 3. A request is a 4-byte big-endian length (1 to 64 MiB) and a 16 kHz
+mono 16-bit WAV; a reply is one JSON line with a string `text` or `error`;
+end of file means exit 0. In resident mode the child points fd 1 at stderr
+and keeps the protocol on its own stream, and asks for SIGTERM when its
+parent dies. The server starts the child and waits for it before the bind
+(a failed start is exit 3 with `PROGRAM did not start: WHY`), sends one
+clip at a time, restarts at once a child that dies after it was ready,
+answers a clip that comes while a child loads with 503 `engine_loading`,
+answers a child lost inside a clip (an end, a reply it cannot read, no
+reply in 120 s, the write of the frame included, so a child that stops
+reading its stdin cannot hold the clip lock) with 503 `engine_unavailable` and starts a new one, starts
+a child that failed to load again only when the next clip comes (so a
+broken engine never loops), passes an `error` reply on as the generic 500,
+and on stop closes the child's stdin, waits 2 s and kills it. Cases: a fake
+engine (`clients/fake_resident.py`) driven by a spec per start and per
+clip; 17 `resident` probe cases (one load and many clips, a crash and the
+restart, malformed replies, an error reply, a slow load within and past
+the timeout, a load error, an exit before ready, a wrong ready line, clips
+refused while it loads, a failed restart, a clip timeout, a child that
+stops reading its stdin, odd text) and 16
+`resident line` cases; 7 parakeet server cases. A server step may be sent
+again while it answers `engine_loading`, and only its last answer is kept,
+so a restart's timing never reaches a fixture; every case also counts the
+fake's runs still alive once the server has stopped (always 0). 555 voice
+cases (371 probe, 134 cli, 50 server), from 486. Red was shown on the Go
+and Rust binaries built before this change: on each, 106 cases disagreed
+and 1 was classed fail-open (`serve moonshine fails is 500`: the old
+binary ran the new resident fake once per clip). For Go the red came
+after the cases and before any Go code; for Rust before any Rust code.
+Then all 554 agreed on both, and two full oracle runs wrote the same
+bytes. The write-under-the-timeout case came last: the Rust binary built
+before that fix disagreed on it (it waited out the fake's 30 s stall);
+with the fix Go and Rust agree on all 555.
+
+Status: in force.
+Retires when: does not retire.
+
+**VO-20 (ruling): Moonshine rests between clips.** Moonshine keeps one
+Silero voice detector per process and never resets its state, so a
+resident child heard each clip through the end of the clip before: on
+LibriSpeech, resident Moonshine small scored 6.21% and 11.21% WER against
+4.85% and 10.39% one process per clip, and 47 of 100 test-clean
+transcripts changed (one gained a "Yeah" that was never said). Before each
+clip, moonshine-cli now runs one second of silence through the same call
+and drops its transcript. With that, WER is 4.81% and 10.70%, within the
+sample's noise of the one-process figures. The C API offers no reset; the
+silence is the smallest change that brought the numbers back.
+
+Status: in force.
+Retires when: Moonshine resets its detector between calls, or offers a
+reset in its C API.
+
+**VO-21 (ruling): the Parakeet-only CrispASR build.** `native.sh
+--parakeet` checks out CrispASR (github.com/CrispStrobe/CrispASR) at
+7e2b030780df5c9ad7ede6ac1935bc783b037d18 with only the 32 files of
+`clients/native/parakeet-cli/crispasr-files.sha256` (the five sources, the
+headers they include, the quantizer's three files, the converter and the
+license), checks each file's SHA-256, and refuses any other file on disk.
+It checks out CrispStrobe/ggml at 2f5a80d258c46e6ac8eee95f1328c0f58376d7ee,
+the commit CrispASR's submodule pins, with only the top files, cmake/,
+include/, the top of src/ and the CPU backend, without its LoongArch and
+SpacemiT code (those files build only for those CPUs), and checks the tree against one SHA-256 of its sorted sha256sum
+listing (aa6369fd...). That digest was taken here on the first checkout:
+trust on first use, against the git commit. Both programs are built with
+zig 0.16 for the baseline CPU with `-ffp-contract=off`; on x86_64 with
+AVX2, FMA, F16C and BMI2, the ggml CPU backend alone also gets those
+(the prefix stamp names which). The quantizer reaches the quantization
+through `ggml_quantize_chunk`, which is in ggml-base (`quantize_q4_K` in
+`ggml-quants.c`), compiled for the baseline CPU in every build; the ISA
+flags reach only the CPU backend. So the same bytes are expected on every
+x86_64 box. `check-binary.sh` must pass on both before
+anything is installed: no string or symbol of a left-out model, Xiaomi's
+tables, pinyin, Kaldi or CrispASR's download cache; no URL; no socket,
+DNS, curl or TLS call; and `ldd` names only the C runtime. The quantizer
+is checked with `--rules`, which skips the model-name strings and only
+that: its per-model rules name other models' tensors as plain strings.
+`ldd` of parakeet-cli names libc and libm only. The quantizer's output was
+the same on two runs here and on the three end-to-end runs; it was not
+checked on another box or on aarch64, where a different result fails the
+Q4_K pin closed, and the way out is a voice_model path to a GGUF file.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-02: stage J, sprig in Rust
+
+`harness/sprig-rs` is the Rust sprig: the four binaries the Go module
+builds (`sprig`, `sprig-hook`, `sprig-mcp`, `weave`), with the loop, the
+four tools, the executor and the process gate, the session tree and its
+resume, the claude and API backends, the command line, the hook, the MCP
+server and the workflow runner. It changes no behavior: it is checked
+against the Go sprig, not the Python oracle, since sprig has no Python
+side.
+
+`clients/sprig_compare.py --go DIR --rust DIR` runs each case of
+`clients/sprig_cases.py` on both sides, each in a scratch root of its own
+with `PATH` set to the side's fakes and `/usr/bin:/bin`, and no other
+variable but the case's own. The fakes: a `claude` that answers from the
+case's script and records argv, cwd and stdin; a gate that rules by the
+case's rules and records each payload; a local HTTP server for the API
+that records each request. Compared per case: the exit code, stdout,
+stderr, every fake call and request, and the files of the work dir and the
+session dir after the run. The real-gate cases run only with
+`--daisugi`, once per daisugi binary given, after `daisugi gate init
+--workspace WORK` in the side's HOME.
+
+Red was shown first, on the empty crate whose four binaries said "not
+ported" (commit `0702fa0f`): all 177 cases refused. Go against Go agreed
+on all 177 before any Rust code, which shows the masking below is whole.
+Then all 177 agreed, and with the https and raw-byte cases added, all 185
+(173 through fakes, 12 through the real Go and Rust daisugi), none
+refused. Go's own tests were not changed and pass. No fault was found in
+Go.
+
+**SP-R-1 (normalization): per-process values.** Each side's root becomes
+`{ROOT}`, the fake API's port `{PORT}` and a closed port `{DEAD}`. The
+values of `id`, `parentId`, `toolUseId`, `leafId` and `session_id`, and a
+minted session id in stderr and in a session file's name, are renamed by
+first appearance (ID1, ID2, ...), so a broken parentId link still shows.
+`ts` and `latencyMs` are masked. The API's `X-Opencode-Session` header
+keeps only its shape, `sprig-` and 16 hex digits. Both sides are built
+with one version string, so `--version` compares. Every other byte is
+compared.
+
+Status: in force.
+Retires when: does not retire.
+
+**SP-R-2 (ruling): the HTTP client past what sprig sets.** The Rust
+client sends Host, User-Agent (Go's text), Content-Length and sprig's
+four headers, and no `Accept-Encoding: gzip`, so no reply comes gzipped
+for it to undo; the compare records the path, the body and sprig's four
+headers. Not followed, and not compared: `HTTP_PROXY`, `HTTPS_PROXY` and
+`NO_PROXY`; redirects (Go follows a 307 or 308, Rust reports the 3xx as
+an `anthropic api` error); the words of a DNS failure, a TLS failure and
+a URL that Go's url.Parse refuses for any reason but a missing scheme or
+a bad port; a header value Go refuses. The compare covers http, https
+through a scratch CA, chunked replies and a refused connection.
+
+Status: in force.
+Retires when: a case needs one of these, or the API backend leaves its
+on-hold state.
+
+**SP-R-3 (ruling): ported, not run in the compare.** The claude backend's
+120 s timeout (both say `context deadline exceeded`); a session file whose
+parentId links form a loop (both walk it without end, as Go does); a
+session-file line of 16 MiB or more (both stop with `bufio.Scanner: token
+too long`); a write to a closed stdout or stderr (both die of SIGPIPE).
+`--gate-timeout` above 9223372036 seconds differs: Go's Duration
+overflows and the gate times out at once, Rust waits that long. No
+caller passes such a value.
+
+Status: in force.
+Retires when: does not retire.
+
+**SP-R-4 (ruling): the crates.** rustls 0.23.45 (Apache-2.0 OR ISC OR
+MIT, the rustls project, 2.0 MB of source), ring 0.17.14 (Apache-2.0 AND
+ISC, from BoringSSL, 8.2 MB, its C and assembly built by its build
+script) and rustls-pki-types 1.15.1 (MIT OR Apache-2.0), for https in the
+API backend. With them come rustls-webpki 0.103.15 (ISC), untrusted 0.9.0
+(ISC), subtle 2.6.1 (BSD-3-Clause), zeroize 1.9.0, getrandom 0.2.17,
+once_cell 1.21.4, cfg-if 1.0.5 and libc 0.2.189 (MIT OR Apache-2.0), and
+at build time only cc 1.4.3, shlex 2.0.1 and find-msvc-tools 0.1.11.
+Each is the version and feature set `harness/coppice-rs/Cargo.lock` and
+`clients/rust` already lock; no new crate came from the network. There
+is no JSON crate: serde_json refuses a lone surrogate escape and bytes
+that are not UTF-8, which Go turns into U+FFFD, and does not match keys
+case-folded, so `src/json.rs` follows encoding/json by hand: its scanner
+and error words, case-folded keys, the last duplicate key, slice reuse,
+type errors with Go's field path, and its encoder's escapes and float
+format. `NOTICE` and `PINS.md` list them.
+
+Status: in force.
+Retires when: does not retire.
+
+**SP-R-5 (ruling): Go's own texts.** The errno texts, the signal names and
+the code points `strconv.IsPrint` calls not printable were printed by Go
+1.25.12 on linux/amd64 and are tables in `src/goerr.rs`; the JSON error
+words and the flag package's words were taken from that Go too. The
+compare ran here against Go 1.25.12. The CI job builds the Go sprig with
+`GO_VERSION` 1.26.8, against `go 1.25.12` in go.mod; if a newer Go words
+any of these differently, the compare there shows it. The job is added,
+not yet run on GitHub.
+
+Status: in force.
+Retires when: the job has run green on GitHub.
+
+**SP-R-6 (ruling): the version without a stamp.** Both install scripts
+stamp the version (`-X main.version` for Go, `SPRIG_VERSION` for Rust).
+Without one, Go reports the VCS revision its build records, cut to 12
+characters with `-dirty`, and the Rust build script runs `git rev-parse
+HEAD` and `git status --porcelain` for the same; the two may disagree on
+what counts as dirty. Not compared.
+
+Status: in force.
+Retires when: does not retire.
+
+
+## 2026-10-02: full parity, the model-asking checks and named definitions
+
+The inventory of what a Go or Rust user still needed Python for is in
+`docs/plans/2026-09-24-omarchy/plan-part2-ports.md` ("Full parity").
+New cases: 32 k2 (`run llm_check *`, `run alias *`, `run postcondition
+expr *`, `orch llm_check *`, `orch alias *`; two cases the ports refused
+before now answered), 10 k3 (`mcp step llm_check
+*`, `mcp step alias`, `mcp step expr not a dict`, `mcp verify llm_check
+invariant`, `mcp verify alias invariant`), 3 pathway (`import llm_check
+*`) and 5 gate cases (`llm claude *`). Red first: the binaries from before
+this work refused or disagreed on every one of them (Go k2 16 disagree and
+16 refused of 148; Rust 11 disagree and 15 refused of the 26 `llm_check`
+k2 cases; Go 6 of 6 `mcp step llm_check` k3 cases refused; Rust 3 of 3
+import cases refused; the Go gate denied all 5 `llm claude` cases
+undecided). After: Go and Rust each agree on 142 k2 cases (6 not ported,
+as ruled), 299 k3 cases (3 not ported and 1 refused, K3-13), all 161
+pathway CLI cases and all 2,099 gate cases.
+
+**PG-1 (ruling): `llm_check` in every verify.** The oracle's evaluator asks
+the model for an `llm_check` wherever `verify` or
+`stage2.verify_completed_step` runs: the gate, `run`, `orchestrate`,
+`weave`, the MCP tools, `pathways import`, ingest and tend. Each port now
+has one copy of `llm_check.run_llm_check`, which both the gate and the
+commands call (Go `internal/llmcheck`, Rust `gate::llm`), on both
+backends. Every command's verify goes through it, since the verifier is
+shared; the asking is cased in the k2, k3, pathway and gate suites, not in
+the f and garden suites (no ingest or tend case holds an `llm_check`).
+The two backends:
+
+- claude-code: `claude -p --model=haiku`, then `DAISUGI_CLAUDE_ARGS`, the
+  prompt on stdin, in the neutral working directory, a 60 s limit, and the
+  first `{` to the last `}` of stdout read as JSON or as a Python dict
+  literal. A failed run is a plain "not satisfied" (the oracle catches
+  `EnvelopeGenerationError` in `_invoke_model`), so the item is
+  "violated", never an evaluation error.
+- the HTTP backend: LLM-12 as before. Any failure is an errored result,
+  and the item is an evaluation error whose text holds `error: llm_check
+  call failed:`.
+
+The payload is `json.dumps({"task": plan.task, "steps": [...]})` with each
+step's keys in the order the binary read them; the fake model answers only
+exact bytes, so every case checks it. The gate's claude-code branch, until
+now denied undecided, runs the same code (5 gate cases). A call the port
+does not make the oracle's way (`SSL_CERT_FILE`, `SSL_CERT_DIR`, a proxy
+it does not read, a reply nested past 900) is undecided: the gate denies
+it, a Rust command refuses it, and a Go command records an evaluation
+error ending "is not in this binary yet" that a caller which stores the
+violation refuses. The predicate stage's violations now carry the
+oracle's detail (`{label: type}`, with `description` for "violated", and
+the unresolved-alias detail), so `run` journals them instead of refusing.
+
+Status: in force.
+Retires when: does not retire.
+
+**PG-2 (ruling): named definitions at every command.** No command of the
+oracle builds an alias registry: only the library function
+`integrations.hermes.envelope_from_yaml` passes one to `verify`. So at
+every command an `alias` is unresolved, and the ports now say so in the
+oracle's words: a top-level alias is the "references unresolved alias
+'NAME'; pass an AliasRegistry via aliases= to verify()" violation with its
+detail, and a nested one the evaluation error "unresolved alias reference
+'NAME'; resolve aliases before evaluation" (the Go port quoted the name
+with double quotes before). At stage 2, and in the MCP stage-2 tool, an
+alias is that evaluation error. Cases: `run alias *`, `orch alias
+postcondition`, `mcp step alias`, `mcp verify alias invariant`.
+
+Status: in force.
+Retires when: does not retire.
+
+**PG-3 (ruling): agentic steps in `weave`, in the ports.** Go
+(`supervise.Agentic`) and Rust (`supervise::agentic`) port
+`AgenticExecutor` and `weave` wires it, as the oracle does (WV-R-9): the
+workspace must be a directory; the child envelope (the caller's own when
+the step names none) is proved inside the caller's with `edge_ok` and a
+2,000 ms budget, and a refusal fails the step with "the child envelope is
+refused: " and the reasons; the tool wall is the step's tools whose
+capability the child grants; the child, with `parent_envelope` set, is
+registered 0600 in `envelopes/agentic-<safe step id>.json` of a fresh 0700
+gate root made by `mkdtemp` in `tempfile.gettempdir()`, outside the
+workspace, and kept; the sub-agent runs as `claude -p --model=haiku`,
+`DAISUGI_CLAUDE_ARGS`, `--output-format json --settings <gate settings>
+--allowedTools <wall> [--max-turns N]`, in the workspace, the prompt on
+stdin. The settings are `gate_settings_json` in enforce mode with
+`--captures-root <root>/captures` and `--session agentic-<id>`; the hook
+command runs the binary's own `gate check` where the oracle's runs
+`python -m opendaisugi.gate_client`, as the hook `install --gate` writes.
+Each failure is a failed step with the oracle's text: no workspace, no
+backed tool, `claude -p` failed, output that is not JSON, `is_error`. A
+reply that is JSON but no object, or a token count `int()` refuses,
+raises out of the executor as in the oracle. `run` and `orchestrate` still
+wire none (K2-7). Since 2026-10-09 the same executor has a sprig runtime
+(`--agent sprig`, SX-R-2) and `run` and `orchestrate` wire it (SX-R-1). Cases: 11 new weave cases (`agentic *`). Red first: the
+binaries from before refused all 12 agentic weave cases. After: Go and
+Rust each agree on 119 of the 120 weave cases (1 refused, WV-R-10).
+
+Status: in force.
+Retires when: does not retire.
+
+**PG-4 (harness): the sub-agent in the weave cases.** The weave suite's
+fake `claude` keeps the garden fake's behavior for a call without
+`--settings`. With `--settings` it is an agentic sub-agent: its key leaves
+out the settings value (a fresh gate root and the gate's own program
+differ run to run and side to side); its log entry holds the settings
+with the program before ` --mode ` written as `<GATE>` and the root as
+`{GATEROOT}`, the root's mode and the working directory; it runs each tool
+call of its answer through the settings' PreToolUse command as the host
+runs a hook, and logs each verdict (exit, stdout, stderr); and it logs the
+envelopes registered in the gate root, with their modes and text. So a
+case compares the inner wall itself: in `weave agentic runs` the gate
+allows the read inside the workspace and `cat`, and denies `/etc/passwd`
+and `rm`, the same way on all three sides.
+
+Status: in force.
+Retires when: does not retire.
+
+**PG-5 (ruling): the alias registry, on a probe.** `aliases.AliasRegistry`
+and the seven system aliases are ported (Go `internal/aliases`, Rust
+`aliases`): registration with the system-name rule, the path check (a
+`children` that is no list iterates as Python iterates it) and the Z3
+vacuity check (a body that names an alias, or that parses only once a
+typed placeholder is bound, is deferred; any other exception refuses the
+register with its text), lookup by tier, and resolve with one-pass
+substitution, longest name first, a regex field's text escaped as
+`re.escape` escapes it, and the oracle's errors (`UnknownAliasError` as
+the name's repr, `AliasCycleError`, missing arguments, a substituted body
+pydantic refuses). No command builds a registry, here or in the oracle
+(PG-2), so `alias-probe` measures it: 23 cases
+(`clients/alias_cases.py`), all agreeing in Go and in Rust. The first Go
+run disagreed on one: the vacuity compiler named an op it cannot compile
+by its tag where the oracle names the class (`DependsOn`); both ports
+now name the class, and quote an unresolved alias with the oracle's
+single quotes. `integrations.hermes.envelope_from_yaml` and
+`load_household_aliases`, which read YAML files and build envelopes, are
+not ported: no binary reads an alias file.
+
+Status: in force.
+Retires when: a command of the oracle builds a registry (the ports then
+wire this one).
+
+**PG-6 (ruling): `daisugi verify` and the command-line `hook report`.**
+Both ports carry them. `verify PLAN --envelope ENVELOPE [--json]` checks
+its two paths as typer's `Path(exists=True, dir_okay=False, readable=True)`
+does ("File 'p' does not exist.", "is a directory.", "is not readable."),
+reads the plan and then the envelope as `yaml.safe_load` and the models
+read them (YAML outside what the readers take is refused, K2-3), and
+verifies leniently, as `verify(plan, envelope)` does: a Z3 check that does
+not finish is a warning, not the violation `run` makes of it (K2-2). It
+prints the oracle's lines, or `VerificationResult.model_dump(mode="json")`
+with `--json`, and exits 0 or 1. `hook report [--pane P] [--root R]` reads
+one event from stdin and runs the same parse, downgrade, check, session
+tree append and delivery as the resident server's `hook report`, with the
+pane identity read from the process's own environment, as the oracle's
+command line reads it. The cases put the gate root's parent on a file, so
+the best-effort tree append writes nothing; the tree is cased through
+gate.sock in the gate_server suite. Cases: 13 `verify *` and 15 `hook
+report *` CLI cases; red first, both binaries answered every one as not
+in the binary. After: Go and Rust each agree on 591 of the 609 CLI cases,
+with the same 9 not ported and 9 refused as before.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-02: the robotics executors in Go and Rust
+
+**RB-R-1 (ruling): no command builds a robot executor; each port has a
+probe.** The oracle's `run`, `orchestrate` and `weave` build the default
+executors (shell, file_read, file_write, network, and task and agentic in
+weave), so a robot step fails there with "no executor for kind
+'joint_move'"; only a library caller hands `robotics_executors` or a VLA
+executor to `Supervisor`. The ports do the same: `daisugi` still fails a
+robot step that way, and the executors are a library part
+(`internal/robotics`, `src/robotics`) that a Go or Rust caller hands to its
+supervisor. The cases drive the library, as the alias cases do (PG-2), and
+each port answers them with a `robot-probe` that is not shipped. Red first:
+a probe that ran the cases through the default executors answered 77 of
+the 79 cases wrongly (the 2 left were render error cases, which then had
+no oracle). After: Go and Rust each agree on all 79.
+
+Status: in force.
+Retires when: a command of the oracle builds a robot executor (the ports
+then wire theirs there).
+
+**RB-R-2 (ruling): MuJoCo is pinned, linked dynamically, and wrapped by us.**
+`clients/go/scripts/native.sh --mujoco` installs the official 3.12.0
+release for Linux x86_64 (or aarch64), checked against the SHA-256 GitHub
+publishes for the asset (a9367911... for x86_64), into a prefix of its own;
+the Z3 prefix is never rebuilt for it. 3.12.0 is the version `uv.lock` pins
+for the oracle's wheel, and the wheel's `libmujoco.so.3.12.0` is the same
+file as the release's, byte for byte (sha256 bd3f702a...), so every side
+runs the same library build. The release holds only a shared library, so
+the builds with the `mujoco` build tag (Go) or Cargo feature (Rust) link it
+dynamically, with no rpath: the loader finds it through `LD_LIBRARY_PATH`.
+The default builds and the shipped binaries never link MuJoCo. The wrappers
+are ours: cgo in Go, hand-written FFI in Rust, and one small C layer both
+compile (`clients/native/mujoco/dmj.c`: loading with the parser's message,
+flat views of the model and data fields, the contacts, and rendering), so
+neither port needs generated bindings and both issue the same calls. To
+write the expectations, the oracle runs with the mujoco wheel fetched by the
+SHA-256 in `uv.lock`, unpacked on `PYTHONPATH` with `MUJOCO_GL=disable`;
+the project's virtual environment is not changed, and CI does not need the
+wheel.
+
+Status: in force.
+Retires when: the oracle moves to another MuJoCo (both pins move together).
+
+**RB-R-3 (ruling): floats are compared exactly, the IK included.** Physics
+is the same library on every side, so qpos, qvel, ctrl, body and site
+positions and every float in a stdout are compared to the last bit, with
+no tolerance. The IK's damped least-squares update goes through numpy in
+the oracle, so the ports compute it in numpy's order: each entry of
+J J^T as a chain of fused multiply-adds from zero (what OpenBLAS's kernels
+do on a CPU with FMA), the 3 x 3 solve as OpenBLAS's left-looking LU
+(getf2) with column-oriented triangular sweeps, and J^T x and the norm as
+plain sums in order. Checked against numpy on 3,000 random systems (the
+solve) and for 1 to 6 joints (J J^T and J^T x), then on every IK case. The
+expectations were written on a CPU with FMA; an oracle run on a CPU without
+it, or with another OpenBLAS kernel, may differ in the last bit and show the
+cartesian cases as stale. Then this ruling is reopened, not loosened.
+
+Status: in force.
+Retires when: does not retire.
+
+**RB-R-4 (ruling): rendering is compared between the ports.** No in-scope
+oracle path renders: only `TransformersVLAExecutor._capture_image` does,
+and it is the next job. The oracle's own renderer also needs PyOpenGL,
+which is not installed here, and fetching it would be more than the pinned
+MuJoCo download. So the 5 render cases carry no expectation: every probe
+must draw the same RGB bytes (the SHA-256 of the image, no pixel
+tolerance), an image of one color fails, and the two error cases (an image
+larger than the offscreen buffer, a camera that does not exist) must give
+the same error. The image is top row first, as the oracle's `Renderer`
+returns it, drawn with its defaults (a 10,000-geom scene, font scale 150,
+all categories). The context is EGL with no display: the first EGL device
+that initializes, as MuJoCo's Python EGL context picks it, then the default
+display, as `sample/record.cc` does. OSMesa is not built as a fallback:
+this box has no libOSMesa to build or test it against, so a box with no
+working EGL gets the renderer's error, and the other cases proceed. Both
+ports drew the same bytes on this box (Mesa's EGL); CI installs Mesa's EGL.
+
+Status: in force.
+Retires when: an in-scope oracle path renders (the cases then get an
+expectation, and the tolerance is ruled then).
+
+**RB-R-5 (ruling): receipts are compared without their timing.** A
+receipt's evidence holds `duration_ms`, and its `evidence_hash` covers it,
+so neither can match across runs. The compare checks each receipt's hash
+against the oracle's `compute_evidence_hash` of that receipt's own
+evidence, then drops `duration_ms` and the hash, and compares the rest.
+Run ids, trace ids, times and durations are dropped everywhere.
+
+Status: in force.
+Retires when: does not retire.
+
+**RB-R-6 (ruling): the dish-wash kit becomes joint moves.** The kit
+(`examples/dish-wash`) registers its own step types and wraps
+`MuJoCoExecutor` in user code, which no port reads. The cases run what its
+executor runs: each domain step as the `joint_move` it makes, with the
+kit's targets (the scrub target's sine computed by the oracle when the case
+is written) and its `settle_steps=200`, under a supervisor, for one and two
+plates.
+
+Status: in force.
+Retires when: the ports read registered custom step types.
+
+**RB-R-7 (ruling): the robotics violations carry their detail.** The
+verifier's four robotics checks (workspace, joint limits, velocity,
+obstacles) named their violations without the oracle's detail dict, so
+`run`, `orchestrate` and a supervised probe refused a plan they rejected
+("a violation whose detail this binary does not write yet") where the
+oracle journals the rejection. Both ports now write the oracle's detail:
+the invariant, the step, and the joint, target, range, bounds, velocities
+or sample point. Red first in a unit test in each port; the case `run
+rejected joint limit` now agrees.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-03: SmolVLA inference in Go and Rust
+
+**VL-R-1 (ruling): the model and its backbone are Apache-2.0; the graphs
+are 1.6 GB.** The model cards in the pinned snapshots say `license:
+apache-2.0` for `lerobot/smolvla_base` and for its backbone
+`HuggingFaceTB/SmolVLM2-500M-Video-Instruct`. The checkpoint's
+`model.safetensors` is 865 MB (the VLM is stored in bfloat16). The three
+FP32 graphs are 393 MB (vision), 796 MB (prefix) and 405 MB (denoise).
+The project's virtual environment has torch and transformers but not
+lerobot, and lerobot pins other versions of both, so the export runs in a
+separate virtual environment (VL-R-2). ONNX Runtime is MIT.
+
+Status: in force.
+Retires when: the pinned revision changes (check the cards again then).
+
+**VL-R-2 (ruling): the export is pinned and can be rebuilt.** Model
+`lerobot/smolvla_base` at revision
+`d9f33c94a60fb382c90dea2164c96845bd955e28`, backbone tokenizer from
+`HuggingFaceTB/SmolVLM2-500M-Video-Instruct` at
+`7b375e1b73b11138ff12fe22c8f2822d8fe03467`. The export environment is
+`clients/vla/requirements.txt` (lerobot 0.6.1, torch 2.11.0 CPU, onnx
+1.19.1, onnxruntime 1.23.2, mujoco 3.12.0, PyOpenGL 3.1.10, and every
+dependency with its sha256), Python 3.12, opset 17. The recipe:
+
+    uv venv VENV --python 3.12
+    uv pip install --python VENV/bin/python --require-hashes \
+      --index-strategy unsafe-best-match \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      -r clients/vla/requirements.txt
+    # fetch both repositories at the revisions above into HF_HOME, then
+    for p in vision prefix denoise check assets; do
+      CUDA_VISIBLE_DEVICES="" HF_HUB_OFFLINE=1 \
+        VENV/bin/python clients/vla_export.py --part $p --out DIR
+    done
+
+`--part assets` copies the backbone's `tokenizer.json` (sha256
+5ece781dc8d2b2f3e2f289ca0ae50b17cfc27dd27bfe7971bb8241e0b964331a) and the
+checkpoint's normalizer stats as `stats.safetensors` (sha256
+490ab239d96e263687c0b2e386a0afbc235a2eceb9857c36ed32f2f162a3e7c8) beside
+the graphs. The executors check all five files against these pins before
+they load any.
+
+Each part runs in its own process under the 4 GB cap (peak 2.4 GB). The
+graphs and their sha256:
+
+- `vision.onnx` eae4a86506b2f8e36f4b3efa16133964feadbc6323ecbb14c61838e080b06664
+- `prefix.onnx` ac391d4633dce409f050929adbe77c7a6af86dddfa0266aa4937e98b13ef3579
+- `denoise.onnx` f2412f7254659dcb9cf0d00dc181f05cca1299609ab1ec25042fe400ff4bda66
+
+They are kept in `~/.cache/opendaisugi/models/smolvla-onnx/`, never in
+the repo. A second export of `vision.onnx` gave the same bytes. Two
+earlier graphs from the same session (prefix a5f378e5..., denoise
+3c3d4689...) are void: they kept bfloat16 weights, for which the CPU
+provider has no kernels, and the prefix held a CumSum over a boolean
+input, which ONNX does not allow. Neither loaded in ONNX Runtime.
+
+`--part check` runs the three graphs with all three sessions open (peak
+2.4 GB) and the Euler loop in numpy, against the PyTorch policy in FP32
+on one fixed input and noise: largest absolute difference 1.8e-6 over
+the 50x32 chunk (largest relative difference 3.3e-3, at values near
+zero), `allclose(atol=1e-3, rtol=1e-3)` true. One chunk took 2.65 s in
+ONNX Runtime (4 threads) and 2.57 s in PyTorch on this CPU.
+
+The oracle is the FP32 PyTorch policy (the checkpoint's bfloat16 VLM
+weights cast to FP32, which is exact), run by lerobot in the export
+environment. The project's own `TransformersVLAExecutor` cannot load this
+model: in the project's environment, transformers' `AutoProcessor` raises
+`ValueError: Unrecognized processing class` and `AutoModel` raises
+`ValueError: Unrecognized model ... Should have a model_type key in its
+config.json` on the pinned snapshot. Stock lerobot runs the VLM in
+bfloat16; that gap is not the basis of any tolerance.
+
+Status: in force.
+Retires when: the pinned revision or a pinned package changes (export
+again and pin the new sha256 values).
+
+**VL-R-3 (ruling): what stays outside the graphs.** The graphs hold the
+networks only. The caller does the rest, as lerobot's processors and
+`sample_actions` do:
+
+- the task text gets a trailing newline if it has none, then the
+  backbone's tokenizer gives at most 48 ids, padded on the right, with a
+  mask of 1 for each real token;
+- the camera image (RGB, top row first) is scaled to [0,1], resized
+  bilinearly (no antialias, `align_corners=False`) to fit 512x512 with
+  its aspect kept, and padded with 0 on the left and top; the graph maps
+  [0,1] to [-1,1];
+- the state is normalized with the checkpoint's mean and std
+  (`(x - mean) / (std + 1e-8)`) and padded with zeros to 32;
+- the prefix mask is 64 ones (image), the 48 token mask values, and one
+  one (state);
+- the 10 Euler steps: `dt = -0.1`, `time = 1 + step * dt` in float32,
+  `x = x + dt * v`, starting from the caller's noise [1,50,32];
+- the sine-cosine time embedding [1,720] (period 0.004 to 4.0), computed
+  in float64 and cast to float32. lerobot computes it in float64, and
+  the CPU provider has no float64 Cos;
+- the action is the first 6 of the 32 dimensions, unnormalized with the
+  checkpoint's mean and std (`x * std + mean`, with no epsilon).
+
+The stats come from the checkpoint's normalizer file (the pre and post
+processors name the same file, kept beside the graphs as
+`stats.safetensors`). lerobot looks a feature up by its key
+(`observation.state.mean`, `action.std`, ...) and leaves the value as it
+is when the key is missing. In `smolvla_base` the file holds only
+per-dataset action stats (`so100.buffer.action.mean` and the like), so
+both steps leave the values unchanged. The ports do the same lookup, so a
+fine-tuned checkpoint with real stats would be normalized.
+
+The vision graph takes its patch positions as a constant. This is exact
+only for a full 512x512 image with no padding mask, which the caller
+always gives (padding is pixels, not a mask).
+
+Status: in force.
+Retires when: a newer export moves a step into a graph.
+
+**VL-R-4 (ruling): three graphs, and FP32 only where a graph traces.** In
+one graph with the vision encoder, the prefix export went over the 4 GB
+cap once its weights were FP32. So the vision encoder and connector are
+a graph of their own (`vision.onnx`, image to embeddings [1,64,960]), and
+each part casts to FP32 only the weights its graph uses; the others stay
+in bfloat16 and never reach the graph. Constant folding is off in the
+export (ONNX Runtime folds when it loads the graph). The denoise export
+uses zeros for the key and value cache: the shapes are static and the
+cache is an input.
+
+Status: in force.
+Retires when: the export runs with a higher memory budget.
+
+**VL-R-5 (ruling): the tokenizer is the oracle's, not the file's
+pipeline.** lerobot loads the backbone's tokenizer with transformers'
+`AutoTokenizer`, which gives a `GPT2Tokenizer` (the class named in
+`tokenizer_config.json`). transformers 5 builds that class's own pipeline:
+the ByteLevel pre-tokenizer, no normalizer, and no special tokens added.
+It takes the vocabulary, the merges and the added tokens from
+`tokenizer.json`, but not the file's pre-tokenizer, which runs a Digits
+step before ByteLevel. The two disagree only where a digit split moves a
+space: `"Ⅻ ½ ٣"` is `[173, 223, 121, 3351, 138, 16936, 113]` in the
+oracle and `[173, 223, 121, 216, 16738, 216, 164, 113]` with the file's
+pipeline. The ports follow the oracle. Both write the minimal byte-level
+BPE by hand (added tokens first, longest match; the GPT-2 pattern written
+out, as Go's regexp has no lookahead; merges by rank, leftmost first),
+with the character classes generated from the tokenizers library
+(`clients/go/internal/smolvla/gen_tables.py`). The text gets a newline
+when it has none, the ids are cut on the left to 48 (the file's
+`truncation_side` is left), and padded on the right with `<|im_end|>`
+(id 2). Red first: with the file's pipeline, 1 of the 30 instructions in
+`clients/fixtures/vla/tokens.json` differed; after, all 30 agree exactly
+in Go and in Rust.
+
+Status: in force.
+Retires when: the oracle's tokenizer pipeline changes (generate the
+fixture again).
+
+**VL-R-6 (ruling): an action may differ from the oracle's by at most
+1e-3.** Two FP32 runtimes do not add in the same order, so a port cannot
+give the oracle's bits. Measured on this CPU: the three graphs in Python's
+ONNX Runtime against the PyTorch policy, 1.8e-6 at most over a 50x6
+chunk; the Go and Rust executors against the oracle on the golden chunk
+(`clients/fixtures/vla/chunk.json`: a 240x320 test image, "pick up the
+block", a 6-value state, noise seed 0), 2.4e-6 each. The tolerance is
+1e-3 on every action value (`ChunkTolerance` in Go, `CHUNK_TOLERANCE` in
+Rust), about 400 times the largest measured difference and the same as
+Arm's validation of its SmolVLA export. The golden chunk, the replayed
+runs of the closed loop and its first free run are held to it; the later
+free runs are not (VL-R-7).
+
+Status: in force.
+Retires when: a measured difference comes near it (find the cause first;
+never raise it to pass).
+
+**VL-R-7 (ruling): the closed loop is held run by run, not as a free
+trajectory.** In the pick-place scene (`tests/fixtures/mjcf/two_joint_arm.xml`,
+"pick up the block", 5 runs of 25 actions, noise seeds 11 to 15), the
+oracle loop (`clients/vla_cases.py --part loop`) records each run's state,
+camera image, chunk and qpos after it. `clients/vla_compare.py` then holds
+each port to:
+
+- replay: each recorded run's own state and image, fed to the port's
+  policy, gives the oracle's chunk within 1e-3. Measured: 3.7e-6 at most,
+  in Go and in Rust, over all 5 runs;
+- the first free run: chunk 1.7e-6, qpos 2.1e-7, the same image bytes;
+- Go against Rust over all 5 free runs: the same chunks, qpos and image
+  bytes, bit for bit (both run the same ONNX Runtime build in float32
+  with no fused multiply-add, and the same MuJoCo build).
+
+The later free runs against the oracle are reported, not held. The two
+renderers draw the same bytes for the same state (checked on two fixed
+poses), but after run 0 the qpos differs by 2e-7, which changes 6 bytes of
+the next 240x320 image. The policy turns that into a chunk difference of
+1e-3, and the loop carries it on: 1.5e-2, 4.7e-2 and 9.2e-2 in runs 2 to
+4, with 1308 to 5979 image bytes differing. A pixel camera in a closed
+loop amplifies a difference in the 7th digit; no tolerance on the free
+trajectory would be honest. The case checks the plumbing (camera, state,
+tokenizer, graphs, actions, physics), not task success: the base model is
+not trained on this scene, the image is mostly dark (a headlight only),
+and its gripper targets (about 2.0, sized for the SO100 arm) drive
+`j_grip` far past its range.
+
+Latency per chunk on this CPU (Intel i5-7300HQ, 4 cores, 4 threads each,
+load average 0.7 to 3.4): Go 2.8 s and Rust 3.0 s on the loop's frames
+(the replay runs: the three graphs and the 10 Euler steps, not the camera
+or physics). The PyTorch oracle took 6.7 s on the same mostly dark frames,
+but 2.6 s on the export check's random image and 3.2 s on the golden
+chunk's patterned image, and ONNX Runtime from Python took 2.65 s on the
+check's image. The oracle's time depends on its input, so these numbers
+are not a speed comparison between the runtimes.
+
+Status: in force.
+Retires when: the oracle's own executor can run the loop (the project's
+environment gains lerobot), or a scene with a trained task gives a
+success measure to compare.
+
+## 2026-10-03: the model catalog (`daisugi models list|search|use`)
+
+**MC-R-1 (ruling): the catalog's entries, as checked.** Each id, license
+and size was read from the Hugging Face API on 2026-10-03 (`cardData`,
+`safetensors.total`, the `config.json` context length, and each GGUF
+repo's file list). All six ids exist as named:
+
+| id | params | license | context | GGUF repo |
+|---|---|---|---|---|
+| `ibm-granite/granite-4.1-3b` | 3402836480 | apache-2.0 | 131072 | `ibm-granite/granite-4.1-3b-GGUF` |
+| `ibm-granite/granite-4.0-1b` | 1631750144 | apache-2.0 | 131072 | `ibm-granite/granite-4.0-1b-GGUF` |
+| `mistralai/Ministral-3-3B-Instruct-2512` | 3849090048 | apache-2.0 | 262144 | `mistralai/Ministral-3-3B-Instruct-2512-GGUF` |
+| `google/gemma-4-E2B-it` | 5123178051 | apache-2.0 | 131072 | `ggml-org/gemma-4-E2B-it-GGUF` |
+| `meta-llama/Llama-3.2-3B-Instruct` | 3212749824 | Llama 3.2 Community License | 131072 | `bartowski/Llama-3.2-3B-Instruct-GGUF` |
+| `meta-llama/Llama-3.2-1B-Instruct` | 1235814400 | Llama 3.2 Community License | 131072 | `bartowski/Llama-3.2-1B-Instruct-GGUF` |
+
+The Gemma 4 small model is E2B. Its GGUF repo is the llama.cpp project's
+(Q4_0, Q8_0, BF16); `unsloth/gemma-4-E2B-it-GGUF` also has Q4_K_M. The
+Llama repos are gated, so their context length is the `context_length`
+of the bartowski GGUF. Ministral's size counts its vision encoder, as
+`safetensors.total` does. A size is an integer count everywhere; the
+text shows it in billions to one decimal.
+
+An entry under a custom licence shows that licence by its full name
+("Llama 3.2 Community License"), not the Hub's short id, as every entry
+shows its licence. Both defaults are under an OSI or permissive licence
+(apache-2.0); a test in each language holds that (2026-10-09).
+
+Status: in force.
+Retires when: an entry changes (check its card again then).
+
+**MC-R-2 (ruling): the default follows the voice probe.** The class of
+a box is `capable` when its GPU has 6 GB or more, or its RAM is 8 GB or
+more, else `weak`; the thresholds, the default per class and the default
+search size per class are in `model_catalog.json`, which all three
+languages read. The hardware is `detect_voice_hardware`:
+`OPENDAISUGI_VOICE_HARDWARE` when set, else the probe `tiers setup` uses.
+Cases always set it, so no case reads the box.
+
+Status: in force.
+Retires when: a setting replaces the hardware pick.
+
+**MC-R-3 (ruling): the choice is a file of its own, kept as given.**
+`daisugi models use ID` writes `<data-dir>/garden_model.json`
+(`{"model": ID}`, indent 2, ASCII escapes), not `config.yaml`, so no
+other command's config bytes change. The id is kept exactly as typed,
+spaces included; only an id that is blank after stripping is refused
+(exit 2, three lines). A file that does not read as an object with a
+non-blank string `model` counts as no choice.
+
+Status: in force.
+Retires when: the choice moves into config.yaml.
+
+**MC-R-4 (ruling): how search asks and reads.** The endpoint is
+`HF_ENDPOINT` with trailing slashes stripped, else
+`https://huggingface.co`. `HF_HUB_OFFLINE` is read as huggingface_hub
+reads it (1, ON, YES or TRUE, any case) and then nothing is asked. The
+request target is built in one fixed order: the query percent-encoded
+(unreserved ASCII kept, every other UTF-8 byte as `%XX`), `limit=100`,
+`sort=downloads`, `direction=-1`, then `expand%5B%5D=` for cardData,
+gguf, pipeline_tag, safetensors and tags. Any 2xx is an answer. The
+filters run on the answer: size is `safetensors.total`, else
+`gguf.total`, integers only; a size filter of 0 or less shows any size,
+and a model of unknown size shows only then. The license is `cardData.
+license`, its `license_name` when it is `other`, else the first
+`license:` tag. Three one-line errors, each exit 1: no answer (offline),
+an HTTP status, and an answer that is not a JSON list. None carries the
+operating system's error text, which differs between languages.
+
+Status: in force.
+Retires when: the API's model list changes shape.
+
+**MC-R-5 (ruling): `models pin` stays in Python.** The old `daisugi
+models REPO` (resolve to a commit-pinned file, `--pull` to download) is
+`daisugi models pin REPO` and resolves any named repo. The org list in
+`model_registry` is now only the scope of discovery. Go and Rust list
+`models pin` as not in the binary.
+
+Status: in force.
+Retires when: a port carries a Hugging Face file download.
+
+**MC-R-6 (ruling): the trainer's base model.** `python -m
+opendaisugi.lora.train` uses `--base-model` when given, else the choice
+`models use` recorded in `--data-dir` (default `~/.opendaisugi`), else the
+default for this hardware (MC-R-2).
+
+Status: retired 2026-10-03. The trainer is now `daisugi lora train` in
+all three languages, which picks the base model the same way (PK-R-6).
+
+**MC-R-7 (ruling): the group is hidden at the top level.** `models` is
+an operational group like `tiers`, so the ten visible top-level commands
+stay ten (SF-5); `help --all` lists it, and so do the binaries' help.
+Bare `daisugi models` prints the group help and exits 2 in all three.
+Help texts are not cases (as RK-R-11).
+
+Status: in force.
+Retires when: the top-level set is ruled again.
+
+**MC-R-8 (ruling): the Llama notice.** A model trained from a Llama base
+must carry Meta's "Built with Llama" notice. `docs/integrations.md` says
+so once, where training is described.
+
+Status: in force.
+Retires when: no Llama model is in the catalog.
+
+**MC-R-9 (ruling): what the wording sweep left as it was.** The user
+docs, the help texts and the changelog no longer say why an engine or
+model is not offered. These stay as written, as records or build sources
+no user reads to run daisugi: `docs/research/`, the plans under
+`docs/plans/`, `docs/superpowers/` and `docs/exploration/` (none says it
+there), this file's earlier rulings, and the comments and the left-out
+name list of the native builds (`clients/native/moonshine-cli`,
+`clients/native/parakeet-cli`, `clients/go/scripts/native.sh`). The
+owner may reword those too.
+
+Status: retired 2026-10-07 by the owner's ruling. The comments and
+left-out lists of `clients/native/moonshine-cli`,
+`clients/native/parakeet-cli` and `clients/go/scripts/native.sh` now keep
+only the technical facts: which code is left out, and that leaving it out
+keeps the build small, offline and easy to audit. They give no origin,
+country or model-ancestry reason. The plans under `docs/plans/` give
+none. The name list that `check-binary.sh` checks is unchanged, so the
+check works as before. `docs/research/`, `docs/superpowers/` and this
+file's earlier rulings stay as dated records.
+Retires when: retired.
+
+**Verified:** 68 model cases (`clients/fixtures/models/`); Go and Rust
+each agree on all 68. The 36 `tiers setup` cases of K3 were recorded
+again for the new families and the new step text; both binaries agree
+on 34, with the same one not ported and one refused as before. The CLI
+suite: Go and Rust each 591 agree, 9 refused, 9 not ported, 0 disagree.
+
+## 2026-10-03: the ML pack (`daisugi pack`, `daisugi lora train`)
+
+**PK-R-1 (ruling): a pack is a child process, not an embedded Python.**
+The gate core stays standalone Go and Rust (owner ruling 2026-10-03). The
+parts that must stay Python (LoRA training, lerobot's SmolVLA policy) run
+in a worker process that the binaries start in a pack's own Python
+(`docs/research/ports-ml-2026-10-q4-packaging.md`). A pack is
+`DATA/packs/NAME/`: `python/` (the pinned CPython, unpacked), `venv/` (made
+with it), `lock.txt`, `worker/` (the worker, the files its jobs run, and
+`pack.json`) and `manifest.json`, written last; a directory without the
+manifest is not installed. The worker protocol, `daisugi-pack-1`, is
+defined once, in `src/opendaisugi/pack/worker.py`: a ready line, then
+requests framed as the voice engines frame a clip (four bytes of length,
+then a JSON object `{"job", "args"}`), and replies as JSON lines
+(`progress`, then one `result` or `error`). The worker keeps its own copy
+of stdout and points file descriptor 1 at stderr, so a library's print
+cannot break the reply stream. The jobs are `selftest`, `train` and
+`vla-chunk`; `echo` and `die` exist only with `DAISUGI_PACK_TEST_JOBS=1`,
+for the protocol's cases. A job that fails never ends the worker; a
+worker that dies, or writes a line that is not a reply, is one line and
+exit 1 in the caller. CUDA packs (`train-cuda`, `vla-ref-cuda`) are listed
+as needing a GPU; `install` and `bundle` refuse them.
+
+Status: in force.
+Retires when: a port carries a trainer of its own.
+
+**PK-R-2 (ruling): the pinned CPython.** python-build-standalone release
+20261001, CPython 3.12.15, x86_64 glibc, the `install_only_stripped`
+archive (34,289,539 bytes), sha256
+`7bb1659e3235077b7f63d5b6eb6ce653c6fcd6c5041e9d5f73b42ce10421464d`, as the
+release's `SHA256SUMS` lists it (fetched 2026-10-03; the same file lists
+the research note's `install_only` hash, `0e56475e...`). The archive
+holds 3485 files and 1049 symbolic links in POSIX ustar, 9 names in the
+prefix field. The unpack takes files, directories and symbolic links
+under `python/` only, and refuses a link that leaves the pack.
+
+Status: in force.
+Retires when: the pin moves (fetch `SHA256SUMS` again).
+
+**PK-R-3 (ruling): the train lock, and how it was made.**
+`packs/train.lock` pins 57 packages with every wheel's sha256: torch
+2.14.1+cpu, transformers 5.18.0, peft 0.21.2, trl 1.14.1, datasets 5.0.1,
+accelerate 1.15.0, numpy 2.5.3, pyarrow 25.0.1 and their dependencies.
+No line has a marker and no NVIDIA or triton wheel is in it. It was made
+once from `packs/train.in`, with uv by its full path and a scratch cache:
+
+    UV_CACHE_DIR=SCRATCH UV_NO_CONFIG=1 ~/.local/bin/uv pip compile packs/train.in \
+      --generate-hashes --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+      --only-binary :all: --index-url https://pypi.org/simple \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      --index-strategy unsafe-best-match \
+      --custom-compile-command "see ruling PK-R-3" -o packs/train.lock
+
+The install uses no uv: the pack's own pip runs with `--isolated
+--no-cache-dir --require-hashes --only-binary=:all:` and the catalog's
+index URLs (or `--no-index --find-links` for a bundle).
+
+Status: in force.
+Retires when: the lock is made again (record the new command here).
+
+**PK-R-4 (ruling): the vla-ref lock is the export environment's.**
+`packs/vla-ref.lock` is a byte copy of `clients/vla/requirements.txt`
+(VL-R-2); a test checks the copy. It was not installed on this box: the
+pinned snapshots of VL-R-2 are not here, and the brief asks for one real
+install, of `train`. So `--only-binary=:all:` is not proven for every
+line of it.
+
+Status: in force.
+Retires when: a vla-ref install runs (record its result here).
+
+**PK-R-5 (ruling): the bundle, and what an offline install trusts.**
+`pack bundle NAME OUT` fetches the CPython tarball (checked), unpacks it
+in a scratch directory and runs its pip `download --no-deps
+--require-hashes --only-binary=:all:` on the lock, then checks every lock
+line has a wheel whose sha256 the lock pins. OUT is a directory, or a tar
+when it ends in `.tar`. The tar is written the same way, byte for byte,
+by the three binaries: ustar, names sorted, mode 0644, owner 0, mtime 0,
+two zero blocks at the end. A name that does not fit the ustar fields
+gets a POSIX extended header (type `x`, named `././@PaxHeader`, one
+`path` record) before its own header, which holds the first 100 bytes of
+the name: the real train bundle has a wheel name of 107 bytes
+(`charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl`).
+`install --offline` checks the tarball and every wheel against the pins
+in the binary (the catalog and the lock), never against a file in the
+bundle, before pip sees them.
+
+Status: in force.
+Retires when: the bundle format changes.
+
+**PK-R-6 (ruling): the garden's train step is `daisugi lora train`.**
+No command trained before: the trainer was `python -m
+opendaisugi.lora.train`, and `lora` was not in the binaries. Step 4 of
+the brief is read as: the trainer becomes `daisugi lora train` in all
+three languages. Its options are the trainer's. The base model is
+`--base-model`, else the choice `models use` recorded in `--data-dir`,
+else the default for this hardware (MC-R-6, retired into this). Go and
+Rust run it in the train pack (the `train` job). Python runs it in its
+own process when torch, transformers, peft, trl and datasets import, else
+in the pack; `OPENDAISUGI_LORA_TRAIN=pack` sends it to the pack (the
+golden cases set it). `lora export` stays in Python; the binaries list it
+as not in the binary.
+
+Status: in force.
+Retires when: a port carries a trainer of its own.
+
+**PK-R-7 (ruling): the VLA reference is one module, reached through the
+pack.** The oracle of VL-R-2 (the policy loader, the noise, the
+tokenizer and stats lookups, one chunk) moved from
+`clients/vla_cases.py` and `clients/vla_export.py` into
+`src/opendaisugi/pack/vla_oracle.py`; the two scripts import it, and every
+pack carries a copy for the `vla-chunk` job. `clients/vla_cases.py --part
+chunk --pack DAISUGI` writes the golden chunk through `DAISUGI pack run
+vla-ref vla-chunk`, so the compare's oracle needs no separate export
+environment for that part. The job's input is a JSON file with the
+policy and backbone snapshot directories, the task, the state, the noise
+seed and the image (height, width, RGB as zlib then base64). The loop
+part still runs in the export environment. Not run for real here
+(PK-R-4); a test drives the script against a fake daisugi, and the
+oracle's noise is checked against `clients/fixtures/vla/process.json`.
+
+Status: in force.
+Retires when: the vla-ref pack is installed and the chunk is made through
+it (compare it with `chunk.json` then).
+
+**PK-R-8 (ruling): the one real install and train run.** On this box
+(4-core i5-7300HQ, no GPU used, 4 GB memory cap):
+
+- `pack bundle train` (Rust): the CPython and 57 wheels, a 351.5 MB tar,
+  in about 70 s; the first try found the long wheel name of PK-R-5.
+- `pack install train --offline` (Go): 65 s, 1.5 GB on disk; the
+  self-test imported torch 2.14.1+cpu, transformers 5.18.0, peft 0.21.2,
+  trl 1.14.1 and datasets 5.0.1. The Rust binary installed it again from
+  the same bundle after each trainer fix, with no network.
+- The base model is `ibm-granite/granite-4.0-1b` (3.1 GB downloaded once
+  into a scratch `HF_HOME`), the smallest catalog model that downloads
+  without a token: `meta-llama/Llama-3.2-1B-Instruct` is gated (and
+  would carry the notice of MC-R-8).
+- The run found three trainer faults, each fixed test first: trl 1.14
+  calls the sequence limit `max_length`; transformers refuses bf16 with no
+  GPU unless `use_cpu` is set; and trl's default chunked loss and its
+  router loss read mixture-of-experts fields that the dense Granite 4
+  config has with zero experts. The trainer now asks for the model's own
+  loss (`nll`) and no router loss when the model has no experts.
+- One step on 4 examples, batch 4, sequence limit 64, in bf16, through
+  `daisugi lora train` in the Rust binary: 852 s in all (840 s in the
+  trainer), loss 5.44, a 34 MB adapter (`adapter_model.safetensors`)
+  and its checkpoint; the trainer's lines streamed on stderr and the
+  binary printed where the adapter is. The same step run directly in the
+  pack's Python before it took 846 s and gave the same loss.
+- The run used one core for most of the step (bf16 on a CPU without
+  native bf16 instructions), with a peak resident size of about 4 GB.
+
+The pack, the bundle and the model were deleted afterwards.
+
+Status: in force.
+Retires when: the pins of PK-R-2 or PK-R-3 move (run it again).
+
+**PK-R-9 (ruling): the AUR split package `daisugi-ml`.** The source
+PKGBUILD (`packaging/aur/opendaisugi`) is now a split package:
+`opendaisugi` (the binaries, with `daisugi-ml` as an optional dependency)
+and `daisugi-ml` (`arch=any`), which depends on `python`,
+`python-pytorch`, `python-transformers`, `python-peft`, `python-trl`,
+`python-datasets` and `python-accelerate`, and lays out the train pack as
+a system pack (PK-R-10) with `scripts/system-pack.py`. `package()`
+builds no virtual environment and runs no pip. Of those names, only
+`python-pytorch` (the Arch repositories) and `python-peft` (AUR) were
+checked, by the research note; the other four were not. `vla-ref` has no
+system pack (lerobot is not packaged for Arch). Not published.
+
+Status: in force.
+Retires when: the Arch package names are checked (then drop this note).
+
+**PK-R-10 (ruling): system packs.** A system pack is
+`/usr/lib/opendaisugi/packs/NAME/` (or the directory
+`OPENDAISUGI_SYSTEM_PACKS` names; the command line reads it, and the
+golden cases set it), with the same `worker/` and a `manifest.json` whose
+`source` is `system`, and the system's Python as `venv/bin/python`. The
+binaries use the data dir's pack first, then the system's. `list` shows
+it as `system`; `status` checks its worker files and protocol only (it
+has no pins of its own) and says to reinstall the system package on a
+problem; `remove` never touches it.
+
+Status: in force.
+Retires when: a distribution ships the packs another way.
+
+**PK-R-11 (ruling): the pack's golden cases.** `clients/pack_cases.py`
+runs 24 cases through the oracle against a fake server: a fake CPython
+tarball (with a symbolic link, an executable and a name in the prefix
+field, as the real one has) whose `python3` runs `/usr/bin/python3`, so
+`venv` and pip are real; three tiny wheels (one with a name longer than
+100 bytes) and their hashed lock, committed under
+`clients/fixtures/pack/assets` by `clients/pack_fake.py`. The cases need
+`/usr/bin/python3` with venv and ensurepip, and without `datasets`. The
+system Python's version is written as `{PYVER}`. Help texts are not cases
+(as RK-R-11). Some steps hold this box's `/usr/bin/python3` (3.14) text
+beyond its version: the trainer's traceback lines in the `lora train`
+steps and `json` 2.0.9 in a `selftest json` step, so the cases are made
+again on a box with another system Python. `clients/pack_compare.py --binary B` holds each step's exit
+code, stdout and stderr, the tree after, and the paths the fake server
+was asked, byte for byte.
+
+Status: in force.
+Retires when: the cases change shape.
+
+**Verified:** 24 pack cases (`clients/fixtures/pack/`): Go and Rust each
+agree on all 24. The Python unit tests (`tests/test_pack.py`,
+`tests/test_lora_train_script.py`), the Go `internal/pack` tests and the
+Rust `pack::` tests pass.
+
+## 2026-10-03: the last parity rows, and CPU training
+
+**PK-R-12 (ruling): a pack install, remove or bundle is the operator's.**
+The gate's owner rule (`owner_rule.py`) did not list `pack` as a
+command. So `daisugi pack install train` read as the top-level command
+`install`, and the gate denied it with the wrong words ("only the
+operator changes how the gate enforces"); `daisugi pack status gate
+disarm` read the same way. Now `pack` is a command with its six
+subcommands, and `pack install`, `pack remove` and `pack bundle` are
+owner verbs with their own refusal: "only the operator installs, removes
+or bundles a pack. Run it yourself." Each one fetches code from the
+network, or changes the Python the binaries run as a worker, outside any
+envelope permission an agent's `daisugi` allowlist gives. `pack list`,
+`pack status`, `pack run` (a job in a pack the operator installed) and
+`lora train` (heavy, but it only computes) stay with the envelope. The
+rule is the same in the three languages, with 12 gate cases ("pack
+rule").
+
+Status: in force.
+Retires when: the operator wants an agent to install packs (then drop
+the verbs).
+
+**PK-R-13 (ruling): CPU training runs in fp32 on every core; the
+measurement is the owner's.** On a box with no GPU the trainer now loads
+the model in float32, turns bf16 off, and sets torch's intra-op threads
+to the cores this process may use (`os.sched_getaffinity`). Its first
+output line says both ("training on the CPU in float32 with 4 threads");
+the pack worker sends that line on as the first progress line. A GPU
+keeps bf16 and torch's own thread count. The before-and-after
+measurement of PK-R-8 was not run here: the step took 852 s, which is
+longer than one foreground command may run under the memory rule, and
+it cannot be split; the pack, the 351.5 MB bundle and the 3.1 GB model
+were also deleted after PK-R-8. To measure it, with about 5 GB free:
+`daisugi pack bundle train --out B`, `daisugi pack install train
+--offline --bundle B`, then the same 4-example `daisugi lora train`
+run as PK-R-8 (batch 4, sequence limit 64, `--base-model
+ibm-granite/granite-4.0-1b`), and compare the time with 852 s.
+
+Measured 2026-10-08 (PK-R-14). Status: in force.
+Retires when: the trainer's CPU settings change.
+
+**PK-R-14 (ruling): the CPU step, measured through the pack from Go and
+Rust.** On this box (4-core i5-7300HQ), with the train pack built by
+the Go `pack bundle train` (336 MB, 2 min 23 s) and installed by the
+Rust `pack install train --offline` (17 min 20 s: the disk was under
+heavy load from other work; PK-R-8 took 65 s), in a scratch HOME:
+
+- Base model `ibm-granite/granite-4.0-350m` (the same Granite 4 family
+  as the 1B; 352 M parameters). One step on the 4-example set of PK-R-8
+  (batch 4, sequence limit 64, `--epochs 1 --grad-accum 1`). The first
+  line both ports printed: "training on the CPU in float32 with 4
+  threads".
+- Go `daisugi lora train`, first run (model download, cold cache): the
+  step took 57.9 s in the trainer, 7 min 24 s in all.
+- Go, warm: 4.3 s in the trainer, 2 min 34 s in all. Rust, warm: 3.1 s
+  in the trainer, 3 min 4 s in all. Loss 4.437 in every run. The time
+  outside the step is the worker starting and the imports and the
+  model load under the same disk load.
+- The 1B model of PK-R-8 was not run: it has 1.63 billion parameters,
+  6.5 GB in float32 before any activation, so it cannot fit the 4 GB
+  cap every job here runs under (PK-R-8 fit only because bf16 halves
+  the weights). On a CPU box with less than about 8 GB free, the fp32
+  choice of PK-R-13 makes the 1B base model fail where bf16 ran in 852 s.
+
+The pack, the bundle and the model were deleted afterwards.
+
+Status: in force.
+Retires when: the pins of PK-R-2 or PK-R-3 move, or PK-R-13 changes.
+
+**TS-1 (ruling): `tiers stats`.** Both ports read the journal as
+`accounting.tier_stats` does: the successful traces since the window's
+start (the SQL filter on `created_at`), each trace's envelope
+`generated_by` bucketed into tier 0, 1 or 2, a trace that does not load
+skipped, and the per-tier token estimates, the hit rate and the tier-1
+providers (ties in their first order). `_row_ts` reads a created_at as
+`datetime.fromisoformat` does for the forms the journal writes and a few
+more: a date, then `T` or a space, `HH:MM`, `:SS` and a fraction of 1 to 6
+digits, then `Z` or an offset `+HH:MM`; a naive time is local time. Any
+other text reads as no time, so the trace is not dropped by the second
+check, where Python may parse a rarer ISO form. The journal never writes
+one. 12 k3 cases ("tiers stats").
+
+Status: in force.
+Retires when: the journal writes another created_at form.
+
+**SR-1 (ruling): `tiers setup --remote`.** Both ports probe a model host
+as `model_host.probe` does (Ollama `/api/tags` and `/api/show`, an
+OpenAI-compatible `/v1/models`, the Anthropic `/v1/messages` with the
+probe model), record it in config.yaml as `record` does, and print
+`describe_host`'s lines. Three limits:
+
+- The probe's requests go out with each client's own `user-agent` and
+  `accept-encoding` (httpx names itself and its decoders; the ports send
+  `opendaisugi` and `identity`). The k3 normalization holds these two
+  headers of a probe request as `{CLIENT}`; the method, path, body,
+  `accept` and `content-type` are compared.
+- A host answer Python reads with a type the ports do not hold the same
+  way is refused, before anything is written: a `true` or `false` where
+  Python's `isinstance(v, int)` counts it an int, an integer past 64 bits,
+  a model name that is not a string, a port with digits of another script.
+- `num_ctx` is read with an ASCII `\b` and ASCII spaces and digits; the
+  oracle's pattern is Unicode-aware, so a Modelfile with a non-ASCII
+  letter right before `num_ctx` can differ.
+
+The fake server of the k3 cases now answers a GET by its path (the key is
+the SHA-256 of `GET <path>`). 22 k3 cases ("setup remote").
+
+Status: in force.
+Retires when: the probe changes its wires.
+
+**RP-1 (ruling): `gate replay`.** Both ports replay a captured session as
+`gate.replay_captures` does: each line of the captures file decided in
+audit terms against the envelope by the gate's own record check (the
+data dir's gate root for the verifier client and the dialect pin), as the
+record the audit log holds, then the report `gate report` builds, with
+the oracle's own counts line and `DENY` lines. A capture whose fields are
+not of the step's types is the deny the oracle's pydantic step raises; a
+line that is JSON but not an object, a missing file, and an envelope that
+does not load end as the oracle's traceback (its last line, exit 1). A
+line in a JSON form this binary does not read is refused. The JSON report
+holds each call's `elapsed_ms`; the compare holds it as 0. 19 cli cases
+("replay"). The Go envelope reader does not take a JSON envelope or a YAML
+flow sequence (3 cases refused, row 12 of the inventory); the Rust one
+does.
+
+Status: in force.
+Retires when: the replay changes its record.
+
+**HP-1 (ruling): `daisugi help`.** `help` prints the oracle's start-here
+text. `help --all` prints the oracle's text for every command, grouped,
+generated from the oracle by `clients/gen_help.py` (checked in CI) into
+both ports, with the lines of the commands a port does not carry left
+out: the list `HELP_NOT_PORTED` in `clients/cli_cases.py` and in each
+port (`bench`, `conformance`, `coppice`, `gate audit`, `lora export`,
+`models pin` at the time of writing; `viz` until VZ-1). The compare drops the same
+lines from the oracle's text. 5 cli cases ("help").
+
+Status: in force.
+Retires when: the ports carry every command (then the list is empty).
+
+**VZ-1 (ruling): `daisugi viz`.** Both ports render a distilled pathway's
+plan as `viz.render_dag_html` does: the oracle's template (embedded; a Go
+test checks the copy, Rust includes the file), the view model built from
+the port's own verify, model sizing with the default ladder and the
+plan's dependency levels (networkx's topological generations, now
+`Levels` in Go and `levels` in Rust, which `topo_order` flattens), and
+`</` escaped. The message counts the page's characters, as `len(html)`
+does. Without an id it lists the pathways. 9 k3 cases ("viz").
+
+Status: in force.
+Retires when: the template or the view model changes shape.
+
+**MP-1 (ruling): `--max-parallel` above 1.** `orchestrate` and `weave`
+now run as the oracle's supervisor does in parallel mode: the steps in
+dependency-level order (networkx's topological generations), and on
+entering a level, its parallel-safe steps (shell, file, network, and task
+steps under an unlimited budget; never a weave step with attempts, a slot
+input, or one that does not run on resume) that pass their verify and
+approval run at once, at most `--max-parallel` at a time, when there are
+two or more. The loop then approves, receipts and halts in order, using
+each prefetched result; a prefetched step the loop never reached gets its
+outcome and receipt at the end. Go runs them on goroutines; Rust on
+scoped threads, each executor giving a job that owns a copy of what it
+needs (the task executor sizes the step first, asks with a copy of the
+model client, and records the spend in order). Since steps run at once,
+the k2 compare reads a case's model requests as a multiset ("unordered").
+5 k2 cases ("orch max parallel") and 4 weave cases ("max parallel"). The
+k2 refused guard drops to 5 and the weave guard to 0.
+
+Status: in force.
+Retires when: the supervisor's parallel mode changes.
+
+**MX-1 (ruling): the MCP methods with no handler.** The oracle's server
+registers no handler for `resources/subscribe`, `resources/unsubscribe`,
+`completion/complete` or the `tasks/*` methods: the SDK checks the params
+(-32602 when they do not validate) and answers -32601 "Method not found".
+`resources/read` checks the `uri` as pydantic's `AnyUrl` and answers
+error 0 "Unknown resource: URI" with the URL as it serializes. A tool
+call's `task` (an object with an optional int `ttl`) is read and not used.
+Both ports now answer these. A URI is normalized for the forms the ports
+read (a scheme, a special scheme's host lowercased, its default port
+dropped, an empty path made "/", `file:///...`, any other scheme kept);
+a URI with `%`, a backslash, brackets, user info, a numeric host, a dot
+segment, or a character outside printable ASCII, a `ttl` that is not an
+int, and a `task` on another method stay refused with -32000 (K3-3).
+33 k3 cases.
+
+Status: in force.
+Retires when: the ports parse URLs as the WHATWG parser does.
+
+**IN-1 (ruling): every layer of `install`.** Both ports now write all
+of `install.py`'s layers, in the order its `apply` writes them: the
+skill, the MCP server, the capture hook and the pathway instructions for
+each harness (Claude Code, Codex, Hermes, OpenClaw), then the gate and
+gateway layers; `--uninstall` reverses all of them as `reverse` does. So
+`install` with no flag, `--print-skill`, `--uninstall` alone,
+`--allow-shell-decomposition`, `--ask` (with `--gate --enforce`), and
+`--report herdr` and `coppice` (the floor-report and subagent hooks, and
+`floor_report` in config.yaml) are answered, and an install that is not
+`--yes` asks the auto-tend question after the confirm, as the oracle does.
+The patched oracles of the cli suite (the gate-only install and
+uninstall shims, and the dropped "layers come from the Python CLI" lines)
+are gone: every install case runs the oracle as it is. Three limits:
+
+- The skill. The oracle links the packaged skill directory into the
+  harness; a binary has no package directory, so each port copies the
+  files from itself (Go embeds a copy a test checks; Rust includes the
+  package's files). The plan still says "Symlink", as the oracle's does.
+  The compare reads the oracle's link as that copy (directories 0755,
+  files 0644). A copy that is already there, file for file, is left as
+  it is, and still listed, as `_link_skill` returns its target.
+- A runtime whose apply raises part way (a Claude Code with no
+  `~/.claude`: the capture hook's write raises after the skill and the
+  MCP server are written) keeps what it wrote and lists none of it, as
+  the oracle's does.
+- A Hermes config.yaml in a YAML form the port's reader does not take
+  (the oracle warns and skips one that does not parse) is refused (row
+  12 of the inventory), and so is a hooks or MCP value whose shape the
+  oracle's code raises on.
+
+35 new cli cases ("layers ...", "uninstall layers ..."); 110 earlier
+install cases run against the whole oracle now. The cli runner can run
+earlier commands in a case's home first (`pre`).
+
+Status: in force.
+Retires when: install.py changes its layers.
+
+**LX-1 (ruling): `lora export` in both ports.** `daisugi lora export
+OUTPUT` writes the journal's successful traces as training JSONL, as
+`lora.dataset.emit_jsonl` does: alpaca or chat form, `--days`,
+`--min-task-chars` and `--system-prompt`, the envelope as
+`model_dump_json()`, every line with `ensure_ascii`, and the summary JSON
+on stdout. It makes the parent directory first and lists the traces
+next, in the oracle's order. A trace whose YAML is gone or does not load
+counts as `skipped_load_error`. A trace in a YAML form the port's reader
+does not take is refused (row 12), and so is a task that is not text,
+where the oracle raises. Nine k3 cases ("lora export ...").
+
+Status: in force.
+Retires when: `lora/dataset.py` changes.
+
+**MP-2 (ruling): `models pin` in both ports, without `--pull`.** `daisugi
+models pin REPO` asks the Hub what `resolve_pinned` asks through
+huggingface_hub: the tree of `main` (`recursive=true&expand=false`), then
+the model info for its commit. It prints the first matching file in
+sorted order and the commit, in text or JSON, and the oracle's
+`NoMatchingFile` line with exit 2. The ports refuse, before or in place
+of a request:
+
+- `--pull`. `hf_hub_download` writes the Hugging Face cache (blobs, a
+  snapshot link, lock files) and draws progress bars on stderr; a binary
+  does not write that cache.
+- What huggingface_hub raises on: a repo id `validate_repo_id` rejects
+  (the ports take ASCII ids only, since Python's `\w` takes other
+  letters too), `HF_HUB_OFFLINE`, a Hub that cannot be reached, a status
+  outside 2xx, a body that is not JSON.
+- A tree with a next page (a `Link` header): the oracle asks again with
+  backoff, and the ports do not follow pages.
+- A tree entry or a model info that huggingface_hub's classes might
+  raise on, or read with parts the ports do not model: a last commit, a
+  security status, eval results, inference-provider mappings, and a date
+  outside the Hub's `...Z` form. A real model info (dates, siblings,
+  card data, safetensors, transformers info) is read.
+
+31 models cases ("pin ..."); the fake Hub now answers a raw request
+target and can send headers.
+
+Status: retired 2026-10-08 by RF-7: the ports write the Hugging Face
+cache, follow pages, and raise what huggingface_hub raises; the one
+refusal left is listed there.
+Retires when: met (see Status).
+
+**MP-3 (ruling): the Hub's agent registry is not fetched.**
+huggingface_hub 1.30 builds its User-Agent with `detect_agent()`, which
+fetches `{HF_ENDPOINT}/api/agent-harnesses` once per HF_HOME (and caches
+it there) unless `HF_HUB_DISABLE_TELEMETRY` is set. That request carries
+nothing the command needs, and the ports do not make it. The models
+cases set `HF_HUB_DISABLE_TELEMETRY=1` for both sides
+(`models_cases.run_case`), so the requests compared are the ones `models
+pin` makes for the user. The ports never change their output on it.
+
+2026-10-08: the Python product now turns it off too. `import opendaisugi`
+sets `HF_HUB_DISABLE_TELEMETRY=1` when it is unset (a value the user set,
+"0" included, is kept), and the pack worker, which runs by its path, sets
+it itself; so do the dev scripts that load Hub models. Python, Go and
+Rust now send no agent name and never ask for the agent list.
+`HF_HUB_DISABLE_IMPLICIT_TOKEN` is not set: it would drop a saved
+`hf auth login` token, and a gated model the user chose would not
+download. `tests/test_hf_telemetry_off.py` checks all of it, and that no
+Go or Rust source names the agent list or an agent/ User-Agent part.
+
+Status: in force.
+Retires when: huggingface_hub stops making the request.
+
+**YM-1 (ruling): YAML is read as `yaml.safe_load` reads it, in both
+ports.** Go (`internal/pyyaml/full.go`) and Rust (`src/pyyaml`) carry a
+translation of PyYAML 6's reader, scanner, parser, composer, resolver and
+SafeConstructor, one method at a time, so the same text gives the same
+value or raises the same exception with the same words (`str(exc)`, marks
+and snippets included). Every reader goes through it: config.yaml (the
+CLI and the gate), plan and envelope files (`run`, `orchestrate`, `gate
+register`, `gate replay`), journal traces, an episodes file, skill
+frontmatter, registry bundles and a Hermes config.yaml. Where the oracle
+catches the error the ports print what it prints; where it does not, the
+ports print the traceback's last line or refuse, as each caller's ruling
+says. `clients/yaml_cases.py` records safe_load's answer for 2623 texts
+(a fixed list and seeded mutations of it); both ports give the same
+value or the same error on all of them, and refuse none.
+
+What the result model does not hold is refused, never guessed: a
+`!!binary` value (base64's errors are not modelled), a `!!set`,
+`!!omap` or `!!pairs` value, a node that holds itself, a float or
+timestamp key, nesting deep enough to reach Python's recursion limit, a
+`\u` escape for a lone surrogate, a tag URI escape that is not UTF-8,
+an `!!int` or `!!float` text Python's `int()` or `float()` might read
+another way, and a date or a key that is not a str where the caller
+needs JSON. A later error in the same text still wins, as in Python: a
+refusal is kept until the whole load has run. Two refusals sit above the
+loader: a config.yaml key that is not a str (`load_config` keeps it, and
+`daisugi config` prints it among the unknown keys; the ports refuse the
+file), and the cases (`config bool key`) that hold one.
+
+Five cases that were refused now agree in both ports: k2 `run envelope
+not yaml`, `run plan not yaml`, `orch envelope not yaml`; garden `tend
+yaml not safe_dump form`, `auto-tend then tend unreadable trace`.
+
+Status: in force.
+Retires when: PyYAML's loader changes.
+
+**PX-9 (ruling): proxy URLs and NO_PROXY entries are parsed as httpx
+parses them.** Both ports carry a translation of httpx 0.28's
+`_urlparse.urlparse` (Go `netproxy/urlparse.go`, Rust `netproxy.rs`):
+the URL and authority patterns, `encode_host` (IPv4 and IPv6 checks,
+percent-encoding of an ASCII name, IDNA for a non-ASCII one),
+`normalize_port`, the path checks and `quote`. So a proxy URL or a
+NO_PROXY entry gives the parts httpx gives, and one httpx rejects stops
+the client with httpx's `InvalidURL` words, as the oracle's client does
+(the gateway answers each turn with 500; the model call fails). A port
+`int()` reads (`+8080`, ` 8080`) is read. A NO_PROXY entry holding `%`
+is a pattern no host matches, as in httpx. URLPattern reads only the
+scheme, host and port of an entry, so an entry with a path or userinfo
+is read too.
+
+The environment's order now reaches every reader: a reader handed a
+map orders it by this process's environment (`OrderedFromMap`,
+`ordered_vars`), so two names that differ only in case resolve as
+`getproxies` resolves them. Only a map that does not come from the
+process environment (a test's) is still refused when two such names
+differ.
+
+Still refused, never guessed (this retires the rest of PX-5):
+
+- a port no socket takes (0, negative, above 65535; a decimal digit of
+  another script is read since RF-6);
+- a proxy host httpx sends percent-encoded (where its connection fails
+  is not modelled), and an IPv6 address with a zone;
+- an IDNA host outside the letters the ports encode: ASCII letters,
+  digits and hyphens and the lower-case Latin-1 letters (U+00DF to
+  U+00FF but U+00F7), all PVALID; a label already in `xn--` form; and a
+  NO_PROXY entry whose host is in `xn--` form (URLPattern orders mounts
+  by the decoded host's length);
+- a request to a non-ASCII host through a proxy (the request line and
+  Host header would need the IDNA form everywhere they are written).
+
+New cases: gateway `env proxy port with a plus`, `port after a space`,
+`port not a number`, `ipv4 with a leading zero`, `ipv6 not closed`,
+`idna host not valid`, `no_proxy percent`, `no_proxy bad port`,
+`no_proxy non-ascii`, `no_proxy with a path`; garden `tend api proxy
+names that differ in case`, `port not a number`, `no_proxy bad port`.
+
+Status: in force.
+Retires when: httpx's URL parser changes.
+
+## 2026-10-08: the Omarchy and AUR packages (prepared, not published)
+
+**PK-R-15 (ruling): `daisugi` is the Go build, and DAISUGI_PORT hands
+`install` to another port.** The owner's ruling of 2026-10-07: the
+package installs `daisugi` as the Go build, with `daisugi-rs` and
+`daisugi-py` beside it so the three can check each other, and
+DAISUGI_PORT chooses the default. The gate's hot path must not gain an
+exec. The mechanism: `install` in every port reads DAISUGI_PORT (`go`,
+`rust` or `python`). When it names this port, or is unset, install runs
+as before. When it names another port, install runs that port's binary
+in place of this process, with the same arguments and root flags, and
+DAISUGI_PORT_HOP=1 set. The binary must be beside this one, under its
+fixed name (`daisugi`, `daisugi-rs`, `daisugi-py`). The port that runs
+install writes the hook as it always did, with its own path: the Go and
+Rust ports `<self> gate check ...` with the marker, the Python port
+`python -m opendaisugi.gate_client ...`. So a hook runs the chosen port
+directly, every reader already reads all three hook forms, and the hook
+content stays at parity. One line and exit 2, nothing changed, when the
+value is not a port, when the named binary is not beside this one, or
+when a hand-over reached a binary of another port (DAISUGI_PORT_HOP set).
+Only `install` reads the variable; every other command runs the binary
+the user typed. `scripts/install.sh` keeps its own DAISUGI_PORT (go or
+rust), which chooses the port it builds and installs as `daisugi`.
+
+Tests: `TestPortHop`, `TestInstallHandsOverToDaisugiPort` (Go),
+`cli::port::tests`, `install_hands_over_to_the_port_daisugi_port_names`
+(Rust, the real exec), `tests/test_port.py` (Python, the real exec).
+
+**PK-R-16 (ruling): `daisugi-py` is its own package, built from the
+wheel.** Every runtime dependency of the wheel has an Arch package:
+pydantic, networkx, yaml, typer, click, numpy and z3-solver in extra,
+and tree-sitter (0.26.0) and tree-sitter-bash (0.25.1) in the AUR, the
+versions the gate pins (checked 2026-10-08). So it is a package with
+Arch dependencies, not a `uv tool install`. It is a separate PKGBUILD,
+not a split of `opendaisugi`, so installing it builds no Go, Rust or Z3.
+The console script `daisugi` is renamed `daisugi-py` in package(). Gap:
+Arch's python-z3-solver is 4.16.0; the Go and Rust ports link Z3 5.1.0,
+and the gate's cases were measured with 5.1.0.
+
+**PK-R-17 (ruling): the Rust hook entry is `daisugi-gate-rs`.** The Go
+module has its own `cmd/daisugi-gate` (not shipped), and the pi and
+OpenCode extensions are called daisugi-gate, so the Rust one takes the
+port suffix. The release tarballs keep their names (`daisugi`,
+`daisugi-gate` in the Rust tarball); the packages rename at install.
+
+**PK-R-18 (ruling): the source package's build tools.** `rust` joins the
+makedepends (cargo builds daisugi-rs), `curl` is named (preflight.sh
+needs it), `gcc-libs` joins depends (the Rust binaries link libgcc_s).
+zig stays a pinned tarball in source=() even though Arch's extra has zig
+0.16.0: native.sh needs that version exactly, and a later Arch zig would
+stop the build. Z3 builds with `zig c++`, so no g++ is needed (Arch's gcc
+has it anyway). prepare() runs `cargo fetch --locked` into
+`$srcdir/cargo`, and build() sets CARGO_NET_OFFLINE, so build() needs no
+network. build() unsets makepkg's CFLAGS, CXXFLAGS, CPPFLAGS, LDFLAGS and
+RUSTFLAGS: z3-build-env.sh appends its path maps to them, and they would
+reach `zig c++`. `pkgver` stays the project version (pyproject.toml); a
+test holds every PKGBUILD to it, so a release bumps them together.
+
+Status: in force.
+Retires when: the owner changes the default binary or publishes packages
+another way.
+
+**PK-R-19 (ruling): the speech engines are two packages built as
+native.sh builds them.** `packaging/aur/opendaisugi-voice` makes
+`moonshine-cli` and `parakeet-cli` from the pinned sources: openDaisugi,
+Moonshine, CrispASR and ggml by commit, ONNX Runtime and zig by sha256.
+native.sh finds each in its build directory, checks it again and fetches
+nothing; it builds exactly what `native.sh --moonshine` and `--parakeet`
+build. check() runs `check-binary.sh` on both Parakeet programs, checks
+each prefix's manifest, and runs each engine through a link (exit 2,
+usage) to show it loads. Each engine lives in
+`/usr/lib/opendaisugi/<engine>` with a relative link in `/usr/bin`:
+moonshine-cli finds its private `libonnxruntime.so.1` through
+`$ORIGIN/../lib`, which the loader resolves through the link (checked
+with ldd in an Arch container), and every port finds `parakeet-quantize`
+beside the resolved `parakeet-cli`. The private ONNX Runtime keeps clear
+of Arch's `onnxruntime`. `!strip` keeps every file as native.sh's manifest
+lists it. A package must run on any x86_64 CPU, so native.sh gains
+`DAISUGI_PARAKEET_ISA` (auto, the default, as before; baseline;
+x86-64-v3), and the package sets baseline: slower ggml code on a box with
+AVX2 than a checkout build gives. No model is packaged: the first `voice
+serve` fetches it and checks its sha256, as before. Built with makepkg
+in an Arch container on 2026-10-08: moonshine-cli 11,063,134 bytes,
+parakeet-cli 1,055,541 bytes; namcap warns only of no PIE and of
+unused loader links.
+
+Status: in force.
+Retires when: the engines' pins move or the package layout changes.
+
+**PK-R-20 (ruling): `daisugi-ml` is its own package, compiled and
+read-only.** It was a split of the source package `opendaisugi`, so
+building it built Go, Rust and Z3 first. It is now
+`packaging/aur/daisugi-ml`, arch any, built from the checkout alone, and
+`opendaisugi` is a single package. package() lays the train pack out
+with `scripts/system-pack.py` and compiles the worker (plain and `-O`),
+so a job never tries to write `__pycache__` under `/usr`. The
+`pack remove` of a system pack touches only the data dir, as before. New
+golden case `system-pack-read-only`: the system pack compiled and
+read-only, then `pack list`, `pack status`, `pack run train selftest`,
+`lora train`, an offline install from a bundle into the data dir, and
+`pack status`; the tree is recorded after. Python, Go and Rust agree on
+all 25 pack cases. `tests/test_pack.py` checks that nothing under the
+read-only pack changes. The offline bundle path needs nothing from the
+package layout: the Go and Rust binaries carry the catalog, the locks
+and the worker, and the Python package carries them in the wheel
+(`opendaisugi/pack/packs`).
+
+Status: in force.
+Retires when: the system pack layout changes.
+
+**PK-R-21 (ruling): the release dry run, and what the packages carry.**
+`pkgver` stays 0.43.0 in every PKGBUILD: it is the version in
+`pyproject.toml`, and a release sets both at once (a test checks they
+agree). It is not a stale number to bump alone. Each package dir carries
+a `.SRCINFO` from `makepkg --printsrcinfo`; a test fails when a PKGBUILD
+changes its version, depends, makedepends or sums without a new one.
+
+The dry run on 2026-10-08 (no tag, no upload): `scripts/release.sh
+0.50.0-dryrun --rust` used the cached Z3 (the Rust build took 2m45s).
+makepkg ran in an Arch container (podman, rootless, `--nodeps`) for
+`opendaisugi-bin` (from the two dry-run tarballs), `daisugi-py` and
+`daisugi-ml` (from a local clone at a91d11c7); `opendaisugi-voice` was
+built in PK-R-19. The installed `daisugi`, `daisugi-rs`, `coppice` and
+`sprig` each print 0.50.0.dryrun on Arch. The source package
+`opendaisugi` was not built: its build() runs release.sh in `$srcdir`,
+which compiles Z3 twice from source, and this box's rules forbid that;
+it waits for a box or a CI job with the time and memory.
+
+namcap findings acted on: the Rust binaries link libgcc_s, which Arch
+now ships as `libgcc` (split out of `gcc-libs`), so `opendaisugi` and
+`opendaisugi-bin` depend on glibc and libgcc; `daisugi-ml` depends on
+python-numpy (the VLA oracle imports it); `daisugi-py` lists
+python-sounddevice (AUR) as optional for push-to-talk and its pkgdesc
+no longer names the package. Accepted as they are: the Go binaries have
+no PIE and no full RELRO (static Go links), the Rust binaries name the
+loader they do not use, the -bin PKGBUILD names x86_64 (the only arch),
+no Maintainer tag (the owner adds one when publishing), and namcap's
+"may not be needed" and Python-module lines, which come from building
+with `--nodeps` where the Python deps are not installed.
+
+Status: in force.
+Retires when: a release sets pkgver, or the package set changes.
+
+## 2026-10-08: the ruled refusals retired (Go and Rust read what Python reads)
+
+The owner asked why Go and Rust sometimes refuse input that Python
+accepts. Python leans on libraries that read odd forms (json and
+ast.literal_eval, sqlite3, PyYAML, tomllib, httpx, huggingface_hub); the
+ports read the common forms by hand and exited 2 on the rest. These
+entries record what each port now reads, and what it still refuses.
+
+**RF-1 (ruling): a plan step given as a string is read as coerce_step
+reads it.** Both ports decode a str step wherever a plan is read (a plan
+file, a pathway store, a bundle, a trace, a model's reply, an MCP call):
+JSON first, then a Python literal. Go `pyjson.LiteralEval` and Rust
+`pathways::literal` translate Python 3.12's tokenizer (numbers, strings
+with every prefix, escapes and implicit concatenation, brackets to 200
+levels) and `ast.literal_eval`: dicts, lists, tuples, str, int of any
+base and size, float, True, False and None. Each item goes through
+coerce_step before the after-validator, so stored input now takes the
+oracle's order too (GD-R-6), and `RefinementRecord.step` decodes a str
+step as well. `clients/literal_cases.py` records decode_dict_text's
+answer for 3,084 texts (a fixed list and seeded mutations); both ports
+give the same dict or None on every one they answer
+(`pmodel` tests in both ports).
+
+Still refused (exit 2, nothing changed), and only where the step is used:
+
+- a text whose tokens make Python's parser print a SyntaxWarning on
+  stderr: an invalid escape such as `\d`, an octal escape above 0o377, a
+  number run into a keyword, and any f-string;
+- a decoded step that holds a set, bytes, a complex number, Ellipsis, a
+  `\N{...}` escape or a key that is not a str;
+- a decoded step that holds a tuple and fails its validation (the error
+  would name the tuple, which the ports read as a list);
+- a step whose "type" is a list or a dict: Python's registry lookup
+  raises TypeError out of the model (a traceback). This held for a dict
+  step too, which the ports read as no step before.
+
+Where Python returns None and prints nothing, the ports may still refuse
+on these grounds (74 of the 2,682 such texts in the corpus); they never
+give another answer.
+
+New cases: pathway `show plan string step ...` (7; `warns` and `set`
+refused as above) and `import string steps`; CLI `verify string steps`,
+`verify string step not a step`, `verify string step warns` (refused);
+k2 `run string steps`; garden `tend string steps` (traces and the
+model's reply). A ruled refusal in the pathway and CLI compares may now
+be worded either way ("is not in this binary yet." or "Nothing was
+changed.").
+
+Status: in force.
+Retires when: the ports print Python's SyntaxWarning text and model sets,
+bytes and complex numbers.
+
+**RF-2 (ruling): a number past 64 bits in a plan or an envelope is kept
+as Python keeps an int.** Since GD-R-3 both ports hold such an int as
+its exact text wherever pydantic keeps it (step metadata, a step's
+`seed` or `max_actions`, `max_output_size_mb`, a postcondition's
+`expected`, `min` or `max`), send `max_execution_time_s` to Z3 as its
+text, and hold any other one at the nearest 64-bit bound in the
+verifier's typed copy, which keeps its order against every number that
+fits. What still refused was the violation such a number most often
+makes: `Envelope is internally inconsistent` (and `Plan requirements
+contradict envelope permissions`) had no detail in the ports, so `verify`,
+`run` and `orchestrate` refused it as a violation they did not word
+(K2-6). The oracle's detail is `{"unsat_core": str(solver.unsat_core())}`,
+and with no tracked assertions z3 prints `[]`; both ports now write that,
+as the gate already did. New cases: CLI `verify big ints` and `verify big
+ints json`; pathway `show big ints`, `show big ints text`, `import big
+ints`; k2 `run big ints`. All agree in both ports.
+
+Status: in force.
+Retires when: does not retire.
+
+**RF-3 (ruling): a BLOB column and a database path holding `?` are read
+as Python's sqlite3 reads them.** A path: `sqlite3.connect(path)` takes
+the name as a plain file name (no URI, no options; the oracle passes no
+`uri=True` except for its own read-only opens, which escape the path).
+The Go driver read a `?` in its DSN as the start of options, so the Go
+binary refused; it now opens every database as a `file:` URI of the
+absolute path with each special character escaped (`sqlpath.DSN`), so
+`?`, `#`, `%` and a leading `file:` are part of the name. The Rust binary
+read `?` already (PW-R-4); its envelope cache no longer refuses one. A
+BLOB: Python's sqlite3 gives bytes, and the pathway store's readers take
+bytes as the oracle does. pydantic reads bytes for a str, an int or a
+float (and `model_validate_json` for JSON) as their UTF-8 text and raises
+a ValidationError when they are not UTF-8; `json.loads` reads bytes in
+the encoding `json.detect_encoding` picks (UTF-8 with or without a BOM,
+UTF-16, UTF-32, decoded with 'surrogatepass'; a failed decode is
+UnicodeDecodeError); `find` admits a row whose provenance values are
+both falsy (an empty BLOB too) and otherwise needs both to be the
+current str values, so a BLOB name is stale. The harness lays out and
+dumps a BLOB as `{"blob": hex}`, and its own read-only opens now escape
+the path too (they opened another file for a path holding `?`).
+
+Still refused: `tend` re-embedding a stale row whose id or task is not
+text (the oracle passes the bytes to its embedder and to the UPDATE).
+
+New cases: pathway `list blob ...` (7), `show blob every column`, `list
+data dir question mark`, `file prefix`, `percent and hash` (with and
+without a store), find `lexical blob columns`; k2 `run data dir with a
+question mark` (the journal, the store and the envelope cache under it).
+
+Status: in force.
+Retires when: does not retire.
+
+**RF-4 (ruling): the stale-embeddings warning is printed, not refused.**
+`PathwayStore.find` warns once per process (a UserWarning) when 10% or
+more of the store was embedded under another model. Python prints it on
+stderr as `<file>:<line>: UserWarning: <text>` and the source line of
+the frame it names, a frame of the oracle's own install (here
+`concurrent/futures/thread.py`, since the orchestrator runs find in a
+thread). Both ports print `UserWarning: <text>` at the first find of the
+run (the envelope generation's, or the orchestrator's), and the k2
+compare reads the oracle's stderr in that form (`k2_cases._warnings`).
+PYTHONWARNINGS is read as `warnings._processoptions` reads it: comma
+separated `action:message:category:module:lineno`, the action by prefix,
+the message a case-blind prefix, the last matching option first. Still
+refused (exit 2, nothing changed): an invalid option (Python prints a
+note at start), the `error` action for the warning (it becomes an
+exception the orchestrator logs and swallows), a filter that names a
+module or a line, a category that is not a builtin, and a filter that
+shows a category beyond UserWarning (Python then shows the
+DeprecationWarnings its libraries raise, which a port cannot know). New
+cases: k2 `orch stale embeddings warns`, `default filter`, `message
+filter`, and `error filter` and `all warnings` (refused); `orch stale
+embeddings warn` (PYTHONWARNINGS=ignore) now agrees. This covered
+`orchestrate` only; RF-11 extends it to every other caller of find.
+
+Status: in force.
+Retires when: the ports model where Python's own libraries warn.
+
+**RF-5 (ruling): a Switchyard config is read as tomllib reads it.** Both
+ports carry a translation of Python 3.12's tomllib (`_parser.py` and
+`_re.py`), one function at a time (Go `switchyard/toml.go`, Rust
+`switchyard/toml.rs`): every statement rule, the flags that forbid a
+second declaration, multi-line basic and literal strings with their
+escapes and line-ending backslash, arrays of tables, multi-line arrays
+with comments, inline tables, dates, times and date-times (to the
+microsecond, with Python's repr and str of each), ints of any size and
+floats with underscores, inf and nan. The brief preferred a library;
+none was in go.sum or Cargo.lock, and BurntSushi/toml and the `toml`
+crate differ from tomllib at the edges (an int past 64 bits, key order
+inside arrays of tables, TOML 1.1 forms behind an environment variable),
+so the ports translate tomllib, as YM-1 translates PyYAML, and add no
+dependency. The file is read as `read_text` reads it: UTF-8 (else the
+oracle's UnicodeDecodeError path) with universal newlines, also when the
+gateway copies the user's file for the child. A file tomllib rejects is
+the oracle's SwitchyardConfigError (exit 1). The repr of a value in an
+error (`names target datetime.date(1979, 5, 27), which is missing`) and
+str() of a value (`api_key_env` given as a date-time) are Python's; a
+`llm_client` that is another hashable type is no client, as `dict.get`
+finds none. `clients/toml_cases.py` records tomllib's answer on 3,052
+texts (a fixed list and seeded mutations); both ports give the same
+document or the same error class on every one. New gateway cases:
+`switchyard own config full toml` (CRLF, multi-line and literal strings,
+dates, arrays of tables), `key env a date`, `big int`, `target named by
+a date`, `not utf-8`; `not toml` now agrees.
+
+Status: in force.
+Retires when: tomllib changes.
+
+**RF-6 (ruling): what stays of PX-9's refusals.** A proxy port written
+in the decimal digits of another script (Unicode Nd, as Python 3.12's
+unicodedata has them: fullwidth, Arabic-Indic and the rest) is read as
+`int()` reads it, so it is the port it names (case `env proxy port in
+fullwidth digits`, both ports). An "Invalid port" error quotes the port
+as the URL wrote it, as httpx does (`Invalid port: '８x'`), not the digits
+read from it (fix round 1, S8; a unit test in each port). The rest of
+PX-9's list stays refused,
+each for a reason outside what a port can model the oracle's way on any
+box:
+
+- a port of 0, below 0 or above 65535: httpx passes it on, and where the
+  connection fails, or which port it reaches, is decided by the C
+  library's getaddrinfo (glibc folds 70000 to 4464 and answers -1 with
+  EAI_SERVICE), not by Python;
+- a proxy host httpx sends percent-encoded, and an IPv6 address with a
+  zone: the name goes to the system resolver or to an interface of this
+  box;
+- an IDNA host outside the letters the ports encode, a label already in
+  `xn--` form, and a NO_PROXY entry in `xn--` form: httpx uses the `idna`
+  package (IDNA 2008 with its own tables and contextual rules), which
+  neither Go's nor Rust's standard library carries; a full port of it is
+  more than this brief's day;
+- a request to a non-ASCII host through a proxy: every place the ports
+  write the request line and Host header would need that IDNA form.
+
+Status: in force.
+Retires when: the ports carry the `idna` package's tables, or httpx's
+URL parser changes.
+
+**RF-7 (ruling): `models pin` does what huggingface_hub does, `--pull`
+included.** Both ports (Go `cli/modelspin.go` and `cli/hubclient.go`,
+Rust `cli/modelspin.rs`):
+
+- validate the repo id as `validate_repo_id` does, with Python's `\w`
+  (a letter or number of any script, `str.isalnum`, or "_"), so a
+  non-ASCII id is asked for (its bytes percent-encoded, as httpx sends
+  them) and an id it rejects raises HFValidationError;
+- raise what huggingface_hub raises, as an uncaught traceback with exit
+  1 whose first exception is the one Python names first:
+  OfflineModeIsEnabled under HF_HUB_OFFLINE, httpcore's ConnectError for
+  a Hub that cannot be reached, httpx's HTTPStatusError for a status of
+  400 or more (hf_raise_for_status raises from it), json's
+  JSONDecodeError for a body that is not JSON, and the KeyError or
+  TypeError of a tree entry or model info its classes cannot build;
+- follow the tree's next pages (the Link header's `rel="next"`), the
+  first with `session.get` and each next one with `http_backoff`: a 429
+  or 5xx is asked again up to five times, waiting 1, 2, 4, 8 and 8
+  seconds, or the Retry-After seconds plus one, and each wait is logged
+  on stderr in huggingface_hub's words;
+- with `--pull`, write the cache as `hf_hub_download` lays it out:
+  HF_HUB_CACHE, HUGGINGFACE_HUB_CACHE or <HF_HOME>/hub; a HEAD of the
+  file's resolve URL at the pinned commit (X-Repo-Commit, X-Linked-Etag
+  or ETag, X-Linked-Size or Content-Length); the blob downloaded to a
+  `<etag>.<hex>.incomplete` file and moved to `blobs/<etag>` with a new
+  file's mode; `snapshots/<commit>/<file>` a relative symlink to it;
+  `refs/<revision>` only when the revision is not the commit (here it
+  always is, so no ref); `.locks/<repo folder>/<etag>.lock` (mode 0664)
+  and `CACHEDIR.TAG`. No telemetry header is sent (MP-3). Progress goes
+  to stderr only when stderr is a terminal (huggingface_hub draws none
+  there in the cases). The compare checks the tree (symlinks by their
+  target) and then has Python find each pulled file with
+  `hf_hub_download(..., local_files_only=True)` under HF_HUB_OFFLINE.
+
+Still refused, never guessed: a model info date `parse_datetime` might
+read another way (it uses strptime), a tree entry with its last commit
+or a security status, a model info with eval results or
+inference-provider mappings, a redirect, a file in Xet storage, a HEAD
+answer huggingface_hub would retry or fall back to the cache on (a 429 or
+5xx, a missing commit, etag or size, a 404 that names the commit), a
+network error on a next page (http_backoff retries it in httpx's words),
+and a "$" in a cache path (expandvars).
+
+New models cases: `pin paged tree two pages`, `rate limited`, `retry
+after`, `pin non-ascii repo`, `pin repo ends in a mark`, `pin repo of
+digits of another script`, `pin pull writes the cache`, `pin pull json`,
+`pin pull lfs`; `pin pull` now answers its HEAD with 404. 107 cases: 106
+agree in both ports, 1 refused (`pin info bad date`); CI's ceiling drops
+from 12 to 1. The fake Hub answers HEAD, a sequence of answers per
+target, and writes its own port into a header.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-09: fix round 1 (review of the refusal rows)
+
+**RF-8 (fix, B1): a literal int past 4300 decimal digits does not
+decode.** Python 3.12 reads at most `sys.int_info.default_max_str_digits`
+(4300) decimal digits into an int: a longer decimal literal is a
+SyntaxError, so `decode_dict_text` gives None and the step stays a str
+(JSON says the same through json.loads). The literal readers had no
+limit, so `verify` passed a plan the oracle rejects. Both now apply it
+(underscores do not count; a run of zeros is 0). A hex, octal or binary
+literal has no limit at parse, but its decimal text past 4300 digits
+cannot be printed (str() raises), so such a value is refused where a
+step uses it. New cases: CLI `verify string step int too long`, `verify
+json step int too long`; eight corpus texts (after the seeded mutants,
+so the rest of the corpus is unchanged).
+
+Status: in force.
+Retires when: Python's int limit changes.
+
+**RF-9 (fix, S6 and S7): tomllib's words, and its ValueError past 4300
+digits.** `tomllib.loads("n = " + "1" * 4301)` raises int()'s ValueError
+("Exceeds the limit (4300 digits) for integer string conversion: value
+has 4301 digits; use sys.set_int_max_str_digits() to increase the
+limit"), not a TOMLDecodeError. The Switchyard readers catch only
+OSError, UnicodeDecodeError and TOMLDecodeError, so the oracle exits 1
+with a traceback whose first exception is ValueError. Both ports now
+raise the same (Go `TOMLValueError`, Rust `TomlDecodeError::is_value_error`)
+and print that traceback; hex, octal and binary ints have no limit, as in
+int(text, 0). The corpus generator records `{"exc": "ValueError", "msg":
+...}` for such a text, and now records `str(exc)` of every error, so the
+3,056 texts check tomllib's message with its line and column, not only
+the class (RF-5 said the words match; now the corpus proves it). New
+gateway case: `switchyard own config int too long`.
+
+Status: in force.
+Retires when: tomllib or Python's int limit changes.
+
+**RF-10 (fix, S1 to S5): `models pin` and `--pull` on the network.**
+Amends RF-7.
+
+- A redirect is not followed, by either port (Go's client had followed
+  up to 10, to any host, for GET and HEAD; Rust followed none). Python
+  follows the tree's and model info's redirects, and for `--pull` reads
+  the HEAD's metadata off a redirect to another host (a CDN) and follows
+  one to the same host. A port that gets a 3xx refuses, before anything
+  is written. New cases: `pin tree redirects`, `pin pull head
+  redirects` (both refused; CI models ceiling 1 to 3).
+- `--pull` from huggingface.co refuses every LFS file and every Xet file,
+  which is every GGUF: the Hub answers their resolve URL with a redirect
+  to its CDN. It works against a Hub or mirror that serves the file at
+  its resolve URL. This is the ruled state, said plainly in
+  docs/client-diversity.md.
+- Only a refused connection (ECONNREFUSED) is printed as httpcore's
+  ConnectError ("[Errno 111] Connection refused"). Any other network
+  failure (a name that does not resolve, TLS, a connection that breaks
+  or times out) is refused: huggingface_hub names it in httpx's words,
+  which the ports do not carry. A unit test in each port (a closed
+  connection is not a ConnectError).
+- The download is written to the `.incomplete` file as it arrives (Go
+  io.Copy, Rust `llm::http::request_to`), so a file of gigabytes costs a
+  buffer, not its size. Python does not hash the file, so neither port
+  does; the size is counted.
+- After the cache is touched, Python raises what http_get raises and the
+  ports now do the same: a size that differs from the HEAD's is OSError
+  ("Consistency check failed: file should be of size 10 but has size 9
+  (...)"), a status of 400 or more is httpx's HTTPStatusError, both exit
+  1 with the temporary file removed (as `_download_to_tmp_and_move`
+  does), the folders, lock file and CACHEDIR.TAG left as Python leaves
+  them. New cases: `pin pull size differs`, `pin pull download not
+  found`. A refusal after a write (a body cut short, which
+  huggingface_hub resumes; a redirect on the GET; a disk error) no longer
+  says "Nothing was changed.": it says the Hugging Face cache may hold
+  folders and a lock file from this pull.
+- A Retry-After in non-ASCII digits (str.isdigit reads every script) or
+  of more than 9 digits is refused (Go's Atoi had wrapped to a negative
+  wait). An etag or commit of "." or ".." is refused before any write.
+- As in Python, and so not refused: a next-page Link that points back
+  loops for ever, and the bearer token goes to whatever host a next-page
+  Link names.
+
+Status: in force.
+Retires when: the ports follow redirects by huggingface_hub's rules and
+read Xet storage.
+
+**RF-11 (fix, S9): the stale-embeddings warning in every caller of
+find.** Python's `PathwayStore.find` warns in every caller, once per
+process. Checked in the oracle: `route` (RouteAdvisor.advise),
+`distill-repeats` (rank_reuse_candidates, one find per repeated ask),
+and the MCP server's `find_pathway`, `recall` (gateway_recall.recall)
+and `envelope_for` (envelope generation looks the task up first) tools
+all reach it; `tend` re-embeds stale rows and
+does not call find (the Go file named `tendcmd.go` holds
+`distill-repeats`). Both ports now print `UserWarning: <text>` once in
+each, with RF-4's PYTHONWARNINGS reading. `route` and `distill-repeats`
+refuse a filter RF-4 does not model, before they print or write
+anything. The MCP server's stderr is its log, which no client reads and
+the k3 compare does not record: there a filter not modelled prints
+nothing, not a refusal, which would end a tool call over a log line. The
+gateway and garden compares now read a warning as k2 does
+(`file:line: UserWarning: text` and its source line become
+`UserWarning: text`). New cases: gateway `route stale store`, `route
+stale store json` (both ports failed first); garden `repeats stale
+store`. Unit tests in Go for the MCP server's once-only warning.
+
+Status: in force.
+Retires when: the ports model where Python's own libraries warn (RF-4).
+
+## 2026-10-09: fix round 2 (re-review 1 of the refusal rows)
+
+**RF-12 (fix, B2): a YAML int past 4300 decimal digits does not load.**
+PyYAML's `construct_yaml_int` calls `int(value)` (after it drops `_` and
+the sign), which raises ValueError past 4300 decimal digits. The plan or
+envelope then does not parse: exit 2, "It did not parse: Exceeds the
+limit (4300 digits) for integer string conversion: value has N digits;
+use sys.set_int_max_str_digits() to increase the limit". Both YAML
+readers (Go `pyyaml.yamlInt`, Rust `pyyaml::yaml_int`) had no limit, so
+`verify` passed a plan or envelope the oracle rejects. Both now raise
+the same ValueError. Hex, octal and binary go through `int(v, base)`,
+which has no limit at parse; a base-60 part that long is already
+refused. A plan file in JSON is read as YAML, so it is covered too. New
+CLI cases: `verify yaml plan int too long` (and `underscores`), `verify
+json plan int too long`, `verify yaml envelope int too long` (both ports
+failed first), `verify yaml plan int at the limit` and `verify yaml
+plan hex int long` (both agreed before and after); five YAML corpus
+texts.
+
+Status: in force.
+Retires when: Python's int limit changes.
+
+**RF-13 (fix, B3): numbers compare as Python compares them.** Python's
+`==` compares two ints exactly and an int with a float exactly. Go's
+verifier decoded every step number to a float64 and compared those, so
+two ints past 2^53 that round to the same float64 were equal: `equals`
+and `in_set` allowed a plan Python denies (`metadata.n` 2^53+1 against
+2^53; 2^64+5 against 2^64), and `not_equals` denied what Python allows.
+Go now keeps an int that no float64 holds exactly as its exact text
+(`exactNumbers`), and `pyEqual` compares by Python's rules (`pyNumCmp`:
+big ints, a float against an int by exact rational value, NaN equal to
+nothing). Fields pydantic declares as float on robot steps are read as
+floats in the evaluator's step (pydantic rounds an int there).
+`numeric_range` is `min <= float(val) <= max` as in Python: a bool
+counts, an int is rounded, an int past the float range raises
+OverflowError. The stage-2 `exit_code` handler is `rc == expected` by
+the same rule (it had truncated a float rc: 3.5 met an expected 3). The
+Z3 literal of such an int is exact. The Rust verify path already
+compared exactly (`gate::predicate`); its older evaluator
+(`crate::predicate`, used by stage 2 on completed steps, the conform
+client and subsumption) compared as f64 and now compares ints exactly
+too; it holds ints only to 64 bits, so stage 2 refuses to compare an
+int past 64 bits (a violation in `verify_completed_step`, a refusal in
+the CLI's stage-2 check), which fails closed. New CLI cases: 14 `verify
+big int ...` rows (2^53+1 against 2^53, 2^64+5 against 2^64 in `equals`
+and `in_set`, the negatives, `not_equals` and `not_in_set`, and int
+against float pairs); Go failed 11 of them first, Rust none. Thirteen
+conformance verify cases in `clients/fixtures/dialect` (ints to 64 bits,
+which every client's JSON reader holds): the old Rust conform client
+failed 10 of them, Go none (its conform shares the fixed package). Unit
+tests in both ports.
+
+Found by the same search: a `length_range` bound with a fractional part
+(`min: 2.5`) is pydantic's ValidationError, a traceback out of verify. Go
+cut it to an int and verified (2.5 became 2, so a plan passed that the
+oracle stops); Rust's older parser read it as no bound and its verify
+path then refused with a many-line message. Both now treat it as an
+expr they do not read and refuse in one line, before anything runs, as
+K2-8 rules. New CLI cases `verify length range fractional min` and
+`max` (ruled refusals; a probe of the old Go binary printed "Verification: OK" on the min case).
+
+Status: in force.
+Retires when: never (Python's numeric tower).
+
+## 2026-10-09: fix round 3 (re-review 2 and the subsumption numerals)
+
+**RF-14 (fix, B4 and the subsumption numerals): Z3 numerals and stage-2
+ints are exact.** Python's subsumption and vacuity build Z3 numerals with
+`_z3_lit`: an int is `z3.IntVal(n)` (exact) and a float `z3.RealVal(f)`,
+which Z3 reads from `str(f)`, the shortest digits (1e30 is 10^30, not the
+float's binary value); a `numeric_range` bound is a pydantic float, so
+2^53+1 there is already 2^53 in Python too.
+
+- Rust `z3_bridge` printed every number through f64 (`as_f64`), and a
+  whole float with all its binary digits. So two ints past 2^53 got one
+  numeral, and a skill's contract could be proved inside a caller's
+  envelope it is not inside (verify's skill delegation; the delegation
+  tree's `edge_ok` for `tree check|spawn` and `gate register --parent`).
+  Now an int to 64 bits is its exact text, and a float its shortest
+  digits. An int past 64 bits, which the typed copy reads as a float, is
+  refused: CLI verify with a skill contract refuses before anything runs
+  (past i64, where `to_serde` clamps), and `edge_ok` adds the reason
+  "proof: an int past 64 bits, which this binary does not prove over
+  exactly" (fails closed; Python may prove the edge).
+- Go kept any int a float64 held exactly as a float64,
+  and printed it with its shortest digits (2^60 as 1152921504606847000).
+  Go now keeps every int past 2^53 as its exact text.
+- B4, Rust stage 2 (MCP `verify_completed_step`, the run supervisor):
+  `to_serde` clamps an int past i64, and the guard looked only past u64,
+  so 2^63+5 equalled 2^63-1 and 2^64-1 read as 9.2e18 in
+  `numeric_range`. Stage 2 now holds every int to 64 bits exactly, signed
+  or not (`to_serde_u64`), and refuses one past 64 bits. Go's stage 2
+  reads the step through `exactNumbers`, so it holds them exactly.
+
+Cases: 7 conformance verify rows with a skill contract (the old Rust
+conform failed 4, the old Go conform 1: 2^60 against 1152921504606847000);
+7 k3 `mcp step big int` rows (old Rust failed 6; now Rust agrees on 6 and
+refuses the one past 64 bits; k3 CI ceiling 2 to 3); 4 tree `check numbers
+past 2^53` rows (all agree before and after: a child keeps the parent's
+invariants word for word, so its own numbers cannot widen it there); 10
+CLI `verify delegation` rows (both ports refuse each, before and after:
+the delegation's unverified-invariant warning is not worded by the ports,
+an older ruling). Unit tests: Rust numerals, Go numerals (the old Go
+failed).
+
+Status: in force.
+Retires when: the Rust typed copy holds ints of any size.
+## 2026-10-09: sprig as an agentic executor (Python, Go, Rust)
+
+The owner ruled on 2026-10-07 that sprig becomes an agentic executor now,
+in all three languages, and that Go and Rust stop refusing an agentic
+step. These entries record the rulings for this chunk and how each port
+copies the oracle.
+
+**SX-R-1 (ruling): the runtime is an `--agent claude|sprig` option on
+`weave`, `run` and `orchestrate`, default `claude`.** It is a setting of
+the executor, not a step field, so plans, dumps, the schemas and the
+pathway cases do not change. Another value exits 2 with one line,
+`Invalid --agent 'pi'; choose from ['claude', 'sprig'].`, checked first in
+the command body (after the option parser's own checks). `run` and
+`orchestrate` now wire `AgenticExecutor` with the caller's envelope, as
+`weave` does, so a reused delegated pathway runs its agentic leaves.
+Cases: weave `agent flag bad value`; k2 `run agentic step runs`, `run
+agentic step sprig`, `run agentic dry run`, `orchestrate reuses delegated
+pathway` and its sprig twin. `run --dry-run` covers an agentic step: `DryRunExecutor` prints
+`[dry-run] would agentic: <prompt repr> in <workspace> tools=<tools
+repr>` and starts nothing. K2-7 retires with this entry. The owner flips
+the default to sprig after the dogfood runs.
+
+Status: in force.
+Retires when: the owner changes the default or the option.
+
+**SX-R-2 (ruling): the sprig runtime keeps every guarantee of PG-3.** The
+workspace check, the edge proof, the child registered 0600 in a fresh
+0700 gate root in `tempfile.gettempdir()`, the session
+`agentic-<safe step id>` and the failure texts before the sub-agent starts
+are the claude runtime's. sprig then runs as `<DAISUGI_SPRIG or sprig>
+--json --gate --gate-cmd "<gate> --mode enforce --root R --session S
+--captures-root R/captures" --tools <wall> --model haiku --session-dir
+R/sessions --session S [--max-turns N] -`, in the workspace, the prompt on
+stdin, in a process group of its own. `<gate>` is the program the hook
+runs: `<python> -m opendaisugi.gate_client` in the oracle, `<self> gate
+check` in the ports, with no shell, no marker word and no `|| exit 2`
+(sprig denies on any non-zero exit). The gate is pinned by the command;
+a payload that names another session meets the pinned session's
+envelope. sprig's session file stays in the kept gate root.
+
+Status: in force.
+Retires when: does not retire.
+
+**SX-R-3 (ruling): the wall on sprig.** The step's tools that the child
+backs, then Read, Write, Edit and Bash mapped to read, write, edit and
+bash, once each, in the step's order. A tool sprig has no tool for (Glob,
+Grep, MultiEdit, WebFetch, WebSearch) is left out, never mapped onto a
+wider tool such as bash. When none is left the step fails with the same
+"no requested tool is backed by the envelope ... nothing to delegate" and
+nothing starts.
+
+Status: in force.
+Retires when: sprig gains a tool for one of the left-out host tools.
+
+**SX-R-4 (ruling): a gate command word with whitespace fails the step.**
+sprig splits `--gate-cmd` at whitespace (Go's `strings.Fields`). When the
+gate program's path or the temp directory holds a character Go counts as
+whitespace, the step fails before anything is made or started with
+"the sprig gate command has a word with a space in it, and sprig splits
+that command at spaces. Use a TMPDIR path and a daisugi path with no
+spaces." No quoting change to sprig.
+
+Status: in force.
+Retires when: sprig takes its gate command as separate words.
+
+**SX-R-5 (ruling): the texts of a failed sprig run.** Each is a failed
+step (rc 1), written once in the oracle and copied by the ports:
+`agentic sub-agent failed: cannot start sprig (<binary>)`, `... sprig ran
+past <N>s and was killed` (the whole process group gets SIGKILL at the
+step timeout), `... sprig was killed by signal <n>`, `... sprig exited
+with code <rc>` with `: <last non-blank stderr line, 500 characters>`
+when there is one, `agentic sub-agent returned unparseable output:
+<repr of the first 300 characters>`, and `agentic sub-agent reply has no
+answer: <repr>` for JSON that is not an object or has no str `answer`.
+No odd reply raises out of the executor, unlike the claude runtime.
+Tokens are the sum of the int values in `usage`; `cost_usd` stays None.
+
+Status: in force.
+Retires when: does not retire.
+
+**SX-R-6 (ruling): sprig's `--tools`, `--model` and `--json` usage.**
+`--tools LIST` (comma list of read, write, edit and bash; default all
+four) sets the tools the prompt and the API request offer; a call to
+another tool is refused as an unknown tool; an empty list or another
+name exits 2 with one line. `--model M` goes to `claude -p` as
+`--model=M` (default haiku) and is used over SPRIG_MODEL on the API.
+`--json` adds `model` (the model asked for) and `usage`: the four token
+counts of all turns added up, under the Messages API names; a count that
+adds up to zero is left out, since sprig's Usage holds no "not reported"
+mark. Go and Rust sprig agree on 193 sprig cases (8 new).
+
+Status: in force.
+Retires when: does not retire.
+
+**SX-R-7 (harness): the fake sprig and the real one.** The agentic fakes
+moved to `clients/agentic_fakes.py`, which the weave and K2 suites both
+import (weave_cases imports k2_cases, so the fakes could not live in
+weave_cases without an import cycle). A case's `"sprig": "fake"` puts
+FAKE_SPRIG on PATH: it logs the argv with the gate program as `<GATE>`
+and the gate root as `{GATEROOT}`, the cwd, the sprig variables, the
+prompt and the registered envelopes, sends each scripted call to the
+`--gate-cmd` words as sprig does, logs each verdict, and prints the
+scripted reply. `"sprig": "real"` runs the sprig binary given with
+`--sprig BIN` (weave_cases, weave_compare, k2_compare) against the fake
+claude; the compares skip those cases without it. The fake claude's key
+now reads the prompt with HOME and any agentic gate root masked, since a
+real sprig puts tool results that name them in its prompt; no earlier
+case had either in a prompt, so no key changed. Weave cases `sprig
+agentic *` (18 kind A, 2 kind B: `real read`, `real deny`). Red first:
+master's Go and Rust binaries disagreed on exactly the 20 new weave and
+5 new k2 cases. After: Go and Rust each agree on 143 of 143 weave cases
+and 161 of 164 k2 cases (3 not ported as ruled), run once with the Go
+sprig as the real sprig and once with sprig-rs; the CLI compare stays at
+0 disagreements.
+
+Status: in force.
+Retires when: does not retire.
+
+**SX-R-8 (ruling, Go and Rust): how the ports run sprig.** Go
+(`supervise.runSprig`, `runGroup`) and Rust (`supervise::agentic_sprig`)
+start sprig with its own process group (Setpgid, `process_group(0)`),
+the run's environment, and the workspace as cwd; a bare name is looked up
+on the run's PATH, and a name with a slash is used as given. As in the
+oracle's `communicate(timeout=...)`, the run ends when sprig has exited
+and its pipes are closed; a process sprig left that still holds a pipe at
+the step timeout makes it a timeout, and the group is killed. The gate
+root's name comes from each port's own mkdtemp (it is masked in every
+case). The wall check for whitespace uses Go's `unicode.IsSpace` and
+Rust's `char::is_whitespace`, the same set the oracle names
+(`_GO_SPACE`). The ports compute no token count: no compared output
+shows the executor's meter.
+
+Status: in force.
+Retires when: does not retire.
+
+**SX-R-9 (ruling, fix rounds 1 and 2): the Python gate never imports from
+the agent's working directory.** Both runtimes run the oracle's gate in the
+sub-agent's workspace: Claude Code runs a hook in the session's
+directory, and sprig runs its `--gate-cmd` in its own cwd. `python -m`
+puts the cwd first on `sys.path`, so a sub-agent allowed to write its
+workspace could plant `opendaisugi/gate_client.py` there and allow every
+later call (shown with a planted module that prints and exits 0). The
+gate program is now `<python> -I -m opendaisugi.gate_client` in
+`gate_settings_json` (the claude hook of an agentic step, `daisugi gate
+settings`, and the hooks `daisugi install --gate` writes for Claude Code
+and Codex) and in the sprig gate command. Round 1 used `-P`, which drops
+only the implicit cwd entry; the agent's environment reaches the gate on
+both paths, and an empty or relative PYTHONPATH entry (`.`, `:/x`, `/x:`,
+`/x::/y`) still put the workspace on `sys.path`, where a planted
+`gate_client.py` or `sitecustomize.py` ran. `-I` (isolated) drops the
+cwd, every PYTHON* variable and the user site; the interpreter's own
+site-packages, an editable install's `.pth` among them, still resolve the
+installed gate. A re-install brings an older hook (no flag, `-P`, or the
+old `opendaisugi.gate` module) up to today's command in place, for Claude
+Code and for Codex. An older hook that differs in mode, root or python is
+left alone, as before, and the warning now says it runs without `-I` and
+how to replace it, when a gate hook there runs the Python module
+(`-m opendaisugi.gate...`) without `-I`; Go (`install/isolated.go`) and
+Rust (`cli/install.rs`) add the same words on the same test (cases
+`install gate other mode`, `install gate old module`, `install gate beside
+unknown`). Other places that start
+`python -m opendaisugi...`: `daisugi start` spawns `-m opendaisugi.cli
+gate serve` and the TUI spawns `-m opendaisugi.cli dashboard`, both in the
+operator's directory, not an agent's; the pi and OpenCode extensions talk
+to the gate socket and start no Python. The ports run `<absolute self>
+gate check`, which loads nothing from the cwd. The compare harnesses mask
+the gate program (`{GATE}`, `<GATE>`), so no recorded case changed;
+`norm_command` reads the `-I -m` form. Tests: tests/test_gate_cwd.py
+(both runtimes with a planted gate and sitecustomize under no PYTHONPATH
+and the four forms above, the hook command, the installed gate found under
+`-I`, the upgrades from no flag and from `-P`, the warning), red before
+each fix. Not covered (parked by the coordinator): a workspace whose write
+scope holds the gate's own code (an editable `src/` or a venv's
+site-packages) can still change the gate.
+
+Status: in force.
+Retires when: does not retire.
+
+**SX-R-10 (ruling, fix round 1): the read after the timeout kill is
+bounded, and a leftover pipe ends as a timeout.** After the group kill at
+the step timeout, all three read the rest of sprig's output for at most
+`SPRIG_DRAIN_S` (2 s), then stop: a process that left the group (setsid)
+and holds a pipe no longer keeps the step past its timeout. A process
+sprig leaves in its group that holds a pipe after sprig exits makes the
+run a timeout, as SX-R-8 says. Tests in all three: sprig answers, starts
+`sleep 60` on its stdout (in the group, and with setsid), and exits 0; the
+step fails with "sprig ran past Ns and was killed" within the timeout
+plus the drain. CI now runs the two real-sprig weave cases in the
+sprig-rs job, each daisugi with each sprig; `weave_compare --sprig` fails
+when no real-sprig case ran.
+
+Status: in force.
+Retires when: does not retire.
+
+## 2026-10-09: the data home (OPENDAISUGI_HOME, XDG_DATA_HOME)
+
+**DH-R-1 (ruling): one rule picks the data directory in every language.**
+When no flag names it, the data directory is `$OPENDAISUGI_HOME` when that
+is usable; else `$XDG_DATA_HOME/opendaisugi` when XDG_DATA_HOME is usable
+and `~/.opendaisugi` does not exist; else `~/.opendaisugi`. A value is
+usable when, after a leading `~` or `~/` is replaced by the home directory,
+it is an absolute path; an empty, relative or `~user` value is ignored and
+the next rule applies (fix round 1: a quoted `~/od` or a relative value
+would have put the gate root under the hook's cwd, the agent's workspace,
+where the guard did not look). The XDG spec says the same of a relative XDG
+path. An existing install keeps its directory; nothing is moved. One helper holds the rule in each language and module:
+`opendaisugi/datahome.py`, `clients/go/internal/datahome`,
+`clients/rust/src/datahome.rs`, `harness/coppice/internal/datahome` (the
+foreman's directory now calls it, with its behaviour unchanged) and
+`harness/coppice-rs/src/datahome.rs`. The pi extension and the OpenCode
+plugin apply the same rule to find the gate socket (OPENDAISUGI_GATE_SOCK
+still wins). sprig names no data directory, so it has no helper. An
+installed gate hook bakes an absolute `--root`; the Python installers
+refuse a relative one (the Go and Rust CLIs already refuse a HOME that is
+not absolute). Every default that named `~/.opendaisugi` (the gate root,
+captures, config.yaml, the registry, the trusted signers, the coppice data
+directory and fallback socket, every `--data-dir`) now asks the helper. The
+compare harnesses run with no OPENDAISUGI_HOME and no XDG_DATA_HOME, so no
+recorded case changed; the cli cases `data home ...` run each branch of the
+rule, and each kind of unusable value (`~/od`, `od`, `./od`, empty), in all
+three.
+
+Status: in force.
+Retires when: does not retire.
+
+**DH-R-2 (ruling, gate): the gate guards every place the data home can
+be.** The gate's own-state rule (`gate_state_rule.data_dirs`), the floor
+rule's coppice data directories (`floor_config.coppice_data_dirs` and
+`_roots`) and daisugi's config guard (`floor_config.daisugi_config_roots`)
+named only `~/.opendaisugi`. With the data home moved by the environment,
+an agent could have written the moved gate state or config.yaml. Each list
+now holds `~/.opendaisugi`, `$OPENDAISUGI_HOME` and
+`$XDG_DATA_HOME/opendaisugi` (each when set), with no exists check:
+`datahome.guarded_data_dirs`. `floor_config._VARS` also expands
+`$OPENDAISUGI_HOME`, so a shell line that names the moved home through the
+variable is placed. Each change only adds denies; with neither variable
+set nothing changes. Go (`runner.guardedDataDirs`) and Rust
+(`Runner::guarded_data_dirs`) make the same change; the 15 gate cases
+`data home ...` hold it, including the pane rule's secret reads (web token,
+CA key) under a moved coppice data directory. Every existing gate case kept
+its recorded answer; gate, cli and models compares: 0 disagreements, Go and
+Rust, twice. Tests: tests/test_gate_state_guard.py,
+tests/test_gate_daisugi_config_guard.py, tests/test_gate_floor_config.py,
+red before the change.
+
+Fix round 1: the pane rule's `_OTHER_SERVER` also refuses a leading
+`OPENDAISUGI_HOME=` or `XDG_DATA_HOME=` assignment, as it refuses `HOME=`
+and any `XDG_RUNTIME_DIR`: with no runtime dir, coppice's fallback socket
+sits under the data home, so either moves an allow or deny to another
+server. Gate cases `pane deny data home`, `pane deny xdg data home`, `pane
+deny home`; `data home od tilde`, `od relative`, `od dot relative`, `od
+empty`, `xdg tilde`, `xdg relative` hold the usable-value rule. Only
+denies are added.
 
 Status: in force.
 Retires when: does not retire.

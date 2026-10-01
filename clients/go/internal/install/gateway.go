@@ -1,7 +1,6 @@
 package install
 
 import (
-	"errors"
 	"os"
 	"regexp"
 	"strings"
@@ -58,63 +57,6 @@ func PlanSteps(rt Runtime, home string, gate, gateway, enforce, ask bool, url st
 		}
 	}
 	return append(steps, gaps...)
-}
-
-// PlanApplyGateway is PlanApply with the base_url layer after the gate
-// layer. A base_url edit Python's apply raises on fails the runtime after
-// the gate edit before it was written: Partial keeps that edit.
-func PlanApplyGateway(rt Runtime, home, self, root string, gate, gateway, enforce, ask bool, url string) (*Change, error) {
-	ch := &Change{Runtime: rt}
-	if gate {
-		var err error
-		if ch, err = PlanApply(rt, home, self, root, enforce, ask); err != nil || ch.Failed {
-			return ch, err
-		}
-	} else {
-		switch rt.Key {
-		case "codex":
-			ch.Mkdirs = []string{gateroot.Join(home, ".codex")}
-		case "hermes":
-			ch.Mkdirs = []string{gateroot.Join(home, ".hermes")}
-		case "openclaw":
-			ch.Mkdirs = []string{gateroot.Join(home, ".openclaw/workspace")}
-		}
-	}
-	if !gateway {
-		return ch, nil
-	}
-	var prior *Edit
-	for _, e := range ch.Edits {
-		prior = e
-	}
-	var e *Edit
-	var err error
-	switch rt.Key {
-	case "claude":
-		p := gateroot.Join(home, ".claude/settings.json")
-		if prior == nil || prior.Path != p || prior.Warning != "" {
-			prior = nil
-		}
-		e, err = PlanClaudeBaseURL(p, url, prior)
-		if err == nil && e != nil && e.Warning == "" && !isDir(gateroot.Join(home, ".claude")) {
-			err = failf("[Errno 2] No such file or directory: %s", pyjson.Repr(p))
-		}
-	case "codex":
-		e, err = PlanCodexBaseURL(gateroot.Join(home, ".codex/config.toml"), url)
-	case "openclaw":
-		e, err = PlanOpenClawBaseURL(gateroot.Join(home, ".openclaw/openclaw.json"), url)
-	}
-	if isFail(err) {
-		ch.Failed, ch.Why, ch.Partial = true, err.Error(), true
-		return ch, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if e != nil {
-		ch.Edits = append(ch.Edits, e)
-	}
-	return ch, nil
 }
 
 // jsonOf is the content an edit is planned on: an earlier edit of the
@@ -205,22 +147,6 @@ func readText(p string) (string, bool, error) {
 	return string(raw), true, nil
 }
 
-// PlanCodexBaseURL is _patch_codex_base_url: the provider table appended
-// and the selector prepended, both once.
-func PlanCodexBaseURL(p, url string) (*Edit, error) {
-	text, existed, err := readText(p)
-	if err != nil {
-		return nil, err
-	}
-	if strings.Contains(text, "[model_providers.opendaisugi]") {
-		return nil, nil
-	}
-	if !strings.Contains(text, codexSelect) {
-		text = codexSelect + "\n" + text
-	}
-	return &Edit{Path: p, Existed: existed, Content: strings.TrimRight(text, "\n") + "\n" + codexBlock(url)}, nil
-}
-
 var json5TrailingComma = regexp.MustCompile(`,([\t\n\v\f\r\x1c-\x1f \x{85}\x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}]*[}\]])`)
 
 // stripJSON5 is _strip_json5_comments.
@@ -284,64 +210,6 @@ func stripJSON5(text string) string {
 
 var json5Comment = regexp.MustCompile(`//|/\*`)
 
-// PlanOpenClawBaseURL is _patch_openclaw_base_url: _patch_mcp with the
-// provider block under models.providers.opendaisugi.
-func PlanOpenClawBaseURL(p, url string) (*Edit, error) {
-	warnBad := p + " is not valid; skipping gateway provider registration to avoid overwriting user state. " +
-		"Fix the file and re-run `daisugi install`."
-	text, existed, err := readText(p)
-	if err != nil {
-		return nil, err
-	}
-	var cfg any = pyjson.NewObject()
-	if existed {
-		v, lerr := pyjson.Loads(text)
-		if lerr != nil {
-			if errors.Is(lerr, pyjson.ErrUnsupported) {
-				return nil, ErrUnsupported
-			}
-			v, lerr = pyjson.Loads(stripJSON5(text))
-			if lerr != nil {
-				if errors.Is(lerr, pyjson.ErrUnsupported) {
-					return nil, ErrUnsupported
-				}
-				return &Edit{Path: p, Warning: warnBad}, nil
-			}
-		}
-		cfg = v
-	}
-	leaf := cfg
-	for _, k := range []string{"models", "providers"} {
-		o, ok := leaf.(*pyjson.Object)
-		if !ok {
-			return nil, failf("'%s' object has no attribute 'setdefault'", pyType(leaf))
-		}
-		next, has := o.Get(k)
-		if !has {
-			next = pyjson.NewObject()
-			o.Set(k, next)
-		}
-		leaf = next
-	}
-	lo, ok := leaf.(*pyjson.Object)
-	if !ok {
-		// `"opendaisugi" in leaf` then leaf[...] = entry: only a dict takes it.
-		return nil, failf("'%s' object does not support item assignment", pyType(leaf))
-	}
-	if _, has := lo.Get("opendaisugi"); has {
-		return nil, nil
-	}
-	e := &Edit{Path: p, Existed: existed}
-	if existed && json5Comment.MatchString(text) {
-		e.PreWarning = p + " contains JSON5 comments which will not survive the rewrite (the writer emits plain " +
-			"JSON). The pre-write backup at " + p + ".bak* preserves the original text — restore from it if you " +
-			"need the comments back. Tracked as M7 in REVIEW_FINDINGS.md."
-	}
-	lo.Set("opendaisugi", pyjson.NewObject().Set("baseUrl", url).Set("api", "anthropic-messages"))
-	e.Content = dumpSettings(cfg)
-	return e, nil
-}
-
 // PlanPopEnvKey is _pop_json_env_key.
 func PlanPopEnvKey(p, key string, prior *Edit) (*Edit, error) {
 	v, st, err := jsonOf(p, prior)
@@ -371,9 +239,27 @@ func PlanPopEnvKey(p, key string, prior *Edit) (*Edit, error) {
 
 var codexProviderTable = regexp.MustCompile(`\n?\[model_providers\.opendaisugi\][^\[]*`)
 
-// PlanCodexUnpatch is _unpatch_codex_base_url.
-func PlanCodexUnpatch(p string) (*Edit, error) {
-	text, existed, err := readText(p)
+// PlanCodexBaseURLOn is _patch_codex_base_url on an earlier edit's
+// content (prior), or the file: the provider table appended and the
+// selector prepended, both once.
+func PlanCodexBaseURLOn(p, url string, prior *Edit) (*Edit, error) {
+	text, existed, err := textOf(p, prior)
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(text, "[model_providers.opendaisugi]") {
+		return nil, nil
+	}
+	if !strings.Contains(text, codexSelect) {
+		text = codexSelect + "\n" + text
+	}
+	return &Edit{Path: p, Existed: existed, Content: strings.TrimRight(text, "\n") + "\n" + codexBlock(url)}, nil
+}
+
+// PlanCodexUnpatchOn is _unpatch_codex_base_url on an earlier edit's
+// content, or the file.
+func PlanCodexUnpatchOn(p string, prior *Edit) (*Edit, error) {
+	text, existed, err := textOf(p, prior)
 	if err != nil {
 		return nil, ErrUnsupported
 	}
@@ -389,84 +275,4 @@ func PlanCodexUnpatch(p string) (*Edit, error) {
 		cleaned += "\n"
 	}
 	return &Edit{Path: p, Existed: true, Content: cleaned}, nil
-}
-
-// PlanOpenClawUnprovider is the provider half of OpenClaw's reverse.
-func PlanOpenClawUnprovider(p string) (*Edit, error) {
-	text, existed, err := readText(p)
-	if err != nil {
-		return nil, ErrUnsupported
-	}
-	if !existed {
-		return nil, nil
-	}
-	v, lerr := pyjson.Loads(text)
-	if lerr != nil {
-		if v, lerr = pyjson.Loads(stripJSON5(text)); lerr != nil {
-			if errors.Is(lerr, pyjson.ErrUnsupported) {
-				return nil, ErrUnsupported
-			}
-			return nil, nil
-		}
-	}
-	cfg, ok := v.(*pyjson.Object)
-	if !ok {
-		return nil, nil
-	}
-	models, has := cfg.Get("models")
-	if !has {
-		return nil, nil
-	}
-	mo, ok := models.(*pyjson.Object)
-	if !ok {
-		return nil, ErrUnsupported
-	}
-	provs, has := mo.Get("providers")
-	if !has {
-		return nil, nil
-	}
-	po, ok := provs.(*pyjson.Object)
-	if !ok {
-		return nil, ErrUnsupported
-	}
-	if _, has := po.Get("opendaisugi"); !has {
-		return nil, nil
-	}
-	po.Delete("opendaisugi")
-	if po.Len() == 0 {
-		mo.Delete("providers")
-		if mo.Len() == 0 {
-			cfg.Delete("models")
-		}
-	}
-	return &Edit{Path: p, Existed: true, Content: dumpSettings(cfg)}, nil
-}
-
-// PlanReverseGateway is the base_url half of Runtime.reverse, after the
-// gate half's edits (prior) of the same files.
-func PlanReverseGateway(rt Runtime, home string, ch *Change) error {
-	var e *Edit
-	var err error
-	switch rt.Key {
-	case "claude":
-		p := gateroot.Join(home, ".claude/settings.json")
-		var prior *Edit
-		for _, x := range ch.Edits {
-			if x.Path == p {
-				prior = x
-			}
-		}
-		e, err = PlanPopEnvKey(p, "ANTHROPIC_BASE_URL", prior)
-	case "codex":
-		e, err = PlanCodexUnpatch(gateroot.Join(home, ".codex/config.toml"))
-	case "openclaw":
-		e, err = PlanOpenClawUnprovider(gateroot.Join(home, ".openclaw/openclaw.json"))
-	}
-	if err != nil {
-		return err
-	}
-	if e != nil {
-		ch.Edits = append(ch.Edits, e)
-	}
-	return nil
 }

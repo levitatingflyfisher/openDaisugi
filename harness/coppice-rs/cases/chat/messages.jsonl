@@ -1,0 +1,135 @@
+# pane.messages reads one pane's transcript: a Claude transcript only when
+# a process inside the pane named it (each pane runs report.py, which names
+# it once the case writes a go file), and a sprig session tree from the
+# pane's record. A transcript another pane named first, live or ended,
+# through a symlinked spelling too, one older than the pane, one whose
+# first record has no working directory, or one that began in another
+# directory, is refused; the rest of the report still counts, and the
+# claim outlives a restart. Only the operator resumes or forks another
+# pane's sprig session. Tool use shows as its name and one
+# line of input, and no tool output ever shows. A pane reads only its own
+# messages. The phone server's websocket is a second connection: the
+# owner's token reads any pane, and a named token reads none. The fixtures
+# are invented.
+#!env COPPICE_SPRIG_BIN={FIXTURES}/adapters/fake-sprig.sh
+#!config [harness.claude]
+#!config command = "/usr/bin/python3"
+#!config args = ["{FIXTURES}/transcripts/report.py"]
+{"id":"w0","write":"{DATA}/web/token","text":"pinned-web-token-0001\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w1","write":"{DATA}/web/token-names.json","text":"{\"tokens\":[{\"name\":\"kid\",\"token\":\"kid-token-0001\"}]}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w2","write":"{WORK}/claude/projects/old/old.jsonl","text":"{\"type\":\"user\",\"timestamp\":\"2020-01-01T00:00:00Z\",\"cwd\":\"{FIXTURES}\",\"message\":{\"content\":\"FAKE-OLD\"}}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w3","write":"{WORK}/claude/projects/bare/bare.jsonl","text":"{\"type\":\"user\",\"timestamp\":\"2099-01-01T00:00:00Z\",\"message\":{\"content\":\"FAKE-BARE\"}}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"alpha","args":["{WORK}/claude/projects/chat/{pane}.jsonl","--copy","{FIXTURES}/transcripts/claude-chat.jsonl","--when","{WORK}/go-alpha"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"2","cmd":"pane.messages","pane":"$c"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"alpha (w1:p1) has no transcript to read. Its hook reported none."}}
+{"id":"3","cmd":"pane.messages","pane":"w9:p9"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane"}}
+{"id":"4","write":"{WORK}/go-alpha","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"5","cmd":"pane.wait_output","pane":"$c","contains":"REPORT ok","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"6","cmd":"pane.messages","pane":"$c"}
+{"id":"$id","ok":true,"result":{"source":"transcript","more":false,"messages":[{"id":"67","role":"owner","text":"fix the fake test, it fails on CI"},{"id":"669","role":"agent","text":"The test reads a clock.\nI give it a fake one.[31m"},{"id":"923","role":"agent","text":"Running the suite."},{"id":"923.1","role":"agent","text":"pytest tests/test_fake.py -q","tool":"Bash"},{"id":"2276","role":"owner","text":"now push it, please"},{"id":"2494","role":"agent","text":"/fake/src/clock.py","tool":"Read"},{"id":"2494.1","role":"agent","text":"","tool":"Glob"},{"id":"2792","role":"agent","text":"A fake reply with no time."}]}}
+{"id":"7","cmd":"pane.messages","pane":"$c","since":"923.1","limit":3}
+{"id":"$id","ok":true,"result":{"more":true,"messages":[{"id":"2494"},{"id":"2494.1"},{"id":"2792"}]}}
+{"id":"8","cmd":"pane.messages","pane":"$c","since":"2792"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[]}}
+# beta names alpha's file, gamma a symlinked spelling of it, delta a file
+# older than itself. Each report is refused, and no file is theirs.
+{"id":"9","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"beta","args":["{WORK}/claude/projects/chat/w1-p1.jsonl","--when","{WORK}/go-beta"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$d"}}
+{"id":"10","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"gamma","args":["{WORK}/claude/projects/alias/w1-p1.jsonl","--link","{WORK}/claude/projects/alias","{WORK}/claude/projects/chat","--when","{WORK}/go-beta"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$g"}}
+{"id":"11","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"delta","args":["{WORK}/claude/projects/old/old.jsonl","--when","{WORK}/go-beta"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$o"}}
+{"id":"11b","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"zeta","args":["{WORK}/claude/projects/chat/{pane}.jsonl","--copy","{FIXTURES}/transcripts/claude-chat.jsonl","--cwd","/elsewhere","--when","{WORK}/go-beta"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$z"}}
+{"id":"11c","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"bare","args":["{WORK}/claude/projects/bare/bare.jsonl","--when","{WORK}/go-beta"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$b"}}
+{"id":"12","write":"{WORK}/go-beta","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"13","cmd":"pane.wait_output","pane":"$d","contains":"REPORT another pane named that transcript first. A pane reads only its own.","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"14","cmd":"pane.wait_output","pane":"$g","contains":"REPORT another pane named that transcript first. A pane reads only its own.","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"15","cmd":"pane.wait_output","pane":"$o","contains":"REPORT that transcript began before the pane started. A pane reads only its own.","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"15b","cmd":"pane.wait_output","pane":"$z","contains":"REPORT that transcript began in another directory. A pane reads only its own.","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"15c","cmd":"pane.wait_output","pane":"$b","contains":"REPORT that transcript's first record has no time or no working directory. A pane reads only its own.","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"16","cmd":"pane.messages","pane":"$d"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"beta (w1:p2) has no transcript to read. Its hook reported none."}}
+{"id":"17","cmd":"pane.messages","pane":"$g"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"gamma (w1:p3) has no transcript to read. Its hook reported none."}}
+# A sprig pane: the fake writes its header and the prompt, then the
+# fixture's rows.
+{"id":"18","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{FIXTURES}","label":"sp","cmd_argv":["--session-dir","{WORK}/sessions","--session","s1"],"env":{"COPPICE_SPRIG_FIXTURE":"{FIXTURES}/transcripts/sprig-chat.jsonl"}}
+{"id":"$id","ok":true,"result":{"pane":"$sp"}}
+{"id":"19","cmd":"pane.messages","pane":"$sp"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"sp (w1:p7) has no transcript to read. Its hook reported none."}}
+{"id":"20","cmd":"agent.prompt","pane":"$sp","text":"look at it","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$sp","state":"idle"}}
+{"id":"21","cmd":"pane.messages","pane":"$sp"}
+{"id":"$id","ok":true,"result":{"source":"transcript","more":false,"messages":[{"role":"owner","text":"look at it"},{"role":"owner","text":"a fake task"},{"role":"agent","text":"Looking at it."},{"role":"agent","text":"ls -la","tool":"bash"},{"role":"agent","text":"fetch the fake page","tool":"web"},{"role":"agent","text":"Done."}]}}
+{"id":"22","cmd":"pane.messages","pane":"$sp","limit":2}
+{"id":"$id","ok":true,"result":{"more":true,"messages":[{"role":"agent","text":"fetch the fake page","tool":"web"},{"role":"agent","text":"Done."}]}}
+# The operator may resume another pane's sprig session.
+{"id":"22b","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{FIXTURES}","label":"sp2","cmd_argv":["--session-dir","{WORK}/sessions","--resume","s1"]}
+{"id":"$id","ok":true,"result":{"pane":"$sp2"}}
+{"id":"v1","cli":["web","serve","--tls","off","--listen","{ADDR}","--qr=false"],"bg":"web"}
+{"id":"$id","ok":true,"result":{"started":true}}
+{"id":"g0","http":"GET","url":"http://{ADDR}/","wait_ms":8000}
+{"id":"$id","ok":true,"result":{"status":200}}
+# The phone: the owner's token reads both, a named token neither. One
+# request to each websocket, since the phone server may answer out of
+# order.
+{"id":"s1","ws":"ws://{ADDR}/ws","protocols":["daisugi.v1","daisugi.bearer.pinned-web-token-0001"],"send":["{\"id\":\"1\",\"cmd\":\"pane.messages\",\"pane\":\"w1:p1\",\"limit\":1}"]}
+{"id":"$id","ok":true,"result":{"status":101,"frames":[{"id":"1","ok":true,"result":{"more":true,"messages":[{"id":"2792"}]}}]}}
+{"id":"s2","ws":"ws://{ADDR}/ws","protocols":["daisugi.v1","daisugi.bearer.pinned-web-token-0001"],"send":["{\"id\":\"2\",\"cmd\":\"pane.messages\",\"pane\":\"w1:p2\"}"]}
+{"id":"$id","ok":true,"result":{"status":101,"frames":[{"id":"2","ok":false,"error":{"code":"bad_request"}}]}}
+{"id":"s3","ws":"ws://{ADDR}/ws","protocols":["daisugi.v1","daisugi.bearer.pinned-web-token-0001"],"send":["{\"id\":\"3\",\"cmd\":\"floor.chat\"}"]}
+{"id":"$id","ok":true,"result":{"status":101,"frames":[{"id":"3","ok":true,"result":{"messages":[],"more":false}}]}}
+{"id":"s4","ws":"ws://{ADDR}/ws","protocols":["daisugi.v1","daisugi.bearer.kid-token-0001"],"send":["{\"id\":\"1\",\"cmd\":\"pane.messages\",\"pane\":\"w1:p1\"}"]}
+{"id":"$id","ok":true,"result":{"status":101,"frames":[{"id":"1","ok":false,"error":{"code":"unauthorized","message":"the chat is for the owner's own sign-in."}}]}}
+{"id":"s5","ws":"ws://{ADDR}/ws","protocols":["daisugi.v1","daisugi.bearer.kid-token-0001"],"send":["{\"id\":\"2\",\"cmd\":\"floor.chat\"}"]}
+{"id":"$id","ok":true,"result":{"status":101,"frames":[{"id":"2","ok":false,"error":{"code":"unauthorized","message":"the chat is for the owner's own sign-in."}}]}}
+{"id":"v2","stop":"web"}
+{"id":"$id","ok":true,"result":"*"}
+# A pane reads its own messages, no other pane's, and no chat.
+{"id":"23","cmd":"hello","role":"pane","pane":"$c"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$c"}}
+{"id":"24","cmd":"pane.messages","pane":"$c","limit":1}
+{"id":"$id","ok":true,"result":{"more":true,"messages":[{"id":"2792"}]}}
+{"id":"25","cmd":"pane.messages","pane":"$sp"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"a pane may read only its own messages. The operator reads any pane's."}}
+{"id":"26","cmd":"floor.chat"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator talks to the floor's foreman."}}
+# A pane may not resume or fork another pane's sprig session, which would
+# make that session's tree its own messages.
+{"id":"26b","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{FIXTURES}","label":"steal","cmd_argv":["--session-dir","{WORK}/sessions","--resume","s1"]}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"that sprig session belongs to another pane. Only the operator resumes or forks it."}}
+{"id":"26c","cmd":"pane.fork","pane":"$sp"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"that sprig session belongs to another pane. Only the operator resumes or forks it."}}
+# sprig reads its flags as Go's flag package does: one dash, "=", and the
+# last value wins. Each spelling of the same resume is refused.
+{"id":"26d","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{FIXTURES}","label":"steal","cmd_argv":["--session-dir","{WORK}/mine","-session-dir","{WORK}/sessions","-resume","s1"]}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"that sprig session belongs to another pane. Only the operator resumes or forks it."}}
+{"id":"26e","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{FIXTURES}","label":"steal","cmd_argv":["-session-dir={WORK}/sessions","--resume=s1"]}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"that sprig session belongs to another pane. Only the operator resumes or forks it."}}
+{"id":"26f","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{FIXTURES}","label":"steal","cmd_argv":["--session-dir","{WORK}/sessions","--resume","nope","-resume","s1"]}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"that sprig session belongs to another pane. Only the operator resumes or forks it."}}
+# After a restart the claim still names alpha's file: the operator reads
+# it, and a new pane that names it is refused.
+#!restart
+{"id":"27","cmd":"pane.messages","pane":"w1:p1","limit":1}
+{"id":"$id","ok":true,"result":{"more":true,"messages":[{"id":"2792"}]}}
+{"id":"28","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"eps","args":["{WORK}/claude/projects/chat/w1-p1.jsonl"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$e"}}
+{"id":"29","cmd":"pane.wait_output","pane":"$e","contains":"REPORT another pane named that transcript first. A pane reads only its own.","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}

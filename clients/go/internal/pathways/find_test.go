@@ -2,6 +2,7 @@ package pathways
 
 import (
 	"bufio"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math"
@@ -71,7 +72,13 @@ func layOut(t *testing.T, path, home string, rows []map[string]any) *Store {
 			marks = append(marks, "?")
 			switch x := v.(type) {
 			case map[string]any:
-				if k == "task_embedding_json" {
+				if h, isBlob := x["blob"].(string); isBlob {
+					b, err := hex.DecodeString(h)
+					if err != nil {
+						t.Fatal(err)
+					}
+					v = b // a BLOB: {"blob": hex}
+				} else if k == "task_embedding_json" {
 					v = embeddingText(x)
 				} else {
 					t.Fatalf("column %s holds %v", k, x)

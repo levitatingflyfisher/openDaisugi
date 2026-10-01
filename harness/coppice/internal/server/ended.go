@@ -369,7 +369,15 @@ func (s *Server) handlePaneResume(_ *Client, r *proto.Request) proto.Response {
 		}
 		return proto.ErrResp(r.ID, code, err.Error())
 	}
+	// A resumed session writes on in the transcripts the old pane
+	// claimed, so they move to the new pane before its hook can report.
+	if resumed {
+		s.moveClaims(id, newRec.ID)
+	}
 	if err := s.startPane(newRec); err != nil {
+		if resumed {
+			s.moveClaims(newRec.ID, id)
+		}
 		// Same cleanup as pane.create and pane.fork: nothing ran, so
 		// nothing stays of the NEW record. The ended one this resume was
 		// trying to replace is left exactly as it was.

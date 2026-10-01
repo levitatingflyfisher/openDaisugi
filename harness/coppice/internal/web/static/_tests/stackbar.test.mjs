@@ -133,6 +133,44 @@ test('the header row reads the floor facts, with colour for health only', () => 
   assert.match(items[4].title, /cache read 1.2M/);
 });
 
+// Under 7 days left on the phone's certificate the header warns, with
+// Renew, which types the command in a shell and does not run it. With no
+// such fact there is no item.
+test('the header row warns about the phone certificate with Renew', () => {
+  const base = { daisugi: { mode: 'off', armed: true } };
+  assert.equal(factsItems(base).find((i) => i.key === 'phone-cert'), undefined);
+  const soon = factsItems({ ...base, phone_cert_days: 3 }).find((i) => i.key === 'phone-cert');
+  assert.equal(soon.text, 'The phone certificate runs out in 3 days.');
+  assert.equal(soon.health, 'warn');
+  assert.deepEqual(soon.action, { kind: 'shell', label: 'Renew', command: 'coppice web cert tailscale' });
+  const one = factsItems({ ...base, phone_cert_days: 1 }).find((i) => i.key === 'phone-cert');
+  assert.equal(one.text, 'The phone certificate runs out in 1 day.');
+  const today = factsItems({ ...base, phone_cert_days: 0 }).find((i) => i.key === 'phone-cert');
+  assert.equal(today.text, 'The phone certificate runs out today.');
+  const gone = factsItems({ ...base, phone_cert_days: -2 }).find((i) => i.key === 'phone-cert');
+  assert.equal(gone.text, 'The phone certificate has run out. The phone cannot reach the box until it is renewed.');
+  assert.equal(gone.health, 'bad');
+  assert.equal(factsItems({ ...base, phone_cert_days: 'x' }).find((i) => i.key === 'phone-cert'), undefined);
+});
+
+// The header row is hidden on a phone, so the rail's list header carries
+// the certificate warning there, as it carries the install hint.
+test('paintHint carries the phone certificate warning too', () => {
+  reset();
+  const hint = document.createElement('p');
+  hint.hidden = true;
+  const ran = [];
+  paintHint(hint, factsItems({ daisugi: { mode: 'off', armed: true, enforcing: 1 }, phone_cert_days: 2 }), (a) => ran.push(a));
+  assert.equal(hint.hidden, false);
+  const words = [...hint.children].filter((c) => c.tagName === 'SPAN').map((c) => c.textContent);
+  assert.deepEqual(words, ['The phone certificate runs out in 2 days.']);
+  [...hint.children].find((c) => c.tagName === 'BUTTON').dispatchEvent({ type: 'click' });
+  assert.deepEqual(ran.map((a) => [a.kind, a.label, a.command]), [['shell', 'Renew', 'coppice web cert tailscale']]);
+  // With both, the rail carries both.
+  paintHint(hint, factsItems({ daisugi: { mode: 'off', armed: true, installed: false }, phone_cert_days: 2 }), () => {});
+  assert.equal([...hint.children].filter((c) => c.tagName === 'SPAN').length, 2);
+});
+
 test('the header row says what it does not know', () => {
   const items = factsItems({ daisugi: { mode: 'enforcing', armed: false, enforcing: 2 }, working: 0, needing_you: 2, tokens_today: {} });
   const k = Object.fromEntries(items.map((i) => [i.key, i]));
@@ -256,9 +294,9 @@ test('on a 390 px phone the rail carries the install hint, with the typed-not-ru
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../app.css', import.meta.url), 'utf8');
   // The hint sits in the rail, above the agent list, and the phone rule
-  // that hides the header row does not hide it.
+  // that hides most of the header row's facts does not hide it.
   assert.ok(html.indexOf('id="gate-hint"') > html.indexOf('id="rail"') && html.indexOf('id="gate-hint"') < html.indexOf('id="roster"'));
-  assert.match(css, /body\.phone #facts \{ display: none; \}/);
+  assert.match(css, /body\.phone #facts \.fact \{ display: none; \}/);
   assert.doesNotMatch(css, /body\.phone #gate-hint \{ display: none/);
   assert.match(css, /@media \(min-width: 600px\) \{ body:not\(\.phone\) #gate-hint \{ display: none; \} \}/);
 

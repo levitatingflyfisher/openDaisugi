@@ -1,0 +1,58 @@
+# floor.chat: each floor.talk sentence goes to the chat file before it is
+# typed, a new foreman adds a note line, and the foreman's own replies come
+# from its transcript, merged by time. A damaged chat file moves aside and
+# the chat starts fresh; a half-written last line is left out. The foreman
+# runs report.py as claude: it copies an invented transcript to its own
+# file, names it from inside the pane once the case writes its go file,
+# then echoes. The claim is kept in the data dir, so after a restart the
+# chat still holds the foreman's replies.
+#!config default = "claude"
+#!config [harness.claude]
+#!config command = "/usr/bin/python3"
+#!config args = ["{FIXTURES}/transcripts/report.py", "{WORK}/claude/projects/chat/{pane}.jsonl", "--copy", "{FIXTURES}/transcripts/claude-chat.jsonl", "--when", "{WORK}/go-{pane}", "--cat"]
+#!env CLAUDE_CONFIG_DIR={WORK}/claude
+{"id":"1","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"messages":[],"source":"transcript","more":false}}
+{"id":"2","cmd":"floor.talk","text":"hello\tforeman\u0007"}
+{"id":"$id","ok":true,"result":{"pane":"$f","started":true,"queued":1}}
+{"id":"3","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"id":"$c1","role":"owner","text":"hello foreman","pane":"$f"}]}}
+{"id":"4","ls":"{DATA}/chat"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"5","cmd":"pane.close","pane":"$f"}
+{"id":"$id","ok":true,"result":{"pane":"$f","closed":true}}
+{"id":"6","cmd":"floor.talk","text":"second"}
+{"id":"$id","ok":true,"result":{"pane":"$f2","started":true}}
+{"id":"7","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"role":"owner","text":"hello foreman","pane":"$f"},{"role":"note","text":"A new foreman started.","pane":"$f2"},{"id":"$c3","role":"owner","text":"second","pane":"$f2"}]}}
+{"id":"8","cmd":"floor.chat","since":"$c1","limit":1}
+{"id":"$id","ok":true,"result":{"more":true,"messages":[{"id":"$c3"}]}}
+# Another day's file with a half-written last line, and one with a line
+# that is not a chat line.
+{"id":"w1","write":"{DATA}/chat/2026-01-01.jsonl","text":"{\"kind\":\"user\",\"date\":\"2026-01-01T00:00:00.000Z\",\"pane\":\"w1:p9\",\"text\":\"an old line\"}\n{\"kind\":\"us"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w2","write":"{DATA}/chat/2026-01-02.jsonl","text":"{\"kind\":\"user\",\"date\":\"2026-01-02T00:00:00.000Z\",\"pane\":\"w1:p9\",\"text\":\"lost\"}\nnot a chat line\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"9","cmd":"floor.chat","limit":2}
+{"id":"$id","ok":true,"result":{"more":true,"messages":[{"role":"note"},{"role":"owner","text":"second"}]}}
+{"id":"10","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"id":"chat/2026-01-01/0","role":"owner","text":"an old line","pane":"w1:p9"},{"text":"hello foreman"},{"role":"note"},{"text":"second"}]}}
+{"id":"11","file":"{DATA}/chat/2026-01-02.jsonl"}
+{"id":"$id","ok":true,"result":{"missing":true}}
+# The foreman names its transcript from inside its pane. Its replies join
+# the chat; its owner lines do not, since the chat file holds them.
+{"id":"12","write":"{WORK}/go-w1-p2","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"13","cmd":"pane.wait_output","pane":"$f2","contains":"REPORT ok","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"14","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"id":"w1:p2/0/2792","role":"agent","text":"A fake reply with no time.","pane":"w1:p2"},{"id":"chat/2026-01-01/0"},{"text":"hello foreman"},{"role":"note"},{"text":"second"},{"id":"w1:p2/0/2494","tool":"Read"},{"id":"w1:p2/0/2494.1","tool":"Glob"},{"id":"w1:p2/0/669"},{"id":"w1:p2/0/923"},{"id":"w1:p2/0/923.1","tool":"Bash"}]}}
+{"id":"15","cmd":"floor.chat","since":"w1:p2/0/923"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"id":"w1:p2/0/923.1"}]}}
+{"id":"16","cmd":"hello","role":"pane","pane":"$f2"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$f2"}}
+{"id":"17","cmd":"floor.chat"}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator talks to the floor's foreman."}}
+#!restart
+{"id":"18","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"more":false,"messages":[{"id":"w1:p2/0/2792"},{"id":"chat/2026-01-01/0"},{"text":"hello foreman"},{"role":"note"},{"text":"second"},{"id":"w1:p2/0/2494"},{"id":"w1:p2/0/2494.1"},{"id":"w1:p2/0/669"},{"id":"w1:p2/0/923"},{"id":"w1:p2/0/923.1"}]}}

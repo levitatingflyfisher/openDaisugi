@@ -197,8 +197,12 @@ class Orchestrator:
         endpoint_overrides: "dict[str, dict[str, Any]] | None" = None,
         step_timeout_s: int = 180,
         max_parallel: int = 1,
+        agent: str = "claude",
     ) -> None:
         self.ladder = ladder
+        # The runtime of agentic steps: a reused delegated pathway carries
+        # them, so this map needs an agentic executor too.
+        self.agent = agent
         # >1 lets the Supervisor run independent deterministic steps concurrently
         # (opt-in; default 1 = sequential).
         self.max_parallel = max_parallel
@@ -355,6 +359,9 @@ class Orchestrator:
         # ids). Wiring it safely is a scoped follow-up (ADR-0008).
         executors["skill"] = SkillExecutor(handlers=self.skill_handlers)
         executors["mcp"] = MCPExecutor(transport=self.mcp_transport)
+        from opendaisugi.agentic_executor import AgenticExecutor
+
+        executors["agentic"] = AgenticExecutor(envelope=run_envelope, runtime=self.agent)
 
         supervisor = Supervisor(
             executors=executors,

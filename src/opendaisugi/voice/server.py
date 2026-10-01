@@ -61,7 +61,7 @@ from opendaisugi.floor.registry import pick_backend, prompt_pane
 from opendaisugi.voice import deliver as deliver_mod
 from opendaisugi.voice.audio import AudioFormatUnsupported, to_wav_16k_mono, wav_duration_s
 from opendaisugi.voice.cleanup import clean_transcript
-from opendaisugi.voice.engines import EngineUnavailable, pick_engine
+from opendaisugi.voice.engines import EngineLoading, EngineUnavailable, pick_engine
 
 if TYPE_CHECKING:
     from opendaisugi.floor.backend import PaneBackend
@@ -323,6 +323,9 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             transcript = server.engine.transcribe(wav_bytes)
+        except EngineLoading as exc:
+            self._send_json(503, {"error": "engine_loading", "message": str(exc)})
+            return
         except EngineUnavailable as exc:
             self._send_json(503, {"error": "engine_unavailable", "message": str(exc)})
             return
@@ -567,12 +570,13 @@ def serve(
 ) -> None:
     """Build the real engine and the real backend, then serve forever.
 
-    Blocks until the process stops. pick_engine can raise EngineUnavailable
+    Blocks until the process stops. A resident engine (resident.py) is
+    started and its model loaded before the socket is bound, and stopped
+    when this returns or raises. pick_engine can raise EngineUnavailable
     when the configured engine's package or model files are missing, or
-    UnknownEngine when voice_engine names something other than
-    faster-whisper or parakeet. Building the server can raise OSError, for
-    example a port already in use, or ValueError, for example a half-given
-    TLS pair. All of these propagate to the caller, uncaught, so the command
+    UnknownEngine when voice_engine names no engine pick_engine builds.
+    Building the server can raise OSError, for example a port already in
+    use, or ValueError, for example a half-given TLS pair. All of these propagate to the caller, uncaught, so the command
     line can turn each into its own exit code.
 
     on_bound, when given, runs once the socket is bound and before this
@@ -582,17 +586,23 @@ def serve(
     """
     engine = pick_engine(config)
     resolved_token_file = token_file if token_file is not None else default_token_file(config)
-    server = build_server(
-        host,
-        port,
-        config=config,
-        engine=engine,
-        token_file=resolved_token_file,
-        armed_dir=armed_dir,
-        backend_factory=lambda: pick_backend(config),
-        tls_cert=tls_cert,
-        tls_key=tls_key,
-    )
-    if on_bound is not None:
-        on_bound()
-    server.serve_forever()
+    # A resident engine starts here and loads its model before the bind,
+    # and stops with the server however it ends.
+    engine.start()
+    try:
+        server = build_server(
+            host,
+            port,
+            config=config,
+            engine=engine,
+            token_file=resolved_token_file,
+            armed_dir=armed_dir,
+            backend_factory=lambda: pick_backend(config),
+            tls_cert=tls_cert,
+            tls_key=tls_key,
+        )
+        if on_bound is not None:
+            on_bound()
+        server.serve_forever()
+    finally:
+        engine.stop()

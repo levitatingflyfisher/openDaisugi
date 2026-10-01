@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use super::gateroot::{join, path_str};
+use super::gateroot::path_str;
 use super::{exit, parse_args, Env, Opt, Res};
 use crate::gate::pyjson::{dumps_indent, loads_py, Object, Value};
 use crate::rank::{self, Ranking};
@@ -91,7 +91,7 @@ impl Env {
     }
 
     fn rank_data_dir(&self, p: &super::Parsed) -> String {
-        path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")))
+        path_str(&p.str("--data-dir", &self.data_home()))
     }
 
     /// `cli._rank_read`.

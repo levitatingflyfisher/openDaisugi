@@ -22,6 +22,7 @@ import (
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/sqlpath"
 )
 
 // KeyArgs are the inputs make_cache_key hashes. Context and Parent nil
@@ -85,19 +86,15 @@ type Cache struct {
 }
 
 func (c *Cache) open() (*sql.DB, error) {
-	dsn := c.path
-	if strings.HasPrefix(dsn, "file:") {
-		// sqlite3.connect reads a path, never a URI.
-		dsn = "./" + dsn
+	dsn, err := sqlpath.DSN(c.path, "")
+	if err != nil {
+		return nil, err
 	}
 	return sql.Open("sqlite3", dsn)
 }
 
 // OpenCache is EnvelopeCache(path, prompt_version=PromptVersion).
 func OpenCache(path string) (*Cache, error) {
-	if strings.ContainsRune(path, '?') {
-		return nil, pathways.ErrPath
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
 		return nil, err
 	}

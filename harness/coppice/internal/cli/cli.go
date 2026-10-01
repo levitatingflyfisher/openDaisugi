@@ -21,6 +21,7 @@ import (
 
 	"github.com/opendaisugi/coppice/internal/attach"
 	"github.com/opendaisugi/coppice/internal/config"
+	"github.com/opendaisugi/coppice/internal/foreman"
 	"github.com/opendaisugi/coppice/internal/plugins"
 	"github.com/opendaisugi/coppice/internal/server"
 	"github.com/opendaisugi/coppice/internal/tmuxmirror"
@@ -123,6 +124,9 @@ func (c *CLI) stdinIsTerminal() bool {
 // does.
 func (c *CLI) Run(argv []string) int {
 	remote := ""
+	// dataDirFlag is --data-dir when given here; c.DataDir also holds the
+	// default, which coppice foreman must not mistake for a choice.
+	dataDirFlag := ""
 	for len(argv) > 0 && strings.HasPrefix(argv[0], "--") {
 		switch argv[0] {
 		case "--version":
@@ -155,6 +159,7 @@ func (c *CLI) Run(argv []string) int {
 				return 1
 			}
 			c.DataDir = argv[1]
+			dataDirFlag = argv[1]
 			argv = argv[2:]
 			continue
 		default:
@@ -167,6 +172,13 @@ func (c *CLI) Run(argv []string) int {
 	}
 
 	switch argv[0] {
+	case "foreman":
+		// Hidden: it reads the foreman's chat files and dials no socket.
+		if remote != "" {
+			fmt.Fprintln(c.Err, "coppice foreman reads local files; it is not wired for --remote.")
+			return 1
+		}
+		return foreman.Main(argv[1:], dataDirFlag, c.Out, c.Err)
 	case "server":
 		return c.runServer(remote, argv[1:])
 	case "attach":

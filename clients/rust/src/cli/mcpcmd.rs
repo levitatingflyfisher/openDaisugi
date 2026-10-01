@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::rc::Rc;
 
-use super::gateroot::{join, path_str};
+use super::gateroot::path_str;
 use super::runcmd::{prepare, PlanCheck};
 use super::{exit, parse_args, Env, Opt, Res};
 use crate::envgen::{self, cache::Cache, GenErr};
@@ -50,7 +50,7 @@ impl Env {
     /// is not one this binary reads, or the matcher is one it does not
     /// carry.
     pub(super) fn matcher_pick(&self, notes: &Rc<RefCell<String>>) -> Result<Pick, String> {
-        let cfg = super::config::load(&format!("{}/.opendaisugi/config.yaml", self.home))
+        let cfg = super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml"))
             .map_err(|e| format!("the config file is not one this binary reads: {e}"))?;
         let pe = self.potion_env(notes);
         match select_matcher(&cfg.matcher_model, &pe) {
@@ -87,7 +87,7 @@ impl Env {
         if p.help {
             return self.cmd_help(CMD, "", "Serve openDaisugi tools over MCP stdio.", &opts);
         }
-        let data_dir = path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let model = p.str("--model", envgen::DEFAULT_MODEL);
         // Daisugi(model=..., data_dir=...) makes the envelope cache.
         if let Err(e) = Cache::open(&format!("{data_dir}/envelope_cache.db")) {
@@ -121,6 +121,9 @@ struct Server {
     check: PlanCheck,
     /// Where the lines go: stdout, or a test's list.
     sink: Option<Vec<String>>,
+    /// The stale-embeddings warning has been given (Python gives it once
+    /// per process).
+    stale_warned: bool,
 }
 
 /// How a tool call ended.
@@ -168,7 +171,10 @@ fn validate(id: Id, v: &Value) -> TR<Object> {
     match validate_model(id, v, Mode::Python) {
         Ok(Value::Obj(o)) => Ok(o),
         Ok(_) => refuse("a model that did not validate to a mapping"),
-        Err(e) => Err(ToolErr::Tool(e.text())),
+        Err(e) => match e.unreadable() {
+            Some(why) => refuse(&why),
+            None => Err(ToolErr::Tool(e.text())),
+        },
     }
 }
 
@@ -182,6 +188,7 @@ impl Server {
             journal: None,
             check: crate::pathways::verify::verify,
             sink: None,
+            stale_warned: false,
         }
     }
 
@@ -265,12 +272,15 @@ impl Server {
                     None,
                 ));
             }
-            "logging/setLevel" => self.write(&mcpwire::error_reply(
-                &m.id,
-                -32601,
-                "Method not found",
-                None,
-            )),
+            // The oracle's server registers no handler for these.
+            "logging/setLevel" | "resources/subscribe" | "resources/unsubscribe" | "completion/complete"
+            | "tasks/get" | "tasks/result" | "tasks/list" | "tasks/cancel" => {
+                self.write(&mcpwire::error_reply(&m.id, -32601, "Method not found", None))
+            }
+            "resources/read" => {
+                let uri = mcpwire::norm_uri(params.value("uri").as_str().unwrap_or("")).unwrap_or_default();
+                self.write(&mcpwire::error_reply(&m.id, 0, &format!("Unknown resource: {uri}"), None))
+            }
             "tools/call" => {
                 let name = params.value("name").as_str().unwrap_or("").to_string();
                 let args = params
@@ -582,7 +592,9 @@ impl Server {
             max_task_chars: 4000,
             ..Default::default()
         };
-        match envgen::generate(&o, &mut c).envelope {
+        let g = envgen::generate(&o, &mut c);
+        self.stale_warning(e, &g.find_warning, notes);
+        match g.envelope {
             Ok(env) => Ok(json_mode(&Value::Obj(env))),
             Err(GenErr::Py(pe)) => Err(ToolErr::Tool(pe.msg)),
             Err(GenErr::Inherit(_)) => refuse("an inheritance check this binary does not word"),
@@ -592,13 +604,31 @@ impl Server {
         }
     }
 
+    /// The stale-embeddings UserWarning find prints, once per server, as
+    /// Python's warnings module prints it to the server's stderr under
+    /// PYTHONWARNINGS. A filter this binary does not model prints nothing:
+    /// the server's stderr is its log, which no client reads (RF-11).
+    fn stale_warning(&mut self, e: &Env, warning: &str, notes: &Rc<RefCell<String>>) {
+        if warning.is_empty() || self.stale_warned {
+            return;
+        }
+        self.stale_warned = true;
+        let pyw = e.env.get("PYTHONWARNINGS").cloned().unwrap_or_default();
+        if super::pywarn::user_warning_shown(&pyw, warning) == Some(true) {
+            notes.borrow_mut().push_str(&format!("UserWarning: {warning}\n"));
+        }
+    }
+
     fn find_pathway(&mut self, e: &mut Env, a: &Object, notes: &Rc<RefCell<String>>) -> TR<Value> {
         let (key, _) = Self::built_matcher(e, notes)?;
         let pe = e.potion_env(notes);
         let task = a.value("task").as_str().unwrap_or("").to_string();
         let mut cache = Default::default();
         let r = match self.store()?.find(&task, &key, &pe, None, &mut cache) {
-            Ok(r) => r,
+            Ok(r) => {
+                self.stale_warning(e, &r.warning, notes);
+                r
+            }
             Err(crate::pathways::find::FindErr::NotCarried(nc)) => return refuse(nc.0),
             Err(crate::pathways::find::FindErr::Err(err)) => {
                 return refuse(format!(
@@ -644,6 +674,7 @@ impl Server {
             Ok(r) => r,
             Err(why) => return refuse(short(&why)),
         };
+        self.stale_warning(e, &r.warning, notes);
         let prov = match r.provenance {
             Some(p) => Value::Obj(
                 Object::new()
@@ -941,7 +972,7 @@ mod tests {
         let out = session(
             &[
                 INIT,
-                r#"{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"x://y"}}"#,
+                r#"{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"http://a/%41"}}"#,
                 r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#,
             ],
             None,

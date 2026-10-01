@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -168,6 +170,16 @@ var errRefused = errors.New("this path is not a regular file and is never read")
 func (t *tailer) poll() error {
 	if t.refused {
 		return errRefused
+	}
+	if t.kind == kindClaude {
+		// The claim is on the real path. A path that now leads elsewhere
+		// is not read.
+		if err := verifyReal(t.path); err != nil {
+			t.refused = true
+			t.reset()
+			t.ok = false
+			return err
+		}
 	}
 	f, dev, ino, refuse, err := t.open(t.path)
 	if err != nil {
@@ -487,25 +499,6 @@ func (pf *paneFacts) moveLast(path string) {
 	}
 }
 
-// drop forgets path and what it counted: another pane took it over and
-// counts it now.
-func (pf *paneFacts) drop(path string) {
-	pf.forgetRetired(path)
-	if _, ok := pf.files[path]; !ok {
-		return
-	}
-	delete(pf.files, path)
-	for i, p := range pf.order {
-		if p == path {
-			pf.order = append(pf.order[:i:i], pf.order[i+1:]...)
-			break
-		}
-	}
-	if pf.path == path {
-		pf.path = ""
-	}
-}
-
 // tokens is the pane's summed token use. ok is false while no file was
 // ever read, so a pane with nothing read shows no tokens at all.
 func (pf *paneFacts) tokens() (Tokens, bool) {
@@ -535,35 +528,357 @@ func (s *Server) factsFor(id string, make bool) *paneFacts {
 	return pf
 }
 
-// claim gives path to pane id. It refuses when another pane that is still
-// live reported the same path: one pane never reads what another pane's
-// hook named. A path an ended pane held moves to id. from names that
-// ended pane, which must then drop the path, so nothing counts twice.
-func (s *Server) claim(id, path string) (ok bool, from string) {
-	s.factsMu.Lock()
-	defer s.factsMu.Unlock()
-	if owner, held := s.claims[path]; held && owner != id {
-		if rec, found := s.tree.Pane(owner); found && !rec.Closed {
-			return false, ""
-		}
-		from = owner
-	}
-	s.claims[path] = id
-	return true, from
+// claimRec is the pane that named one transcript, and when.
+type claimRec struct {
+	Pane string  `json:"pane"`
+	At   float64 `json:"at"`
 }
 
-// release forgets that pane id holds each of paths.
-func (s *Server) release(id string, paths []string) {
-	if len(paths) == 0 {
+// claimsFile in the data dir keeps every transcript a pane named, so a
+// claim outlives the pane that made it and the server.
+const claimsFile = "transcripts.json"
+
+// maxClaimsPerPane is how many transcripts one pane may name. Past it the
+// pane's reports name no more, so no pane can grow the claims without end.
+const maxClaimsPerPane = maxFilesPerPane + retiredKeep
+
+// The refusals of a transcript a pane's report names.
+const (
+	transcriptNotOwnRefusal = "only a process inside the pane names its transcript."
+	transcriptTakenRefusal  = "another pane named that transcript first. A pane reads only its own."
+	transcriptOldRefusal    = "that transcript began before the pane started. A pane reads only its own."
+	transcriptManyRefusal   = "this pane named too many transcripts. Start a new pane."
+	transcriptBareRefusal   = "that transcript's first record has no time or no working directory. A pane reads only its own."
+	transcriptCwdRefusal    = "that transcript began in another directory. A pane reads only its own."
+	transcriptLongRefusal   = "that transcript's first line is too long to check. A pane reads only its own."
+	transcriptMovedRefusal  = "that transcript's path now leads to another file. A pane reads only its own."
+)
+
+// firstRecordCap is how many bytes of a transcript the check of its first
+// record reads.
+const firstRecordCap = 64 << 10
+
+// loadClaimsLocked reads the claims file once. A file that does not parse
+// moves aside with a note, and the claims start empty. The caller holds
+// factsMu.
+func (s *Server) loadClaimsLocked() {
+	if s.claimsLoaded {
 		return
 	}
-	s.factsMu.Lock()
-	defer s.factsMu.Unlock()
-	for _, p := range paths {
-		if s.claims[p] == id {
-			delete(s.claims, p)
+	s.claimsLoaded = true
+	path := filepath.Join(s.cfg.DataDir, claimsFile)
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		// Not readable: claim nothing new until a restart can read it, so
+		// no pane takes a path the file holds.
+		s.claimsBroken = true
+		go s.Note("cannot read "+path+". No transcript is claimed until it can be read.", "")
+		return
+	}
+	var v struct {
+		Claims map[string]claimRec `json:"claims"`
+	}
+	if json.Unmarshal(b, &v) != nil {
+		moved := moveAsideFile(path, s.clock())
+		go s.Note("A transcript claims file could not be read. It moved to "+moved+". The claims start fresh.", "")
+		return
+	}
+	for p, c := range v.Claims {
+		if c.Pane != "" {
+			s.claims[p] = c
 		}
 	}
+}
+
+// moveAsideFile renames path to a free <path>.broken-<UTC time> name, mode
+// 0600, and returns the new name, or path when the move failed.
+func moveAsideFile(path string, now time.Time) string {
+	base := path + ".broken-" + now.UTC().Format("20060102T150405Z")
+	target := base
+	for n := 2; ; n++ {
+		if _, err := os.Lstat(target); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		target = fmt.Sprintf("%s-%d", base, n)
+	}
+	if os.Rename(path, target) != nil {
+		return path
+	}
+	_ = os.Chmod(target, 0o600)
+	return target
+}
+
+// saveClaimsLocked writes the claims file, 0600. The caller holds factsMu.
+func (s *Server) saveClaimsLocked() {
+	b, _ := json.Marshal(map[string]any{"claims": s.claims})
+	path := filepath.Join(s.cfg.DataDir, claimsFile)
+	tmp := path + ".tmp"
+	var err error
+	if !s.writeData(func() {
+		if err = os.WriteFile(tmp, b, 0o600); err == nil {
+			err = os.Rename(tmp, path)
+		}
+	}) || err == nil {
+		return
+	}
+	go s.Note("cannot write "+path+". Transcript claims are kept until the server stops.", "")
+}
+
+// claim gives the real path to pane id, for good. It refuses a path any
+// other pane named first, live or ended, before or after a restart: one
+// pane never reads what another pane's hook named. refusal is "" when the
+// claim holds.
+func (s *Server) claim(id, real string) (refusal string) {
+	s.factsMu.Lock()
+	defer s.factsMu.Unlock()
+	s.loadClaimsLocked()
+	if c, held := s.claims[real]; held {
+		if c.Pane == id {
+			return ""
+		}
+		return transcriptTakenRefusal
+	}
+	if s.claimsBroken {
+		return transcriptTakenRefusal
+	}
+	n := 0
+	for _, c := range s.claims {
+		if c.Pane == id {
+			n++
+		}
+	}
+	if n >= maxClaimsPerPane {
+		return transcriptManyRefusal
+	}
+	s.claims[real] = claimRec{Pane: id, At: unixSeconds(s.clock())}
+	s.saveClaimsLocked()
+	return ""
+}
+
+// claimedBy is every transcript pane id claimed, oldest claim first.
+func (s *Server) claimedBy(id string) []string {
+	s.factsMu.Lock()
+	defer s.factsMu.Unlock()
+	s.loadClaimsLocked()
+	type pc struct {
+		path string
+		at   float64
+	}
+	var out []pc
+	for p, c := range s.claims {
+		if c.Pane == id {
+			out = append(out, pc{p, c.At})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].at != out[j].at {
+			return out[i].at < out[j].at
+		}
+		return out[i].path < out[j].path
+	})
+	paths := make([]string, len(out))
+	for i, x := range out {
+		paths[i] = x.path
+	}
+	return paths
+}
+
+// realTranscriptPath is path with every symlink resolved, or, for a file
+// not made yet, its directory's real path joined with its name. ok is false
+// when the directory cannot be resolved.
+func realTranscriptPath(path string) (string, bool) {
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		return r, true
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(dir, filepath.Base(path)), true
+}
+
+// under reports whether dir is base or lies under it, as written or with
+// base's symlinks resolved.
+func under(dir, base string) bool {
+	if dir == "" || base == "" {
+		return false
+	}
+	dir = filepath.Clean(dir)
+	bases := []string{filepath.Clean(base)}
+	if r, err := filepath.EvalSymlinks(base); err == nil {
+		bases = append(bases, r)
+	}
+	for _, b := range bases {
+		if dir == b || strings.HasPrefix(dir, strings.TrimSuffix(b, "/")+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// cwdOfPane reports whether a transcript that began in dir began in pane
+// p: in its working directory or under it. A pane that works in / or in
+// the home dir would pass every transcript that way, so for it dir must
+// be its working directory itself.
+func (s *Server) cwdOfPane(dir string, p layout.Pane) bool {
+	base := filepath.Clean(p.Cwd)
+	home := s.paneEnv(p, "HOME")
+	if base == "/" || (home != "" && base == filepath.Clean(home)) {
+		d := filepath.Clean(dir)
+		if d == base {
+			return true
+		}
+		r1, e1 := filepath.EvalSymlinks(d)
+		r2, e2 := filepath.EvalSymlinks(base)
+		return e1 == nil && e2 == nil && r1 == r2
+	}
+	return under(dir, p.Cwd)
+}
+
+// checkFirstRecord checks that transcript path began in pane id: its first
+// record (the first user or assistant entry) carries a time and a working
+// directory, the time is no more than a second before the pane started,
+// and the directory is the pane's own or under it. It answers the
+// refusal, or "". A file with no record yet passes: a hook may report a
+// transcript before its first line. The check reads the first
+// firstRecordCap bytes, and a file with no record in them is refused.
+func (s *Server) checkFirstRecord(id, path string) string {
+	rec, ok := s.tree.Pane(id)
+	if !ok {
+		return ""
+	}
+	f, _, _, _, err := openRegular(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	buf := make([]byte, firstRecordCap)
+	n, _ := io.ReadFull(f, buf)
+	buf = buf[:n]
+	for len(buf) > 0 {
+		i := bytes.IndexByte(buf, '\n')
+		if i < 0 {
+			break
+		}
+		line := buf[:i]
+		buf = buf[i+1:]
+		var e map[string]any
+		if json.Unmarshal(line, &e) != nil || e == nil {
+			continue
+		}
+		if typ := str(e, "type"); typ != "user" && typ != "assistant" {
+			continue
+		}
+		at, cwd := rfc3339Seconds(str(e, "timestamp")), str(e, "cwd")
+		if at == 0 || cwd == "" {
+			return transcriptBareRefusal
+		}
+		if lp, live := s.Live(id); live && !lp.started.IsZero() && at < unixSeconds(lp.started)-1 {
+			return transcriptOldRefusal
+		}
+		if !s.cwdOfPane(cwd, rec) {
+			return transcriptCwdRefusal
+		}
+		return ""
+	}
+	if fi.Size() >= firstRecordCap {
+		return transcriptLongRefusal
+	}
+	return ""
+}
+
+// verifyReal answers an error when path, resolved again now, is no longer
+// the real path it was claimed as: a directory on the way was swapped for
+// a symlink since.
+func verifyReal(path string) error {
+	r, ok := realTranscriptPath(path)
+	if ok && r != filepath.Clean(path) {
+		return errors.New(transcriptMovedRefusal)
+	}
+	return nil
+}
+
+// moveClaims gives pane to every claim from, for a pane.resume that runs
+// the same session on as a new pane.
+func (s *Server) moveClaims(from, to string) {
+	s.factsMu.Lock()
+	defer s.factsMu.Unlock()
+	s.loadClaimsLocked()
+	moved := false
+	for p, c := range s.claims {
+		if c.Pane == from {
+			c.Pane = to
+			s.claims[p] = c
+			moved = true
+		}
+	}
+	if moved {
+		s.saveClaimsLocked()
+	}
+}
+
+// claimOwner is the pane that claimed real, or "".
+func (s *Server) claimOwner(real string) string {
+	s.factsMu.Lock()
+	defer s.factsMu.Unlock()
+	s.loadClaimsLocked()
+	return s.claims[real].Pane
+}
+
+// kernelPane is the pane the kernel placed this connection in, or "". A
+// hello names no pane here: only a process inside the pane counts.
+func (c *Client) kernelPane() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.facts.checked || !c.facts.pane || c.facts.plugin != "" || c.facts.unknown {
+		return ""
+	}
+	return c.facts.paneID
+}
+
+// checkTranscript checks the transcript path a report names for pane id.
+// real is the path to read, or "" when the report names none the server
+// reads. refusal is set when the report must be refused: it came from
+// outside the pane, another pane named the path first, the file began
+// before the pane, or the pane named too many.
+func (s *Server) checkTranscript(c *Client, id, harness, path string) (real, refusal string) {
+	if path == "" {
+		return "", ""
+	}
+	if c.kernelPane() != id {
+		return "", transcriptNotOwnRefusal
+	}
+	rec, ok := s.tree.Pane(id)
+	if !ok || canonHarness(harness) != "claude" || !sameHarness(harness, rec.Harness) ||
+		!s.claudeTranscriptPath(rec, path) {
+		return "", ""
+	}
+	real, ok = realTranscriptPath(path)
+	if !ok || !s.claudeTranscriptPath(rec, real) {
+		return "", ""
+	}
+	// A file this pane claimed before, or that a pane.resume handed to
+	// it, stays its own.
+	switch owner := s.claimOwner(real); {
+	case owner == id:
+		return real, ""
+	case owner != "":
+		return "", transcriptTakenRefusal
+	}
+	if refusal := s.checkFirstRecord(id, real); refusal != "" {
+		return "", refusal
+	}
+	if refusal := s.claim(id, real); refusal != "" {
+		return "", refusal
+	}
+	return real, ""
 }
 
 // canonHarness names one harness one way: the gate calls Claude Code
@@ -612,24 +927,10 @@ func (s *Server) claudeTranscriptPath(p layout.Pane, path string) bool {
 }
 
 // noteReport keeps what one pane.report_state said beyond the state
-// itself: the mode, the verdict, and the transcript path. own is true when
-// the report came from the pane's own connection. Only then, and only for
-// a Claude pane whose report names Claude, is its transcript path read.
-func (s *Server) noteReport(id, harness string, x proto.ReportExtras, own bool) {
+// itself: the mode, the verdict, and the transcript to read, real, which
+// checkTranscript claimed for the pane, or "".
+func (s *Server) noteReport(id string, x proto.ReportExtras, real string) {
 	now := s.clock()
-	claimed, from := false, ""
-	if rec, ok := s.tree.Pane(id); ok && own && x.TranscriptPath != "" &&
-		canonHarness(harness) == "claude" && sameHarness(harness, rec.Harness) &&
-		s.claudeTranscriptPath(rec, x.TranscriptPath) {
-		claimed, from = s.claim(id, x.TranscriptPath)
-	}
-	if from != "" {
-		if old := s.factsFor(from, false); old != nil {
-			old.mu.Lock()
-			old.drop(x.TranscriptPath)
-			old.mu.Unlock()
-		}
-	}
 	pf := s.factsFor(id, true)
 	pf.mu.Lock()
 	if x.Mode != "" {
@@ -638,13 +939,12 @@ func (s *Server) noteReport(id, harness string, x proto.ReportExtras, own bool) 
 	if v := x.Verdict; v != nil {
 		pf.verdict = &gateFact{Decision: v.Decision, Tool: v.Tool, Clause: v.Clause, At: unixSeconds(now)}
 	}
-	var forgot []string
-	if claimed {
-		forgot = pf.use(x.TranscriptPath, kindClaude, s.openTranscript)
+	if real != "" {
+		// A file let go of stays claimed: the claim is for good.
+		_ = pf.use(real, kindClaude, s.openTranscript)
 	}
 	pf.seen = now
 	pf.mu.Unlock()
-	s.release(id, forgot)
 }
 
 func unixSeconds(t time.Time) float64 { return float64(t.UnixNano()) / 1e9 }
@@ -762,11 +1062,6 @@ func (s *Server) pruneFacts() {
 	for id := range s.facts {
 		if _, ok := s.tree.Pane(id); !ok {
 			delete(s.facts, id)
-		}
-	}
-	for path, id := range s.claims {
-		if _, ok := s.facts[id]; !ok {
-			delete(s.claims, path)
 		}
 	}
 }

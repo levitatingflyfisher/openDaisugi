@@ -20,8 +20,11 @@ import (
 	"sort"
 	"strings"
 
+	"daisugi-verify/internal/datahome"
 	"daisugi-verify/internal/gate"
 	"daisugi-verify/internal/gateroot"
+	"daisugi-verify/internal/llm"
+	"daisugi-verify/internal/verify"
 )
 
 // Version is the build's version, set at link time:
@@ -91,6 +94,12 @@ type Env struct {
 	quiet bool
 	// plain is the root --plain: no box drawing.
 	plain bool
+	// checkClient is the model client llm_check calls go through.
+	checkClient *llm.Client
+	// selfPath and execFn stand in for install.Self and syscall.Exec in
+	// tests of the DAISUGI_PORT hand-over.
+	selfPath string
+	execFn   func(argv0 string, argv, env []string) error
 }
 
 func (e *Env) out(format string, a ...any)  { fmt.Fprintf(e.Stdout, format, a...) }
@@ -145,11 +154,8 @@ More
 // notInBinary is every other command of the Python CLI, so --help shows
 // what this binary does not carry.
 var notInBinary = []string{
-	"help",
 	"bench", "conformance", "coppice",
-	"lora", "models",
-	"verify", "viz", "voice",
-	"gate replay", "gate audit",
+	"gate audit",
 }
 
 const rootHelp = `Usage: daisugi [OPTIONS] COMMAND [ARGS]...
@@ -171,6 +177,7 @@ Start here:
   status           Show day-one readiness: are token savings live and are actions verified?
   config           Show every setting as daisugi will use it, and where each one came from.
   dashboard        The live floor: the module map with gauges read from the stores.
+  help             Show the short start-here text, or every command with --all.
 
 View:
   modules          Show the module wiring: what is active, available, or an open slot.
@@ -186,6 +193,7 @@ Gate:
   gate report      Summarize the audit log: what an enforcing gate would have denied.
   gate settings    Print the Claude Code hooks-settings JSON that wires in the gate.
   gate proposals   List recorded envelope-edit proposals.
+  gate replay      Replay a captured session through the gate offline (nothing executes).
   gate serve       Run the resident gate in the foreground (Ctrl-C to stop).
   install          Wire the gate into agent harnesses (--gate, --harness).
 
@@ -196,6 +204,7 @@ Pathways:
   pathways delete  Delete a compiled pathway.
   pathways export  Export a pathway: json, skill, mermaid, md or smtlib.
   pathways import  Import a pathway bundle, re-verify it, and admit it.
+  viz              Render a distilled pathway's plan as a standalone page.
 
 Garden:
   gardener prune   Evict stale / failure-dominated pathways.
@@ -218,10 +227,19 @@ Envelopes:
 Run:
   orchestrate      Run a prompt end to end: decompose, size, supervised execute, synthesize.
   run              Execute a plan against an envelope under runtime supervision.
+  verify           Verify an action plan against a safety envelope.
 
 Setup:
   onboard          Turn existing agent transcripts into verified traces and pathways.
   tiers setup      Detect hardware, recommend a local model, and optionally qualify and wire it.
+  tiers stats      Show per-tier call counts, estimated tokens, and pathway hit rate.
+  models list      List the curated models, the default for this box, and the one in use.
+  models search    Search the Hugging Face API for models, filtered by size and license.
+  models use       Record the model the garden uses. Any id, path or GGUF file is accepted.
+  pack list        List the ML packs and which are installed.
+  pack install     Install a pack: a pinned Python, a venv, the locked wheels.
+  pack run         Run one job (selftest, train, vla-chunk) in a pack's worker.
+  lora train       Train a LoRA adapter in the train pack.
   mcp serve        Serve the openDaisugi tools over MCP stdio.
 
 Registry and release:
@@ -280,6 +298,13 @@ func (e *Env) usage(cmd string, err error) error {
 	return err
 }
 
+// dataHome is opendaisugi.datahome.data_home() for this command's
+// environment and home: OPENDAISUGI_HOME, else XDG_DATA_HOME/opendaisugi
+// when ~/.opendaisugi does not exist, else ~/.opendaisugi.
+func (e *Env) dataHome() string {
+	return datahome.Dir(func(k string) string { return e.env[k] }, e.home, datahome.Exists)
+}
+
 // homeDir is Path.home(): $HOME as pathlib prints it.
 func (e *Env) homeDir() (string, error) {
 	h := e.env["HOME"]
@@ -328,9 +353,14 @@ func (e *Env) run(args []string) error {
 		return e.refuse(args[0], err)
 	}
 	e.home = home
+	verify.LLM = e.llmCheck
 	switch args[0] {
 	case "gate":
 		return e.gate(args[1:])
+	case "help":
+		return e.helpCmd(args[1:])
+	case "viz":
+		return e.vizCmd(args[1:])
 	case "install":
 		return e.install(args[1:])
 	case "pathways":
@@ -353,6 +383,8 @@ func (e *Env) run(args []string) error {
 		return e.graft(args[1:])
 	case "rank":
 		return e.rankCmd(args[1:])
+	case "tree":
+		return e.treeCmd(args[1:])
 	case "route":
 		return e.route(args[1:])
 	case "config":
@@ -377,6 +409,12 @@ func (e *Env) run(args []string) error {
 		return e.onboard(args[1:])
 	case "tiers":
 		return e.tiers(args[1:])
+	case "models":
+		return e.modelsCmd(args[1:])
+	case "pack":
+		return e.packCmd(args[1:])
+	case "lora":
+		return e.loraCmd(args[1:])
 	case "setup":
 		return e.setupMoved(args[1:])
 	case "modules":
@@ -391,6 +429,10 @@ func (e *Env) run(args []string) error {
 		return e.batchCmd(args[1:])
 	case "release":
 		return e.release(args[1:])
+	case "voice":
+		return e.voiceCmd(args[1:])
+	case "verify":
+		return e.verifyCmd(args[1:])
 	}
 	for _, name := range notInBinary {
 		if name == args[0] {
@@ -464,7 +506,9 @@ func (e *Env) gate(args []string) error {
 		return e.gateProposals(rest)
 	case "serve":
 		return e.gateServe(rest)
-	case "replay", "audit":
+	case "replay":
+		return e.gateReplay(rest)
+	case "audit":
 		return e.notYet("daisugi gate " + sub)
 	}
 	e.errf("Usage: daisugi gate [OPTIONS] COMMAND [ARGS]...\nTry 'daisugi gate --help' for help.\n\nError: No such command '%s'.\n", sub)
@@ -525,7 +569,7 @@ const checkHelp = `Usage: daisugi gate check --mode audit|enforce [OPTIONS] < pa
 
 Options:
   --mode audit|enforce      audit observes and logs; enforce denies.
-  --root PATH               Gate state directory (default ~/.opendaisugi/gate).
+  --root PATH               Gate state directory (default: the data directory's gate).
   --format NAME             Host contract: claude | pi | opencode | hermes | openclaw.
   --verify-timeout SECONDS  Inner verifier budget; running out of it denies.
   --captures-root PATH      Also mirror each call into this captures directory.

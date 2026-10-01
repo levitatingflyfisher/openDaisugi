@@ -160,6 +160,8 @@ var clientMethods = map[string]bool{
 var Carried = map[string]bool{
 	"ping": true, "initialize": true, "logging/setLevel": true, "prompts/get": true, "prompts/list": true,
 	"resources/list": true, "resources/templates/list": true, "tools/call": true, "tools/list": true,
+	"resources/read": true, "resources/subscribe": true, "resources/unsubscribe": true,
+	"completion/complete": true, "tasks/get": true, "tasks/result": true, "tasks/list": true, "tasks/cancel": true,
 }
 
 // Check is ClientRequest.model_validate for a request: "" when the SDK
@@ -173,17 +175,32 @@ func Check(m Message) string {
 		return "unported"
 	}
 	p := m.Params
-	required := map[string]bool{"initialize": true, "logging/setLevel": true, "prompts/get": true, "tools/call": true}
+	required := map[string]bool{"initialize": true, "logging/setLevel": true, "prompts/get": true, "tools/call": true,
+		"resources/read": true, "resources/subscribe": true, "resources/unsubscribe": true,
+		"completion/complete": true, "tasks/get": true, "tasks/result": true, "tasks/cancel": true}
 	if p == nil {
 		if required[m.Method] {
 			return "invalid"
 		}
 		return ""
 	}
-	// RequestParams: an optional task (task-augmented calls are not in
-	// this binary) and _meta with an optional progressToken.
+	// RequestParams: an optional task and _meta with an optional
+	// progressToken. A tool call's task (TaskMetadata: an optional int
+	// ttl) is read and then not used, as the oracle's server does.
 	if t, has := p.Get("task"); has && t != nil {
-		return "unported"
+		if m.Method != "tools/call" {
+			return "unported"
+		}
+		to, ok := t.(*pyjson.Object)
+		if !ok {
+			return "invalid"
+		}
+		if ttl, has := to.Get("ttl"); has && ttl != nil {
+			if _, isInt := ttl.(pyjson.Int); !isInt {
+				// pydantic's lax int takes some floats and strings.
+				return "unported"
+			}
+		}
 	}
 	if meta, has := p.Get("_meta"); has && meta != nil {
 		mo, ok := meta.(*pyjson.Object)
@@ -198,6 +215,69 @@ func Check(m Message) string {
 	case "tools/list", "resources/list", "resources/templates/list", "prompts/list":
 		if !optStr(p, "cursor") {
 			return "invalid"
+		}
+	case "resources/read", "resources/subscribe", "resources/unsubscribe":
+		u, ok := p.Value("uri").(string)
+		if !ok {
+			return "invalid"
+		}
+		if _, why := NormURI(u); why != "" {
+			return why
+		}
+	case "tasks/get", "tasks/result", "tasks/cancel":
+		if _, ok := p.Value("taskId").(string); !ok {
+			return "invalid"
+		}
+	case "tasks/list":
+		if !optStr(p, "cursor") {
+			return "invalid"
+		}
+	case "completion/complete":
+		ref, ok := p.Value("ref").(*pyjson.Object)
+		if !ok {
+			return "invalid"
+		}
+		switch ref.Value("type") {
+		case "ref/prompt":
+			if _, ok := ref.Value("name").(string); !ok {
+				return "invalid"
+			}
+			if !optStr(ref, "title") {
+				return "invalid"
+			}
+		case "ref/resource":
+			if _, ok := ref.Value("uri").(string); !ok {
+				return "invalid"
+			}
+		default:
+			return "invalid"
+		}
+		arg, ok := p.Value("argument").(*pyjson.Object)
+		if !ok {
+			return "invalid"
+		}
+		if _, ok := arg.Value("name").(string); !ok {
+			return "invalid"
+		}
+		if _, ok := arg.Value("value").(string); !ok {
+			return "invalid"
+		}
+		if c, has := p.Get("context"); has && c != nil {
+			co, ok := c.(*pyjson.Object)
+			if !ok {
+				return "invalid"
+			}
+			if a, has := co.Get("arguments"); has && a != nil {
+				ao, ok := a.(*pyjson.Object)
+				if !ok {
+					return "invalid"
+				}
+				for _, k := range ao.Keys() {
+					if _, ok := ao.Value(k).(string); !ok {
+						return "invalid"
+					}
+				}
+			}
 		}
 	case "tools/call":
 		if _, ok := p.Value("name").(string); !ok {
@@ -365,3 +445,86 @@ func itoa(n int) string {
 	}
 	return string(d)
 }
+
+// specialSchemes are the WHATWG special schemes with their default ports.
+var specialSchemes = map[string]string{"http": "80", "https": "443", "ws": "80", "wss": "443", "ftp": "21"}
+
+// NormURI is pydantic's AnyUrl on a URI: the URL as it serializes, or why
+// it is not one ("invalid": the SDK answers -32602; "unported": a form this
+// binary does not normalize the way the URL parser does). The forms read:
+// a scheme, then for http, https, ws, wss and ftp a host (lowercased, the
+// default port dropped, an empty path made "/"), for file an empty host,
+// and any other scheme kept as written; printable ASCII only, with no %,
+// backslash, brackets or user info.
+func NormURI(u string) (string, string) {
+	i := strings.IndexByte(u, ':')
+	if i <= 0 || !isAlpha(u[0]) {
+		return "", "invalid"
+	}
+	for j := 1; j < i; j++ {
+		c := u[j]
+		if !(isAlpha(c) || (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.') {
+			return "", "invalid"
+		}
+	}
+	for j := 0; j < len(u); j++ {
+		c := u[j]
+		if c <= 0x20 || c >= 0x7f || c == '%' || c == '\\' || c == '[' || c == ']' {
+			return "", "unported"
+		}
+	}
+	scheme, rest := strings.ToLower(u[:i]), u[i+1:]
+	port, special := specialSchemes[scheme]
+	switch {
+	case special:
+		if !strings.HasPrefix(rest, "//") {
+			return "", "unported"
+		}
+		rest = rest[2:]
+		end := strings.IndexAny(rest, "/?#")
+		if end < 0 {
+			end = len(rest)
+		}
+		hostport, tail := rest[:end], rest[end:]
+		if strings.Contains(hostport, "@") {
+			return "", "unported"
+		}
+		host, p, hasPort := strings.Cut(hostport, ":")
+		if host == "" {
+			return "", "invalid"
+		}
+		if c := host[0]; c >= '0' && c <= '9' {
+			return "", "unported"
+		}
+		host = strings.ToLower(host)
+		if hasPort {
+			if p == "" || strings.TrimLeft(p, "0123456789") != "" || len(p) > 5 {
+				return "", "unported"
+			}
+			if p != port {
+				host += ":" + p
+			}
+		}
+		path := tail
+		if k := strings.IndexAny(path, "?#"); k >= 0 {
+			path = path[:k]
+		}
+		for _, seg := range strings.Split(path, "/") {
+			if seg == "." || seg == ".." {
+				return "", "unported" // the URL parser resolves dot segments
+			}
+		}
+		if tail == "" || tail[0] != '/' {
+			tail = "/" + tail
+		}
+		return scheme + "://" + host + tail, ""
+	case scheme == "file":
+		if !strings.HasPrefix(rest, "///") {
+			return "", "unported"
+		}
+		return scheme + ":" + rest, ""
+	}
+	return scheme + ":" + rest, ""
+}
+
+func isAlpha(c byte) bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }

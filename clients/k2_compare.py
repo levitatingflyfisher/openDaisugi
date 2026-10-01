@@ -30,9 +30,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import agentic_fakes  # noqa: E402 - the fake claude and sprig; --sprig sets the real one
 import k2_cases  # noqa: E402, F401 - sibling module, run as a script (it patches garden_cases)
 from cli_cases import as_daisugi  # noqa: E402
-from fixture_paths import leaks  # noqa: E402
+from fixture_paths import fixed_root, leaks  # noqa: E402
 from garden_cases import run_case  # noqa: E402
 from garden_compare import before_tree, compare, guard  # noqa: E402
 from k2_cases import FIXTURE_DIR, SCRATCH, cmd_for  # noqa: E402
@@ -46,7 +47,11 @@ def main() -> int:
     ap.add_argument("--only")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--max-refused", type=int, default=None)
+    ap.add_argument(
+        "--sprig", help="the sprig binary the real-sprig cases run; without it they skip"
+    )
     args = ap.parse_args()
+    agentic_fakes.set_real_sprig(args.sprig)
     SCRATCH.mkdir(parents=True, exist_ok=True)
     binary = as_daisugi(args.binary, SCRATCH)
     cases = [
@@ -59,8 +64,11 @@ def main() -> int:
     for i, case in enumerate(cases):
         if args.only and args.only not in case["name"]:
             continue
-        work = SCRATCH / "cmp" / f"{i:04d}"
-        before = before_tree(case, SCRATCH / "cmp" / f"{i:04d}b")
+        if case.get("sprig") == "real" and not agentic_fakes.has_real_sprig():
+            classes["skipped (no --sprig)"] += 1
+            continue
+        work = fixed_root(SCRATCH, f"c/{i:04d}")
+        before = before_tree(case, fixed_root(SCRATCH, f"c/b{i:04d}"))
         got = run_case(case, cmd_for(case, binary), work)
         cls, problems = compare(case, got, before)
         if cls == "agree" and got["tree"] != before:
@@ -69,7 +77,7 @@ def main() -> int:
             if problems:
                 cls = "disagree"
         if args.oracle:
-            live = run_case(case, cmd_for(case, None), SCRATCH / "cmp" / f"{i:04d}py")
+            live = run_case(case, cmd_for(case, None), fixed_root(SCRATCH, f"c/p{i:04d}"))
             if live != case["expect"]:
                 stale += 1
                 print(f"STALE fixture: {case['name']}: {diff(case['expect'], live)[:3]}")
@@ -81,7 +89,7 @@ def main() -> int:
         elif cls in ("refused", "not-ported") and args.verbose:
             print(f"{cls}: {case['name']}")
         shutil.rmtree(work, ignore_errors=True)
-    shutil.rmtree(SCRATCH / "cmp", ignore_errors=True)
+    shutil.rmtree(SCRATCH / "c", ignore_errors=True)
     print(
         f"\nk2: {sum(classes.values())} cases: "
         + ", ".join(f"{k}={v}" for k, v in sorted(classes.items()))

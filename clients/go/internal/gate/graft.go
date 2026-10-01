@@ -72,17 +72,29 @@ func (r *runner) decideDelegateCall(p *pyjson.Object, rec *record, d *decision, 
 		return out
 	}
 	norm := normpath(path)
+	// A code write reads its target only when the target exists.
+	if m, _ := rec.Arguments.Value("mode").(string); m == "code_write" && !delegate.Lexists(norm) {
+		return r.delegateSend(p, d, env, root, callCwd, toolName, norm)
+	}
 	got := r.evaluateRecord(r.syntheticRecord(p, "Read", "file_read", "path", norm), env, root, callCwd)
 	if got.WouldDeny {
 		got.ToolName = toolName
 		got.Reason = "delegate reads " + norm + ": " + got.Reason
 		return got
 	}
+	return r.delegateSend(p, d, env, root, callCwd, toolName, norm)
+}
+
+// delegateSend is gate._delegate_send: the network send of a delegate
+// call to a remote worker.
+func (r *runner) delegateSend(p *pyjson.Object, d *decision, env *envelope, root *workspace, callCwd *string,
+	toolName, norm string) *decision {
+	defer r.enter()()
 	rule := r.actingRule()
 	allowRemote := rule != nil && rule.AllowRemote
 	rt := r.routeDelegate(env, allowRemote)
 	if rt.OK && rt.Tier == "remote" {
-		got = r.evaluateRecord(r.syntheticRecord(p, "WebFetch", "network", "url", rt.URL), env, root, callCwd)
+		got := r.evaluateRecord(r.syntheticRecord(p, "WebFetch", "network", "url", rt.URL), env, root, callCwd)
 		if got.WouldDeny {
 			got.ToolName = toolName
 			got.Reason = "delegate sends " + norm + " to " + rt.Host + ": " + got.Reason
@@ -104,7 +116,7 @@ func graftRedirectReason(lines int, minLines string) string {
 
 // maybeGraft is gate._maybe_graft: a deny_redirect graft on an allowed
 // whole read of a large file.
-func (r *runner) maybeGraft(p *pyjson.Object, d *decision, env *envelope) *decision {
+func (r *runner) maybeGraft(p *pyjson.Object, d *decision, env *envelope, sessionID any) *decision {
 	defer r.enter()()
 	if r.fmt != "claude" || !d.Allow || d.WouldDeny {
 		return d
@@ -140,6 +152,11 @@ func (r *runner) maybeGraft(p *pyjson.Object, d *decision, env *envelope) *decis
 	graft := rule.AsObject().
 		Set("lines", pyjson.Int{Text: strconv.Itoa(m.Lines)}).
 		Set("file_lines_over", rule.MinLines)
+	arm := ""
+	if rule.State == "audit" || rule.State == "trial" {
+		arm = delegate.ArmOf(rule, r.safeSession(sessionID))
+		graft.Set("arm", arm)
+	}
 	rt := r.routeDelegate(env, rule.AllowRemote)
 	out := *d
 	if !rt.OK {
@@ -172,8 +189,13 @@ func (r *runner) maybeGraft(p *pyjson.Object, d *decision, env *envelope) *decis
 		out.Graft = graft
 		return &out
 	}
-	if rule.State != "active" {
+	if rule.State == "audit" {
 		graft.Set("applied", false).Set("why", "the rule is in audit: the read is not denied")
+		out.Graft = graft
+		return &out
+	}
+	if rule.State == "trial" && arm == "control" {
+		graft.Set("applied", false).Set("why", "the session is in the trial's control arm: the read is not denied")
 		out.Graft = graft
 		return &out
 	}

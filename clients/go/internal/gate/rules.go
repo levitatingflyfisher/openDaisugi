@@ -1,9 +1,11 @@
 package gate
 
 import (
+	"strconv"
 	"strings"
 	"sync/atomic"
 
+	"daisugi-verify/internal/datahome"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/verify"
 )
@@ -18,7 +20,62 @@ const (
 	floorRefusal    = "this is the floor's own config. Edit it yourself."
 	opencodeRefusal = "this is OpenCode's config or gate plugin. Edit it yourself."
 	daisugiRefusal  = "this is daisugi's own config. Edit it yourself."
+	// chatRefusal is pane_rule.CHAT_REFUSAL: the chat verbs read, they do
+	// not allow.
+	chatRefusal = "the chat and an agent's messages are the operator's to read."
 )
+
+// jsonUnescaped is pane_rule.json_unescaped: JSON string escapes decoded
+// once. A \uXXXX that is not a surrogate becomes its character, and a
+// backslash before any other character drops.
+func jsonUnescaped(text string) string {
+	var b strings.Builder
+	for i := 0; i < len(text); {
+		c := text[i]
+		if c == '\\' && i+1 < len(text) {
+			if text[i+1] == 'u' && i+6 <= len(text) {
+				if v, err := strconv.ParseUint(text[i+2:i+6], 16, 32); err == nil && isHex4(text[i+2:i+6]) &&
+					(v < 0xD800 || v > 0xDFFF) {
+					b.WriteRune(rune(v))
+					i += 6
+					continue
+				}
+			}
+			b.WriteByte(text[i+1])
+			i += 2
+			continue
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+// isHex4 reports whether s is four hex digits, with no sign.
+func isHex4(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for i := 0; i < 4; i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// chatWireHit is pane_rule.chat_wire_hit: a shell line that sends
+// floor.chat or pane.messages on the coppice wire, as typed or with its
+// JSON escapes decoded.
+func (r *runner) chatWireHit(rec *record) bool {
+	defer r.enter()()
+	if rec == nil || rec.StepType != "shell" {
+		return false
+	}
+	return pySearch("pane_rule._CHAT_WIRE_TEXT", rec.Command) ||
+		pySearch("pane_rule._CHAT_WIRE_TEXT", jsonUnescaped(rec.Command))
+}
 
 // shellDeniesFromOutside is pane_rule.shell_denies_from_outside.
 func shellDeniesFromOutside(command string) bool {
@@ -64,13 +121,14 @@ func isAllowWords(words []string) bool {
 }
 
 func webDoor(text string) bool {
-	return pySearch("pane_rule._WEB_TOKEN_CMD", text) || secretFileSearch(text) || strings.Contains(text, webAnswerRoute)
+	return pySearch("pane_rule._WEB_TOKEN_CMD", text) || secretFileSearch(text) ||
+		pySearch("pane_rule._PRIVATE_DIR_TEXT", text) || strings.Contains(text, webAnswerRoute)
 }
 
 // shellAllows is pane_rule.shell_allows.
 func (r *runner) shellAllows(command string) bool {
 	defer r.enter()()
-	if webDoor(command) {
+	if webDoor(command) || webDoor(r.expandHome(command)) {
 		return true
 	}
 	for _, c := range r.commands(command) {
@@ -82,7 +140,8 @@ func (r *runner) shellAllows(command string) bool {
 			return true
 		}
 	}
-	return pySearch("pane_rule._ALLOW_TEXT", command) || pySearch("pane_rule._WIRE_TEXT", command)
+	return pySearch("pane_rule._ALLOW_TEXT", command) || pySearch("pane_rule._WIRE_TEXT", command) ||
+		pySearch("pane_rule._WIRE_TEXT", jsonUnescaped(command))
 }
 
 // commands is pane_rule._commands: the simple commands of a shell line,
@@ -183,7 +242,7 @@ func (r *runner) pathNamesSecret(raw, cwd string) bool {
 
 // secretSubdirs are pane_rule._SECRET_DIRS: each directory, under a
 // coppice data directory, that holds a secret file.
-var secretSubdirs = []string{"", "web", "web/ca", "web/tls", "voice"}
+var secretSubdirs = []string{"", "web", "web/ca", "web/tls", "voice", "chat", "journal"}
 
 // coppiceSecretNames are pane_rule._SECRET_NAMES: each secret file,
 // relative to its coppice data directory.
@@ -222,7 +281,7 @@ func strPtr(s string) *string { return &s }
 // coppiceDataDirs is floor_config.coppice_data_dirs.
 func (r *runner) coppiceDataDirs() []string {
 	defer r.enter()()
-	return r.spellings(append([]string{pathJoin(r.pathHome(), ".opendaisugi/coppice")}, r.customDataDirs()...))
+	return r.spellings(append(r.guardedUnder("coppice"), r.customDataDirs()...))
 }
 
 // secretDirs is pane_rule._secret_dirs.
@@ -409,7 +468,7 @@ func (r *runner) floorRoots() []string {
 			out = append(out, pathJoin(base, "coppice"))
 		}
 	}
-	out = append(out, pathJoin(home, ".opendaisugi/coppice"))
+	out = append(out, r.guardedUnder("coppice")...)
 	out = append(out, r.customDataDirs()...)
 	return r.spellings(out)
 }
@@ -432,7 +491,7 @@ func (r *runner) opencodeRoots() []string {
 func (r *runner) daisugiConfigRoots() []string {
 	defer r.enter()()
 	defer r.enter()()
-	return r.spellings([]string{r.configPath(), pathJoin(r.pathHome(), ".opendaisugi/config.yaml")})
+	return r.spellings(append([]string{r.configPath()}, r.guardedUnder("config.yaml")...))
 }
 
 // namesConfig is floor_config._names_config: a relative word whose parts
@@ -492,6 +551,11 @@ func (r *runner) expandHome(text string) string {
 		}
 		if name == "HOME" {
 			return home
+		}
+		// On a resident call the caller's own data dir is its pane's
+		// COPPICE_DATA_DIR.
+		if name == "COPPICE_DATA_DIR" && r.caller.DataDir != nil && *r.caller.DataDir != "" {
+			return *r.caller.DataDir
 		}
 		return r.env[name]
 	})
@@ -819,6 +883,26 @@ func (r *runner) floorBody(cwd string, rec *record, g guard) bool {
 
 // pathHome is str(Path.home()).
 func (r *runner) pathHome() string { return pathStr(r.home) }
+
+// dataHome is opendaisugi.datahome.data_home() for this run's environment.
+func (r *runner) dataHome() string {
+	return datahome.Dir(func(k string) string { return r.env[k] }, r.pathHome(), datahome.Exists)
+}
+
+// guardedDataDirs is opendaisugi.datahome.guarded_data_dirs(): every
+// directory the data home can be, guarded with no exists check.
+func (r *runner) guardedDataDirs() []string {
+	return datahome.Guarded(func(k string) string { return r.env[k] }, r.pathHome())
+}
+
+// guardedUnder is [d / name for d in guarded_data_dirs()].
+func (r *runner) guardedUnder(name string) []string {
+	var out []string
+	for _, d := range r.guardedDataDirs() {
+		out = append(out, pathJoin(d, name))
+	}
+	return out
+}
 
 // searchRefuses is pane_rule._search_refuses: true when the search rule
 // refuses this line anyway, so its own reason is the one the agent sees.

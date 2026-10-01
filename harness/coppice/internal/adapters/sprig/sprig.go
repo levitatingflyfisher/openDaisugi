@@ -170,19 +170,62 @@ func TreePath(argv []string, sessionID string) (string, bool) {
 	return filepath.Join(dir, sessionID+".jsonl"), true
 }
 
-// flagValue reads --name VALUE or --name=VALUE out of argv, never looking
-// at or past a literal "--".
+// ResumeID is the session id argv's --resume names, if it names one.
+func ResumeID(argv []string) (string, bool) {
+	return flagValue(argv, "resume")
+}
+
+// sessionFlagSet are the three flags this adapter owns on every turn's
+// argv, by their bare names.
+var sessionFlagSet = map[string]bool{"session-dir": true, "session": true, "resume": true}
+
+// sessionFlag reads token a as sprig's own flag parser (Go's flag
+// package) does: one or two dashes, then a name, then "=value" or no
+// value. ok is true only for session-dir, session and resume; inline is
+// true when the value came with "=".
+func sessionFlag(a string) (name, val string, inline, ok bool) {
+	if len(a) < 2 || a[0] != '-' {
+		return "", "", false, false
+	}
+	b := a[1:]
+	if b[0] == '-' {
+		b = b[1:]
+	}
+	if b == "" || b[0] == '-' || b[0] == '=' {
+		return "", "", false, false
+	}
+	if eq := strings.IndexByte(b, '='); eq >= 0 {
+		name, val, inline = b[:eq], b[eq+1:], true
+	} else {
+		name = b
+	}
+	return name, val, inline, sessionFlagSet[name]
+}
+
+// flagValue reads the last value argv gives session flag name, in any
+// spelling sprig's flag parser takes: -name, --name, with "=value" or the
+// next word as the value. The last one wins, as in sprig. It never looks
+// at or past a literal "--". An empty value counts as none.
 func flagValue(argv []string, name string) (string, bool) {
 	head := beforeDoubleDash(argv)
-	for i, a := range head {
-		if a == "--"+name && i+1 < len(head) {
-			return head[i+1], true
+	val := ""
+	for i := 0; i < len(head); i++ {
+		n, v, inline, ok := sessionFlag(head[i])
+		if !ok {
+			continue
 		}
-		if len(a) > len(name)+3 && a[:len(name)+3] == "--"+name+"=" {
-			return a[len(name)+3:], true
+		if !inline {
+			if i+1 >= len(head) {
+				continue
+			}
+			i++
+			v = head[i]
+		}
+		if n == name {
+			val = v
 		}
 	}
-	return "", false
+	return val, val != ""
 }
 
 // insertAfterSessionDir splices extra flags in right after --session-dir's
@@ -212,12 +255,8 @@ func insertAfterSessionDir(argv []string, extra ...string) []string {
 	return out
 }
 
-// sessionFlagNames are the three flags this adapter itself owns on every
-// turn's argv: --session-dir always, and exactly one of --session/--resume.
-var sessionFlagNames = map[string]bool{"--session-dir": true, "--session": true, "--resume": true}
-
-// stripSessionFlags removes --session-dir/--session/--resume (and their
-// values) from argv, so this adapter's own per-turn construction of those
+// stripSessionFlags removes session-dir, session and resume in every
+// spelling sessionFlag reads (and their values) from argv, so this adapter's own per-turn construction of those
 // flags - built fresh every turn from StartOpts.Cwd/Env and the id this
 // adapter decided on - is never shadowed by a stale copy the caller
 // originally passed in StartOpts.Argv. Like flagValue and
@@ -229,15 +268,13 @@ func stripSessionFlags(argv []string) []string {
 	tail := argv[len(head):]
 	out := make([]string, 0, len(head))
 	for i := 0; i < len(head); i++ {
-		a := head[i]
-		if sessionFlagNames[a] {
-			i++ // also skip its value
+		if _, _, inline, ok := sessionFlag(head[i]); ok {
+			if !inline {
+				i++ // also skip its value
+			}
 			continue
 		}
-		if eq := strings.IndexByte(a, '='); eq > 0 && sessionFlagNames[a[:eq]] {
-			continue
-		}
-		out = append(out, a)
+		out = append(out, head[i])
 	}
 	return append(out, tail...)
 }

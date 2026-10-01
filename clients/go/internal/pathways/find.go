@@ -162,16 +162,22 @@ func (s *Store) findIn(q []float64, identity string, threshold float64) (FindRes
 					return err
 				}
 				n++
+				// `not row_model and not row_version` admits a legacy
+				// row; otherwise only str values equal the current ones.
 				ms, ok1 := model.(string)
 				vs, ok2 := version.(string)
-				if !ok1 || !ok2 {
-					return fmt.Errorf("%w: a provenance column is not text", ErrUnreadable)
-				}
-				if !((ms == "" && vs == "") || (ms == identity && vs == EmbeddingModelVersion)) {
+				if !(colFalsy(model) && colFalsy(version)) &&
+					!(ok1 && ok2 && ms == identity && vs == EmbeddingModelVersion) {
 					continue
 				}
 				sc := &scored{rowid: rowid}
 				out = append(out, sc)
+				if b, isBlob := text.([]byte); isBlob {
+					// json.loads(bytes): the text in the encoding it detects.
+					if t, err := JSONText(b); err == nil {
+						text = t
+					}
+				}
 				t, isText := text.(string)
 				if !isText {
 					sc.invalid = true
@@ -265,4 +271,21 @@ func clip(x float64) float64 {
 // percent is Python's f"{x:.0%}".
 func percent(x float64) string {
 	return fmt.Sprintf("%.0f%%", x*100)
+}
+
+// colFalsy is `not v` for a column value as Python's sqlite3 gives it.
+func colFalsy(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return x == ""
+	case []byte:
+		return len(x) == 0
+	case int64:
+		return x == 0
+	case float64:
+		return x == 0
+	}
+	return false
 }

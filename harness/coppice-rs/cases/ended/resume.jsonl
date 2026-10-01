@@ -1,0 +1,56 @@
+# pane.resume starts a new live pane from an ended record: its label, cwd,
+# argv, env and task. A pty record with no harness session id starts fresh,
+# and the reply says resumed: false. The ended record goes once the new pane
+# has started. A pty pane with a harness session id and resume_args for its
+# harness resumes that session, with the pane's own extra args after it.
+#!config [harness.claude]
+#!config command = "/bin/sh"
+#!config args = ["-c", "echo started $*; exec sleep 600", "claude"]
+#!config resume_args = ["--resume", "{session}"]
+{"id":"1","cmd":"task.create","label":"work","cwd":"{FIXTURES}"}
+{"id":"$id","ok":true,"result":{"task":"$work","worktree":""}}
+{"id":"2","cmd":"pane.create","task":"$work","cmd_argv":["/bin/sh","-c","echo once $GREETING; exit 2"],"label":"short","env":{"GREETING":"hello"},"cols":90,"rows":20}
+{"id":"$id","ok":true,"result":{"pane":"$short"}}
+{"id":"3","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","args":["--prompt","fix it"]}
+{"id":"$id","ok":true,"result":{"pane":"$agent"}}
+#!retry 5000
+{"id":"4","cmd":"pane.list","ended":true}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$short","closed":true,"exit_code":2,"state":"done"}],"path":"*"}}
+{"id":"5","cmd":"pane.resume"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"pane.resume needs pane. Run: coppice pane list --ended"}}
+{"id":"6","cmd":"pane.resume","pane":"$short","cols":0}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"pane.resume takes positive cols and rows, or neither."}}
+{"id":"7","cmd":"pane.resume","pane":"$short","rows":-1}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"8","cmd":"pane.resume","pane":"w9:p9"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"no pane \"w9:p9\". Run: coppice pane list --ended"}}
+{"id":"9","cmd":"pane.resume","pane":"$agent"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
+{"id":"10","cmd":"pane.resume","pane":"$short","cols":100}
+{"id":"$id","ok":true,"result":{"pane":"$short2","workspace":"*","tab":"*","resumed":false}}
+{"id":"11","cmd":"pane.wait_output","pane":"$short2","contains":"once hello","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+#!retry 5000
+{"id":"12","cmd":"pane.list","ended":true}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$short2","label":"short","closed":true,"exit_code":2,"state":"done","cols":100,"rows":20,"task":"$work"}],"path":"*"}}
+{"id":"13","cmd":"pane.list","pane":"$short"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"14","cmd":"hello","role":"pane","pane":"$agent"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"$agent"}}
+{"id":"15","cmd":"pane.report_state","pane":"$agent","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","harness_session_id":"sess-42","pane":"$agent","state":"idle","source":"gate","detail":"Stop"}}
+{"id":"$id","ok":true,"result":{"pane":"$agent","state":"idle"}}
+#!tree
+#!restart
+{"id":"16","cmd":"server.status"}
+{"id":"$id","ok":true,"result":{"panes":2,"panes_live":0,"resumable":1,"restore":{"panes":2,"already_closed":1,"resumed":0,"marked_done":1,"marked_unknown":0,"notes":["*"]}}}
+{"id":"17","cmd":"pane.resume","pane":"$agent","cols":80,"rows":24}
+{"id":"$id","ok":true,"result":{"pane":"$agent2","resumed":true}}
+{"id":"18","cmd":"pane.wait_output","pane":"$agent2","contains":"started --resume sess-42 --prompt fix it","timeout_ms":5000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"19","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$agent2","label":"claude-fixtures","harness":"claude","cols":80,"rows":24}],"path":"*"}}
+{"id":"20","cmd":"pane.resume","pane":"$agent"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"*"}}
+{"id":"21","cmd":"server.status"}
+{"id":"$id","ok":true,"result":{"resumable":0}}
+#!tree

@@ -382,8 +382,11 @@ fn read_bundles(dir: &str) -> LR<Vec<Found>> {
                 continue;
             }
         };
-        let b = crate::pathways::dumped::load_dumped(&text)
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        // A YAML error, or a value this binary does not model, is skipped.
+        let b = crate::pyyaml::load(&text)
             .ok()
+            .and_then(|v| crate::pyyaml::to_json(&v))
             .and_then(|v| bundle::validate(&v).ok());
         out.push(Found { bundle: b });
     }

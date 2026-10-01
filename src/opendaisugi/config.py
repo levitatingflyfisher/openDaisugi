@@ -17,6 +17,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 
+from opendaisugi.datahome import data_home
+
 
 class FloorConfig(BaseModel):
     """Which pane backend drives the floor, and what runs when a pane blocks.
@@ -43,7 +45,7 @@ class Config(BaseModel):
     model: str = "anthropic/claude-sonnet-4-20250514"
     max_task_chars: int = 4000
     z3_timeout_ms: int = 500
-    data_dir: Path = Field(default_factory=lambda: Path.home() / ".opendaisugi")
+    data_dir: Path = Field(default_factory=data_home)
     # Background distillation consent (Phase A). None = never asked (distinct
     # from an explicit no); True = distil repeated tasks in the background;
     # False = declined. Distillation only ever affects *efficiency* (the guard
@@ -184,8 +186,8 @@ class Config(BaseModel):
     # reports a visible device. A Pascal GPU (sm_61) has crashed other torch-based
     # inference under CUDA before, see ADR-0019. CUDA is opt-in and verified,
     # never auto-detected.
-    voice_engine: str = "faster-whisper"  # faster-whisper | parakeet
-    voice_model: str = "tiny.en"  # a faster-whisper model id, or for parakeet a local model dir
+    voice_engine: str = "faster-whisper"  # faster-whisper | moonshine | parakeet | whisper.cpp
+    voice_model: str = "tiny.en"  # faster-whisper id, ggml file, Moonshine or Parakeet model
     voice_device: str = "cpu"  # cpu | cuda
     voice_compute_type: str = "int8"
     # The optional cleanup pass is off by default. It never uses a paid model
@@ -209,7 +211,7 @@ def load_config(path: Path | None = None) -> Config:
     newer version of opendaisugi still loads on an older version.
     """
     if path is None:
-        path = Path.home() / ".opendaisugi" / "config.yaml"
+        path = data_home() / "config.yaml"
     if not path.exists():
         return default_config()
 
@@ -226,7 +228,7 @@ def save_config(config: Config, path: Path | None = None) -> None:
     config.yaml is user-editable and written rarely.
     """
     if path is None:
-        path = Path.home() / ".opendaisugi" / "config.yaml"
+        path = data_home() / "config.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     data = config.model_dump(mode="json")
     # Pydantic serializes Path to str in mode="json"; yaml.safe_dump is fine with it.
@@ -812,7 +814,7 @@ def resolved_config(
             # cwd-hook check is a no-op) rather than crash `daisugi config`.
             cwd = home
     env = os.environ if env is None else env
-    path = path or home / ".opendaisugi" / "config.yaml"
+    path = path or data_home(home=home) / "config.yaml"
     cfg = load_config(path)
     raw = _read_raw(path)
     out: list[ResolvedField] = []

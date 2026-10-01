@@ -988,7 +988,7 @@ def _verify(
         return _result(plan, envelope, violations, warnings, t0)
 
     # Stage 3: DAG
-    from opendaisugi.dag import check_dag  # networkx: only when a plan reaches this stage
+    from opendaisugi.dag import check_dag  # only when a plan reaches this stage
 
     violations.extend(check_dag(plan))
 
@@ -1079,7 +1079,7 @@ def verify_step(
 
     # DAG check on a singleton with depends_on=[] is trivial; included for
     # symmetry with the whole-plan path.
-    from opendaisugi.dag import check_dag  # networkx: only when a plan reaches this stage
+    from opendaisugi.dag import check_dag  # only when a plan reaches this stage
 
     violations.extend(check_dag(plan))
 

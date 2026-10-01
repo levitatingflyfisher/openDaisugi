@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
@@ -48,10 +49,28 @@ func pyValue(v any) (any, error) {
 		return pyjson.Float(x), nil
 	case string:
 		return x, nil
+	case []byte:
+		return blob(x), nil
 	}
-	// A BLOB is bytes in Python; pydantic's str and float read bytes by
-	// rules this port does not carry.
 	return nil, fmt.Errorf("%w: a column holds a %T", ErrUnreadable, v)
+}
+
+// blob is a BLOB column: bytes in Python.
+type blob []byte
+
+// asText is a value as pydantic reads bytes for a str, an int or a float
+// (and model_validate_json for JSON): their UTF-8 text, or pydantic's
+// ValidationError when the bytes are not UTF-8. Any other value is
+// itself.
+func asText(v any) (any, error) {
+	b, ok := v.(blob)
+	if !ok {
+		return v, nil
+	}
+	if !utf8.Valid(b) {
+		return nil, &Invalid{"pydantic_core._pydantic_core.ValidationError: the bytes are not UTF-8"}
+	}
+	return string(b), nil
 }
 
 func field(title string, s pmodel.Schema, v any) (any, error) {
@@ -63,6 +82,13 @@ func field(title string, s pmodel.Schema, v any) (any, error) {
 }
 
 func loads(text any) (any, error) {
+	if b, isBlob := text.(blob); isBlob {
+		t, err := JSONText(b)
+		if err != nil {
+			return nil, err
+		}
+		text = t
+	}
 	s, ok := text.(string)
 	if !ok {
 		// json.loads of an int or None raises TypeError.
@@ -89,6 +115,9 @@ func FromRow(r Row) (*Pathway, error) {
 	out := pyjson.NewObject()
 	for _, col := range []string{"id", "task_description"} {
 		v, err := get(col)
+		if err == nil {
+			v, err = asText(v)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -100,6 +129,12 @@ func FromRow(r Row) (*Pathway, error) {
 	embText, err := get("task_embedding_json")
 	if err != nil {
 		return nil, err
+	}
+	if b, isBlob := embText.(blob); isBlob {
+		// json.loads(bytes) reads the text in the encoding it detects.
+		if embText, err = JSONText(b); err != nil {
+			return nil, err
+		}
 	}
 	// json.loads and list[float]: checked here, the floats themselves
 	// built only when a command prints them (Full).
@@ -118,6 +153,9 @@ func FromRow(r Row) (*Pathway, error) {
 	out.Set("task_embedding", nil)
 	for _, col := range []string{"embedding_model", "embedding_model_version"} {
 		v, err := get(col)
+		if err == nil {
+			v, err = asText(v)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -131,6 +169,9 @@ func FromRow(r Row) (*Pathway, error) {
 		model    *pmodel.Model
 	}{{"envelope_json", "envelope", pmodel.Envelope}, {"plan_template_json", "plan_template", pmodel.ActionPlan}} {
 		v, err := get(c.col)
+		if err == nil {
+			v, err = asText(v)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +183,7 @@ func FromRow(r Row) (*Pathway, error) {
 		if verr != nil {
 			for _, e := range verr.Errs {
 				if e.Type == pmodel.UnreadableStep {
-					return nil, fmt.Errorf("%w: a plan step is a string", ErrUnreadable)
+					return nil, fmt.Errorf("%w: %s", ErrUnreadable, e.Msg)
 				}
 			}
 			return nil, &Invalid{"pydantic_core._pydantic_core.ValidationError: " + verr.String()}
@@ -165,6 +206,9 @@ func FromRow(r Row) (*Pathway, error) {
 		s   pmodel.Schema
 	}{{"version", pmodel.Int{}}, {"hit_count", pmodel.Int{}}, {"distilled_at", pmodel.Float{}}} {
 		v, err := get(c.col)
+		if err == nil {
+			v, err = asText(v)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -179,6 +223,9 @@ func FromRow(r Row) (*Pathway, error) {
 		s   pmodel.Schema
 	}{{"last_activation_at", pmodel.Float{}}, {"failure_count", pmodel.Int{}}} {
 		v, err := get(c.col)
+		if err == nil {
+			v, err = asText(v)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -189,6 +236,9 @@ func FromRow(r Row) (*Pathway, error) {
 	}
 	out.Set("activation_count", pyjson.Int{Text: "0"})
 	sig, err := get("structure_signature")
+	if err == nil {
+		sig, err = asText(sig)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +253,9 @@ func FromRow(r Row) (*Pathway, error) {
 	// `json.loads(p) if p else []`: an empty text or a NULL is no
 	// parameters.
 	var plist any = []any{}
+	if b, isBlob := params.(blob); isBlob && len(b) == 0 {
+		params = ""
+	}
 	if pyjson.Truthy(params) {
 		if plist, err = loads(params); err != nil {
 			return nil, err

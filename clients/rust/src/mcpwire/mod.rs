@@ -179,6 +179,14 @@ pub const CARRIED: &[&str] = &[
     "resources/templates/list",
     "tools/call",
     "tools/list",
+    "resources/read",
+    "resources/subscribe",
+    "resources/unsubscribe",
+    "completion/complete",
+    "tasks/get",
+    "tasks/result",
+    "tasks/list",
+    "tasks/cancel",
 ];
 
 /// `ClientRequest.model_validate` for a request.
@@ -216,6 +224,13 @@ pub fn check(m: &Message) -> Checked {
             "logging/setLevel",
             "prompts/get",
             "tools/call",
+            "resources/read",
+            "resources/subscribe",
+            "resources/unsubscribe",
+            "completion/complete",
+            "tasks/get",
+            "tasks/result",
+            "tasks/cancel",
         ]
         .contains(&method)
         {
@@ -223,10 +238,18 @@ pub fn check(m: &Message) -> Checked {
         }
         return Ok;
     };
-    // RequestParams: an optional task (task-augmented calls are not in
-    // this binary) and _meta with an optional progressToken.
-    if matches!(p.get("task"), Some(t) if !t.is_null()) {
-        return Unported;
+    // RequestParams: an optional task and _meta with an optional
+    // progressToken. A tool call's task (TaskMetadata: an optional int
+    // ttl) is read and then not used, as the oracle's server does.
+    match p.get("task") {
+        None | Some(Value::Null) => {}
+        Some(_) if method != "tools/call" => return Unported,
+        Some(Value::Obj(t)) => match t.get("ttl") {
+            None | Some(Value::Null) | Some(Value::Int(_)) => {}
+            // pydantic's lax int takes some floats and strings.
+            Some(_) => return Unported,
+        },
+        Some(_) => return Invalid,
     }
     match p.get("_meta") {
         None | Some(Value::Null) => {}
@@ -244,6 +267,50 @@ pub fn check(m: &Message) -> Checked {
         "tools/list" | "resources/list" | "resources/templates/list" | "prompts/list" => {
             if !opt_str(p, "cursor") {
                 return Invalid;
+            }
+        }
+        "resources/read" | "resources/subscribe" | "resources/unsubscribe" => {
+            let Value::Str(u) = p.value("uri") else { return Invalid };
+            if let Err(c) = norm_uri(u) {
+                return c;
+            }
+        }
+        "tasks/get" | "tasks/result" | "tasks/cancel" => {
+            if !matches!(p.value("taskId"), Value::Str(_)) {
+                return Invalid;
+            }
+        }
+        "tasks/list" => {
+            if !opt_str(p, "cursor") {
+                return Invalid;
+            }
+        }
+        "completion/complete" => {
+            let Value::Obj(r) = p.value("ref") else { return Invalid };
+            let ok_ref = match r.value("type") {
+                Value::Str(t) if t == "ref/prompt" => matches!(r.value("name"), Value::Str(_)) && opt_str(r, "title"),
+                Value::Str(t) if t == "ref/resource" => matches!(r.value("uri"), Value::Str(_)),
+                _ => false,
+            };
+            if !ok_ref {
+                return Invalid;
+            }
+            let Value::Obj(a) = p.value("argument") else { return Invalid };
+            if !matches!(a.value("name"), Value::Str(_)) || !matches!(a.value("value"), Value::Str(_)) {
+                return Invalid;
+            }
+            match p.get("context") {
+                None | Some(Value::Null) => {}
+                Some(Value::Obj(c)) => match c.get("arguments") {
+                    None | Some(Value::Null) => {}
+                    Some(Value::Obj(args)) => {
+                        if args.iter().any(|(_, v)| !matches!(v, Value::Str(_))) {
+                            return Invalid;
+                        }
+                    }
+                    Some(_) => return Invalid,
+                },
+                Some(_) => return Invalid,
             }
         }
         "tools/call" => {
@@ -511,6 +578,7 @@ fn field(name: &'static str, schema: Schema, default: Option<fn() -> Value>) -> 
         name,
         schema,
         default,
+        omit_none: false,
     }
 }
 
@@ -796,4 +864,68 @@ mod tests {
         let out = pre_parse(m, &Object::new().with("task", "[1]")).unwrap();
         assert_eq!(out.value("task"), &Value::Str("[1]".into()));
     }
+}
+
+/// pydantic's `AnyUrl` on a URI: the URL as it serializes, or why it is
+/// not one (`Invalid`: the SDK answers -32602; `Unported`: a form this
+/// binary does not normalize the way the URL parser does). The Go
+/// client's `mcpwire.NormURI` is the twin.
+pub fn norm_uri(u: &str) -> Result<String, Checked> {
+    let b = u.as_bytes();
+    let Some(i) = u.find(':') else { return Err(Checked::Invalid) };
+    if i == 0 || !b[0].is_ascii_alphabetic() {
+        return Err(Checked::Invalid);
+    }
+    if !b[1..i].iter().all(|c| c.is_ascii_alphanumeric() || b"+-.".contains(c)) {
+        return Err(Checked::Invalid);
+    }
+    if b.iter().any(|&c| c <= 0x20 || c >= 0x7f || b"%\\[]".contains(&c)) {
+        return Err(Checked::Unported);
+    }
+    let scheme = u[..i].to_ascii_lowercase();
+    let rest = &u[i + 1..];
+    let port = match scheme.as_str() {
+        "http" | "ws" => Some("80"),
+        "https" | "wss" => Some("443"),
+        "ftp" => Some("21"),
+        _ => None,
+    };
+    if let Some(port) = port {
+        let Some(rest) = rest.strip_prefix("//") else { return Err(Checked::Unported) };
+        let end = rest.find(|c| "/?#".contains(c)).unwrap_or(rest.len());
+        let (hostport, tail) = rest.split_at(end);
+        if hostport.contains('@') {
+            return Err(Checked::Unported);
+        }
+        let (host, p) = match hostport.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (hostport, None),
+        };
+        if host.is_empty() {
+            return Err(Checked::Invalid);
+        }
+        if host.as_bytes()[0].is_ascii_digit() {
+            return Err(Checked::Unported);
+        }
+        let mut host = host.to_ascii_lowercase();
+        if let Some(p) = p {
+            if p.is_empty() || !p.bytes().all(|c| c.is_ascii_digit()) || p.len() > 5 {
+                return Err(Checked::Unported);
+            }
+            if p != port {
+                host = format!("{host}:{p}");
+            }
+        }
+        let path = tail.split(|c| c == '?' || c == '#').next().unwrap_or("");
+        if path.split('/').any(|seg| seg == "." || seg == "..") {
+            // The URL parser resolves dot segments.
+            return Err(Checked::Unported);
+        }
+        let tail = if tail.starts_with('/') { tail.to_string() } else { format!("/{tail}") };
+        return Ok(format!("{scheme}://{host}{tail}"));
+    }
+    if scheme == "file" && !rest.starts_with("///") {
+        return Err(Checked::Unported);
+    }
+    Ok(format!("{scheme}:{rest}"))
 }

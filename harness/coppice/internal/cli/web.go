@@ -32,15 +32,21 @@ const webUsage = `coppice web - the floor in a browser
       Prints a QR the phone scans to install the CA.
   coppice web cert show [--ca-dir DIR]
       Print what the current certificate covers and when it expires.
-  coppice web cert tailscale NAME.TAILNET.ts.net [--dir DIR]
+  coppice web cert tailscale [NAME.TAILNET.ts.net] [--dir DIR]
       Ask tailscale for a Let's Encrypt certificate and write it where
-      coppice web serve --tls tailscale looks for it.
+      coppice web serve --tls tailscale looks for it. With no name, this
+      box's MagicDNS name.
   coppice web serve [--listen ADDR] [--tls tailscale|localca|files|off]
                     [--cert FILE --key FILE] [--ca-dir DIR] [--ca-listen ADDR]
                     [--external-url URL] [--gate-root DIR] [--voice-url URL [--voice-token-file FILE]]
                     [--ntfy URL --ntfy-topic NAME --ntfy-token-env VAR]
                     [--persist|--forget] [--web-push] [--qr]
       Serve the phone client. Mints a token on the first run and prints it.
+      With --tls tailscale it does the whole job: it gets the certificate
+      for this box's MagicDNS name, renews it when under 30 days are left,
+      and listens on the tailnet address and loopback only. A --listen
+      with no host (:8443) keeps that and sets the port; a --listen with a
+      host (0.0.0.0:8443) listens there instead.
   coppice web token [--for NAME] [--rotate] [--url URL] [--qr] [--listen ADDR]
       Print the current token, its sign-in URL, and a QR to scan. With
       --for, the token is the one minted for NAME, and every allow and
@@ -207,19 +213,41 @@ func (c *CLI) webCertTailscale(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
-		fmt.Fprintln(c.Err, "Give the MagicDNS name. Example: coppice web cert tailscale box.tail1234.ts.net")
+	dirSet := false
+	fs.Visit(func(f *flag.Flag) { dirSet = dirSet || f.Name == "dir" })
+	if fs.NArg() > 1 {
+		fmt.Fprintln(c.Err, "Give one MagicDNS name, or none to use this box's. Example: coppice web cert tailscale box.tail1234.ts.net")
 		return 1
 	}
 	name := fs.Arg(0)
-	if err := os.MkdirAll(*dir, 0o700); err != nil {
-		fmt.Fprintf(c.Err, "%v\n", err)
-		return 1
+	if name == "" {
+		// No name: this box's own, as tailscale names it.
+		ts, err := web.ReadTailscale()
+		if err != nil {
+			fmt.Fprintln(c.Err, err)
+			return 1
+		}
+		name = ts.Name
 	}
 	// The same two basenames TailscalePaths names, so coppice web serve
-	// finds this pair without being told where it landed.
+	// finds this pair without being told where it landed. With no --dir,
+	// the pair a running serve uses, else the pair web.json saves: Renew
+	// types this command, and it must renew the pair that is served.
 	certFile := filepath.Join(*dir, filepath.Base(certDefault))
 	keyFile := filepath.Join(*dir, filepath.Base(keyDefault))
+	if !dirSet {
+		certFile, keyFile = servedPair(c.DataDir, certFile, keyFile)
+	}
+	if err := web.CheckPairFiles(certFile, keyFile); err != nil {
+		fmt.Fprintln(c.Err, err)
+		return 1
+	}
+	for _, d := range []string{filepath.Dir(certFile), filepath.Dir(keyFile)} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			fmt.Fprintf(c.Err, "%v\n", err)
+			return 1
+		}
+	}
 	// Both paths are explicit. What tailscale names a file when nothing
 	// tells it was never checked, so this never leans on it.
 	cmd := exec.Command("tailscale", "cert",
@@ -232,8 +260,21 @@ func (c *CLI) webCertTailscale(args []string) int {
 	}
 	fmt.Fprintf(c.Out, "cert      %s\nkey       %s\n", certFile, keyFile)
 	fmt.Fprintf(c.Out, "\nStart the server with:\n  coppice web serve --tls tailscale --cert %s --key %s\n", certFile, keyFile)
-	fmt.Fprintln(c.Out, "Let's Encrypt issues this and it lasts 90 days. Renewal is yours.")
+	fmt.Fprintln(c.Out, "Let's Encrypt issues this and it lasts 90 days. A running coppice web serve --tls tailscale renews it and serves the new one.")
 	return 0
+}
+
+// servedPair is the pair a running tailscale serve uses, else the pair a
+// saved --tls tailscale setup names, else certFile and keyFile.
+func servedPair(dataDir, certFile, keyFile string) (string, string) {
+	if c, k, ok := web.ServingPair(web.ServingPath(dataDir)); ok && k != "" {
+		return c, k
+	}
+	if cfg, err := web.LoadConfig(web.ConfigPath(dataDir)); err == nil &&
+		cfg.TLS == string(web.TLSTailscale) && cfg.CertFile != "" && cfg.KeyFile != "" {
+		return cfg.CertFile, cfg.KeyFile
+	}
+	return certFile, keyFile
 }
 
 // voiceURLErr is what --voice-url prints for anything that is not an
@@ -346,6 +387,44 @@ func (c *CLI) webServeCommand(args []string) int {
 		return 0
 	}
 
+	// --tls tailscale does the whole job before anything else is printed
+	// or saved: it reads this box's name and tailnet addresses, gets or
+	// renews the certificate, and checks the listen address. The phone
+	// opens the MagicDNS name, so that is the sign-in address unless
+	// --external-url names another.
+	auto := *tlsSource == string(web.TLSTailscale)
+	if auto {
+		ts, err := web.ReadTailscale()
+		if err != nil {
+			fmt.Fprintln(c.Err, err)
+			return 1
+		}
+		if _, err := web.ListenAddrs(*listen, ts.IPs); err != nil {
+			fmt.Fprintln(c.Err, err)
+			return 1
+		}
+		res, err := web.EnsureCert(ts.Name, *certFile, *keyFile, time.Now())
+		switch {
+		case err != nil && web.ValidPair(*certFile, *keyFile, time.Now()):
+			// The pair on disk still serves; the server tries again once
+			// a day.
+			leaf, _ := web.LoadLeaf(*certFile)
+			days := web.CertDays(leaf.NotAfter, time.Now())
+			fmt.Fprintf(c.Err, "The certificate renewal failed, so the certificate on disk serves. It runs out in %d %s. %v\n",
+				days, web.Plural(days, "day"), err)
+		case err != nil:
+			fmt.Fprintln(c.Err, err)
+			return 1
+		}
+		for _, line := range web.CertLines(ts.Name, res) {
+			fmt.Fprintln(c.Out, line)
+		}
+		if cfg.ExternalURL == "" {
+			_, port, _ := net.SplitHostPort(*listen)
+			cfg.ExternalURL = "https://" + net.JoinHostPort(ts.Name, port)
+		}
+	}
+
 	// The configuration is proved servable before anything is printed or
 	// saved. A refusal here must leave no token on screen, no QR drawn, and
 	// no web.json behind: a run that cannot serve has nothing worth
@@ -380,7 +459,16 @@ func (c *CLI) webServeCommand(args []string) int {
 		fmt.Fprintln(c.Out, "Minted a new web token.")
 	}
 	if *qr {
-		printSignIn(c.Out, tok, *externalURL, *listen, *tlsSource)
+		printSignIn(c.Out, tok, cfg.ExternalURL, *listen, *tlsSource)
+	}
+	// The one line that says what now listens where, once it does.
+	var listening func([]string)
+	if auto {
+		base := signInURL(cfg.ExternalURL, *listen, *tlsSource)
+		only := web.BlankHost(*listen)
+		listening = func(addrs []string) {
+			fmt.Fprintln(c.Out, web.ListeningLine(base, addrs, only))
+		}
 	}
 
 	serve := c.serveWeb
@@ -399,6 +487,8 @@ func (c *CLI) webServeCommand(args []string) int {
 		VoiceTokenFile: *voiceTokenFile,
 		Views:          plugins.ViewsOf(c.loadPlugins()),
 		ViewLib:        plugins.SharedLib(),
+		Listening:      listening,
+		ServingFile:    web.ServingPath(c.DataDir),
 	})
 	if err != nil {
 		fmt.Fprintf(c.Err, "%v\n", err)

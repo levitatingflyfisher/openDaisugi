@@ -155,7 +155,14 @@ def compare(
     problems += stderr_problems(expect, got)
     if got["tree"] != expect["tree"]:
         problems += ["tree: " + d for d in diff(expect["tree"], got["tree"])]
-    if _stable_keys(got["requests"]) != _stable_keys(expect["requests"]):
+    want_req, got_req = _stable_keys(expect["requests"]), _stable_keys(got["requests"])
+    if case.get("unordered"):
+        # A level's steps ran at once (K2-4): the requests are a multiset.
+        def order(rs: list[Any]) -> list[Any]:
+            return sorted(rs, key=lambda r: json.dumps(r, sort_keys=True))
+
+        want_req, got_req = order(want_req), order(got_req)
+    if got_req != want_req:
         problems += ["requests: " + d for d in diff(expect["requests"], got["requests"])]
     if got.get("proxy") != expect.get("proxy"):
         problems += ["proxy: " + d for d in diff(expect.get("proxy"), got.get("proxy"))]

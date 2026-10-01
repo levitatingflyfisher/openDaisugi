@@ -160,6 +160,37 @@ func TestRemoveWithoutKeepDeletesACleanWorktree(t *testing.T) {
 	run(t, repo, "rev-parse", "--verify", "refs/heads/x")
 }
 
+// A worktree added from inside another worktree sits beside that one.
+// RemoveAt takes the path Add returned, so it finds it through the main
+// repo, where Remove would build the path again from the main repo's name.
+func TestRemoveAtDeletesAWorktreeAddedFromAWorktree(t *testing.T) {
+	repo := initRepo(t)
+	outer, err := Add(repo, "outer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner, err := Add(outer, "inner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(outer+"-worktrees", "inner"); inner != want {
+		t.Fatalf("inner = %q, want %q", inner, want)
+	}
+	main, err := Repo(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveAt(main, inner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(inner); !os.IsNotExist(err) {
+		t.Fatalf("inner worktree still on disk: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outer, ".git")); err != nil {
+		t.Fatal("the outer worktree went too")
+	}
+}
+
 func TestRemoveWithKeepLeavesTheWorktree(t *testing.T) {
 	repo := initRepo(t)
 	p, err := Add(repo, "x")

@@ -1,0 +1,113 @@
+# coppice web cert: init, show, tailscale, and a data dir both ports
+# read. Every key and serial is random, so the cases read what the
+# commands print and the meta file, never a certificate's bytes. The
+# dates follow the clock, and a PEM's length follows its random bytes.
+#!mask expires
+#!mask created
+#!mask not_after
+{"id": "c0", "cli": ["web", "cert", "show"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "c1", "cli": ["web", "cert", "init"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "c2", "cli": ["web", "cert", "init", "--ip", "not-an-ip"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "c3", "cli": ["web", "cert", "init", "--name", "a.test", "--qr", "big"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "l0", "ls": "{DATA}"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "c4", "cli": ["web", "cert", "init", "--name", "coppice.test", "--name", "box.test", "--ip", "127.0.0.1", "--ip", "::1", "--qr", "off"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "l1", "ls": "{DATA}/web"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "m1", "file": "{DATA}/web/ca/meta.json"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "c5", "cli": ["web", "cert", "show"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# A second init keeps the CA and issues a new leaf.
+{"id": "c6", "cli": ["web", "cert", "init", "--ip", "127.0.0.1", "--ca-listen", "127.0.0.1:8099", "--qr", "url"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "m2", "file": "{DATA}/web/ca/meta.json"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "c7", "cli": ["web", "cert", "init", "--name", "only.test", "--ca-listen", "nope", "--qr", "url"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# The other port reads this CA, and issues a leaf from it.
+{"id": "p1", "cli": ["web", "cert", "show"], "peer": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p2", "cli": ["web", "cert", "init", "--name", "peer.test", "--qr", "off"], "peer": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "c8", "cli": ["web", "cert", "show"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# Serve it: the leaf chains to the CA, and the CA goes out on plain HTTP.
+{"id": "v1", "cli": ["web", "serve", "--listen", "{ADDR}", "--ca-listen", "{ADDR2}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h1", "http": "GET", "url": "https://{ADDR}/", "cafile": "{DATA}/web/ca/ca.crt", "sni": "peer.test", "wait_ms": 8000, "same_as": "{FIXTURES}/web/static/index.html"}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "h2", "http": "GET", "url": "http://{ADDR2}/ca.crt", "wait_ms": 3000, "same_as": "{DATA}/web/ca/ca.crt", "mask_headers": ["Content-Length"]}
+{"id": "$id", "ok": true, "result": {"status": 200, "body": "{SAME_AS_FILE}"}}
+{"id": "h3", "http": "GET", "url": "http://{ADDR2}/ca.key"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "h4", "http": "POST", "url": "http://{ADDR2}/ca.crt", "same_as": "{DATA}/web/ca/ca.crt", "mask_headers": ["Content-Length"]}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "h5", "http": "GET", "url": "https://{ADDR}/api/token/check", "cafile": "{DATA}/web/ca/ca.crt", "sni": "peer.test", "headers": {"Authorization": "Bearer nope"}}
+{"id": "$id", "ok": true, "result": {"status": 401}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# The same, the other way: this port's leaf on the other port's server.
+{"id": "c9", "cli": ["web", "cert", "init", "--name", "mine.test", "--qr", "off"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "v2", "cli": ["web", "serve", "--listen", "{ADDR}", "--ca-listen", "off", "--qr=false"], "bg": "web2", "peer": true}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h6", "http": "GET", "url": "https://{ADDR}/manifest.webmanifest", "cafile": "{DATA}/web/ca/ca.crt", "sni": "mine.test", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x2", "stop": "web2"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# A broken CA is never replaced. (A key file that is PEM but not a key
+# fails with Go's asn1 words, which this port does not copy: CP-R-37.)
+{"id": "w2", "write": "{DATA}/web/ca/ca.key", "text": "no pem here\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "c11", "cli": ["web", "cert", "init", "--name", "x.test", "--qr", "off"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "w3", "write": "{DATA}/web/ca/ca.crt", "text": "no pem here\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "c12", "cli": ["web", "cert", "init", "--name", "x.test", "--qr", "off"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "c13", "cli": ["web", "cert", "show"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w4", "write": "{DATA}/web/ca/leaf.crt", "text": "no pem here\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "c14", "cli": ["web", "cert", "show"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# A key with no certificate is a partial CA: refused, the key kept.
+{"id": "c15", "cli": ["web", "cert", "init", "--name", "x.test", "--qr", "off", "--ca-dir", "{WORK}/ca2"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "c16", "cli": ["web", "cert", "init", "--name", "x.test", "--qr", "off", "--ca-dir", "{WORK}/ca3"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w5", "write": "{WORK}/ca4/ca.key", "text": "kept\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "c17", "cli": ["web", "cert", "init", "--name", "x.test", "--qr", "off", "--ca-dir", "{WORK}/ca4"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "l2", "ls": "{WORK}/ca4"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "c18", "cli": ["web", "cert", "show", "--ca-dir", "{WORK}/ca2"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "c19", "cli": ["web", "cert", "show", "--ca-dir", "{WORK}/none"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# coppice web cert tailscale, on a fake tailscale.
+# With no name, the name is this box's, from tailscale status.
+{"id": "t1", "cli": ["web", "cert", "tailscale"], "env": {"PATH": "{FIXTURES}/web/bin:/usr/bin:/bin"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "t2", "cli": ["web", "cert", "tailscale", "box.tail1.ts.net"], "env": {"PATH": "{FIXTURES}/web/bin:/usr/bin:/bin"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "t3", "ls": "{DATA}/web/tls"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "t4", "cli": ["web", "cert", "tailscale", "fail.tail1.ts.net", "--dir", "{WORK}/ts"], "env": {"PATH": "{FIXTURES}/web/bin:/usr/bin:/bin"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "t5", "cli": ["web", "cert", "tailscale", "--dir", "{WORK}/ts2", "b.ts.net"], "env": {"PATH": "{FIXTURES}/web/bin:/usr/bin:/bin"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "t6", "cli": ["web", "cert", "tailscale", "a", "b"], "env": {"PATH": "{FIXTURES}/web/bin:/usr/bin:/bin"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "t7", "cli": ["web", "cert", "tailscale", "a.ts.net"], "env": {"PATH": "{WORK}"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# With no tailscale on PATH, serve says so and serves nothing.
+{"id": "t8", "cli": ["web", "serve", "--tls", "tailscale", "--listen", "{ADDR}", "--ca-listen", "off", "--qr=false"], "env": {"PATH": "{WORK}"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}

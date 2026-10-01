@@ -1,0 +1,150 @@
+# The two speech engines of `daisugi voice`, built from the pinned
+# sources exactly as `clients/go/scripts/native.sh --moonshine` and
+# `--parakeet` build them. Not published.
+#
+#   moonshine-cli  Moonshine (moonshine-ai/moonshine at v0.1.5) on
+#                  Microsoft's ONNX Runtime 1.23.2 release
+#   parakeet-cli   CrispASR's Parakeet code and its ggml fork, with
+#                  parakeet-quantize beside it
+#
+# Every source is in source=(), pinned by commit (openDaisugi, Moonshine,
+# CrispASR, ggml) or by sha256 (zig 0.16.0, ONNX Runtime). native.sh finds
+# them in its build directory, checks each one again (the CrispASR files
+# one by one against crispasr-files.sha256, the ggml tree against one
+# sha256) and fetches nothing. The git sources are full clones (about
+# 500 MB for Moonshine and 210 MB for CrispASR); native.sh checks out only
+# the files it builds.
+#
+# Each engine lives in its own directory under /usr/lib/opendaisugi, with
+# a link in /usr/bin. moonshine-cli finds libonnxruntime.so.1 through
+# $ORIGIN/../lib, which the loader resolves through the link, and the
+# daisugi binaries find parakeet-quantize beside the resolved
+# parakeet-cli. A private copy of ONNX Runtime keeps it apart from Arch's
+# onnxruntime package. options=(!strip) keeps every file byte for byte as
+# native.sh's manifest lists it.
+#
+# The ggml CPU code is built for the baseline x86_64 CPU
+# (DAISUGI_PARAKEET_ISA=baseline), so the package runs on any x86_64 box;
+# a box with AVX2 runs faster with `native.sh --parakeet` from a checkout.
+#
+# No model is in either package. The first `daisugi voice serve` with an
+# engine fetches its model into ~/.cache/opendaisugi/models and checks
+# every file against its pinned sha256: Moonshine small from
+# download.moonshine.ai, Parakeet-TDT 0.6B v2 as the F16 GGUF from
+# Hugging Face, then made Q4_K on the box and checked again.
+#
+# _commit is the commit the opendaisugi package pins. Until one exists,
+# the empty _commit makes makepkg stop at the source step, the intent.
+
+pkgbase=opendaisugi-voice
+pkgname=(moonshine-cli parakeet-cli)
+pkgver=0.43.0
+pkgrel=1
+_commit=
+_moonshine=234f60faa0eb388b01cdf7e60aca232af37aefda
+_crispasr=7e2b030780df5c9ad7ede6ac1935bc783b037d18
+_ggml=2f5a80d258c46e6ac8eee95f1328c0f58376d7ee
+_ort=1.23.2
+_zig=0.16.0
+pkgdesc='Speech engines for daisugi voice'
+arch=('x86_64')
+url='https://github.com/levitatingflyfisher/openDaisugi'
+license=('MIT')
+makedepends=('git' 'cmake' 'make' 'gcc' 'curl' 'binutils')
+options=('!strip' '!debug' '!lto')
+source=("openDaisugi::git+${url}.git#commit=${_commit}"
+        "moonshine::git+https://github.com/moonshine-ai/moonshine.git#commit=${_moonshine}"
+        "crispasr::git+https://github.com/CrispStrobe/CrispASR.git#commit=${_crispasr}"
+        "ggml::git+https://github.com/CrispStrobe/ggml.git#commit=${_ggml}"
+        "https://github.com/microsoft/onnxruntime/releases/download/v${_ort}/onnxruntime-linux-x64-${_ort}.tgz"
+        "https://ziglang.org/download/${_zig}/zig-x86_64-linux-${_zig}.tar.xz")
+noextract=("onnxruntime-linux-x64-${_ort}.tgz")
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            '1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b'
+            '70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00')
+
+_env() {
+  export PATH="${srcdir}/zig-x86_64-linux-${_zig}:${PATH}"
+  export ZIG_GLOBAL_CACHE_DIR="${srcdir}/zig-cache"
+  export XDG_CACHE_HOME="${srcdir}/cache"
+  export DAISUGI_NATIVE_BUILD_DIR="${srcdir}/native-build"
+  export DAISUGI_MOONSHINE_PREFIX="${srcdir}/moonshine-prefix"
+  export DAISUGI_PARAKEET_PREFIX="${srcdir}/parakeet-prefix"
+  export DAISUGI_PARAKEET_ISA=baseline
+}
+
+prepare() {
+  _env
+  mkdir -p "${DAISUGI_NATIVE_BUILD_DIR}"
+  ln -sf "${srcdir}/onnxruntime-linux-x64-${_ort}.tgz" "${DAISUGI_NATIVE_BUILD_DIR}/"
+  local d
+  for d in moonshine crispasr ggml; do
+    ln -sfn "${srcdir}/${d}" "${DAISUGI_NATIVE_BUILD_DIR}/${d}"
+  done
+}
+
+build() {
+  _env
+  # native.sh's own compiler flags, not the distribution's: makepkg's
+  # would reach `zig cc`.
+  unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+  cd "${srcdir}/openDaisugi"
+  clients/go/scripts/native.sh --moonshine
+  clients/go/scripts/native.sh --parakeet
+}
+
+check() {
+  _env
+  local checker="${srcdir}/openDaisugi/clients/native/parakeet-cli/check-binary.sh"
+  "${checker}" "${DAISUGI_PARAKEET_PREFIX}/bin/parakeet-cli"
+  "${checker}" --rules "${DAISUGI_PARAKEET_PREFIX}/bin/parakeet-quantize"
+  local p
+  for p in "${DAISUGI_MOONSHINE_PREFIX}" "${DAISUGI_PARAKEET_PREFIX}"; do
+    (cd "${p}" && sha256sum -c --quiet manifest.sha256)
+  done
+  # Run each engine through a link, as /usr/bin runs it: with no
+  # arguments it loads (moonshine-cli finds libonnxruntime.so.1 through
+  # $ORIGIN) and says its usage with exit 2.
+  local links="${srcdir}/links" rc
+  mkdir -p "${links}"
+  ln -sf "${DAISUGI_MOONSHINE_PREFIX}/bin/moonshine-cli" "${DAISUGI_PARAKEET_PREFIX}/bin/parakeet-cli" "${links}/"
+  for p in moonshine-cli parakeet-cli; do
+    rc=0
+    "${links}/${p}" 2>/dev/null || rc=$?
+    [ "${rc}" -eq 2 ] || { echo "check: ${p} through a link exited ${rc}, not 2" >&2; return 1; }
+  done
+}
+
+package_moonshine-cli() {
+  pkgdesc='Moonshine speech engine for daisugi voice (moonshine-cli, with its ONNX Runtime)'
+  # ONNX Runtime links libstdc++ and libgcc_s.
+  depends=('glibc' 'libgcc' 'libstdc++')
+  local d="${pkgdir}/usr/lib/opendaisugi/moonshine"
+  cd "${DAISUGI_MOONSHINE_PREFIX:-${srcdir}/moonshine-prefix}"
+  install -Dm755 bin/moonshine-cli -t "${d}/bin/"
+  install -Dm755 lib/libonnxruntime.so.1 -t "${d}/lib/"
+  install -dm755 "${pkgdir}/usr/bin"
+  ln -s ../lib/opendaisugi/moonshine/bin/moonshine-cli "${pkgdir}/usr/bin/moonshine-cli"
+  local lic="${pkgdir}/usr/share/licenses/${pkgname}"
+  install -Dm644 "${srcdir}/openDaisugi/LICENSE" "${lic}/LICENSE"
+  install -Dm644 share/licenses/moonshine/LICENSE "${lic}/LICENSE-moonshine"
+  install -Dm644 share/licenses/onnxruntime/LICENSE "${lic}/LICENSE-onnxruntime"
+  install -Dm644 share/licenses/onnxruntime/ThirdPartyNotices.txt "${lic}/ThirdPartyNotices-onnxruntime.txt"
+}
+
+package_parakeet-cli() {
+  pkgdesc='Parakeet speech engine for daisugi voice (parakeet-cli and parakeet-quantize)'
+  depends=('glibc')
+  local d="${pkgdir}/usr/lib/opendaisugi/parakeet"
+  cd "${DAISUGI_PARAKEET_PREFIX:-${srcdir}/parakeet-prefix}"
+  install -Dm755 bin/parakeet-cli bin/parakeet-quantize -t "${d}/bin/"
+  install -dm755 "${pkgdir}/usr/bin"
+  ln -s ../lib/opendaisugi/parakeet/bin/parakeet-cli "${pkgdir}/usr/bin/parakeet-cli"
+  local lic="${pkgdir}/usr/share/licenses/${pkgname}"
+  install -Dm644 "${srcdir}/openDaisugi/LICENSE" "${lic}/LICENSE"
+  install -Dm644 share/licenses/crispasr/LICENSE "${lic}/LICENSE-crispasr"
+  install -Dm644 share/licenses/ggml/LICENSE "${lic}/LICENSE-ggml"
+}

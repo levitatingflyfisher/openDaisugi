@@ -1,0 +1,36 @@
+# The messages event: a talk writes a chat line and sends one with chat
+# true. Once a connection subscribed, the server looks at each transcript
+# it reads every half second, and sends one when a pane gets its file and
+# when the file grows. The claude pane names its file from inside, with
+# report.py, once the case writes its go file. The sleeps keep each change
+# in its own look.
+#!config default = "fake"
+#!config [harness.fake]
+#!config command = "{FIXTURES}/fake-foreman.sh"
+#!config [harness.claude]
+#!config command = "/usr/bin/python3"
+#!config args = ["{FIXTURES}/transcripts/report.py"]
+#!watch messages
+#!settle 1500
+{"id":"w1","write":"{WORK}/claude/projects/demo/t.jsonl","text":"{\"type\":\"user\",\"timestamp\":\"2099-01-01T00:00:00Z\",\"cwd\":\"{FIXTURES}\",\"message\":{\"content\":\"first\"}}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"floor.talk","text":"hello"}
+{"id":"$id","ok":true,"result":{"pane":"$f","started":true}}
+{"id":"2","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"alpha","args":["{WORK}/claude/projects/demo/t.jsonl","--when","{WORK}/go"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"s1","sleep":1200}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"3","write":"{WORK}/go","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"4","cmd":"pane.wait_output","pane":"$c","contains":"REPORT ok","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"s2","sleep":1200}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"5","cmd":"pane.messages","pane":"$c"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"0","role":"owner","text":"first"}]}}
+{"id":"w2","write":"{WORK}/claude/projects/demo/t.jsonl","text":"{\"type\":\"user\",\"timestamp\":\"2099-01-01T00:00:00Z\",\"cwd\":\"{FIXTURES}\",\"message\":{\"content\":\"first\"}}\n{\"type\":\"assistant\",\"timestamp\":\"2099-01-01T00:00:01Z\",\"message\":{\"content\":\"second\"}}\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"s3","sleep":1200}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"6","cmd":"pane.messages","pane":"$c","since":"0"}
+{"id":"$id","ok":true,"result":{"messages":[{"role":"agent","text":"second"}]}}

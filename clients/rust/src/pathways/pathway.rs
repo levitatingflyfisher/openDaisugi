@@ -43,8 +43,8 @@ impl Pathway {
 }
 
 fn invalid_validation(e: pmodel::ValidationError) -> PwErr {
-    if e.unreadable_step() {
-        return PwErr::Unreadable("a plan step is a string".into());
+    if let Some(why) = e.unreadable() {
+        return PwErr::Unreadable(why);
     }
     PwErr::Invalid(format!("pydantic_core._pydantic_core.ValidationError: {}", e.text()))
 }
@@ -55,10 +55,25 @@ fn col_value(c: &Col) -> Result<Value, PwErr> {
         Col::Int(i) => Value::Int(i.to_string()),
         Col::Real(f) => Value::Float(*f),
         Col::Text(s) => Value::Str(s.clone()),
-        // A BLOB is bytes in Python; pydantic's str and float read bytes
-        // by rules this port does not carry.
-        Col::Blob => return Err(PwErr::Unreadable("a column holds a BLOB".into())),
+        // A BLOB is bytes in Python: pydantic reads bytes for a str, an int
+        // or a float (and model_validate_json for JSON) as their UTF-8
+        // text, and raises when they are not UTF-8.
+        Col::Blob(b) => match String::from_utf8(b.clone()) {
+            Ok(s) => Value::Str(s),
+            Err(_) => {
+                return Err(PwErr::Invalid("pydantic_core._pydantic_core.ValidationError: the bytes are not UTF-8".into()))
+            }
+        },
     })
+}
+
+/// `json.loads(c)` of a column: bytes are read in the encoding
+/// `json.detect_encoding` picks.
+fn json_loads_col(c: &Col) -> Result<Value, PwErr> {
+    match c {
+        Col::Blob(b) => json_loads(&Value::Str(super::jsonbytes::json_text(b)?)),
+        other => json_loads(&col_value(other)?),
+    }
 }
 
 /// `json.loads(v)`: a str is parsed; any other type raises TypeError.
@@ -112,6 +127,14 @@ pub fn from_row(r: &Row, emb: &Emb) -> Result<Pathway, PwErr> {
             }
             (*ok, text.clone())
         }
+        Emb::Other(Col::Blob(b)) => {
+            let t = super::jsonbytes::json_text(b)?;
+            let ok = scan_embedding(t.as_bytes()).is_some();
+            if !ok {
+                json_loads(&Value::Str(t.clone()))?;
+            }
+            (ok, Some(t))
+        }
         Emb::Other(c) => {
             json_loads(&col_value(c)?)?;
             (false, None)
@@ -130,9 +153,16 @@ pub fn from_row(r: &Row, emb: &Emb) -> Result<Pathway, PwErr> {
         };
         models.push(pmodel::validate_json(id, &s).map_err(invalid_validation)?);
     }
-    let traces = json_loads(&get("source_trace_ids_json")?)?;
-    let params_raw = get("parameters_json")?;
-    let params = if params_raw.truthy() { json_loads(&params_raw)? } else { Value::List(vec![]) };
+    let col = |name: &str| -> Result<&Col, PwErr> {
+        r.get(name).ok_or_else(|| PwErr::Unreadable(format!("the row has no {name} column")))
+    };
+    let traces = json_loads_col(col("source_trace_ids_json")?)?;
+    let params_col = col("parameters_json")?;
+    let params_truthy = match params_col {
+        Col::Blob(b) => !b.is_empty(),
+        c => col_value(c)?.truthy(),
+    };
+    let params = if params_truthy { json_loads_col(params_col)? } else { Value::List(vec![]) };
 
     // CompiledPathway(...): each field in its order.
     let field = |s: &Schema, v: Value| -> Result<Value, PwErr> {

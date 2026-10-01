@@ -46,7 +46,7 @@ func (e *Env) route(args []string) error {
 	if err != nil {
 		return e.usage(cmd, err)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	cheap := p.str("--cheap-model", gateway.DefaultCheapModel)
 	frontier := p.str("--frontier-model", gateway.DefaultFrontierModel)
 	harness := strings.ToLower(pystr.Strip(p.str("--harness", "claude-code")))
@@ -54,7 +54,7 @@ func (e *Env) route(args []string) error {
 	db := filepath.Join(dataDir, "pathways.db")
 	_, statErr := os.Stat(db)
 	hasStore := statErr == nil
-	cfg, err := config.Load(filepath.Join(e.home, ".opendaisugi", "config.yaml"))
+	cfg, err := config.Load(filepath.Join(e.dataHome(), "config.yaml"))
 	if err != nil {
 		return e.refuse(cmd, fmt.Errorf("the config file is not one this binary reads: %w", err))
 	}
@@ -89,6 +89,14 @@ func (e *Env) route(args []string) error {
 		s.Close()
 		if ferr != nil && errors.Is(ferr, pathways.ErrUnreadable) {
 			return e.refuse(cmd, ferr)
+		}
+		// The stale-embeddings UserWarning find prints, as Python's
+		// warnings module prints it under PYTHONWARNINGS; a filter not
+		// modelled is refused (route writes nothing).
+		if ferr == nil && r.Warning != "" {
+			if err := e.staleOnce(r.Warning); err != nil {
+				return e.refuse(cmd, err)
+			}
 		}
 		// A lookup that fails is no match: routing never breaks on the store.
 		if ferr == nil && r.Match != nil {

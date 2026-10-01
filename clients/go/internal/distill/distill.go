@@ -224,7 +224,11 @@ func (d *Distiller) reembedStale() (int, error) {
 		for k, x := range vecs[i] {
 			xs[k] = x
 		}
-		if err := d.S.UpdateEmbedding(r["id"].(string), pyjson.Dumps(xs, true), d.Opt.Identity, pathways.EmbeddingModelVersion); err != nil {
+		id, isText := r["id"].(string)
+		if !isText {
+			return 0, fmt.Errorf("%w: an id is not text", pathways.ErrUnreadable)
+		}
+		if err := d.S.UpdateEmbedding(id, pyjson.Dumps(xs, true), d.Opt.Identity, pathways.EmbeddingModelVersion); err != nil {
 			return 0, err
 		}
 	}

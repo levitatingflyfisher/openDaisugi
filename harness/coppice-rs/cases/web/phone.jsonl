@@ -1,0 +1,137 @@
+# coppice web serve --tls tailscale does the whole job, on the fake
+# tailscale in fixtures/web/bin. The fake's tailnet address is 127.0.0.2,
+# a loopback address a case can bind and reach, so a case can check that
+# the server listens there and on 127.0.0.1, and nowhere else. The fake
+# logs each call to {WORK}/ts.log, and FAKE_TS_DAYS sets how long a new
+# certificate lasts. No case here runs the real tailscale or leaves the box.
+#!env PATH={FIXTURES}/web/bin:/usr/bin:/bin
+#!env FAKE_TS_LOG={WORK}/ts.log
+# With no tailscale on PATH: one line, exit 1, and nothing saved.
+{"id": "n1", "cli": ["web", "serve", "--tls", "tailscale", "--persist"], "env": {"PATH": "{WORK}"}}
+{"id": "$id", "ok": true, "result": {"code": 1, "stdout": "", "stderr": "tailscale is not on PATH. Install Tailscale on this box, then run coppice web serve --tls tailscale again.\n"}}
+{"id": "n2", "cli": ["web", "serve", "--tls", "tailscale"], "env": {"FAKE_TS_STATE": "NeedsLogin"}}
+{"id": "$id", "ok": true, "result": {"code": 1, "stdout": "", "stderr": "Tailscale is not running on this box (it says NeedsLogin). Run tailscale up, then run coppice web serve --tls tailscale again.\n"}}
+{"id": "n3", "cli": ["web", "serve", "--tls", "tailscale"], "env": {"FAKE_TS_HTTPS": "off"}}
+{"id": "$id", "ok": true, "result": {"code": 1, "stdout": "", "stderr": "Tailscale HTTPS certificates are off for this tailnet. Turn on MagicDNS and HTTPS in the Tailscale admin console, then run coppice web serve --tls tailscale again.\n"}}
+{"id": "n4", "cli": ["web", "serve", "--tls", "tailscale", "--listen", "nohost"]}
+{"id": "$id", "ok": true, "result": {"code": 1, "stdout": "", "stderr": "--listen \"nohost\" is not host:port\n"}}
+{"id": "n5", "cli": ["web", "serve", "--tls", "tailscale"], "env": {"FAKE_TS_NAME": "fail.tail1.ts.net"}}
+{"id": "$id", "ok": true, "result": {"code": 1, "stdout": "", "stderr": "tailscale cert failed: fake tailscale: HTTPS is off. If it says access denied, run sudo tailscale set --operator=$USER once, then run coppice web serve --tls tailscale again.\n"}}
+{"id": "l0", "ls": "{DATA}"}
+{"id": "$id", "ok": true, "result": "*"}
+# The whole job: the certificate, the public-logs line the first time, the
+# saved settings, and one line that says where it listens.
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--persist", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h1", "http": "GET", "url": "https://127.0.0.2:{PORT}/api/token/check", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "h2", "http": "GET", "url": "https://127.0.0.1:{PORT}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "h3", "http": "GET", "url": "https://127.0.0.3:{PORT}/", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "refused_ok": true}
+{"id": "$id", "ok": true, "result": {"refused": true}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "Got a certificate for box.tail1.ts.net. It runs out in 90 days.\nThis name is now in public certificate logs: box.tail1.ts.net.\nSaved {DATA}/web/web.json. The coppice server will start the phone server.\nServing https://box.tail1.ts.net:{PORT} on 127.0.0.2:{PORT} and 127.0.0.1:{PORT}. Only the tailnet and this box can reach it.\n"}}
+{"id": "f1", "file": "{DATA}/web/web.json"}
+{"id": "$id", "ok": true, "result": {"mode": "0o600"}}
+{"id": "c1", "file": "{WORK}/ts.log", "count": " box.tail1.ts.net\n"}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+{"id": "l1", "ls": "{DATA}/web"}
+{"id": "$id", "ok": true, "result": "*"}
+# The second start keeps the certificate and prints no certificate line.
+{"id": "v2", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h4", "http": "GET", "url": "https://127.0.0.2:{PORT}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x2", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "Serving https://box.tail1.ts.net:{PORT} on 127.0.0.2:{PORT} and 127.0.0.1:{PORT}. Only the tailnet and this box can reach it.\n"}}
+{"id": "c2", "file": "{WORK}/ts.log", "count": " box.tail1.ts.net\n"}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+# A certificate with under 30 days left is renewed at start, with no
+# public-logs line.
+{"id": "e1", "cli": ["web", "cert", "tailscale"], "env": {"FAKE_TS_DAYS": "10"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "v3", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h5", "http": "GET", "url": "https://127.0.0.1:{PORT}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x3", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "Renewed the certificate for box.tail1.ts.net. It runs out in 90 days.\nServing https://box.tail1.ts.net:{PORT} on 127.0.0.2:{PORT} and 127.0.0.1:{PORT}. Only the tailnet and this box can reach it.\n"}}
+{"id": "c3", "file": "{WORK}/ts.log", "count": " box.tail1.ts.net\n"}
+{"id": "$id", "ok": true, "result": {"count": 3}}
+# A --listen with a host is used as given.
+{"id": "v4", "cli": ["web", "serve", "--tls", "tailscale", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h6", "http": "GET", "url": "https://{ADDR}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "h7", "http": "GET", "url": "https://127.0.0.2:{PORT}/", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "refused_ok": true}
+{"id": "$id", "ok": true, "result": {"refused": true}}
+{"id": "x4", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "Serving https://box.tail1.ts.net:{PORT} on {ADDR}.\n"}}
+# The QR: with a fixed address the sign-in line and the QR are the same on
+# both sides.
+{"id": "q1", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--external-url", "https://box.tail1.ts.net:8443"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h8", "http": "GET", "url": "https://127.0.0.2:{PORT}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x5", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "*"}}
+# A tailnet address the box will not bind (fd7a:115c:a1e0::1 is no address of
+# this box) is skipped with one log line; the serve goes on with the rest.
+{"id": "k1", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--qr=false"], "env": {"FAKE_TS_IPS": "127.0.0.2,fd7a:115c:a1e0::1"}, "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h9", "http": "GET", "url": "https://127.0.0.2:{PORT}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x6", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "Serving https://box.tail1.ts.net:{PORT} on 127.0.0.2:{PORT} and 127.0.0.1:{PORT}. Only the tailnet and this box can reach it.\n", "stderr": "*"}}
+# An address tailscale gives that is not a tailnet address, an empty or
+# unspecified one above all, is skipped with one log line and never bound,
+# so nothing listens on 127.0.0.3.
+{"id": "k0", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--qr=false"], "env": {"FAKE_TS_IPS": ",0.0.0.0,127.0.0.2"}, "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h11", "http": "GET", "url": "https://127.0.0.2:{PORT}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "h12", "http": "GET", "url": "https://127.0.0.3:{PORT}/", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "refused_ok": true}
+{"id": "$id", "ok": true, "result": {"refused": true}}
+{"id": "x8", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0, "stdout": "Serving https://box.tail1.ts.net:{PORT} on 127.0.0.2:{PORT} and 127.0.0.1:{PORT}. Only the tailnet and this box can reach it.\n", "stderr": "*"}}
+# With no tailnet address it can bind, a foreground serve stops.
+{"id": "k2", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--qr=false"], "env": {"FAKE_TS_IPS": "fd7a:115c:a1e0::1"}}
+{"id": "$id", "ok": true, "result": {"code": 1, "stderr": "*"}}
+# A running serve names the certificate it serves, so floor.facts warns
+# about a pair at any path, and the file goes when the serve ends.
+{"id": "k3", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--qr=false", "--cert", "{WORK}/own.crt", "--key", "{WORK}/own.key"], "env": {"FAKE_TS_DAYS": "3"}, "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h10", "http": "GET", "url": "https://127.0.0.1:{PORT}/manifest.webmanifest", "cafile": "{WORK}/own.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "sv1", "file": "{DATA}/web/serving.json", "count": "\"cert_file\":\"{WORK}/own.crt\""}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+{"id": "ff0", "cmd": "floor.facts"}
+{"id": "$id", "ok": true, "result": {"phone_cert_days": 3}}
+# Renew types coppice web cert tailscale: it renews the pair this serve
+# uses, not the default pair.
+{"id": "rn", "cli": ["web", "cert", "tailscale"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "rc", "file": "{WORK}/ts.log", "count": "--cert-file={WORK}/own.crt "}
+{"id": "$id", "ok": true, "result": {"count": 3}}
+{"id": "x7", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "sv2", "file": "{DATA}/web/serving.json"}
+{"id": "$id", "ok": true, "result": {"missing": true}}
+# floor.facts names the certificate's days only under 7 days left.
+{"id": "ff1", "cmd": "floor.facts"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "e2", "cli": ["web", "cert", "tailscale"], "env": {"FAKE_TS_DAYS": "3"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "ff2", "cmd": "floor.facts"}
+{"id": "$id", "ok": true, "result": {"phone_cert_days": 3}}
+# Persisted: the next coppice start serves the phone on the tailnet and
+# loopback, with no command.
+#!restart
+{"id": "g1", "http": "GET", "url": "https://127.0.0.2:{PORT}/api/token/check", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "g2", "http": "GET", "url": "https://127.0.0.3:{PORT}/", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "refused_ok": true}
+{"id": "$id", "ok": true, "result": {"refused": true}}
+{"id": "lg", "log": "web:"}
+{"id": "$id", "ok": true, "result": "*"}

@@ -23,6 +23,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from opendaisugi.datahome import data_home
+
 # State of one candidate module within a stage.
 ACTIVE = "active"  # wired and in use right now
 AVAILABLE = "available"  # installed / present — could be swapped in today
@@ -153,17 +155,15 @@ def _coppice_socket_present(
 
     Checked with lstat so a symlink cannot lie. The path formula matches
     ``floor.coppice_backend.default_socket_path``: the runtime dir when
-    ``XDG_RUNTIME_DIR`` is set, else ``home`` joined with
-    ``.opendaisugi/coppice``. ``home`` and ``env`` exist so a test can point
+    ``XDG_RUNTIME_DIR`` is set, else the data home
+    (``opendaisugi.datahome``) joined with ``coppice``. ``home`` and ``env`` exist so a test can point
     this at a fixture directory and a fixture environment instead of the
     real ``Path.home()`` and ``os.environ``, the same isolation
     ``default_socket_path(env=...)`` already gives its own caller.
     """
     env = os.environ if env is None else env
     runtime = env.get("XDG_RUNTIME_DIR")
-    base = (
-        Path(runtime) / "coppice" if runtime else (home or Path.home()) / ".opendaisugi" / "coppice"
-    )
+    base = Path(runtime) / "coppice" if runtime else data_home(env, home) / "coppice"
     try:
         st = os.lstat(base / "server.sock")
     except OSError:
@@ -209,6 +209,7 @@ def detect_stages(
     home: Path | None = None,
     which: Callable[[str], str | None] = shutil.which,
     env: Mapping[str, str] | None = None,
+    parakeet_ok: bool = True,
 ) -> list[Stage]:
     """Build the wiring snapshot for ``data_dir`` (read-only, best-effort).
 
@@ -216,7 +217,9 @@ def detect_stages(
     ``shutil.which``) exist so the floor stage's herdr detection is
     testable without touching the real ``~/.claude/settings.json`` or PATH.
     ``env`` (default ``os.environ``) isolates the coppice socket check from
-    the real ``XDG_RUNTIME_DIR`` the same way.
+    the real ``XDG_RUNTIME_DIR`` the same way. ``parakeet_ok`` is
+    voice.models.parakeet_usable() as the caller found it; the layer may
+    not import voice (ADR-0020), so the floor-side callers pass it in.
     """
     from opendaisugi.onboarding import default_transcript_roots, gather_status
 
@@ -252,7 +255,6 @@ def detect_stages(
     matcher_cfg = load_config(data_dir / "config.yaml")
     matcher_sel = matcher_cfg.matcher_model
     switchyard_row = _switchyard_module(matcher_cfg.gateway_router, which)
-    voice_sel = matcher_cfg.voice_engine
     # Both hooks are required for ACTIVE — one alone is a half-wired install,
     # not a working floor report (Fix round 1, Finding 1c).
     herdr_stop_on = _claude_hook_installed("--event stop", event="Stop", home=home)
@@ -348,7 +350,37 @@ def detect_stages(
         )
 
     faster_whisper_installed = _have("faster_whisper")
-    sherpa_onnx_installed = _have("sherpa_onnx")
+    whisper_cli_on_path = which("whisper-cli") is not None
+    moonshine_cli_on_path = which("moonshine-cli") is not None
+    parakeet_cli_on_path = which("parakeet-cli") is not None
+    # The engine the config means (engines.resolve_engine): with the voice
+    # settings unset or at their defaults, the engine the hardware picks
+    # among those installed (VO-17).
+    voice_engine, voice_model = matcher_cfg.voice_engine, matcher_cfg.voice_model
+    if voice_engine == "faster-whisper" and voice_model == "tiny.en":
+        from opendaisugi.hardware import choose_engine, detect_voice_hardware
+
+        installed = {
+            name
+            for name, there in (
+                ("faster-whisper", faster_whisper_installed),
+                ("moonshine", moonshine_cli_on_path),
+                ("parakeet", parakeet_cli_on_path),
+            )
+            if there
+        }
+        voice_sel, voice_model, _line = choose_engine(
+            detect_voice_hardware(env),
+            installed,
+            faster_whisper_installed,
+            parakeet_ok=parakeet_ok,
+        )
+    else:
+        voice_sel = voice_engine
+    moonshine_model = (
+        voice_model if voice_sel == "moonshine" and voice_model != "tiny.en" else "small"
+    )
+    parakeet_note = "model NVIDIA Parakeet-TDT-0.6B v2, CC-BY-4.0"
 
     def _voice_state(key: str, installed: bool) -> str:
         if voice_sel == key and installed:
@@ -612,11 +644,25 @@ def detect_stages(
                     else "needs opendaisugi[voice]",
                 ),
                 Module(
+                    "moonshine",
+                    _voice_state("moonshine", moonshine_cli_on_path),
+                    f"moonshine-cli on PATH; {moonshine_model}, fetched on first use"
+                    if moonshine_cli_on_path and moonshine_model in ("tiny", "small", "medium")
+                    else "moonshine-cli on PATH"
+                    if moonshine_cli_on_path
+                    else "needs moonshine-cli on PATH (scripts/install.sh)",
+                ),
+                Module(
                     "parakeet",
-                    AVAILABLE if sherpa_onnx_installed else POSSIBLE,
-                    "needs a downloaded model directory"
-                    if sherpa_onnx_installed
-                    else "needs opendaisugi[voice-parakeet]",
+                    _voice_state("parakeet", parakeet_cli_on_path),
+                    f"parakeet-cli on PATH; {parakeet_note}"
+                    if parakeet_cli_on_path
+                    else f"needs parakeet-cli on PATH (scripts/install.sh); {parakeet_note}",
+                ),
+                Module(
+                    "whisper.cpp",
+                    _voice_state("whisper.cpp", whisper_cli_on_path),
+                    "whisper-cli on PATH" if whisper_cli_on_path else "needs whisper-cli on PATH",
                 ),
             ],
         ),
@@ -634,6 +680,7 @@ def render_wiring(
     plain: bool | None = None,
     home: Path | None = None,
     which: Callable[[str], str | None] = shutil.which,
+    parakeet_ok: bool = True,
 ) -> str:
     """Render the wiring snapshot as an ASCII pipeline.
 
@@ -646,7 +693,7 @@ def render_wiring(
     from opendaisugi import console
 
     g = console.glyphs() if plain is None else (console.ASCII_BOX if plain else console.BOX)
-    stages = detect_stages(data_dir, home=home, which=which)
+    stages = detect_stages(data_dir, home=home, which=which, parakeet_ok=parakeet_ok)
     out: list[str] = []
     out.append(f"openDaisugi — module wiring   (data dir: {data_dir})")
     out.append("")
@@ -705,11 +752,12 @@ def wiring_json(
     *,
     home: Path | None = None,
     which: Callable[[str], str | None] = shutil.which,
+    parakeet_ok: bool = True,
 ) -> str:
     """Render the wiring snapshot as JSON.
 
     ``home`` and ``which`` pass straight through to detect_stages(), the
     same isolation render_wiring() already offers.
     """
-    stages = detect_stages(data_dir, home=home, which=which)
+    stages = detect_stages(data_dir, home=home, which=which, parakeet_ok=parakeet_ok)
     return json.dumps([asdict(s) for s in stages], indent=2)

@@ -45,6 +45,28 @@ path = "src/bin/envelope_probe.rs"
 name = "l-probe"
 path = "src/bin/l_probe.rs"
 
+[[bin]]
+name = "voice-probe"
+path = "src/bin/voice_probe.rs"
+
+# A test instrument for clients/alias_compare.py: the alias registry on
+# the oracle's cases. It is not shipped.
+[[bin]]
+name = "alias-probe"
+path = "src/bin/alias_probe.rs"
+
+# A test instrument for clients/robotics_compare.py: the robotics executors
+# on the robotics cases. It is not shipped.
+[[bin]]
+name = "robot-probe"
+path = "src/bin/robot_probe.rs"
+required-features = ["mujoco"]
+
+[[bin]]
+name = "vla-probe"
+path = "src/bin/vla_probe.rs"
+required-features = ["mujoco"]
+
 [lib]
 name = "daisugi_verify"
 path = "src/lib.rs"
@@ -75,6 +97,20 @@ miniz_oxide = "0.8"
 # ed25519 signing and verifying for pathway bundles and release
 # manifests. Already in the tree through rustls.
 ring = "0.17"
+
+[features]
+# The robotics executors over MuJoCo (src/mujoco, src/robotics), the VLA
+# executor over ONNX Runtime (src/ort, src/smolvla) and their probe. Off by
+# default: the shipped binaries never link MuJoCo or ONNX Runtime. Needs the
+# prefixes clients/go/scripts/native.sh --mujoco and --onnxruntime install,
+# a C compiler, and libmujoco.so and libonnxruntime.so.1 on the loader's
+# path at run time.
+mujoco = ["dep:cc"]
+
+[build-dependencies]
+# Compiles the shared C layer clients/native/mujoco/dmj.c. Already in the
+# tree through tree-sitter.
+cc = { version = "1", optional = true }
 
 [profile.release]
 opt-level = 3

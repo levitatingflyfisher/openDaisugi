@@ -338,6 +338,11 @@ func Post(w *Wire, body []byte, timeout float64, proxies *netproxy.Httpx) (int, 
 			if refusal.Fails != "" {
 				return 0, "", fail("the model call could not start: " + refusal.Fails)
 			}
+			if refusal.Invalid != "" {
+				// httpx.InvalidURL is not an error post() catches: it
+				// reaches the caller as it is.
+				return 0, "", fail(refusal.Invalid)
+			}
 			return 0, "", fmt.Errorf("%w, under a proxy setting it reads as httpx does: %s", ErrUnsupported, refusal.Unported)
 		case errors.As(err, &status):
 			return 0, "", fail(fmt.Sprintf("the proxy refused the model call: %d %s", status.Code, status.Reason))

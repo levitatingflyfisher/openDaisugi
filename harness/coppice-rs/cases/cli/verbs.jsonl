@@ -1,0 +1,272 @@
+# The command line: each command's stdout, stderr and exit code against
+# a scratch server. The driver names the socket and the data dir.
+# The top level: help, version, the floor on a pipe, unknown options.
+{"id": "h", "cli": ["--help"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "h2", "cli": ["-h"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "v", "cli": ["--version"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "floor", "cli": []}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "opt", "cli": ["--bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "rem0", "cli": ["--remote"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "unk", "cli": ["nosuchword"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# The server commands.
+{"id": "st", "cli": ["server", "status"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "stj", "cli": ["server", "status", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "tok", "cli": ["server", "token"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "tokj", "cli": ["server", "token", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "start", "cli": ["server", "start"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "startj", "cli": ["server", "start", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "s0", "cli": ["server"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s1", "cli": ["server", "bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s2", "cli": ["server", "status", "--bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s3", "cli": ["server", "status", "extra"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "s4", "cli": ["server", "start", "--json", "--foreground", "--x"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# Workspaces and tabs.
+{"id": "w1", "cli": ["workspace", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w2", "cli": ["workspace", "list", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w3", "cli": ["workspace", "create", "--label", "second", "--cwd", "{START}"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w4", "cli": ["workspace", "create", "--label"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "w5", "cli": ["workspace"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "w6", "cli": ["workspace", "bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "t1", "cli": ["tab", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "t2", "cli": ["tab", "create", "--label", "t <&> x"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "t3", "cli": ["tab", "list", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "t4", "cli": ["tab", "create", "--", "x"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "t5", "cli": ["tab", "list", "--workspace", "w9"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# Panes. The first one is made by a request, so its id is bound.
+{"id": "p", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "stty -echo; echo ready; exec cat"], "label": "cat"}
+{"id": "$id", "ok": true, "result": {"pane": "$p"}}
+{"id": "pr", "cmd": "pane.wait_output", "pane": "$p", "contains": "ready"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "p1", "cli": ["pane", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p2", "cli": ["pane", "list", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p3a", "cli": ["pane", "create", "--label", "nocwd", "--", "/bin/true"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p3", "cli": ["pane", "create", "--cwd", "{START}", "--label", "sleeper", "--cols", "90", "--rows", "20", "--", "/bin/sleep", "600"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p4", "cli": ["pane", "create", "--cols", "x", "--", "/bin/true"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p5", "cli": ["pane", "send-text", "$p", "hello", "there"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p6", "cli": ["pane", "send-keys", "$p", "enter"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "pw", "cmd": "pane.wait_output", "pane": "$p", "contains": "hello there"}
+{"id": "$id", "ok": true, "result": "*"}
+{"id": "p7", "cli": ["pane", "read", "$p"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p8", "cli": ["pane", "read", "$p", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p9", "cli": ["pane", "send-text", "$p", "--no-enter", "x"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p10", "cli": ["pane", "run", "$p", "line", "two"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p11", "cli": ["pane", "wait-output", "$p", "--contains", "line two", "--timeout", "3000"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p12", "cli": ["pane", "wait-output", "$p", "--contains", "never", "--timeout", "300"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p13", "cli": ["pane", "resize", "$p", "--cols", "100", "--rows", "30"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p14", "cli": ["pane", "explain", "$p"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p15", "cli": ["pane", "rename", "$p", "new", "name"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p16", "cli": ["pane", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "p17", "cli": ["pane", "send-text"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p18", "cli": ["pane", "bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p19", "cli": ["pane", "read", "$p", "--bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p20", "cli": ["pane", "close", "w9:p9"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p21", "cli": ["pane", "list", "--ended", "3"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p22", "cli": ["pane", "send-keys", "$p", "nokey"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p23", "cli": ["pane", "fork", "$p"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p24", "cli": ["pane", "trust", "$p", "--not-now"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p25", "cli": ["pane", "forget"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p26", "cli": ["pane", "resume", "$p"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "p27", "cli": ["pane", "read", "$p", "--source", "plain", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# Agents.
+{"id": "a1", "cli": ["agent", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "a2", "cli": ["agent", "list", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "a3", "cli": ["agent", "get", "$p"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "a4", "cli": ["agent", "get", "$p", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "a5", "cli": ["agent", "read", "$p", "--region", "bottom"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "a5b", "cli": ["agent", "read", "$p", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "a6", "cli": ["agent", "wait", "w9:p9", "--until", "done", "--timeout", "300"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "a7", "cli": ["agent", "prompt", "$p", "--wait", "5000"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "a9", "cli": ["agent", "allow", "$p", "a1", "--reason", "fine"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "a10", "cli": ["agent", "deny", "$p", "a1"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "a11", "cli": ["agent", "allow"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# The floor and sessions.
+{"id": "f1", "cli": ["floor", "note", "a", "note"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "f2", "cli": ["floor", "note", "from", "a", "pane"], "env": {"COPPICE_PANE": "$p"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "f3", "cli": ["floor", "bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "f4", "cli": ["session", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "f5", "cli": ["session", "stop", "w9:p9"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "f6", "cli": ["floor", "talk", "hi"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# Tasks.
+{"id": "k1", "cli": ["task", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k2", "cli": ["task", "list", "--tree"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k3", "cli": ["task", "create", "--label", "build", "--cwd", "."]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k4", "cli": ["task", "create", "--label", "child", "--parent", "t1", "--model", "m"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k5", "cli": ["task", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k6", "cli": ["task", "list", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "kp", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sleep", "600"], "label": "worker", "task": "t2"}
+{"id": "$id", "ok": true, "result": {"pane": "$w"}}
+{"id": "k7", "cli": ["task", "list", "--tree"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k8", "cli": ["task", "list", "--tree", "--json"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "k9", "cli": ["task", "set-foreman", "t1", "--pane", "$p"]}
+{"id": "$id", "ok": true, "result": {"code": "*"}}
+{"id": "k10", "cli": ["task", "move", "t2", "--parent", "t1"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k11", "cli": ["task", "close"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "k12", "cli": ["task", "close", "t2"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k13", "cli": ["task", "list", "--tree"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "k14", "cli": ["task", "bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# Skills.
+{"id": "sk1", "cli": ["skill", "foreman"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "sk2", "cli": ["skill"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "sk3", "cli": ["skill", "nope"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# Attach and the tmux mirror refuse a pipe and a bad flag first.
+{"id": "at1", "cli": ["attach", "$p"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "at2", "cli": ["attach", "--x"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "tm1", "cli": ["tmux-mirror"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "tm2", "cli": ["tmux-mirror", "--session"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "tm3", "cli": ["tmux-mirror", "--bogus"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "tm4", "cli": ["tmux-mirror", "--session", "nosuch", "--tmux-socket", "{WORK}/tmux.sock"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# --stdio speaks the protocol on stdin and stdout.
+{"id": "io", "cli": ["--stdio"], "stdin": "{\"id\":\"1\",\"cmd\":\"workspace.list\"}\n{\"id\":\"2\",\"cmd\":\"server.status\"}\n"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# --remote, through a fake ssh that runs the side's own binary.
+{"id": "r1", "cli": ["--remote", "foo", "pane", "list"]}
+{"id": "$id", "ok": true, "result": {"code": 3}}
+{"id": "r2", "cli": ["--remote", "ssh://box", "pane", "list"], "env": {"PATH": "{FIXTURES}/cli/bin:/usr/bin:/bin", "FAKE_SSH_BIN": "{BIN}", "FAKE_SSH_SOCK": "{SOCK}"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "r3", "cli": ["--remote", "ssh://box", "server", "status", "--json"], "env": {"PATH": "{FIXTURES}/cli/bin:/usr/bin:/bin", "FAKE_SSH_BIN": "{BIN}", "FAKE_SSH_SOCK": "{SOCK}"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "r4", "cli": ["--remote", "ssh://box", "attach", "$p"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "r5", "cli": ["--remote", "ssh://box", "server", "start"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "r6", "cli": ["--remote", "ssh://box", "project", "add", "."]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "r7", "cli": ["--remote", "ssh://box", "open", "pi"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "r8", "cli": ["--remote", "ssh://box", "new"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "r9", "cli": ["--remote", "ssh://box", "tmux-mirror"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "r10", "cli": ["--remote", "ssh://box"]}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "r11", "cli": ["--remote", "ssh://box", "pane", "close", "w9:p9"], "env": {"PATH": "{FIXTURES}/cli/bin:/usr/bin:/bin", "FAKE_SSH_BIN": "{BIN}", "FAKE_SSH_SOCK": "{SOCK}"}}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+{"id": "r12", "cli": ["--remote", "ssh://box", "floor", "note", "far"], "env": {"PATH": "{FIXTURES}/cli/bin:/usr/bin:/bin", "FAKE_SSH_BIN": "{BIN}", "FAKE_SSH_SOCK": "{SOCK}", "COPPICE_PANE": "$p"}}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# No server on the alt socket, and autostart is off.
+{"id": "n1", "cli": ["pane", "list"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 3}}
+{"id": "n2", "cli": ["server", "status"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 3}}
+{"id": "n3", "cli": ["server", "stop"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "n4", "cli": ["server", "stop", "--json"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "n5", "cli": ["attach"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 1}}
+# A detached server on the alt socket, then a dial that starts one.
+{"id": "d1", "cli": ["server", "start"], "alt": true, "autostart": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "d2", "cli": ["server", "status"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "d3", "cli": ["server", "stop"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "d4", "cli": ["pane", "list"], "alt": true, "autostart": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "d5", "cli": ["server", "stop", "--json"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# pane close prints every scalar of the reply.
+{"id": "z1", "cli": ["pane", "close", "$p"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "z2", "cli": ["pane", "list", "--ended"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "z3", "cli": ["server", "stop"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "z4", "cli": ["server", "stop"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}

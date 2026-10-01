@@ -6,22 +6,46 @@ until you turn it on.
 
 ## Turn it on
 
-The default engine is faster-whisper. Install its extra, create a token,
-then start the server. Every request needs the token now, including one
-from this same box, so `daisugi voice serve` will not start without it.
+Create a token, then start the server. Every request needs the token,
+including one from this same box, so `daisugi voice serve` will not start
+without it.
 
 ```bash
-uv add 'opendaisugi[voice]'
 coppice web token
 daisugi voice serve
 ```
 
 This binds `127.0.0.1:7477`. It answers `GET /health`, `POST /transcribe`, and
-`POST /deliver`. On first use it downloads the `tiny.en` speech model. The
-download is about 78 MB. It stays cached after that.
+`POST /deliver`. coppice starts it for you, so on a floor you often need
+neither command.
 
-If you use Parakeet instead, see "A second engine: Parakeet" below. You do
-not need the faster-whisper extra for that path.
+With no voice settings in `config.yaml` (or `voice_engine: faster-whisper`
+with `voice_model: tiny.en`, the defaults), the engine follows the box's
+hardware, and the server says in one line which it chose and why:
+
+- Parakeet v2 on a desktop with at least 8 GB of RAM and 4 cores;
+- else Moonshine small with at least 2 GB;
+- else faster-whisper `tiny.en` where the Python build has its extra
+  (`uv add 'opendaisugi[voice]'`), and Moonshine small otherwise.
+
+The first of these whose program is installed wins, so a box without
+`parakeet-cli` gets Moonshine, and the line says that `parakeet-cli` is
+not on PATH. The Go and Rust daisugi never load faster-whisper. Each
+engine says on first use that it is fetching its model, and how big it
+is: Parakeet v2 fetches 1237 MB once and keeps a 397 MB file, Moonshine
+small is 142 MB, faster-whisper's `tiny.en` 78 MB. faster-whisper keeps
+its model in the Hugging Face cache (`~/.cache/huggingface`); Parakeet's
+and Moonshine's stay in `~/.cache/opendaisugi/models` (or under
+`$XDG_CACHE_HOME`). If the fetch fails, the message says so; run `daisugi
+voice serve` again to retry.
+
+Parakeet and Moonshine run as `parakeet-cli` and `moonshine-cli`, small
+programs `scripts/install.sh` builds (`clients/go/scripts/native.sh
+--parakeet` and `--moonshine`) and links onto PATH. Each runs as one
+child of the voice server that loads its model once, before the server
+listens, and keeps it loaded. If the child stops, the server starts it
+again; a clip that comes while it loads gets `503 engine_loading`. Try
+again a moment later.
 
 The server starts even with no pane backend running. Preview mode never
 needs one. Direct send does: an armed pane that asks for direct send with no
@@ -116,25 +140,71 @@ when a CUDA device is actually visible on this box. Otherwise it runs on CPU
 with no error. Some GPUs have crashed other local model inference under CUDA.
 A working CPU path beats a broken GPU one.
 
-## A second engine: Parakeet
+## Choose an engine
 
-faster-whisper is the default engine. Parakeet is a second engine you can opt
-into. It needs the `opendaisugi[voice-parakeet]` extra, which installs
-`sherpa-onnx`, and a downloaded model directory. The model archive is about
-460 MB. Set `voice_engine` to `parakeet` and `voice_model` to the extracted
-model directory to switch. `daisugi voice serve` reads only the engine you
-configured, so a Parakeet-only box never needs faster-whisper installed.
+| `voice_engine` | `voice_model` | Needs |
+|---|---|---|
+| `parakeet` | `v2` (the default), fetched once at a pinned digest and made Q4_K on this box; or the path of a Parakeet-TDT GGUF file | `parakeet-cli` on PATH (and `parakeet-quantize` beside it, for `v2`) |
+| `moonshine` | `tiny`, `small` (the default) or `medium`, fetched once at a pinned digest; or a Moonshine streaming model directory | `moonshine-cli` on PATH |
+| `faster-whisper` | a model name such as `tiny.en` or `base.en` | the `[voice]` extra; the Python build only |
+| `whisper.cpp` | the path of a ggml model file | `whisper-cli` on PATH; it runs once per clip |
+
+On this box (a 4-core 2017 laptop CPU), on real speech, Parakeet v2
+answers a 5 s clip in about 1.1 s with 2.5 to 3.5 times fewer errors than
+`tiny.en`; Moonshine small takes about 1.5 s; `tiny.en` about 0.45 s. See
+docs/research/stt-2026-10.md, "Measured again with the resident engines".
+
+Parakeet v2 is NVIDIA's model, under CC-BY-4.0; the attribution is in
+NOTICE.
+
+Every model is fetched at a pinned Hugging Face commit (or, for Moonshine,
+a dated directory) and each file is checked against its sha256.
+
+### Parakeet v2 on aarch64
+
+The Q4_K file that `parakeet-quantize` makes is pinned for x86_64 only. On
+any other machine, `voice_model: v2` stops with one line and fetches
+nothing; the path of a Parakeet GGUF file still works. To pin the aarch64
+result, on an aarch64 box (or under `qemu-aarch64` user-mode emulation):
+
+1. Build the engine: `clients/go/scripts/native.sh --parakeet` (every file
+   but the ggml CPU code is built for the baseline CPU with
+   `-ffp-contract=off`).
+2. Fetch the F16 file at the pinned commit, and check it:
+
+   ```bash
+   curl -LO https://huggingface.co/cstr/parakeet-tdt-0.6b-v2-GGUF/resolve/8878172f3c45ba231fac8cfd4aff2542b13bc875/parakeet-tdt-0.6b-v2.gguf
+   sha256sum parakeet-tdt-0.6b-v2.gguf   # c82b001dcb0adecd36f7401e4b77c7257eb352462368b89cf3ee13184206d7f7
+   ```
+
+3. Make the Q4_K file and hash it:
+
+   ```bash
+   "$(clients/go/scripts/native.sh --print-parakeet)/bin/parakeet-quantize" \
+     parakeet-tdt-0.6b-v2.gguf q4k.gguf q4_k
+   sha256sum q4k.gguf
+   ```
+
+4. If the hash is the x86_64 one
+   (`764c4e6738b0b38c53bbfea040f9e07425d6d742df58b18906053085aea46b1c`),
+   add `aarch64` to `PARAKEET_QUANT_ARCHES` in `voice/pins.py`, Go's
+   `ParakeetQuantArches` and Rust's `PARAKEET_QUANT_ARCHES`. If it is not,
+   the quantized pin becomes one per machine: record the new hash beside
+   the old one in all three. Run it twice to be sure the result is stable.
 
 ## What leaves the box
 
-Nothing, by default. The clip is decoded and transcribed in process, the
-grant files under `<data-dir>/voice/armed` are local, and the token file is
+No audio and no text, by default. The clip is decoded and transcribed on
+this box (in process, or by `parakeet-cli`, `moonshine-cli` or `whisper-cli`), the grant
+files under `<data-dir>/voice/armed` are local, and the token file is
 local. With cleanup on, the transcript is also journaled to
-`<data-dir>/gateway/turns.jsonl`, exactly as a typed prompt is. The one
-outbound call in the whole path is the optional cleanup pass, off by
-default, which goes wherever `voice_cleanup_model` and
-`voice_cleanup_base_url` point. Naming a hosted model there is the one way
-your transcript leaves your own machines.
+`<data-dir>/gateway/turns.jsonl`, exactly as a typed prompt is. The first
+use of a model fetches it: faster-whisper's and Parakeet's from Hugging
+Face, Moonshine's from download.moonshine.ai. Those requests name the model file and carry
+nothing of yours. The one outbound call that carries your words is the
+optional cleanup pass, off by default, which goes wherever
+`voice_cleanup_model` and `voice_cleanup_base_url` point. Naming a hosted
+model there is the one way your transcript leaves your own machines.
 
 ## If something goes wrong
 

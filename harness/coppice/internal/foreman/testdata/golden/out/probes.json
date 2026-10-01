@@ -1,0 +1,81 @@
+[
+  {
+    "op": "zoom",
+    "id": 0,
+    "n": 1,
+    "out": "long entry 0: gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; gate status and plan; "
+  },
+  {
+    "op": "zoom",
+    "id": 40,
+    "n": 1,
+    "out": "split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me across messages. split me a"
+  },
+  {
+    "op": "zoom",
+    "id": 45,
+    "n": 1,
+    "out": "word for word: {\"out\":\"a\\nb\"} and 100% kept"
+  },
+  {
+    "op": "zoom",
+    "id": 0,
+    "n": 64,
+    "out": "0+32|m c long entry 0: gate status and plan; ga | entry 8: spawn pane envelope coppice gat m entry 16: sprig report worker ledger spa | entry 24: envelope entry 25: ledger spaw\n32+32|m entry 32: worker ledger spawn pane envel | c split me across messages. split me acr m <b>html</b> & \"quotes\" \\ back\tslash  ent | entry 52: worker ledger spawn pane envel\n"
+  },
+  {
+    "op": "zoom",
+    "id": 64,
+    "n": 32,
+    "out": "64+16|m entry 60: gate entry 61: pane envelope c | entry 68: spawn pane envelope coppice ga\n80+16|m entry 76: sprig report worker ledger spa | entry 84: envelope entry 85: ledger spaw\n"
+  },
+  {
+    "op": "zoom",
+    "id": 128,
+    "n": 16,
+    "out": "128+8|entry 124: envelope coppice gate brief sprig entry 125: ledger spawn pane envelope coppice gate brief sprig report worker ledger spawn c long entry 126: sprig status and plan; sprig status and plan entry 127: coppice gate entry 128: spawn pane envelope coppice gate brief sprig report worker entry 129: report worker ledger spawn entry 130: gate brief sprig report worker ledger spawn pane envelope coppice gate entry 131: pane envelope coppice gate brief sprig\n136+8|entry 132: worker entry 133: brief sprig report worker ledger spawn pane envelope entry 134: envelope coppice gate c long entry 135: ledger status and plan; ledger status and pl entry 136: sprig report worker ledger spawn entry 137: coppice gate brief sprig report worker ledger spawn pane envelope coppice gate entry 138: spawn pane envelope coppice gate brief sprig entry 139: report worker\n"
+  },
+  {
+    "op": "zoom",
+    "id": 160,
+    "n": 2,
+    "out": "160+1|entry 156: sprig\n161+1|entry 157: coppice gate brief sprig report worker ledger spawn\n"
+  },
+  {
+    "op": "zoom",
+    "id": 3,
+    "n": 2,
+    "err": true
+  },
+  {
+    "op": "zoom",
+    "id": 0,
+    "n": 512,
+    "err": true
+  },
+  {
+    "op": "date",
+    "id": 0,
+    "out": "2026-10-07T23:30:00Z"
+  },
+  {
+    "op": "date",
+    "id": 29,
+    "out": "2026-10-07T23:59:00Z"
+  },
+  {
+    "op": "date",
+    "id": 30,
+    "out": "2026-10-08T00:00:00Z"
+  },
+  {
+    "op": "date",
+    "id": 163,
+    "out": "2026-10-08T02:09:00Z"
+  },
+  {
+    "op": "date",
+    "id": 99999,
+    "err": true
+  }
+]

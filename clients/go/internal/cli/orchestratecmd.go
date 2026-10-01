@@ -45,6 +45,7 @@ func (e *Env) orchestrateCmd(args []string) error {
 		{names: []string{"--cost"}, help: "Show a cost figure for the run."},
 		{names: []string{"--data-dir"}, value: true, metavar: "PATH", help: "Daisugi data dir (pathway store + journal)."},
 		{names: []string{"--json"}, help: "Emit the orchestration result as JSON."},
+		agentOpt,
 	}
 	p, err := parseArgs(args, opts, 1)
 	if err != nil {
@@ -76,6 +77,10 @@ func (e *Env) orchestrateCmd(args []string) error {
 		e.errf("Invalid --stakes %s; choose from ['high', 'low', 'medium'].\n", pystr.Repr(stakes))
 		return exit(2)
 	}
+	agent, err := e.checkAgent(p)
+	if err != nil {
+		return err
+	}
 	if p.has("--llm") {
 		v := p.str("--llm", "")
 		if err := e.checkLLMFlag(v); err != nil {
@@ -84,11 +89,8 @@ func (e *Env) orchestrateCmd(args []string) error {
 		e.env["OPENDAISUGI_LLM_BACKEND"] = v
 		e.Environ = append(e.Environ, "OPENDAISUGI_LLM_BACKEND="+v)
 	}
-	if parallel > 1 {
-		return e.notYet("daisugi orchestrate --max-parallel above 1")
-	}
 	model := p.str("--model", orchestrate.DefaultDecomposeModel)
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	if err := e.renamedBackendAt(cmd, dataDir); err != nil {
 		return err
 	}
@@ -129,13 +131,18 @@ func (e *Env) orchestrateCmd(args []string) error {
 			return e.refuse(cmd, fmt.Errorf("%s", why))
 		}
 	}
-	// A stored pathway embedded under another model makes find warn
-	// (a UserWarning this binary does not print): refused here, before
-	// anything is written.
+	// A stored pathway embedded under another model makes find warn: a
+	// UserWarning printed at the first find, as Python's warnings module
+	// prints it under PYTHONWARNINGS. A setting whose effect this binary
+	// does not model is refused here, before anything is written.
+	stale := &staleWarner{e: e}
 	if warn, err := findWarning(filepath.Join(dataDir, "pathways.db"), prompt, m.Key, e); err != nil {
 		return e.refuse(cmd, err)
-	} else if warn {
-		return e.refuse(cmd, fmt.Errorf("the pathway store warns of stale embeddings, a warning this binary does not print yet"))
+	} else if warn != "" {
+		pw, _ := e.lookup("PYTHONWARNINGS")
+		if _, ok := userWarningShown(pw, warn); !ok {
+			return e.refuse(cmd, fmt.Errorf("the pathway store warns of stale embeddings under PYTHONWARNINGS=%s, a filter this binary does not read the oracle's way", pystr.Repr(pw)))
+		}
 	}
 	if err := e.echoResolvedAt(dataDir); err != nil {
 		return e.refuse(cmd, err)
@@ -167,6 +174,7 @@ func (e *Env) orchestrateCmd(args []string) error {
 			Cache: cache, Store: store, MatcherKey: m.Key, Potion: e.potionEnv(), Journal: j,
 			MaxRetries: 3, MaxTaskChars: 4000, LLM: c}
 		r, err := envgen.Generate(o)
+		stale.warn(r.FindWarning)
 		if err != nil {
 			return e.orchestrateErr(cmd, err)
 		}
@@ -184,10 +192,15 @@ func (e *Env) orchestrateCmd(args []string) error {
 	if fs, _ := env.Value("fallback").(*pyjson.Object); fs != nil && fs.Value("strategy") == "tier2_recompute" {
 		fallback = supervise.Recompute(c, env, venv, 500)
 	}
-	res, err := orchestrate.Run(orchestrate.Options{LLM: c, Prompt: prompt, Env: env, VEnv: venv, Budget: budget,
+	agentic, err := e.agentic(env, agent)
+	if err != nil {
+		return e.fail(cmd, err)
+	}
+	res, err := orchestrate.Run(orchestrate.Options{LLM: c, Prompt: prompt, Env: env, VEnv: venv, Budget: budget, Agentic: agentic,
 		StrictBudget: p.flag("--strict-budget"), SynthLLM: !p.flag("--deterministic-synthesis"), Store: store,
 		MatcherKey: m.Key, Potion: e.potionEnv(), Threshold: -1, Journal: j, DecomposeModel: model, Environ: e.Environ,
-		Z3TimeoutMs: 500, StepTimeoutS: 180, Ladder: orchestrate.BuildLadder(""), Fallback: fallback})
+		Z3TimeoutMs: 500, StepTimeoutS: 180, Ladder: orchestrate.BuildLadder(""), Fallback: fallback,
+		MaxParallel: int(parallel), Warn: stale.warn})
 	if err != nil {
 		var de *orchestrate.DecompositionError
 		if errors.As(err, &de) && de.NoSteps {
@@ -301,24 +314,24 @@ func (e *Env) orchestrateErr(cmd string, err error) error {
 	return e.fail(cmd, err)
 }
 
-// findWarning reports whether PathwayStore.find(prompt) would warn of
-// stale embeddings, read without writing. A store that is not there, or
+// findWarning is the stale-embeddings warning PathwayStore.find(prompt)
+// would give, or "", read without writing. A store that is not there, or
 // has no table, does not warn.
-func findWarning(db, prompt, key string, e *Env) (bool, error) {
+func findWarning(db, prompt, key string, e *Env) (string, error) {
 	if _, err := os.Stat(db); err != nil {
-		return false, nil
+		return "", nil
 	}
 	s, err := pathways.OpenReadOnly(db)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	defer s.Close()
 	r, err := s.Find(prompt, key, e.potionEnv(), -1)
 	if err != nil {
 		if errors.Is(err, pathways.ErrUnreadable) || errors.Is(err, pathways.ErrNotCarried) {
-			return false, err
+			return "", err
 		}
-		return false, nil
+		return "", nil
 	}
-	return r.Warning != "", nil
+	return r.Warning, nil
 }

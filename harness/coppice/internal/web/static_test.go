@@ -126,7 +126,7 @@ func TestNoStaticFileUsesInlineScriptOrStyle(t *testing.T) {
 func TestEveryFileTheShellNeedsIsEmbedded(t *testing.T) {
 	for _, name := range []string{
 		"index.html", "app.css", "app.js", "grid.js", "chips.js", "roster.js", "pane.js",
-		"tiles.js", "floor.js", "windows.js", "keys.js", "rail.js", "dock.js", "newpane.js", "settings.js", "record.js", "messages.js", "stackbar.js", "overlay.js", "sw.js", "sw-policy.js",
+		"tiles.js", "floor.js", "windows.js", "keys.js", "rail.js", "dock.js", "newpane.js", "chat.js", "settings.js", "record.js", "messages.js", "stackbar.js", "overlay.js", "sw.js", "sw-policy.js",
 		"manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png",
 	} {
 		if _, err := fs.Stat(StaticFiles(), name); err != nil {

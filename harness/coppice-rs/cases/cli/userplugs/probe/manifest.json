@@ -1,0 +1,10 @@
+{
+  "id": "probe",
+  "kind": "policy",
+  "title": "Probe",
+  "about": "It tries verbs and notes what the server says.",
+  "run": "probe.py",
+  "listens": ["note"],
+  "needs": ["floor.note", "pane.list", "task.list"],
+  "config": {"n": 1, "s": "x", "list": [1, 2.5], "nested": {"b": true}}
+}

@@ -44,8 +44,15 @@ run sh -c 'cd "$HOME/work" && daisugi gate init --workspace "$HOME/work"' > "$S/
 run daisugi install --gate --enforce --runtime claude --yes > "$S/install.out" 2>&1 ||
   { cat "$S/install.out" >&2; fail "daisugi install --gate"; }
 [ -f "$S/.claude/settings.json" ] || fail "install wrote no .claude/settings.json"
-cmd="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["PreToolUse"][0]["hooks"][0]["command"])' "$S/.claude/settings.json")" ||
-  fail "settings.json has no PreToolUse hook command"
+# install also writes the capture hook (`daisugi hook record`) beside the
+# gate's, as the Python CLI does; the gate's is the one that is not it.
+cmd="$(python3 -c '
+import json, sys
+cmds = [h["command"] for e in json.load(open(sys.argv[1]))["hooks"]["PreToolUse"] for h in e["hooks"]]
+gate = [c for c in cmds if "hook record" not in c]
+assert len(gate) == 1, cmds
+print(gate[0])' "$S/.claude/settings.json")" ||
+  fail "settings.json has not exactly one PreToolUse gate hook command"
 echo "hook command: $cmd"
 
 allow="{\"session_id\":\"s1\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$S/work/a.txt\"},\"cwd\":\"$S/work\",\"hook_event_name\":\"PreToolUse\"}"

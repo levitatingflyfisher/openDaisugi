@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::config;
-use super::gatecmds::{yaml_to_json, DECOMPOSE_OPT};
+use super::gatecmds::DECOMPOSE_OPT;
 use super::gateroot::{self, join, path_str};
 use super::journalcmd::{result_dump, JOURNAL_DATA_DIR};
 use super::statuscmd::load_json;
@@ -109,7 +109,7 @@ impl Env {
     /// The gate part of `cli._echo_resolved`, which it works out before
     /// it resolves the backend.
     fn gate_state(&self) -> Result<String, String> {
-        let data = join(&self.home, ".opendaisugi");
+        let data = self.data_home();
         if gateroot::is_disarmed(&join(&data, "gate")) {
             return Ok("disarmed".into());
         }
@@ -124,7 +124,8 @@ impl Env {
             Err(why) => return self.refuse(cmd, &why),
         };
         let backend = self.llm_client().backend();
-        self.note(&format!("backend: {backend} · gate: {gate} · data: ~/.opendaisugi"));
+        let shown = self.tilde(&self.data_home());
+        self.note(&format!("backend: {backend} · gate: {gate} · data: {shown}"));
         Ok(())
     }
 
@@ -217,7 +218,13 @@ impl Env {
         let obj = match load_json(body) {
             Ok(Value::Obj(o)) => Some(o),
             Ok(_) => None,
-            Err(_) => decode_dict_text(body),
+            Err(_) => {
+                let d = decode_dict_text(body);
+                if !d.refuse.is_empty() {
+                    return Err(Fail::Unreadable(format!("claude wrote a reply that holds {}", d.refuse)));
+                }
+                d.dict
+            }
         };
         let Some(obj) = obj else { return Ok(None) };
         Ok(Some(obj.get("subtasks").cloned().unwrap_or(Value::List(vec![]))))
@@ -391,8 +398,12 @@ impl Env {
             return self.refuse(CMD, "the episodes file is not UTF-8");
         };
         let v = match load_episodes(&text) {
-            Ok(v) => v,
-            Err(why) => return self.refuse(CMD, why),
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => {
+                self.errf(&format!("Invalid YAML: {}\n", e.msg));
+                return exit(2);
+            }
+            Err(why) => return self.refuse(CMD, &why),
         };
         let obj = match v {
             Value::Obj(o) => o,
@@ -670,26 +681,21 @@ fn mkdtemp(tmpdir: &str) -> std::io::Result<String> {
     Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
 }
 
-/// `yaml.safe_load` for an episodes file: the form `yaml.safe_dump`
-/// writes, or a JSON document.
-fn load_episodes(text: &str) -> Result<Value, &'static str> {
-    let empty = text.split('\n').all(|l| {
-        let t = l.trim();
-        t.is_empty() || t.starts_with('#')
-    });
-    if empty {
-        return Ok(Value::Null);
-    }
-    if let Ok(v) = crate::pathways::dumped::load_dumped(text) {
-        return Ok(v);
-    }
-    let t = strip(text);
-    if t.starts_with('{') || t.starts_with('[') {
-        if let Ok(y) = super::yaml::parse(text) {
-            if let Ok(v) = yaml_to_json(&y) {
-                return Ok(v);
-            }
+/// `yaml.safe_load(episodes_file.read_text())`: the value, or the
+/// yaml.YAMLError the oracle prints (`Ok(Err(exc))`).
+fn load_episodes(text: &str) -> Result<Result<Value, crate::pyyaml::Exc>, String> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    match crate::pyyaml::load(&text) {
+        Err(crate::pyyaml::Fail::Unsupported(why)) => {
+            Err(format!("the episodes file holds YAML this binary does not read ({why})"))
         }
+        Err(crate::pyyaml::Fail::Exc(e)) if e.kind == "ValueError" => {
+            Err("the episodes file makes yaml raise a ValueError, which the oracle does not catch".into())
+        }
+        Err(crate::pyyaml::Fail::Exc(e)) => Ok(Err(e)),
+        Ok(v) => match crate::pyyaml::to_json(&v) {
+            Some(j) => Ok(Ok(j)),
+            None => Err("the episodes file holds a date or a key that is not text".into()),
+        },
     }
-    Err("the episodes file is YAML this binary does not read yet")
 }

@@ -64,6 +64,16 @@ def test_recommendation_is_provisional_and_llamafile_and_hedged():
     assert rec.quant  # a concrete quant suggestion
 
 
+def test_candidate_families_follow_the_catalog():
+    assert recommend_model(_profile(ram_gb=16.0)).candidate_families == [
+        "Granite",
+        "Ministral",
+        "Gemma",
+        "Llama",
+    ]
+    assert recommend_model(_profile(ram_gb=4.0)).candidate_families == ["Granite", "Llama"]
+
+
 def test_cpu_only_recommendation_flags_slowness():
     rec = recommend_model(_profile(ram_gb=16.0, vram_gb=0.0))
     assert "cpu" in rec.rationale.lower()

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -106,6 +107,9 @@ func (DryRun) Run(step *pyjson.Object, _, _ int) (ExecResult, error) {
 		msg = "[dry-run] would skill: " + str(step, "skill_id") + " input=" + pmodel.Repr(step.Value("skill_input"))
 	case "mcp":
 		msg = "[dry-run] would mcp: " + str(step, "server") + "/" + str(step, "tool") + " args=" + pmodel.Repr(step.Value("arguments"))
+	case "agentic":
+		msg = "[dry-run] would agentic: " + pystr.Repr(str(step, "prompt")) + " in " + str(step, "workspace") +
+			" tools=" + pmodel.Repr(step.Value("tools"))
 	default:
 		msg = "[dry-run] unknown step kind: " + pystr.Repr(str(step, "type"))
 	}
@@ -520,39 +524,63 @@ func (sh Shell) Run(step *pyjson.Object, timeoutS, maxOut int) (ExecResult, erro
 	}
 	pw.Close()
 	pgid := cmd.Process.Pid
-	type readOut struct {
-		buf       []byte
-		truncated bool
-	}
-	got := make(chan readOut, 1)
+	// The reader appends to buf as it reads, so the output read so far is
+	// there even when a writer outlives the step and the reader is left.
+	var mu sync.Mutex
+	buf := make([]byte, 0, 4096)
+	truncated := false
+	readerDone := make(chan struct{})
 	go func() {
-		buf := make([]byte, 0, 4096)
+		defer close(readerDone)
 		chunk := make([]byte, 64*1024)
-		for len(buf) < maxOut {
-			n, err := pr.Read(chunk[:min(64*1024, maxOut-len(buf))])
+		for {
+			mu.Lock()
+			room := maxOut - len(buf)
+			mu.Unlock()
+			if room <= 0 {
+				break
+			}
+			n, err := pr.Read(chunk[:min(64*1024, room)])
+			mu.Lock()
 			buf = append(buf, chunk[:n]...)
+			mu.Unlock()
 			if err != nil {
-				got <- readOut{buf, false}
 				return
 			}
 		}
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		got <- readOut{buf, true}
+		mu.Lock()
+		truncated = true
+		mu.Unlock()
 	}()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	deadline := start.Add(time.Duration(timeoutS) * time.Second)
 	timedOut := false
 	select {
 	case <-done:
-	case <-time.After(time.Duration(timeoutS) * time.Second):
+	case <-time.After(time.Until(deadline)):
 		timedOut = true
 		killGroup(pgid, done)
 	}
-	var out readOut
+	// Read to EOF. A background child the shell left can hold the pipe
+	// open after the shell exits, so the wait is bounded by the step's own
+	// time; past it the group is killed and the output read so far is kept.
 	select {
-	case out = <-got:
-	case <-time.After(2 * time.Second):
+	case <-readerDone:
+	case <-time.After(max(0, time.Until(deadline))):
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		select {
+		case <-readerDone:
+		case <-time.After(2 * time.Second):
+		}
 	}
+	mu.Lock()
+	out := struct {
+		buf       []byte
+		truncated bool
+	}{append([]byte(nil), buf...), truncated}
+	mu.Unlock()
 	pr.Close()
 	rc := -1
 	if st := cmd.ProcessState; st != nil {

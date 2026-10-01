@@ -1,0 +1,57 @@
+# A saved tailscale phone server at boot, before tailscale is up: loopback
+# serves at once, the tailnet address is bound once tailscale has it, and
+# the log says so once when it waits and once when it binds. The fake
+# tailscale reports Starting and no address while {WORK}/up does not say
+# up. The first retry comes 2 s after the start.
+#!env PATH={FIXTURES}/web/bin:/usr/bin:/bin
+#!env FAKE_TS_UP_FILE={WORK}/up
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "w1", "write": "{WORK}/up", "text": "up"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--persist", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h1", "http": "GET", "url": "https://127.0.0.2:{PORT}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x1", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+# A foreground serve while tailscale is still starting stops, in one line.
+{"id": "w2", "write": "{WORK}/up", "text": "down"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "n1", "cli": ["web", "serve", "--tls", "tailscale", "--listen", ":{PORT}", "--qr=false"]}
+{"id": "$id", "ok": true, "result": {"code": 1, "stdout": "", "stderr": "Tailscale is not running on this box (it says Starting). Run tailscale up, then run coppice web serve --tls tailscale again.\n"}}
+#!restart
+{"id": "g1", "http": "GET", "url": "https://127.0.0.1:{PORT}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "g2", "http": "GET", "url": "https://127.0.0.2:{PORT}/", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "refused_ok": true}
+{"id": "$id", "ok": true, "result": {"refused": true}}
+{"id": "w3", "write": "{WORK}/up", "text": "up"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "g3", "http": "GET", "url": "https://127.0.0.2:{PORT}/api/token/check", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "wait_ms": 10000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "lg", "log": "web:"}
+{"id": "$id", "ok": true, "result": "*"}
+# A saved --listen with a host is used exactly as given: when tailscale
+# comes up late, nothing listens on the tailnet behind it.
+{"id": "fg", "cli": ["web", "serve", "--forget"]}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+#!restart
+{"id": "v2", "cli": ["web", "serve", "--tls", "tailscale", "--listen", "{ADDR}", "--persist", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "h2", "http": "GET", "url": "https://{ADDR}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "x2", "stop": "web"}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "w5", "write": "{WORK}/up", "text": "down"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+#!restart
+{"id": "g4", "http": "GET", "url": "https://{ADDR}/manifest.webmanifest", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "wait_ms": 8000}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "w6", "write": "{WORK}/up", "text": "up"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "sl", "sleep": 3000}
+{"id": "$id", "ok": true, "result": {"slept": true}}
+{"id": "g5", "http": "GET", "url": "https://127.0.0.2:{PORT}/", "cafile": "{DATA}/web/tls/tailscale.crt", "sni": "box.tail1.ts.net", "refused_ok": true}
+{"id": "$id", "ok": true, "result": {"refused": true}}
+{"id": "lg2", "log": "web:"}
+{"id": "$id", "ok": true, "result": "*"}

@@ -94,10 +94,11 @@ fn plans_would_deny(data_dir: &str) -> usize {
         if !text.contains("dialect") {
             continue;
         }
-        let Ok(Value::Obj(o)) = crate::pathways::dumped::load_dumped(&text) else { continue };
-        let Value::Obj(result) = o.value("result") else { continue };
-        let Value::List(warnings) = result.value("warnings") else { continue };
-        if warnings.iter().any(|w| matches!(w, Value::Str(s) if s.starts_with(prefix))) {
+        let Ok(v) = crate::pyyaml::load(&text) else { continue };
+        let Some(crate::pyyaml::Val::List(warnings)) = v.get("result").and_then(|r| r.get("warnings")) else {
+            continue;
+        };
+        if warnings.iter().any(|w| matches!(w, crate::pyyaml::Val::Str(s) if s.starts_with(prefix))) {
             count += 1;
         }
     }
@@ -110,7 +111,7 @@ impl Env {
         if p.has("--data-dir") {
             return path_str(&p.str("--data-dir", ""));
         }
-        join(&self.home, ".opendaisugi")
+        self.data_home()
     }
 
     pub(super) fn status_cmd(&mut self, args: &[String]) -> Res {
@@ -145,7 +146,7 @@ impl Env {
         // pathway commands read it. The binary carries lexical and potion
         // only; under any other matcher it reuses no pathway, so it says so
         // (C-12).
-        let hcfg = config::load(&join(&self.home, ".opendaisugi/config.yaml"));
+        let hcfg = config::load(&join(&self.data_home(), "config.yaml"));
         let key = match &hcfg {
             Ok(c) => c.matcher_model.clone(),
             Err(_) => "lexical".to_string(),

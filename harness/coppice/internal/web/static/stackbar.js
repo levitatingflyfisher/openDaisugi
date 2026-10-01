@@ -194,6 +194,12 @@ export function factsItems(facts, rows) {
     const hint = MESSAGES.gateNotInstalled();
     items.push({ key: 'gate-hint', text: hint.text, health: 'warn', title: hint.text, action: hint.actions[0] });
   }
+  // The phone's tailscale certificate is close to its end: warn, with
+  // Renew. The server names it only under 7 days left.
+  if (typeof facts.phone_cert_days === 'number' && Number.isFinite(facts.phone_cert_days)) {
+    const m = MESSAGES.phoneCert(facts.phone_cert_days);
+    items.push({ key: 'phone-cert', text: m.text, health: facts.phone_cert_days < 0 ? 'bad' : 'warn', title: m.text, action: m.actions[0] });
+  }
   const gw = facts.gateway;
   if (!gw || !str(gw.url)) items.push({ key: 'gateway', text: 'no gateway', health: 'off', title: 'No gateway is set in coppice.toml.' });
   else if (gw.answers === true) items.push({ key: 'gateway', text: 'gateway answers', health: 'ok', title: gw.url });
@@ -310,23 +316,28 @@ export const FACTS_MS = 5000;
 // hides hintEl when there is none. The header row that carries the hint
 // is hidden on a phone and on a narrow screen, so the rail carries it
 // there.
+// The phone certificate warning goes there too, for the same reason.
+const HINT_KEYS = ['gate-hint', 'phone-cert'];
+
 export function paintHint(hintEl, items, onAction) {
   if (!hintEl) return;
-  const it = (items || []).find((x) => x.key === 'gate-hint');
+  const its = (items || []).filter((x) => HINT_KEYS.includes(x.key));
   hintEl.textContent = '';
-  hintEl.hidden = !it;
-  if (!it) return;
-  const words = document.createElement('span');
-  words.textContent = it.text;
-  hintEl.append(words);
-  if (it.action && typeof onAction === 'function') {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'fix';
-    b.textContent = it.action.label;
-    b.addEventListener('click', () => onAction(it.action));
-    hintEl.append(' ', b);
-  }
+  hintEl.hidden = its.length === 0;
+  its.forEach((it, i) => {
+    if (i > 0) hintEl.append(' ');
+    const words = document.createElement('span');
+    words.textContent = it.text;
+    hintEl.append(words);
+    if (it.action && typeof onAction === 'function') {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'fix';
+      b.textContent = it.action.label;
+      b.addEventListener('click', () => onAction(it.action));
+      hintEl.append(' ', b);
+    }
+  });
 }
 
 export function mountFacts(el, { rpc, connected, got, tick, later, cancel, rows, onAction, hintEl }) {

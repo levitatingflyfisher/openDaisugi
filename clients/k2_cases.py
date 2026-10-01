@@ -32,7 +32,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import agentic_fakes  # noqa: E402 - the fake claude and sprig of an agentic step
 import garden_cases  # noqa: E402 - sibling module, run as a script
+from fixture_paths import fixed_root  # noqa: E402
 from garden_cases import (  # noqa: E402
     PY_CLI,
     body_id,
@@ -82,8 +84,32 @@ def _receipts(result: dict[str, Any]) -> None:
             row["evidence_json"] = _EVIDENCE_MS.sub(r'\1"{MS}"', text)
 
 
+_WARN = re.compile(r"^.*?:\d+: (\w*Warning): (.*)$")
+
+
+def _warnings(stderr: list[str]) -> list[str]:
+    """Python prints a warning as `file:line: UserWarning: text` and the
+    source line; keep `UserWarning: text` (the file is the oracle's)."""
+    out: list[str] = []
+    skip = False
+    for line in stderr:
+        if skip:
+            skip = False
+            if line.startswith("  "):
+                continue
+        m = _WARN.match(line)
+        if m:
+            out.append(f"{m.group(1)}: {m.group(2)}")
+            skip = True
+            continue
+        out.append(line)
+    return out
+
+
 def normalize(result: dict[str, Any], home: str, t0: float) -> dict[str, Any]:
     _receipts(result)
+    if isinstance(result.get("stderr"), list):
+        result["stderr"] = _warnings(result["stderr"])
     result["stdout"] = _TEXT_MS.sub("{MS} ms)", result.get("stdout", ""))
     out = _generic_normalize(result, home, t0)
     text = json.dumps(out, ensure_ascii=True)
@@ -231,6 +257,46 @@ def build_run_cases() -> list[dict[str, Any]]:
     # Shell.
     add(run_case_spec("run shell one step", [sh("s1", "echo hi")], echo))
     add(run_case_spec("run shell json", [sh("s1", "echo hi")], echo, flags=("--yes", "--json")))
+    # PW-6: a data directory that holds '?': a plain file name to
+    # Python's sqlite3 (the journal, the pathway store, the envelope cache).
+    add(
+        run_case_spec(
+            "run data dir with a question mark",
+            [sh("s1", "echo hi")],
+            echo,
+            flags=("--yes", "--data-dir", "{HOME}/d?x=1"),
+        )
+    )
+    # PW-6: numbers past 64 bits in a plan and an envelope, kept as Python
+    # keeps an int.
+    big = 123456789012345678901234567890
+    add(
+        run_case_spec(
+            "run big ints",
+            [sh("s1", "echo hi", metadata={"n": big, "m": -big, "l": [big, 1]})],
+            env_doc(
+                shell=True,
+                shell_allowlist=["echo"],
+                max_output_size_mb=big,
+                post=[{"type": "file_size_range", "path": "w/none", "min": -big, "max": big}],
+            ),
+            flags=("--yes", "--json"),
+        )
+    )
+    # PW-6: steps given as strings (JSON, then a Python literal), decoded as
+    # coerce_step decodes them.
+    add(
+        run_case_spec(
+            "run string steps",
+            [
+                json.dumps(sh("s1", "echo hi")),
+                "{'id': 's2', 'type': 'shell', 'command': 'echo ' \"there\", "
+                "'depends_on': ('s1',), 'metadata': {'n': 0x10}}",
+            ],
+            echo,
+            flags=("--yes", "--json"),
+        )
+    )
     add(
         run_case_spec(
             "run shell two steps ordered",
@@ -464,22 +530,45 @@ def build_run_cases() -> list[dict[str, Any]]:
             env_doc(),
         )
     )
+    # Agentic steps (K2-7 retired): run carries the agentic executor, on
+    # claude -p by default or on sprig with --agent sprig.
+    g1 = {
+        "id": "g1",
+        "type": "agentic",
+        "prompt": "fix it",
+        "workspace": W,
+        "tools": ["Read"],
+        "depends_on": [],
+    }
+    g_env = env_doc(file_read=[f"{W}/**"])
+    g_read = {"tool_name": "Read", "tool_input": {"file_path": f"{W}/a.txt"}}
     add(
         run_case_spec(
-            "run agentic step has no executor",
-            [
-                {
-                    "id": "g1",
-                    "type": "agentic",
-                    "prompt": "fix it",
-                    "workspace": W,
-                    "tools": ["Read"],
-                    "depends_on": [],
-                }
-            ],
-            env_doc(file_read=[f"{W}/**"]),
+            "run agentic step runs",
+            [g1],
+            g_env,
+            flags=("--yes", "--json"),
+            before={"w/a.txt": {"text": "a\n"}},
+            replies=[{"agentic": "fixed it", "calls": [g_read]}],
         )
     )
+    add(
+        run_case_spec(
+            "run agentic step sprig",
+            [g1],
+            g_env,
+            flags=("--yes", "--json", "--agent", "sprig"),
+            before={"w/a.txt": {"text": "a\n"}},
+            sprig="fake",
+            replies=[
+                {
+                    "sprig": {"answer": "fixed it", "turns": 4, "model": "haiku", "usage": {}},
+                    "calls": [{"tool": "read", "input": {"path": "a.txt"}}],
+                }
+            ],
+        )
+    )
+    add(run_case_spec("run agentic dry run", [g1], g_env, flags=("--yes", "--json", "--dry-run")))
     add(
         run_case_spec(
             "run llm_check invariant",
@@ -494,6 +583,194 @@ def build_run_cases() -> list[dict[str, Any]]:
                     }
                 ],
             },
+        )
+    )
+    # An llm_check asks the model once per verify: through `claude -p` (no
+    # key, the fake claude on PATH), or through the HTTP backend.
+    judge = {"type": "judge", "description": "d", "expr": {"op": "llm_check", "rule": "is it kind"}}
+    yes = json.dumps({"satisfied": True, "rationale": "it is kind"})
+    no = json.dumps({"satisfied": False, "rationale": "it is not"})
+    for name, reply, extra in [
+        ("holds", {"claude_raw": yes}, {}),
+        ("not satisfied", {"claude_raw": no}, {}),
+        ("dict literal", {"claude_raw": "{'satisfied': True, 'rationale': None}"}, {}),
+        ("prose reply", {"claude_raw": "I think it is kind."}, {}),
+        ("satisfied not bool", {"claude_raw": '{"satisfied": "no", "rationale": 3}'}, {}),
+        ("claude fails", {"claude_raw": "", "stderr": "boom", "exit": 3}, {}),
+        ("claude args", {"claude_raw": yes}, {"env": {"DAISUGI_CLAUDE_ARGS": "--verbose"}}),
+    ]:
+        add(
+            run_case_spec(
+                f"run llm_check invariant {name}",
+                [sh("s1", "echo hi")],
+                {**echo, "invariants": [judge]},
+                replies=[reply],
+                **extra,
+            )
+        )
+    for name, reply, extra in [
+        ("holds", {"http": yes}, {}),
+        ("not satisfied", {"http": no}, {}),
+        ("not json", {"http": "maybe"}, {}),
+        ("list reply", {"http": "[1, 2]"}, {}),
+        ("server error", {"http_status": 500, "body": '{"error": "x"}'}, {}),
+        (
+            "check model",
+            {"http": yes},
+            {"env": {**API, "OPENDAISUGI_LLM_CHECK_MODEL": "anthropic/claude-sonnet-4-5"}},
+        ),
+    ]:
+        add(
+            run_case_spec(
+                f"run llm_check invariant api {name}",
+                [sh("s1", "echo hi")],
+                {**echo, "invariants": [judge]},
+                replies=[reply],
+                env=extra.get("env", API),
+            )
+        )
+    add(
+        run_case_spec(
+            "run llm_check invariant api no key",
+            [sh("s1", "echo hi")],
+            {**echo, "invariants": [judge]},
+            env={"OPENDAISUGI_LLM_BACKEND": "api"},
+        )
+    )
+    add(
+        run_case_spec(
+            "run llm_check invariant nested",
+            [sh("s1", "echo hi")],
+            {
+                **echo,
+                "invariants": [
+                    {
+                        "type": "judge",
+                        "description": "d",
+                        "expr": {
+                            "op": "and",
+                            "children": [
+                                {"op": "not", "child": {"op": "llm_check", "rule": "is it rude"}},
+                                {
+                                    "op": "forall_steps",
+                                    "pred": {"op": "equals", "path": "type", "value": "shell"},
+                                },
+                            ],
+                        },
+                    }
+                ],
+            },
+            replies=[{"claude_raw": no}],
+        )
+    )
+    add(
+        run_case_spec(
+            "run llm_check invariant physical",
+            [sh("s1", "echo hi")],
+            {**echo, "stakes": "physical", "invariants": [judge]},
+        )
+    )
+    add(
+        run_case_spec(
+            "run llm_check invariant not enforced",
+            [sh("s1", "echo hi")],
+            {**echo, "invariants": [{**judge, "enforce": False}]},
+        )
+    )
+    # A postcondition that asks a model: once over the plan before the run,
+    # once over each completed step (stage 2).
+    post_judge = [{"type": "judge", "expr": {"op": "llm_check", "rule": "is the output kind"}}]
+    for name, replies in [
+        ("holds", [{"http": yes}, {"http": yes}]),
+        ("stage2 not satisfied", [{"http": yes}, {"http": no}]),
+        ("stage2 not json", [{"http": yes}, {"http": "maybe"}]),
+        ("stage1 not satisfied", [{"http": no}]),
+    ]:
+        add(
+            run_case_spec(
+                f"run llm_check postcondition {name}",
+                [sh("s1", "echo hi")],
+                env_doc(shell=True, shell_allowlist=["echo"], post=post_judge),
+                replies=replies,
+                env=API,
+            )
+        )
+    add(
+        run_case_spec(
+            "run llm_check postcondition two steps",
+            [sh("s1", "echo one"), sh("s2", "echo two", ["s1"])],
+            env_doc(shell=True, shell_allowlist=["echo"], post=post_judge),
+            replies=[{"claude_raw": yes}, {"claude_raw": yes}, {"claude_raw": no}],
+            flags=("--yes", "--json"),
+        )
+    )
+    # Named definitions: no command builds an alias registry, so every
+    # alias is unresolved, in the oracle's words.
+    alias = {"op": "alias", "name": "no_secrets", "args": {}}
+    add(
+        run_case_spec(
+            "run alias invariant",
+            [sh("s1", "echo hi")],
+            {**echo, "invariants": [{"type": "named", "description": "d", "expr": alias}]},
+        )
+    )
+    add(
+        run_case_spec(
+            "run alias invariant nested",
+            [sh("s1", "echo hi")],
+            {
+                **echo,
+                "invariants": [
+                    {"type": "named", "description": "d", "expr": {"op": "not", "child": alias}},
+                ],
+            },
+        )
+    )
+    add(
+        run_case_spec(
+            "run alias postcondition",
+            [sh("s1", "echo hi")],
+            env_doc(shell=True, shell_allowlist=["echo"], post=[{"type": "named", "expr": alias}]),
+        )
+    )
+    add(
+        run_case_spec(
+            "run alias postcondition nested",
+            [sh("s1", "echo hi")],
+            env_doc(
+                shell=True,
+                shell_allowlist=["echo"],
+                post=[{"type": "named", "expr": {"op": "or", "children": [alias]}}],
+            ),
+        )
+    )
+    add(
+        run_case_spec(
+            "run alias postcondition not enforced",
+            [sh("s1", "echo hi")],
+            env_doc(
+                shell=True,
+                shell_allowlist=["echo"],
+                post=[{"type": "named", "expr": alias, "enforce": False}],
+            ),
+        )
+    )
+    # Postcondition exprs stage 2 cannot read.
+    add(
+        run_case_spec(
+            "run postcondition expr not a dict",
+            [sh("s1", "echo hi")],
+            env_doc(shell=True, shell_allowlist=["echo"], post=[{"type": "t", "expr": "x"}]),
+        )
+    )
+    add(
+        run_case_spec(
+            "run postcondition expr does not parse",
+            [sh("s1", "echo hi")],
+            env_doc(
+                shell=True, shell_allowlist=["echo"], post=[{"type": "t", "expr": {"op": "zz"}}]
+            ),
+            # The oracle raises a ValidationError out of verify (K2-8).
             go_refuses=True,
         )
     )
@@ -626,7 +903,6 @@ def build_run_cases() -> list[dict[str, Any]]:
             "kind": "cli",
             "name": "run envelope not yaml",
             "argv": ["run", "p.yaml", "-e", "e.yaml"],
-            "go_refuses": True,
             "before": {**bad, "e.yaml": {"text": "a: [\n"}},
         }
     )
@@ -657,7 +933,6 @@ def build_run_cases() -> list[dict[str, Any]]:
             "kind": "cli",
             "name": "run plan not yaml",
             "argv": ["run", "p.yaml", "-e", "e.yaml"],
-            "go_refuses": True,
             "before": {"p.yaml": {"text": "steps: {\n"}, "e.yaml": yml(echo)},
         }
     )
@@ -1223,28 +1498,85 @@ def build_orchestrate_cases() -> list[dict[str, Any]]:
             ],
         )
     )
-    stale = pathway(8, T, lexical(T), model="other-model", emb_version="1", pl=pw_plan)
+    # A reused delegated pathway: the distiller salvages a divergent plan
+    # into a template with an agentic leaf, and Tier-0 reuse runs it as is.
+    TG = "Fix the failing parser test"
+    from opendaisugi.models import AgenticStep
+
+    g_plan = ActionPlan(
+        id="plan_00000009",
+        source="distiller",
+        task=TG,
+        steps=[AgenticStep(id="g1", prompt="fix the parser", workspace=W, tools=["Read"])],
+    )
+    g_store = {
+        ".opendaisugi/pathways.db": {
+            "db": {"rows": [row_spec(put_row(pathway(9, TG, lexical(TG), pl=g_plan)))]}
+        },
+        "w/a.txt": {"text": "a\n"},
+    }
+    g_read = {"tool_name": "Read", "tool_input": {"file_path": f"{W}/a.txt"}}
     add(
         orch(
-            "orch stale embeddings warn",
-            T,
-            envelope=env_doc(shell=True, shell_allowlist=["echo"]),
-            flags=("--deterministic-synthesis",),
-            before={
-                ".opendaisugi/pathways.db": {
-                    "db": {"rows": [row_spec(put_row(pw)), row_spec(put_row(stale))]}
-                }
-            },
-            # The warning's text names the oracle's source file; the case
-            # checks only that the binary refuses (K2-5).
-            env={**API, "PYTHONWARNINGS": "ignore::UserWarning"},
-            replies=[
-                {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
-                {"http": "r"},
-            ],
-            go_refuses=True,
+            "orchestrate reuses delegated pathway",
+            TG,
+            envelope=env_doc(file_read=[f"{W}/**"]),
+            flags=("--deterministic-synthesis", "--json"),
+            before=g_store,
+            replies=[{"agentic": "fixed the parser", "calls": [g_read]}],
         )
     )
+    add(
+        orch(
+            "orchestrate reuses delegated pathway sprig",
+            TG,
+            envelope=env_doc(file_read=[f"{W}/**"]),
+            flags=("--deterministic-synthesis", "--json", "--agent", "sprig"),
+            before=g_store,
+            sprig="fake",
+            replies=[
+                {
+                    "sprig": {"answer": "fixed the parser", "turns": 4, "model": "haiku"},
+                    "calls": [{"tool": "read", "input": {"path": "a.txt"}}],
+                }
+            ],
+        )
+    )
+    stale = pathway(8, T, lexical(T), model="other-model", emb_version="1", pl=pw_plan)
+    # K2-5: the store warns of stale embeddings (a UserWarning on stderr,
+    # compared as "UserWarning: <text>"), under PYTHONWARNINGS as Python
+    # reads it. "error" turns the warning into an exception the
+    # orchestrator logs; the ports refuse that setting.
+    for name, warnings, refuses in [
+        ("orch stale embeddings warn", "ignore::UserWarning", False),
+        ("orch stale embeddings warns", None, False),
+        ("orch stale embeddings default filter", "default::UserWarning", False),
+        ("orch stale embeddings all warnings", "default", True),
+        ("orch stale embeddings message filter", "ignore:1 pathway", False),
+        ("orch stale embeddings error filter", "error::UserWarning", True),
+    ]:
+        env = dict(API)
+        if warnings is not None:
+            env["PYTHONWARNINGS"] = warnings
+        add(
+            orch(
+                name,
+                T,
+                envelope=env_doc(shell=True, shell_allowlist=["echo"]),
+                flags=("--deterministic-synthesis",),
+                before={
+                    ".opendaisugi/pathways.db": {
+                        "db": {"rows": [row_spec(put_row(pw)), row_spec(put_row(stale))]}
+                    }
+                },
+                env=env,
+                replies=[
+                    {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
+                    {"http": "r"},
+                ],
+                **({"go_refuses": True} if refuses else {}),
+            )
+        )
     add(
         orch(
             "orch llm_check postcondition",
@@ -1257,7 +1589,60 @@ def build_orchestrate_cases() -> list[dict[str, Any]]:
                 {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
                 {"http": "r"},
             ],
-            go_refuses=True,
+        )
+    )
+    yes = json.dumps({"satisfied": True, "rationale": "kind"})
+    add(
+        orch(
+            "orch llm_check postcondition holds",
+            P,
+            envelope=env_doc(
+                post=[{"type": "judge", "expr": {"op": "llm_check", "rule": "is it kind"}}]
+            ),
+            flags=("--deterministic-synthesis",),
+            replies=[
+                {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
+                {"http": yes},
+                {"http": yes},
+                {"http": "r"},
+                {"http": yes},
+            ],
+        )
+    )
+    add(
+        orch(
+            "orch llm_check invariant holds",
+            P,
+            envelope={
+                **env_doc(),
+                "invariants": [
+                    {
+                        "type": "judge",
+                        "description": "d",
+                        "expr": {"op": "llm_check", "rule": "is it kind"},
+                    }
+                ],
+            },
+            flags=("--deterministic-synthesis",),
+            replies=[
+                {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
+                {"http": yes},
+                {"http": yes},
+                {"http": "r"},
+            ],
+        )
+    )
+    add(
+        orch(
+            "orch alias postcondition",
+            P,
+            envelope=env_doc(
+                post=[{"type": "named", "expr": {"op": "alias", "name": "no_secrets", "args": {}}}]
+            ),
+            flags=("--deterministic-synthesis",),
+            replies=[
+                {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
+            ],
         )
     )
     # Refusals and options.
@@ -1270,7 +1655,6 @@ def build_orchestrate_cases() -> list[dict[str, Any]]:
             "orch envelope not yaml",
             P,
             flags=("--envelope", "bad.yaml"),
-            go_refuses=True,
             before={"bad.yaml": {"text": "x: [\n"}},
         )
     )
@@ -1294,9 +1678,39 @@ def build_orchestrate_cases() -> list[dict[str, Any]]:
                 {"http": decomposed({"id": "a", "type": "task", "prompt": "a"})},
                 {"http": "r"},
             ],
-            go_refuses=True,
         )
     )
+    # Parallel levels (K2-4): a level's independent task steps run at
+    # once, so the model requests come in any order (unordered).
+    wide = decomposed(
+        {"id": "a", "type": "task", "prompt": "Name one risk"},
+        {"id": "b", "type": "task", "prompt": "Name a cost"},
+        {"id": "c", "type": "task", "prompt": "Name a delay"},
+        {"id": "d", "type": "task", "prompt": "Rank them", "depends_on": ["a", "b", "c"]},
+    )
+    for name, flags in [
+        ("orch max parallel wide", ("--max-parallel", "2", "--json")),
+        ("orch max parallel wide text", ("--max-parallel", "3")),
+        ("orch max parallel one", ("--max-parallel", "1", "--json")),
+        ("orch max parallel budget", ("--max-parallel", "4", "--budget", "100000", "--json")),
+    ]:
+        add(
+            orch(
+                name,
+                P,
+                envelope=none,
+                flags=flags,
+                replies=[
+                    {"http": wide},
+                    {"http": "r1"},
+                    {"http": "r2"},
+                    {"http": "r3"},
+                    {"http": "r4"},
+                    {"http": answer("A.")},
+                ],
+                unordered=True,
+            )
+        )
     add(
         orch(
             "orch model flag",
@@ -1340,7 +1754,9 @@ def main() -> int:
         "--only", help="run only cases whose name holds this text; print, write nothing"
     )
     ap.add_argument("--fresh", action="store_true", help="rerun every case")
+    ap.add_argument("--sprig", help="the sprig binary the real-sprig cases run")
     args = ap.parse_args()
+    agentic_fakes.set_real_sprig(args.sprig)
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
     SCRATCH.mkdir(parents=True, exist_ok=True)
@@ -1366,7 +1782,7 @@ def main() -> int:
             if "model" in prev:
                 c["model"] = prev["model"]
             continue
-        work = SCRATCH / "gen" / f"{i:04d}"
+        work = fixed_root(SCRATCH, f"g/{i:04d}")
         if c.get("replies"):
             record_replies(c, work)
         c["expect"] = run_case(c, cmd_for(c, None), work)
@@ -1390,7 +1806,7 @@ def main() -> int:
     (out / "manifest.json").write_text(
         json.dumps(manifest, indent=1, sort_keys=True) + "\n", encoding="utf-8"
     )
-    shutil.rmtree(SCRATCH / "gen", ignore_errors=True)
+    shutil.rmtree(SCRATCH / "g", ignore_errors=True)
     cache_path.unlink(missing_ok=True)
     from fixture_paths import leaks
 

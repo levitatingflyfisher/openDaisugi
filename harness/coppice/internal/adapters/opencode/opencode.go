@@ -182,7 +182,7 @@ func gatePluginPath(env []string) (string, error) {
 // gatePluginSHA256 is the SHA-256 of the gate plugin the Python package
 // ships, src/opendaisugi/harness_opencode/plugin/daisugi-gate.ts. A test
 // fails when the two differ.
-const gatePluginSHA256 = "769010ed81c8beb23a09d445f0ad3d5a4ce8e754a1fd4937abc791ff9fbf2cc3"
+const gatePluginSHA256 = "3bf882d5e7395825e1010cbaddcfb78249dad8d8928f4034bc910c5d3bd22053"
 
 // maxPluginBytes bounds the read of the plugin file.
 const maxPluginBytes = 1 << 20

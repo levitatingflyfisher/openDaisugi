@@ -64,7 +64,8 @@ func init() {
 			def("max_actions", Int{}, constant(pyjson.Int{Text: "50"})), def("timeout_s", Float{}, constant(5.0))}},
 		{"task", "TaskStep", []Field{req("prompt", Str{})}},
 		{"agentic", "AgenticStep", []Field{req("prompt", Str{}), req("workspace", Str{}), def("tools", List{Str{}}, emptyList),
-			def("max_turns", Nullable{Int{}}, constant(nil))}},
+			def("max_turns", Nullable{Int{}}, constant(nil)),
+			{Name: "child_envelope", Schema: Nullable{Envelope}, Default: constant(nil), OmitNone: true}}},
 		{"skill", "SkillStep", []Field{req("skill_id", Str{}), def("skill_input", Dict{Any{}}, emptyDict),
 			def("contract_envelope", Nullable{Envelope}, constant(nil))}},
 		{"mcp", "MCPStep", []Field{req("server", Str{}), req("tool", Str{}), def("arguments", Dict{Any{}}, emptyDict)}},
@@ -83,18 +84,14 @@ func init() {
 	}
 }
 
-// UnreadableStep is the error type of a step this port does not read.
+// UnreadableStep is the error type of a step this port does not read
+// the oracle's way; its message says why, and callers refuse.
 const UnreadableStep = "unreadable_step"
 
 // Steps is ActionPlan.steps: list[Any] with coerce_step before and the
-// StepBase check after. A dict whose "type" is registered validates as
-// that step model in Python mode (subclass.model_validate). A str item is
-// decode_dict_text's case; callers refuse plans that hold one.
-type Steps struct {
-	// Decode reads a str item as coerce_step does (decode_dict_text), for
-	// a model's reply. Unset, a str item is UnreadableStep.
-	Decode bool
-}
+// StepBase check after, wherever the plan comes from (a file, a store,
+// a model's reply).
+type Steps struct{}
 
 func (st Steps) validate(v any, loc []any, mode Mode) (any, []Err) {
 	xs, ok := v.([]any)
@@ -105,64 +102,70 @@ func (st Steps) validate(v any, loc []any, mode Mode) (any, []Err) {
 		}
 		return nil, one(loc, "list_type", msg, v)
 	}
-	if st.Decode {
-		return validateReplySteps(xs, loc, v)
-	}
 	return validateSteps(xs, loc, v)
 }
 
-// validateSteps is ActionPlan.steps read from stored input (Decode
-// unset). Each item is checked in turn, and the first that fails is
-// the error: a str is UnreadableStep, an item with no registered type
-// is the after-validator's error, and a registered step's own field
-// errors take the field's place, with no item index. The oracle's
-// coerce_step goes past an item with no registered type, so for such
-// an item before an invalid step the oracle names the invalid step and
-// this names the item. Rust's validate_steps checks every item's type
-// before any fields, so it names the item in both orders. GD-R-6
-// covers replies only.
-func validateSteps(xs []any, loc []any, v any) (any, []Err) {
-	out := make([]any, 0, len(xs))
-	for _, x := range xs {
-		if _, isStr := x.(string); isStr {
-			// coerce_step decodes such a string as JSON or as a Python
-			// literal; the store reader does not, and says so.
-			return nil, one(loc, UnreadableStep, "a plan step is a string", v)
-		}
-		o, isObj := x.(*pyjson.Object)
-		var m *Model
-		if isObj {
-			if tag, has := o.Get("type"); has {
-				if s, isStr := tag.(string); isStr {
-					m = StepTypes[s]
-				}
+// CoerceStep is coerce_step before the step model validates: a str
+// that decode_dict_text reads as a dict of a registered type is that
+// dict. refuse is set where Python's answer is one this port does not
+// model: the text makes Python's parser warn on stderr, the decoded dict
+// holds a value the literal reader does not model, or a "type" that is
+// a list or a dict (the registry lookup raises TypeError). tuple is set
+// when the decoded dict held a tuple, read as a list.
+func CoerceStep(x any) (item any, tuple bool, refuse string) {
+	if o, ok := x.(*pyjson.Object); ok {
+		if tag, has := o.Get("type"); has {
+			switch tag.(type) {
+			case []any, *pyjson.Object:
+				return nil, false, "a step whose type is a list or a dict (Python raises TypeError)"
 			}
 		}
-		if m == nil {
-			// The after-validator's ValueError, for the whole field.
-			return nil, one(loc, "value_error", fmt.Sprintf("Value error, ActionPlan.steps item %s is not a StepBase subclass. "+
-				"If authoring a custom step type, register it with @opendaisugi.step_type.", Repr(x)), v)
-		}
-		y, errs := m.fields(o, loc, Python)
-		if errs != nil {
-			// model_validate raised inside the validator: its errors
-			// take the field's place, with no item index.
-			return nil, errs
-		}
-		out = append(out, y)
+		return x, false, ""
 	}
-	return out, nil
+	text, ok := x.(string)
+	if !ok {
+		return x, false, ""
+	}
+	d := DecodeDictText(text)
+	if d.Dict == nil {
+		if d.Refuse != "" {
+			return nil, false, "a step given as a string holds " + d.Refuse
+		}
+		return x, false, ""
+	}
+	tag, has := d.Dict.Get("type")
+	if !has {
+		return x, false, ""
+	}
+	switch t := tag.(type) {
+	case string:
+		if StepTypes[t] == nil {
+			return x, false, ""
+		}
+	case pyjson.Opaque:
+		return nil, false, "a step given as a string holds " + d.Refuse
+	case []any, *pyjson.Object:
+		return nil, false, "a step whose type is a list or a dict (Python raises TypeError)"
+	default:
+		return x, false, ""
+	}
+	if d.Refuse != "" {
+		return nil, false, "a step given as a string holds " + d.Refuse
+	}
+	return d.Dict, d.Tuple, ""
 }
 
-// validateReplySteps is ActionPlan.steps as a model's reply is read
-// (Decode set). coerce_step runs over every item first: a str that
-// decodes to a dict of a registered type is that dict, and a dict of a
-// registered type validates as that step right away (its errors take the
-// field's place, with no item index); an item with no registered type
-// is only noted, not yet an error. Once every item is checked this way,
-// the after-validator names the first noted item (GD-R-6): an invalid
-// registered step can be the error even after an item that is no step.
-func validateReplySteps(xs []any, loc []any, v any) (any, []Err) {
+// validateSteps is ActionPlan.steps. coerce_step runs over every item
+// first: a str that decodes to a dict of a registered type is that dict,
+// and a dict of a registered type validates as that step right away (its
+// errors take the field's place, with no item index); an item with no
+// registered type is only noted, not yet an error. Once every item is
+// checked this way, the after-validator names the first noted item
+// (GD-R-6): an invalid registered step can be the error even after an
+// item that is no step. A decoded step that held a tuple and fails its
+// validation is refused: the error would name the tuple, which this port
+// reads as a list.
+func validateSteps(xs []any, loc []any, v any) (any, []Err) {
 	type outcome struct {
 		val    any
 		item   any // the original item, when it is not a step
@@ -170,15 +173,9 @@ func validateReplySteps(xs []any, loc []any, v any) (any, []Err) {
 	}
 	outs := make([]outcome, 0, len(xs))
 	for _, x := range xs {
-		item := x
-		if text, isStr := x.(string); isStr {
-			if d, ok := DecodeDictText(text); ok {
-				if tag, has := d.Get("type"); has {
-					if s, isStr := tag.(string); isStr && StepTypes[s] != nil {
-						item = d
-					}
-				}
-			}
+		item, tuple, refuse := CoerceStep(x)
+		if refuse != "" {
+			return nil, one(loc, UnreadableStep, refuse, v)
 		}
 		o, isObj := item.(*pyjson.Object)
 		var m *Model
@@ -192,6 +189,9 @@ func validateReplySteps(xs []any, loc []any, v any) (any, []Err) {
 		if m != nil && isObj {
 			y, errs := m.fields(o, loc, Python)
 			if errs != nil {
+				if tuple {
+					return nil, one(loc, UnreadableStep, "a step given as a string holds a tuple, and its validation fails", v)
+				}
 				// model_validate raised inside the validator: its errors
 				// take the field's place, with no item index.
 				return nil, errs
@@ -199,7 +199,7 @@ func validateReplySteps(xs []any, loc []any, v any) (any, []Err) {
 			outs = append(outs, outcome{val: y, isStep: true})
 			continue
 		}
-		outs = append(outs, outcome{item: item})
+		outs = append(outs, outcome{item: x})
 	}
 	out := make([]any, 0, len(outs))
 	for _, r := range outs {
@@ -224,34 +224,62 @@ var ActionPlan = &Model{Name: "ActionPlan", Finite: true, Fields: []Field{
 	{Name: "steps", Schema: Steps{}, Required: true},
 }}
 
-// ActionPlanReply is ActionPlan as a model's reply is read: a step given
-// as a string is decoded as coerce_step decodes it.
-var ActionPlanReply = &Model{Name: "ActionPlan", Finite: true, Fields: []Field{
-	ActionPlan.Fields[0], ActionPlan.Fields[1], ActionPlan.Fields[2],
-	{Name: "steps", Schema: Steps{Decode: true}, Required: true},
-}}
+// ActionPlanReply is ActionPlan as a model's reply is read; the oracle
+// reads every plan the same way.
+var ActionPlanReply = ActionPlan
+
+// Decoded is decode_dict_text's answer. Dict is nil for None. Refuse
+// names what this port does not model: with no Dict, the text makes
+// Python's parser print a SyntaxWarning, so any caller that reaches it
+// refuses; with a Dict, the dict holds a value the literal reader does
+// not model (the Dict then lacks it), and a caller refuses if it uses
+// the dict. Tuple is set when the dict held a tuple, read as a list.
+type Decoded struct {
+	Dict   *pyjson.Object
+	Refuse string
+	Tuple  bool
+}
 
 // DecodeDictText is models.decode_dict_text: text holding one dict, as
-// JSON or as a Python literal (the subset pyjson.LiteralEval reads).
-func DecodeDictText(text string) (*pyjson.Object, bool) {
+// JSON or as a Python literal (pyjson.LiteralEval).
+func DecodeDictText(text string) Decoded {
 	if pystr.Len(text) > 65_536 {
-		return nil, false
+		return Decoded{}
 	}
 	body := pystr.Strip(text)
 	if !strings.HasPrefix(body, "{") {
-		return nil, false
+		return Decoded{}
 	}
 	if v, err := pyjson.LoadsPy(body, 900); err == nil {
 		if o, isObj := v.(*pyjson.Object); isObj {
-			return o, true
+			return Decoded{Dict: o}
 		}
 	}
-	if v, ok := pyjson.LiteralEval(body); ok {
-		if o, isObj := v.(*pyjson.Object); isObj {
-			return o, true
+	lit := pyjson.LiteralEval(body)
+	switch lit.Status {
+	case pyjson.LitValue:
+		if o, isObj := lit.Value.(*pyjson.Object); isObj {
+			return Decoded{Dict: o, Tuple: lit.Tuple}
+		}
+	case pyjson.LitRefused:
+		if lit.Value == nil {
+			return Decoded{Refuse: lit.Why}
+		}
+		if o, isObj := lit.Value.(*pyjson.Object); isObj {
+			return Decoded{Dict: o, Refuse: lit.Why, Tuple: lit.Tuple}
 		}
 	}
-	return nil, false
+	return Decoded{}
+}
+
+// Unreadable is the reason of the first UnreadableStep error, or "".
+func (e *ValidationError) Unreadable() string {
+	for _, er := range e.Errs {
+		if er.Type == UnreadableStep {
+			return er.Msg
+		}
+	}
+	return ""
 }
 
 // PathwayParameter is pathway.PathwayParameter.

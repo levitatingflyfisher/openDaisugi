@@ -92,13 +92,22 @@ The trainer is a CLI on the GPU box:
 uv add 'opendaisugi[lora]'
 python -m opendaisugi.lora.train \
     --jsonl train.jsonl \
-    --base-model Qwen/Qwen2.5-1.5B-Instruct \
     --output adapters/robin \
     --qlora
 ```
 
-QLoRA + Qwen-1.5B fits in 16 GB VRAM (RTX 4080). Heavy deps are
-lazy-imported — the trainer module itself is importable on the
+With no `--base-model`, the trainer uses the model `daisugi models use`
+recorded, else the catalog default for this hardware:
+`ibm-granite/granite-4.1-3b` on a box with 8 GB of RAM or a 6 GB GPU,
+`ibm-granite/granite-4.0-1b` on a smaller one. `daisugi models list`
+shows the curated models, and `daisugi models search QUERY` finds others
+on the Hugging Face API. Any id, local path or GGUF file works, by name
+or through `models use`.
+
+If you train from a Llama base model (`meta-llama/...`), the Llama
+license asks you to show "Built with Llama" with the model you share.
+
+Heavy deps are lazy-imported: the trainer module itself is importable on the
 development laptop; only `_train` touches `torch`, `peft`, `trl`,
 `bitsandbytes`.
 

@@ -77,9 +77,10 @@ impl Env {
     pub(super) fn hook(&mut self, args: &[String]) -> Res {
         if args.is_empty() || args[0] == "--help" {
             self.out(
-                "Usage: daisugi hook [OPTIONS] COMMAND [ARGS]...\n\n  Capture hooks. This binary carries record, list, \
-                 to-trace and auto-tend.\n\nCommands:\n  record     Read a hook payload from stdin, record it, return \
-                 the host's continue contract.\n  list       List captured sessions with call counts.\n  to-trace   \
+                "Usage: daisugi hook [OPTIONS] COMMAND [ARGS]...\n\n  Capture hooks. This binary carries record, report, \
+                 list, to-trace and auto-tend.\n\nCommands:\n  record     Read a hook payload from stdin, record it, return \
+                 the host's continue contract.\n  report     Read one PaneStateEvent JSON line from stdin and deliver \
+                 it.\n  list       List captured sessions with call counts.\n  to-trace   \
                  Convert a captured session into a journal trace.\n  auto-tend  Close the captures to traces to \
                  distillation loop in one call.\n",
             );
@@ -90,6 +91,7 @@ impl Env {
             "record" => return self.hook_record(&args[1..]),
             "list" => return self.hook_list(&args[1..]),
             "to-trace" => return self.hook_to_trace(&args[1..]),
+            "report" => return self.hook_report(&args[1..]),
             _ => {}
         }
         let what = format!("daisugi hook {}", args[0]);
@@ -111,12 +113,12 @@ impl Env {
             return self.cmd_help(CMD, "", "Close the captures->traces->distillation loop in one cron-friendly call.", &opts);
         }
         let min_interval = self.click_int(CMD, &p, "--min-interval", 3600)?;
-        let root = p.str("--captures-root", &format!("{}/.opendaisugi/captures", self.home));
-        let data_dir = p.str("--data-dir", &format!("{}/.opendaisugi", self.home));
+        let root = p.str("--captures-root", &super::gateroot::join(&self.data_home(), "captures"));
+        let data_dir = p.str("--data-dir", &self.data_home());
         let force = p.flag("--force");
         let cfg = match super::config::load(&format!("{data_dir}/config.yaml")) {
             Ok(c) => c,
-            Err(super::config::ConfigErr::Invalid) => {
+            Err(super::config::ConfigErr::Invalid | super::config::ConfigErr::Yaml(_)) => {
                 self.errf(&format!("daisugi {CMD}: pydantic_core._pydantic_core.ValidationError: the config file does not validate\n"));
                 return exit(1);
             }

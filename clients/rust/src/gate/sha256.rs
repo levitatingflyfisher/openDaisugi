@@ -11,18 +11,78 @@ const K: [u32; 64] = [
     0xc67178f2,
 ];
 
+const H0: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+
 /// The digest of `data`.
 pub fn digest(data: &[u8]) -> [u8; 32] {
-    let mut h: [u32; 8] =
-        [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
-    let mut msg = data.to_vec();
-    let bits = (data.len() as u64).wrapping_mul(8);
-    msg.push(0x80);
-    while msg.len() % 64 != 56 {
-        msg.push(0);
+    let mut h = Hasher::new();
+    h.update(data);
+    h.finish()
+}
+
+/// SHA-256 fed a piece at a time (`hashlib.sha256().update`), so a file
+/// is hashed as it streams, never held whole.
+pub struct Hasher {
+    h: [u32; 8],
+    buf: Vec<u8>,
+    len: u64,
+}
+
+impl Default for Hasher {
+    fn default() -> Self {
+        Self::new()
     }
-    msg.extend_from_slice(&bits.to_be_bytes());
-    for block in msg.chunks(64) {
+}
+
+impl Hasher {
+    pub fn new() -> Self {
+        Hasher { h: H0, buf: Vec::with_capacity(64), len: 0 }
+    }
+
+    pub fn update(&mut self, mut data: &[u8]) {
+        self.len = self.len.wrapping_add(data.len() as u64);
+        if !self.buf.is_empty() {
+            let take = (64 - self.buf.len()).min(data.len());
+            self.buf.extend_from_slice(&data[..take]);
+            data = &data[take..];
+            if self.buf.len() < 64 {
+                return;
+            }
+            let block = std::mem::take(&mut self.buf);
+            compress(&mut self.h, &block);
+        }
+        let whole = data.len() - data.len() % 64;
+        for block in data[..whole].chunks(64) {
+            compress(&mut self.h, block);
+        }
+        self.buf.extend_from_slice(&data[whole..]);
+    }
+
+    pub fn finish(mut self) -> [u8; 32] {
+        let bits = self.len.wrapping_mul(8);
+        let mut tail = std::mem::take(&mut self.buf);
+        tail.push(0x80);
+        while tail.len() % 64 != 56 {
+            tail.push(0);
+        }
+        tail.extend_from_slice(&bits.to_be_bytes());
+        for block in tail.chunks(64) {
+            compress(&mut self.h, block);
+        }
+        let mut out = [0u8; 32];
+        for (i, x) in self.h.iter().enumerate() {
+            out[4 * i..4 * i + 4].copy_from_slice(&x.to_be_bytes());
+        }
+        out
+    }
+
+    pub fn hexdigest(self) -> String {
+        self.finish().iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
+
+fn compress(h: &mut [u32; 8], block: &[u8]) {
+    {
         let mut w = [0u32; 64];
         for i in 0..16 {
             w[i] = u32::from_be_bytes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]]);
@@ -32,7 +92,7 @@ pub fn digest(data: &[u8]) -> [u8; 32] {
             let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
             w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
         }
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = *h;
         for i in 0..64 {
             let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ (!e & g);
@@ -53,11 +113,6 @@ pub fn digest(data: &[u8]) -> [u8; 32] {
             *x = x.wrapping_add(y);
         }
     }
-    let mut out = [0u8; 32];
-    for (i, x) in h.iter().enumerate() {
-        out[4 * i..4 * i + 4].copy_from_slice(&x.to_be_bytes());
-    }
-    out
 }
 
 /// `hashlib.sha256(data).hexdigest()`.
@@ -75,5 +130,17 @@ mod tests {
         assert_eq!(hexdigest(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         let long = vec![b'a'; 1000];
         assert_eq!(hexdigest(&long), "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3");
+    }
+
+    #[test]
+    fn pieces_hash_as_the_whole() {
+        let data: Vec<u8> = (0..1000u32).map(|i| (i * 7 + 3) as u8).collect();
+        for step in [1usize, 3, 55, 63, 64, 65, 127, 500] {
+            let mut h = Hasher::new();
+            for piece in data.chunks(step) {
+                h.update(piece);
+            }
+            assert_eq!(h.hexdigest(), hexdigest(&data), "step {step}");
+        }
     }
 }

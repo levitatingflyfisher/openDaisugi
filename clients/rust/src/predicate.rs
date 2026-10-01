@@ -72,11 +72,18 @@ pub fn parse_expression(v: &Value) -> Result<Expr, String> {
         "matches" => Expr::Matches { path: s(v, "path")?, regex: s(v, "regex")? },
         "not_matches" => Expr::NotMatches { path: s(v, "path")?, regex: s(v, "regex")? },
         "numeric_range" => Expr::NumericRange { path: s(v, "path")?, min: f(v, "min")?, max: f(v, "max")? },
-        "length_range" => Expr::LengthRange {
-            path: s(v, "path")?,
-            min: v.get("min").and_then(|x| x.as_i64()).unwrap_or(0),
-            max: v.get("max").and_then(|x| x.as_i64()),
-        },
+        "length_range" => {
+            // pydantic's int fields: a number with a fractional part is a
+            // ValidationError, never cut or dropped.
+            let int_of = |key: &str| -> Result<Option<i64>, String> {
+                match v.get(key) {
+                    None => Ok(None),
+                    Some(Value::Null) if key == "max" => Ok(None),
+                    Some(x) => x.as_i64().map(Some).ok_or_else(|| format!("length_range {key} is not an int")),
+                }
+            };
+            Expr::LengthRange { path: s(v, "path")?, min: int_of("min")?.unwrap_or(0), max: int_of("max")? }
+        }
         "exists" => Expr::Exists { path: s(v, "path")? },
         "is_empty" => Expr::IsEmpty { path: s(v, "path")? },
         "and" => Expr::And {
@@ -165,12 +172,50 @@ fn numeric_of(v: &Value) -> f64 {
     }
 }
 
+/// A JSON number as Python holds it: an int (a bool is 0 or 1) exactly, or
+/// a float.
+enum Num {
+    Int(i128),
+    Float(f64),
+}
+
+fn num_of(v: &Value) -> Option<Num> {
+    match v {
+        Value::Bool(b) => Some(Num::Int(*b as i128)),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(Num::Int(i as i128))
+            } else if let Some(u) = n.as_u64() {
+                Some(Num::Int(u as i128))
+            } else {
+                n.as_f64().map(Num::Float)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Python's `==` between two numbers: exact between ints, and between an
+/// int and a float (never by rounding the int to a float).
+fn num_eq(a: &Value, b: &Value) -> bool {
+    match (num_of(a), num_of(b)) {
+        (Some(Num::Int(x)), Some(Num::Int(y))) => x == y,
+        (Some(Num::Float(x)), Some(Num::Float(y))) => x == y,
+        (Some(Num::Int(i)), Some(Num::Float(f))) | (Some(Num::Float(f)), Some(Num::Int(i))) => {
+            // A whole float below 2^127 converts to i128 exactly; one
+            // above is past every int a JSON number gives here.
+            f.is_finite() && f.fract() == 0.0 && f.abs() < 1.7e38 && f as i128 == i
+        }
+        _ => false,
+    }
+}
+
 /// Python `==` semantics across JSON-representable types: bool/int/float
 /// compare numerically (`True == 1` is True in Python); strings/arrays/
 /// objects compare structurally with the same rule applied recursively.
 pub fn py_eq(a: &Value, b: &Value) -> bool {
     if is_numericish(a) && is_numericish(b) {
-        return numeric_of(a) == numeric_of(b);
+        return num_eq(a, b);
     }
     match (a, b) {
         (Value::Null, Value::Null) => true,
@@ -377,11 +422,22 @@ pub fn eval_scalar(expr: &Expr, scope: &Py) -> Result<bool, String> {
 /// physical stakes, matching the oracle — LLMCheck is otherwise not
 /// reproducible offline and does not appear in the corpus).
 pub fn evaluate_predicate(expr: &Expr, steps: &[Value], stakes: &str) -> Result<bool, String> {
-    let dumped: Vec<Py> = steps.iter().map(dumped_step).collect();
-    go(expr, steps, &dumped, stakes)
+    evaluate_predicate_with(expr, steps, stakes, None)
 }
 
-fn go(e: &Expr, steps: &[Value], dumped: &[Py], stakes: &str) -> Result<bool, String> {
+/// An llm_check's verdict for a rule: `run_llm_check(rule, payload)` with
+/// the payload the caller holds. An Err is the error the evaluator
+/// raises.
+pub type LlmVerdict<'a> = &'a dyn Fn(&str) -> Result<bool, String>;
+
+/// `evaluate_predicate` with a model to ask: an llm_check is answered by
+/// `llm`, and with none it is not reproducible offline.
+pub fn evaluate_predicate_with(expr: &Expr, steps: &[Value], stakes: &str, llm: Option<LlmVerdict>) -> Result<bool, String> {
+    let dumped: Vec<Py> = steps.iter().map(dumped_step).collect();
+    go(expr, steps, &dumped, stakes, llm)
+}
+
+fn go(e: &Expr, steps: &[Value], dumped: &[Py], stakes: &str, llm: Option<LlmVerdict>) -> Result<bool, String> {
     {
         match e {
             Expr::ForallSteps { pred } => {
@@ -436,15 +492,18 @@ fn go(e: &Expr, steps: &[Value], dumped: &[Py], stakes: &str) -> Result<bool, St
                     _ => Ok(false),
                 }
             }
-            Expr::LLMCheck { .. } => {
+            Expr::LLMCheck { rule } => {
                 if stakes == "physical" {
                     return Err("llm_check blocked for physical stakes — use sound primitives only".into());
                 }
-                Err("llm_check is not reproducible offline (network/model call)".into())
+                match llm {
+                    Some(ask) => ask(rule),
+                    None => Err("llm_check is not reproducible offline (network/model call)".into()),
+                }
             }
             Expr::And { children } => {
                 for c in children {
-                    if !go(c, steps, dumped, stakes)? {
+                    if !go(c, steps, dumped, stakes, llm)? {
                         return Ok(false);
                     }
                 }
@@ -452,14 +511,14 @@ fn go(e: &Expr, steps: &[Value], dumped: &[Py], stakes: &str) -> Result<bool, St
             }
             Expr::Or { children } => {
                 for c in children {
-                    if go(c, steps, dumped, stakes)? {
+                    if go(c, steps, dumped, stakes, llm)? {
                         return Ok(true);
                     }
                 }
                 Ok(false)
             }
-            Expr::Not { child } => Ok(!go(child, steps, dumped, stakes)?),
-            Expr::Implies { a, b } => Ok(!go(a, steps, dumped, stakes)? || go(b, steps, dumped, stakes)?),
+            Expr::Not { child } => Ok(!go(child, steps, dumped, stakes, llm)?),
+            Expr::Implies { a, b } => Ok(!go(a, steps, dumped, stakes, llm)? || go(b, steps, dumped, stakes, llm)?),
             other => {
                 // Scalar at plan root: evaluate against a synthetic {"steps": [...]} scope.
                 let scope = Py::Obj(vec![("steps".to_string(), Py::List(dumped.to_vec()))]);
@@ -494,5 +553,27 @@ mod tuple_tests {
         let shell = vec![serde_json::json!({"id": "s", "type": "shell", "command": "ls", "target_position": [1]})];
         let e = fs(serde_json::json!({"op": "equals", "path": "target_position", "value": [1]}));
         assert!(evaluate_predicate(&parse_expression(&e).unwrap(), &shell, "low").unwrap());
+    }
+}
+
+#[cfg(test)]
+mod num_tests {
+    use super::*;
+
+    fn v(t: &str) -> Value {
+        serde_json::from_str(t).unwrap()
+    }
+
+    /// Python compares ints exactly, and an int with a float exactly.
+    #[test]
+    fn py_eq_compares_numbers_as_python_does() {
+        assert!(!py_eq(&v("9007199254740993"), &v("9007199254740992")));
+        assert!(!py_eq(&v("-9007199254740993"), &v("-9007199254740992")));
+        assert!(!py_eq(&v("9007199254740993"), &v("9007199254740992.0")));
+        assert!(py_eq(&v("9007199254740992"), &v("9007199254740992.0")));
+        assert!(!py_eq(&v("18446744073709551615"), &v("18446744073709551614")));
+        assert!(py_eq(&v("true"), &v("1")));
+        assert!(py_eq(&v("1"), &v("1.0")));
+        assert!(!py_eq(&v("1"), &v("1.5")));
     }
 }

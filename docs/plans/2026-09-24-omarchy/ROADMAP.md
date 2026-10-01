@@ -80,6 +80,9 @@ width, and the web floor at phone width.
 - **1i. Readable windows.** The web windows are sharp and sized right.
 - **1j. The foreman.** Talking to the floor reaches a foreman agent that can
   start, direct and stop agents across projects.
+  Design: `design-foreman.md` (2026-10-08): one chat that never ends, whose
+  memory is a summary tree of the whole chat; its only acting tool is a gated
+  spawn. Built after the sprig agentic executor and delegation-tree step 4.
 
 ## Part 3: the publication sweep
 

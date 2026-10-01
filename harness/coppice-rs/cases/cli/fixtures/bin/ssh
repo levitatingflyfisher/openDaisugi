@@ -1,0 +1,4 @@
+#!/bin/sh
+# A fake ssh for coppice --remote. coppice runs `ssh HOST coppice --stdio`;
+# this runs the side's own binary on the side's own socket instead.
+exec "$FAKE_SSH_BIN" --socket "$FAKE_SSH_SOCK" --stdio

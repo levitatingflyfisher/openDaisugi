@@ -88,21 +88,26 @@ func TestAPaneHoldsABoundedNumberOfClaims(t *testing.T) {
 	dir := filepath.Join(s.getenv("CLAUDE_CONFIG_DIR"), "projects", "fake-project")
 	send, next, stop := ownPane(t, s, "w1:p1")
 	defer stop()
-	for i := 0; i < maxFilesPerPane+retiredKeep+10; i++ {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxClaimsPerPane+10; i++ {
 		p := filepath.Join(dir, fmt.Sprintf("fake-%03d.jsonl", i))
 		send(gateReportLine("r", "w1:p1", `"transcript_path":"`+p+`"`))
-		mustOK(t, next())
-	}
-	s.factsMu.Lock()
-	n := 0
-	for _, id := range s.claims {
-		if id == "w1:p1" {
-			n++
+		r := next()
+		res, _ := r["result"].(map[string]any)
+		if r["ok"] != true {
+			t.Fatalf("report %d refused whole: %v", i, r)
+		}
+		if i < maxClaimsPerPane && res["transcript"] != nil {
+			t.Fatalf("report %d's transcript refused: %v", i, r)
+		}
+		if i >= maxClaimsPerPane && res["transcript"] != transcriptManyRefusal {
+			t.Fatalf("report %d past the cap named a transcript: %v", i, r)
 		}
 	}
-	s.factsMu.Unlock()
-	if n > maxFilesPerPane+retiredKeep {
-		t.Fatalf("the pane holds %d claims, want at most %d", n, maxFilesPerPane+retiredKeep)
+	if n := len(s.claimedBy("w1:p1")); n > maxClaimsPerPane {
+		t.Fatalf("the pane holds %d claims, want at most %d", n, maxClaimsPerPane)
 	}
 }
 
@@ -160,7 +165,9 @@ func TestASprigVerdictFromTheFutureIsDatedNow(t *testing.T) {
 
 // A transcript an ended pane let go of, then another pane took over,
 // counts once in tokens_today.
-func TestATranscriptThatMovesPanesCountsOnceToday(t *testing.T) {
+// An ended pane's transcript is not another pane's: the report that names
+// it is refused, and its tokens count once, for the pane that named it.
+func TestAnEndedPanesTranscriptStaysItsOwnAndCountsOnceToday(t *testing.T) {
 	s := newFactsServer(t)
 	roundTrip(t, s, strings.Replace(paneCreate, "%s", t.TempDir(), 1))
 	if err := s.updatePane("w1:p2", func(p *layout.Pane) { p.Harness = "claude" }); err != nil {
@@ -176,7 +183,12 @@ func TestATranscriptThatMovesPanesCountsOnceToday(t *testing.T) {
 	if err := s.updatePane("w1:p1", func(p *layout.Pane) { p.Closed = true }); err != nil {
 		t.Fatal(err)
 	}
-	reportOwn(t, s, "w1:p2", `"transcript_path":"`+first+`"`)
+	send, next, stop := ownPane(t, s, "w1:p2")
+	send(gateReportLine("r", "w1:p2", `"transcript_path":"`+first+`"`))
+	if r := next(); r["ok"] != true || r["result"].(map[string]any)["transcript"] != transcriptTakenRefusal {
+		t.Fatalf("a pane took an ended pane's transcript: %v", r)
+	}
+	stop()
 	listRow(t, s, "w1:p2")
 	m := result(t, roundTrip(t, s, `{"id":"f","cmd":"floor.facts"}`)[0])
 	tok, _ := m["tokens_today"].(map[string]any)

@@ -15,6 +15,7 @@ import (
 	"sort"
 
 	"daisugi-verify/internal/config"
+	"daisugi-verify/internal/datahome"
 	"daisugi-verify/internal/embed/potion"
 	"daisugi-verify/internal/envgen"
 	"daisugi-verify/internal/llm"
@@ -101,7 +102,7 @@ func validate(title string, m *pmodel.Model, raw json.RawMessage) (*pyjson.Objec
 func null(raw json.RawMessage) bool { return len(raw) == 0 || string(raw) == "null" }
 
 func matcherKey(home string) (string, error) {
-	cfg, err := config.Load(filepath.Join(home, ".opendaisugi", "config.yaml"))
+	cfg, err := config.Load(filepath.Join(datahome.Dir(os.Getenv, home, datahome.Exists), "config.yaml"))
 	if err != nil {
 		return "", err
 	}

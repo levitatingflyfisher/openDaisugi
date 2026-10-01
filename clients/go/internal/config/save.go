@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"daisugi-verify/internal/datahome"
 	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pyyaml"
@@ -21,12 +22,12 @@ import (
 // refuses before it writes anything.
 
 // defaults is Config() as model_dump(mode="json") gives it; data_dir is
-// filled from the home directory.
+// the data home (datahome.Dir) for this process's environment and home.
 func defaults(home string) map[string]any {
 	null := any(nil)
 	return map[string]any{
 		"model": "anthropic/claude-sonnet-4-20250514", "max_task_chars": pyjson.Int{Text: "4000"},
-		"z3_timeout_ms": pyjson.Int{Text: "500"}, "data_dir": gateroot.PathStr(filepath.Join(home, ".opendaisugi")),
+		"z3_timeout_ms": pyjson.Int{Text: "500"}, "data_dir": datahome.Dir(os.Getenv, home, datahome.Exists),
 		"auto_tend": null, "gateway_local_model": null, "gateway_router": "rules", "switchyard_route_id": "daisugi",
 		"switchyard_capable_model": "claude-sonnet-5", "switchyard_efficient_model": null,
 		"switchyard_api_key_env": null, "shell_allow_decomposition": false, "gate_mode": "audit", "gate_ask": false,

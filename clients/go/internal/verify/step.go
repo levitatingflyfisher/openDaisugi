@@ -44,42 +44,29 @@ func VerifyStep(plan ActionPlan, env Envelope, z3TimeoutMs int) VerifyResultGo {
 // recognizedStage2 is stage2._OPAQUE_POSTCONDITION_HANDLERS' keys.
 var recognizedStage2 = map[string]bool{"exit_code": true, "file_exists": true, "file_size_range": true}
 
-// Stage2Refusal names a postcondition VerifyCompletedStep does not decide
-// the oracle's way (an expr it does not evaluate, or one that asks a
-// model), or "" when it decides every enforced one. A caller refuses such
-// an envelope before anything runs.
+// Stage2Refusal names an enforced invariant or postcondition whose expr
+// is a dict that does not parse as a predicate, or is "" when there is
+// none. The oracle raises a ValidationError out of verify there (a
+// traceback); a caller refuses such an envelope before anything runs.
 func Stage2Refusal(env Envelope) string {
-	// verify() asks a model for an llm_check invariant; this binary does
-	// not.
+	unread := func(raw json.RawMessage) bool {
+		if !strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
+			return false
+		}
+		_, err := ParseExpression(raw)
+		return err != nil
+	}
 	for _, inv := range env.Invariants {
-		if strings.Contains(string(inv.Expr), `"llm_check"`) {
-			return fmt.Sprintf("invariant '%s' asks a model (llm_check)", inv.Type)
+		if inv.Enforce && unread(inv.Expr) {
+			return fmt.Sprintf("invariant '%s' has an expr this binary does not read", inv.Type)
 		}
 	}
 	for _, pc := range env.Postconditions {
-		if !pc.Enforce {
-			continue
-		}
-		raw := strings.TrimSpace(string(pc.Expr))
-		if raw == "" || raw == "null" {
-			continue
-		}
-		if !strings.HasPrefix(raw, "{") {
-			return fmt.Sprintf("postcondition '%s' has an expr that is not a dict", pc.Type)
-		}
-		if strings.Contains(raw, `"llm_check"`) || strings.Contains(raw, `"alias"`) {
-			return fmt.Sprintf("postcondition '%s' asks a model or names an alias", pc.Type)
-		}
-		if _, err := ParseExpression(pc.Expr); err != nil {
+		if pc.Enforce && unread(pc.Expr) {
 			return fmt.Sprintf("postcondition '%s' has an expr this binary does not read", pc.Type)
 		}
 	}
 	return ""
-}
-
-func pyIntEq(rc int, n *json.Number) bool {
-	v, ok := new(big.Int).SetString(string(*n), 10)
-	return ok && v.Cmp(big.NewInt(int64(rc))) == 0
 }
 
 func bigOf(n *json.Number, def *big.Int) (*big.Int, bool) {
@@ -146,11 +133,8 @@ func stage2Handler(pc Postcondition, step Step) bool {
 		if !has || rc == nil || pc.Expected == nil {
 			return false
 		}
-		n, ok := rc.(float64)
-		if !ok {
-			return false
-		}
-		return pyIntEq(int(n), pc.Expected)
+		// rc == expected, Python's == (3.5 is not 3; True is 1).
+		return pyEqual(rc, *pc.Expected)
 	case "file_exists":
 		if pc.Path == nil || *pc.Path == "" {
 			return false

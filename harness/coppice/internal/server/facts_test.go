@@ -63,6 +63,9 @@ func projFixture(t *testing.T, s *Server, name string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if rec, ok := s.tree.Pane("w1:p1"); ok {
+		b = fitCwd(t, b, rec.Cwd)
+	}
 	f, err := os.CreateTemp(dir, "*-"+name)
 	if err != nil {
 		t.Fatal(err)
@@ -206,8 +209,8 @@ func TestATranscriptPathFromAnotherConnectionIsNeverRead(t *testing.T) {
 	s := newFactsServer(t)
 	p := projFixture(t, s, "claude-transcript.jsonl")
 	got := roundTrip(t, s, gateReportLine("1", "w1:p1", `"transcript_path":"`+p+`"`))
-	if !got[0].OK {
-		t.Fatalf("report: %+v", got[0].Error)
+	if !got[0].OK || result(t, got[0])["transcript"] != transcriptNotOwnRefusal {
+		t.Fatalf("report from another connection: %+v", got[0])
 	}
 	row := listRow(t, s, "w1:p1")
 	if _, ok := row["tokens"]; ok {
@@ -229,6 +232,7 @@ func TestAPathAnotherLivePaneReportedIsNotRead(t *testing.T) {
 	mustOK(t, next1())
 	send2, next2, stop2 := ownPane(t, s, "w1:p2")
 	defer stop2()
+	// w1:p2 runs no Claude, so its report names no file the server reads.
 	send2(gateReportLine("2", "w1:p2", `"transcript_path":"`+p+`"`))
 	mustOK(t, next2())
 	if _, ok := listRow(t, s, "w1:p2")["tokens"]; ok {

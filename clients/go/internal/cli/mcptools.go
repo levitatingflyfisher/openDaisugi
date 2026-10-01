@@ -71,6 +71,7 @@ func (s *mcpServer) envelopeFor(a *pyjson.Object) (any, error) {
 		o.Context = &ctx
 	}
 	r, err := envgen.Generate(o)
+	s.staleWarn(r.FindWarning)
 	if err != nil {
 		var pe *envgen.PyError
 		if errors.As(err, &pe) {
@@ -79,6 +80,17 @@ func (s *mcpServer) envelopeFor(a *pyjson.Object) (any, error) {
 		return nil, refusef("%s", short(err))
 	}
 	return tracejournal.JSONMode(r.Envelope), nil
+}
+
+// staleWarn prints the stale-embeddings UserWarning find gives, once per
+// server, as Python's warnings module prints it to the server's stderr
+// under PYTHONWARNINGS. A filter this binary does not model prints
+// nothing: the server's stderr is its log, which no client reads (RF-11).
+func (s *mcpServer) staleWarn(msg string) {
+	if s.stale == nil {
+		s.stale = &staleWarner{e: s.e}
+	}
+	s.stale.warn(msg)
 }
 
 func (s *mcpServer) findPathway(a *pyjson.Object) (any, error) {
@@ -94,6 +106,7 @@ func (s *mcpServer) findPathway(a *pyjson.Object) (any, error) {
 	if err != nil {
 		return nil, refusef("a pathway store this binary does not read (%v)", short(err))
 	}
+	s.staleWarn(r.Warning)
 	if r.Match == nil {
 		return nil, nil
 	}
@@ -132,6 +145,7 @@ func (s *mcpServer) recall(a *pyjson.Object) (any, error) {
 	if err != nil {
 		return nil, refusef("%s", short(err))
 	}
+	s.staleWarn(r.Warning)
 	var prov any
 	if p := r.Provenance; p != nil {
 		prov = pyjson.NewObject().Set("pathway_id", p.PathwayID).Set("similarity", p.Similarity).
@@ -333,12 +347,15 @@ func stage2Violations(step, env *pyjson.Object) ([]any, error) {
 			}
 			continue
 		}
-		if _, isDict := expr.(*pyjson.Object); !isDict {
-			return nil, refusef("postcondition '%s' has an expr that is not a dict", typ)
+		evalError := func(msg string) {
+			out = append(out, violation(fmt.Sprintf("postcondition '%s' evaluation error: %s", typ, msg),
+				pyjson.NewObject().Set("postcondition", typ).Set("step_id", stepID)))
 		}
-		text := pathways.DumpJSON(expr)
-		if strings.Contains(text, `"llm_check"`) || strings.Contains(text, `"alias"`) {
-			return nil, refusef("postcondition '%s' asks a model or names an alias", typ)
+		if _, isDict := expr.(*pyjson.Object); !isDict {
+			// _normalize_expr passes a non-dict through; evaluation then
+			// raises on its Python type.
+			evalError(fmt.Sprintf("unknown predicate op: '%s'", pmodel.TypeName(expr)))
+			continue
 		}
 		pexpr, err := verify.ParseExpression(venv.Postconditions[i].Expr)
 		if err != nil {
@@ -346,7 +363,11 @@ func stage2Violations(step, env *pyjson.Object) ([]any, error) {
 		}
 		ok, err := verify.EvaluatePredicate(pexpr, vplan, venv)
 		if err != nil {
-			return nil, refusef("postcondition '%s' meets an evaluation error this binary does not word", typ)
+			if !verify.WordedEvalError(err) {
+				return nil, refusef("postcondition '%s' meets an evaluation error this binary does not word", typ)
+			}
+			evalError(err.Error())
+			continue
 		}
 		if !ok {
 			out = append(out, violation(fmt.Sprintf("postcondition '%s' violated on completed step %s", typ, stepID),

@@ -1,4 +1,4 @@
-# openDaisugi — White Paper
+# openDaisugi: White Paper
 
 *Runtime assurance for the outputs of unverifiable models: separating what is
 allowed from what is decided.*
@@ -15,12 +15,12 @@ the related work.
 
 ## Abstract
 
-Capable AI systems — LLM agents, robot foundation models — are *unverifiable* in the
+Capable AI systems (LLM agents, robot foundation models) are *unverifiable* in the
 formal sense: stochastic, opaque, with undefined behavior outside their training
 distribution. Formal systems are *verifiable* but limited. This is the verification
 gap. openDaisugi is a runtime-assurance layer that bridges it not by verifying the
-model, but by having the model **generate a verifiable specification** — a safety
-*envelope* — and then checking proposed actions against that envelope, with an SMT
+model, but by having the model **generate a verifiable specification** (a safety
+*envelope*) and then checking proposed actions against that envelope, with an SMT
 solver, before anything executes. The generated spec is checkable even though the
 generation process is not. The architecture is Runtime Assurance (RTA) from
 aerospace control; the novelty is applying it to LLM agents and robot policies,
@@ -37,7 +37,7 @@ honest options have each been unsatisfying:
 - **Verify the model.** Intractable. You cannot prove properties of a 100B-parameter
   black box, and its most useful behavior is precisely the un-prespecified kind.
 - **Constrain the model so tightly it can't surprise you.** Then you didn't need a
-  model — the tension at the heart of every "DSL for agents": the more you can
+  model. This is the tension at the heart of every "DSL for agents": the more you can
   pre-specify, the less you need the agent.
 
 ## 2. The idea
@@ -45,11 +45,11 @@ honest options have each been unsatisfying:
 **Separate what is _allowed_ from what is _decided._**
 
 - *Decided* comes from the black box. Keep it a black box. Let it be as capable as it is.
-- *Allowed* comes from a space of verifiable calculations — a specification.
+- *Allowed* comes from a space of verifiable calculations: a specification.
 
 The load-bearing move: **the black box generates the specification, and a
 deterministic layer enforces it.** An LLM can't be verified, but a *safety envelope
-an LLM writes* can be — and so can the claim that a proposed plan stays inside it.
+an LLM writes* can be. So can the claim that a proposed plan stays inside it.
 We shift the burden of trust off the model and onto a checkable artifact.
 
 This resolves the DSL tension. The specification isn't pre-written by a human
@@ -63,9 +63,9 @@ is easy to get backwards. The envelope is not itself a token-saving trick. It is
 in-bounds, you can compile a batch you would never run unverified, route to a smaller
 model you would not otherwise trust, and compact context that no longer needs to hold
 the policy. So openDaisugi is a verifiable-execution substrate plus a small family of
-cost *levers* it underwrites — a framing reached independently by five blind
-architects in a [convergence experiment](exploration/2026-08-blind-design-gauntlet/)
-and recorded as [ADR-0011](adr/0011-verifiable-execution-substrate.md). All three
+cost *levers* it underwrites. Five blind
+architects reached this framing independently in a [convergence experiment](exploration/2026-08-blind-design-gauntlet/)
+and it is recorded as [ADR-0011](adr/0011-verifiable-execution-substrate.md). All three
 levers are now built to the mechanism line: the deed ledger (v0.41), within-instance
 batch compilation with a net-token meter (v0.42), and the rationale store (v0.43)
 ([roadmap.md](roadmap.md), Stages 8 to 10). Their savings at scale are not yet
@@ -77,14 +77,14 @@ This is not a new architecture. It is a 30-year-old one from a new angle. Runtim
 Assurance (RTA) is the discipline of deploying an unverified advanced system safely
 by monitoring and constraining it at runtime. Four established patterns:
 
-1. **Simplex** (Sha et al., 1996) — an advanced (unverified) controller plus a
+1. **Simplex** (Sha et al., 1996): an advanced (unverified) controller plus a
    conservative (verified) baseline, with a decision module that switches to the
    baseline when a safety boundary is approached.
-2. **NN-tuned classical control** — a neural net adjusts a PID/MPC's parameters; the
+2. **NN-tuned classical control**: a neural net adjusts a PID/MPC's parameters; the
    system inherits the classical controller's guarantees within bounds.
-3. **Verified envelope** — define the permitted action space; reject anything
+3. **Verified envelope**: define the permitted action space; reject anything
    outside it. Verify *actions*, not perception.
-4. **Compiled policy / live DSL** — high-level reasoning generates a constraint spec
+4. **Compiled policy / live DSL**: high-level reasoning generates a constraint spec
    dynamically; a simpler system executes within it. The generated constraints are
    verifiable even though generation isn't.
 
@@ -109,18 +109,18 @@ task ─▶ generate envelope ─┐
                     └ (fail closed)           └ per-step re-check          └ reusable pathway
 ```
 
-- **Envelope** — a `Permission` spec (allowed file/network/shell/MCP/robot
+- **Envelope**: a `Permission` spec (allowed file/network/shell/MCP/robot
   capabilities) + invariants + postconditions + stakes. A checkable artifact.
-- **Verify** — a staged check (permissions → skill-subsumption → Z3 → predicate
+- **Verify**: a staged check (permissions → skill-subsumption → Z3 → predicate
   algebra → DAG). The proofs are SMT (Z3), not string matching; an unprovable or
   unknown result is treated as a *violation*. Delegation safety is the same proof
   applied to two envelopes: `envelope_subsumes(caller, contract)`.
-- **Supervise** — execute step-by-step; re-verify each step; write a tamper-evident
+- **Supervise**: execute step-by-step; re-verify each step; write a tamper-evident
   receipt; check run-end integrity so a silently-skipped step is detectable.
-- **Journal → distill** — successful runs become traces; repeated traces distill
+- **Journal → distill**: successful runs become traces; repeated traces distill
   into signed, reusable *pathways* (a plan template + the envelope that provably
-  covers it), so recurring work skips the expensive model — supervised by the same
-  verification stack.
+  covers it), so recurring work skips the expensive model. The same
+  verification stack supervises it.
 
 The pipeline above checks a declared plan. Most agents today declare no plan; they
 emit tool calls one at a time inside a host harness. For them, the **gate**
@@ -177,7 +177,7 @@ The gravity in this space pulls every tool toward *becoming the agent*. daisugi
 deliberately doesn't. It plugs into whatever drives the model. sprig, our own loop,
 sits above daisugi and uses it like any other harness; it is on hold with the owner.
 
-- **vs. harnesses (Claude Code, Codex, OpenClaw, Hermes, Gas Town)** — they own the
+- **vs. harnesses (Claude Code, Codex, OpenClaw, Hermes, Gas Town)**: they own the
   driving loop and the messaging/skills. daisugi is the assurance + budget +
   memory substrate they *lack*. It integrates mainly through the gate hook
   (`daisugi install --gate` for Claude Code and Codex, an extension for pi), and also
@@ -186,7 +186,7 @@ sits above daisugi and uses it like any other harness; it is on hold with the ow
   rules and hooks. What we did not find in them is *runtime assurance*: checkable
   envelopes, proved delegation, fail-closed gates. Policy engines such as AWS
   AgentCore on Cedar come closer (§10).
-- **vs. prompt caching** — caching cuts the cost of *context*; distillation cuts the
+- **vs. prompt caching**: caching cuts the cost of *context*; distillation cuts the
   cost of *reasoning* by removing calls entirely. Complementary.
 
 If daisugi became a harness, it would rebuild those tools, badly, and abandon the one
@@ -197,15 +197,15 @@ defensible position: the shared verification substrate.
 The same domain-agnostic core (envelope, verify, supervisor, journal, distiller)
 serves two applications of very different magnitude:
 
-- **LLM agents — real but incremental.** Makes something that exists cheaper and
+- **LLM agents (real but incremental).** Makes something that exists cheaper and
   safer. Genuine value; not, on its own, a novel contribution.
-- **Robot foundation models — novel.** We found no Simplex-style RTA gate for
+- **Robot foundation models (novel).** We found no Simplex-style RTA gate for
   VLA models; RoboGuard, the nearest, repairs LLM plans against temporal-logic
   rules (§10). π0 and its kin output motor commands from pixels with no quality
-  gate, no fallback controller, no safety envelope. The same architecture — the VLA
+  gate, no fallback controller, no safety envelope. The same architecture applies. The VLA
   proposes a trajectory, a constraint layer checks joint/velocity/force/collision
   bounds and deconflicts a swarm's airspace, a conservative baseline takes over when
-  the envelope is violated — is straightforward to describe, maps directly onto
+  the envelope is violated. It is straightforward to describe, maps directly onto
   published aerospace patterns, and we found no build of it for robot foundation models.
 
 ## 7. What is built, and what is not
@@ -269,31 +269,31 @@ built, see yellow paper §5.5). sprig and weave are on hold with the owner
 
 **Aspirational.** The *empirical* claim (what fraction of real usage is compilable,
 and how much compilation actually saves) has never been measured, though the
-machinery to measure it exists (roadmap Stage 4). Robotics is **sim-only and plan-level** — no 100Hz CBF-QP, no hardware, no π0
-in the loop; that needs a collaborator with an arm. Papers, defense/SBIR revenue, and
+machinery to measure it exists (roadmap Stage 4). Robotics is **sim-only and plan-level** (no 100Hz CBF-QP, no hardware, no π0
+in the loop). That needs a collaborator with an arm. Papers, defense/SBIR revenue, and
 a pathway marketplace are optionality with nothing built toward them.
 
 The honest boundary matters: swarm deconfliction is analytic geometry, not a
 flight-safety certificate (waypoint-in-box ≠ path-in-box; set margins accordingly).
 The verification is *sound for what it checks*; it verifies **actions, not
-understanding** — an envelope can prove the arm stayed under 5N, never that the model
+understanding**. An envelope can prove the arm stayed under 5N, never that the model
 understood the task. That gap is bounded, not closed.
 
 ## 8. Why it's worth doing
 
-Because the alternative — deploying capable, unverifiable models with no gate between
-decision and effect — is what everyone does now, and it doesn't scale to physical
+Because the alternative (deploying capable, unverifiable models with no gate between
+decision and effect) is what everyone does now, and it doesn't scale to physical
 stakes or to agents with real permissions. The contribution is not a new model or a
 new solver. It is the architecture that lets a capable black box operate under a
-formal safety bound *that the black box itself helped write* — and the demonstration
+formal safety bound *that the black box itself helped write*, and the demonstration
 that this same architecture spans LLM agents and robot policies, which are the same
 problem wearing different clothes.
 
 There is a second reason, quieter but real: the architecture appears to be the
 *convergent* one. Five independent architects, each given a neutral statement of the
-problem and told nothing about openDaisugi, rebuilt its spine — enforcement outside
+problem and told nothing about openDaisugi, rebuilt its spine: enforcement outside
 the context window, fail-closed pre-execution gating, a human floor a model may only
-tighten — and two of the pieces they reinvented were never hinted at in their brief
+tighten. Two of the pieces they reinvented were never hinted at in their brief
 (the monotone-narrowing subsumption law and within-instance compilation). Convergence
 that was not planted is the cheapest strong evidence a design is right. The
 [record](exploration/2026-08-blind-design-gauntlet/) is public, adversarial critiques
@@ -536,12 +536,12 @@ We did not find these in the surveys. "Not found" is not "does not exist".
 
 ## References
 
-- Sha, L. (1996/2001). *Using Simplicity to Control Complexity.* IEEE Software — the foundational Simplex Architecture paper.
+- Sha, L. (1996/2001). *Using Simplicity to Control Complexity.* IEEE Software. It is the foundational Simplex Architecture paper.
 - Schierman, J. et al. (2015). *Runtime Assurance for aerospace systems.*
-- Wood, G. *Ethereum Yellow Paper* — the formal-specification register this project's [yellow paper](spec/yellow-paper.md) borrows.
+- Wood, G. *Ethereum Yellow Paper*. It is the formal-specification register this project's [yellow paper](spec/yellow-paper.md) borrows.
 - Black, K. et al. (2024). *π0: A Vision-Language-Action Flow Model for General Robot Control.* Physical Intelligence.
-- de Moura, L. & Bjørner, N. (2008). *Z3: An Efficient SMT Solver.* — the solver behind the verification core.
-- Diátaxis (Procida, D.) — the documentation framework this project's [docs](README.md) follow.
+- de Moura, L. & Bjørner, N. (2008). *Z3: An Efficient SMT Solver.* It is the solver behind the verification core.
+- Diátaxis (Procida, D.): the documentation framework this project's [docs](README.md) follow.
 - Schneider, F. B. (2000). *Enforceable Security Policies.* ACM TISSEC 3(1). What an execution monitor can enforce.
 - Alshiekh, M. et al. (2017). *Safe Reinforcement Learning via Shielding.* [arXiv 1708.08611](https://arxiv.org/abs/1708.08611).
 - Cutler, J. W. et al. (2024). *Cedar: A New Language for Expressive, Fast, Safe, and Analyzable Authorization.* [arXiv 2403.04651](https://arxiv.org/abs/2403.04651).
@@ -549,5 +549,5 @@ We did not find these in the surveys. "Not found" is not "does not exist".
 - The other works in §10 are cited inline, with the URL each survey read.
 
 *The code and comments referenced here were authored by an AI assistant and describe
-what currently exists — take them with gratitude and a grain of salt, and verify
+what currently exists. Take them with gratitude and a grain of salt, and verify
 before relying.*

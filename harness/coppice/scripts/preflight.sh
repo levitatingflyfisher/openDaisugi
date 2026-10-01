@@ -4,7 +4,14 @@
 # cannot. Every failure line names the command that fixes it.
 set -uo pipefail
 
-prefix="${COPPICE_GHOSTTY_PREFIX:-$HOME/.local/ghostty-vt}"
+# The prefix rule of toolchain.sh and internal/toolchain.GhosttyPrefix.
+if [ -n "${COPPICE_GHOSTTY_PREFIX:-}" ]; then
+  prefix="$COPPICE_GHOSTTY_PREFIX"
+elif [ -f "$HOME/.local/ghostty-vt/share/pkgconfig/libghostty-vt-static.pc" ]; then
+  prefix="$HOME/.local/ghostty-vt"
+else
+  prefix="${XDG_DATA_HOME:-$HOME/.local/share}/opendaisugi/ghostty-vt"
+fi
 missing=0
 
 say_missing() {
@@ -15,11 +22,11 @@ say_missing() {
 command -v go >/dev/null 2>&1 || say_missing "go" "install Go 1.26 or newer"
 if command -v go >/dev/null 2>&1; then
   if [ "$(go env GOTOOLCHAIN)" = "local" ]; then
-    say_missing "a switchable Go toolchain" "run harness/coppice/scripts/toolchain.sh"
+    say_missing "a switchable Go toolchain" "export GOTOOLCHAIN=auto in this shell"
   fi
 fi
-command -v zig >/dev/null 2>&1 || say_missing "zig 0.16" "run harness/coppice/scripts/toolchain.sh"
-command -v cmake >/dev/null 2>&1 || say_missing "cmake" "run harness/coppice/scripts/toolchain.sh"
+command -v zig >/dev/null 2>&1 || say_missing "zig 0.16" "run harness/coppice/scripts/toolchain.sh, then export the PATH line it prints"
+command -v cmake >/dev/null 2>&1 || say_missing "cmake" "run harness/coppice/scripts/toolchain.sh, then export the PATH line it prints"
 command -v pkg-config >/dev/null 2>&1 || say_missing "pkg-config" "install pkgconf from your distribution"
 [ -f "$prefix/share/pkgconfig/libghostty-vt-static.pc" ] ||
   say_missing "libghostty-vt at $prefix" "run harness/coppice/scripts/toolchain.sh"

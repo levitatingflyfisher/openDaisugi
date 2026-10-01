@@ -192,6 +192,25 @@ See [feature-status.md](feature-status.md) for the full matrix. Summary:
   calls, or set `OPENDAISUGI_LLM_BACKEND=claude-code` (v0.12.0+) to
   route through an existing Claude Code install instead of an API key.
 
+- **The data home follows the environment.** `OPENDAISUGI_HOME` and
+  `XDG_DATA_HOME` move it, as `HOME` does. An installed gate hook bakes its
+  `--root`, so an agent's tool-call environment cannot move an installed
+  gate. A harness an agent starts itself with `OPENDAISUGI_HOME=...` is the
+  same case as one it starts with `HOME=...`: out of scope for the gate.
+- **A POSIX `sh` at `/bin/sh`.** The executors run a shell step with
+  `/bin/sh -c` (Go and Rust) or `subprocess` with `shell=True` (Python,
+  which also uses `/bin/sh`). Every Linux, macOS and BSD target has it. A
+  system with no `/bin/sh` (NixOS without the compatibility link, Termux)
+  cannot run shell steps.
+- **The default envelope writes under `/tmp/**`.** The library's
+  low-stakes default (`defaults.py`, and the Go and Rust envelope
+  generators) allows writes to `/tmp/**` and `./out/**`. On Linux that is
+  the system temp directory. On macOS and the BSDs the per-user temp
+  directory (`$TMPDIR`) is elsewhere, so a write there falls outside the
+  default envelope and is refused. Pass an envelope that names it. The
+  default is kept as it is, since a change would change what the gate
+  allows.
+
 ## ClaudeCode LLM backend (v0.12.0+)
 
 - Each call spawns a fresh `claude -p` subprocess (~0.5-1 s overhead vs

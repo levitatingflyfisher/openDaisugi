@@ -361,7 +361,7 @@ impl Env {
         };
         let reg_path = path_str(&p.str(
             "--registry",
-            &join(&self.home, ".opendaisugi/trusted_signers.json"),
+            &join(&self.data_home(), "trusted_signers.json"),
         ));
         let reg = match Registry::load(&reg_path) {
             Ok(r) => r,

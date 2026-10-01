@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -65,11 +66,26 @@ func (c *smtCompiler) softBool(tag string) string {
 }
 
 func isNumericJSON(v interface{}) bool {
-	_, ok := v.(float64)
-	return ok
+	switch v.(type) {
+	case float64, json.Number:
+		return true
+	}
+	return false
 }
 
+// smtNumLit is z3.RealVal of a number: exact for an int no float64 holds
+// (a json.Number of int text), the float's own value otherwise.
 func smtNumLit(v interface{}) (string, error) {
+	if n, ok := v.(json.Number); ok {
+		t := string(n)
+		if strings.ContainsAny(t, ".eE") {
+			return "", fmt.Errorf("a number past the float range")
+		}
+		if strings.HasPrefix(t, "-") {
+			return "(- " + t[1:] + ".0)", nil
+		}
+		return t + ".0", nil
+	}
 	f, ok := v.(float64)
 	if !ok {
 		return "", fmt.Errorf("expected numeric value, got %T", v)
@@ -260,9 +276,10 @@ func (c *smtCompiler) compileScalar(expr Expression) (string, error) {
 		}
 		return fmt.Sprintf("(=> %s %s)", nonempty, inner), nil
 	case AliasRef:
-		return "", fmt.Errorf("unresolved alias reference %q; resolve aliases before compilation", e.Name)
+		return "", fmt.Errorf("unresolved alias reference '%s'; resolve aliases before compilation", e.Name)
 	default:
-		return "", fmt.Errorf("unknown scalar predicate op: %v", expr.Op())
+		// The oracle names the expression's class.
+		return "", fmt.Errorf("unknown scalar predicate op: %s", strings.TrimPrefix(fmt.Sprintf("%T", expr), "verify."))
 	}
 }
 

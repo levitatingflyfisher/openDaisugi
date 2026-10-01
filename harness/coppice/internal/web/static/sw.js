@@ -1,6 +1,6 @@
 import { SHELL, shouldCache } from './sw-policy.js';
 
-const CACHE = 'coppice-shell-v6';
+const CACHE = 'coppice-shell-v8';
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

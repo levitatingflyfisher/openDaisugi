@@ -135,3 +135,70 @@ def test_duplicate_step_ids_rejected():
     )
     violations = check_dag(plan)
     assert any(v.stage == "dag" and "duplicate step id" in v.message for v in violations)
+
+
+# ----- No networkx: the same answers networkx gave -----
+
+
+def test_dag_imports_no_networkx():
+    import inspect
+
+    import opendaisugi.dag as dag
+
+    src = inspect.getsource(dag)
+    assert "import networkx" not in src and "from networkx" not in src
+
+
+def _has_cycle(succ: dict[str, list[str]]) -> bool:
+    """A plain three-colour DFS: True when it meets a back edge."""
+    color = dict.fromkeys(succ, 0)
+
+    def visit(n: str) -> bool:
+        color[n] = 1
+        for m in succ[n]:
+            if color[m] == 1 or (color[m] == 0 and visit(m)):
+                return True
+        color[n] = 2
+        return False
+
+    return any(color[n] == 0 and visit(n) for n in succ)
+
+
+def test_the_walks_hold_their_invariants_on_random_graphs():
+    """Always runs, no networkx: on 5000 seeded random plans with
+    self-loops and repeated edges, a cycle is named exactly when one
+    exists and the named one is real; the levels cover every step once
+    and put each edge's tail in an earlier level."""
+    import random
+
+    from opendaisugi.dag import _build_graph, _find_cycle, _generations
+
+    rng = random.Random(20261009)
+    for _ in range(5000):
+        size = rng.randint(1, 9)
+        ids = [f"s{i}" for i in range(size)]
+        steps = []
+        for sid in ids:
+            deps = [rng.choice(ids) for _ in range(rng.randint(0, 3))]
+            steps.append(ShellStep(id=sid, command="true", depends_on=deps))
+        g = _build_graph(_plan(steps))
+        edges = {(a, b) for a in g.succ for b in g.succ[a]}
+        cycle = _find_cycle(g)
+        assert (cycle is not None) == _has_cycle(g.succ), steps
+        if cycle is not None:
+            assert cycle
+            for a, b in zip(cycle, cycle[1:] + cycle[:1], strict=True):
+                assert (a, b) in edges, (cycle, steps)
+            try:
+                _generations(g)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"levels taken over a cycle: {cycle}")
+            continue
+        levels = _generations(g)
+        flat = [n for lvl in levels for n in lvl]
+        assert sorted(flat) == sorted(g.succ)
+        rank = {n: i for i, lvl in enumerate(levels) for n in lvl}
+        for a, b in edges:
+            assert rank[a] < rank[b], (a, b, levels)

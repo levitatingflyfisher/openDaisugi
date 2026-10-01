@@ -130,6 +130,17 @@ pub fn build(files: &[String]) -> R<Report> {
             }
         }
     }
+    summarize(rep)
+}
+
+/// `gate._build_report` over records already in hand (the records `gate
+/// replay` decides).
+pub fn from_records(records: Vec<Object>) -> R<Report> {
+    summarize(Report { records, denied: vec![], fp: vec![], reasons: Object::new(), word: vec![] })
+}
+
+/// The counts, the denied list and the reasons, from the records.
+fn summarize(mut rep: Report) -> R<Report> {
     rep.word = rep.records.iter().filter(|r| !word_lines(r).is_empty()).cloned().collect();
     for r in &rep.records {
         if !r.value("would_deny").truthy() {
@@ -213,7 +224,7 @@ impl Report {
 }
 
 /// `str(v)` for the JSON values whose str is modelled.
-fn py_str(v: &Value) -> R<String> {
+pub fn py_str(v: &Value) -> R<String> {
     Ok(match v {
         Value::Null => "None".into(),
         Value::Bool(true) => "True".into(),

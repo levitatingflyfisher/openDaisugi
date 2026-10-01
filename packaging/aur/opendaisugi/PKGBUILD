@@ -1,8 +1,15 @@
-# Builds the three openDaisugi binaries from source at one pinned commit.
+# Builds the openDaisugi binaries from source at one pinned commit.
 # It needs no release tag. Not published.
 #
+# What it installs (ruling PK-R-15): coppice and sprig (Go), daisugi (the
+# Go build, the default), daisugi-rs (the Rust build) and daisugi-gate-rs
+# (the Rust hook entry alone). The Python daisugi is the package
+# daisugi-py (packaging/aur/daisugi-py), so the three ports can check each
+# other. DAISUGI_PORT=rust or python makes `daisugi install` hand the
+# install to that port, which then writes hooks that run it directly.
+#
 # _commit must be a commit on the public repository that carries
-# scripts/release.sh and clients/go/scripts/native.sh with the
+# scripts/release.sh with --rust and clients/go/scripts/native.sh with the
 # libghostty-vt step. The public history is squashed once a month, so pin
 # a commit of a finished month. Until one exists, the empty _commit makes
 # makepkg stop at the source step, which is the intent.
@@ -10,8 +17,17 @@
 # Every native source is fetched here, in source=(), and checked by
 # sha256 (Z3, tree-sitter, tree-sitter-bash, zig 0.16.0) or by commit
 # (ghostty). prepare() fetches ghostty's zig dependencies, which its
-# build.zig.zon pins by hash, and the Go modules, which go.sum pins.
-# build() then needs no network. Everything it writes stays in $srcdir.
+# build.zig.zon pins by hash, the Go modules, which go.sum pins, and the
+# Rust crates, which Cargo.lock pins. build() then needs no network.
+# Everything it writes stays in $srcdir.
+#
+# Z3 is compiled twice: once by native.sh for the Go binaries, once by the
+# z3-sys crate for the Rust ones. Both use `zig c++` (zig is in source=()),
+# so the build needs no g++, and both link Z3 statically.
+#
+# The train pack as a system pack is the package daisugi-ml
+# (packaging/aur/daisugi-ml), and the speech engines are moonshine-cli and
+# parakeet-cli (packaging/aur/opendaisugi-voice).
 
 pkgname=opendaisugi
 pkgver=0.43.0
@@ -23,10 +39,9 @@ pkgdesc='Agent floor (coppice), loop (sprig) and tool-call gate (daisugi) for AI
 arch=('x86_64')
 url='https://github.com/levitatingflyfisher/openDaisugi'
 license=('MIT')
-depends=('glibc')
-makedepends=('go' 'git' 'cmake' 'make' 'gcc' 'python' 'pkgconf' 'binutils')
-provides=('coppice' 'sprig')
-conflicts=('opendaisugi-bin')
+# The Rust binaries link libgcc_s; Arch splits it out of gcc-libs as libgcc.
+depends=('glibc' 'libgcc')
+makedepends=('go' 'rust' 'git' 'cmake' 'make' 'gcc' 'python' 'pkgconf' 'binutils' 'curl')
 options=('!lto' '!debug')
 source=("openDaisugi::git+${url}.git#commit=${_commit}"
         "ghostty::git+https://github.com/ghostty-org/ghostty.git#commit=${_ghostty}"
@@ -49,6 +64,7 @@ _env() {
   export GOMODCACHE="${srcdir}/gopath/pkg/mod"
   export GOCACHE="${srcdir}/gocache"
   export GOTOOLCHAIN=auto
+  export CARGO_HOME="${srcdir}/cargo"
   export XDG_CACHE_HOME="${srcdir}/cache"
   export DAISUGI_NATIVE_PREFIX="${srcdir}/native"
   export DAISUGI_NATIVE_BUILD_DIR="${srcdir}/native-build"
@@ -69,22 +85,39 @@ prepare() {
   for m in harness/coppice harness/sprig clients/go; do
     (cd "${srcdir}/openDaisugi/${m}" && go mod download -x)
   done
+  (cd "${srcdir}/openDaisugi/clients/rust" && cargo fetch --locked)
 }
 
 build() {
   _env
-  # The binaries must name no build path and link only glibc, so the
-  # release script's own Go flags are used, not the distribution's CGO
-  # flags. SOURCE_DATE_EPOCH comes from makepkg.
+  export CARGO_NET_OFFLINE=true
+  # The binaries must name no build path and link only glibc (and
+  # libgcc_s for the Rust ones), so the release script's own flags are
+  # used, not the distribution's: z3-build-env.sh adds its path maps to
+  # CFLAGS and RUSTFLAGS, and makepkg's would reach `zig c++`.
+  # SOURCE_DATE_EPOCH comes from makepkg.
+  unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
   cd "${srcdir}/openDaisugi"
-  scripts/release.sh "${pkgver}"
+  scripts/release.sh "${pkgver}" --rust
   tar -xzf "dist/opendaisugi-${pkgver}-linux-x86_64.tar.gz" -C "${srcdir}"
+  tar -xzf "dist/opendaisugi-rust-${pkgver}-linux-x86_64.tar.gz" -C "${srcdir}"
 }
 
 package() {
+  optdepends=('daisugi-py: the Python daisugi, to check the Go and Rust ones against'
+              'daisugi-ml: LoRA training (daisugi lora train) with the system PyTorch'
+              'moonshine-cli: the Moonshine speech engine for daisugi voice'
+              'parakeet-cli: the Parakeet speech engine for daisugi voice')
+  provides=('coppice' 'sprig')
+  conflicts=('opendaisugi-bin')
   cd "${srcdir}/opendaisugi-${pkgver}-linux-x86_64"
   install -Dm755 coppice sprig daisugi -t "${pkgdir}/usr/bin/"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
   install -Dm644 NOTICE-coppice NOTICE-sprig NOTICE-daisugi -t "${pkgdir}/usr/share/licenses/${pkgname}/"
   install -Dm644 README "${pkgdir}/usr/share/doc/${pkgname}/README"
+  cd "${srcdir}/opendaisugi-rust-${pkgver}-linux-x86_64"
+  install -Dm755 daisugi "${pkgdir}/usr/bin/daisugi-rs"
+  install -Dm755 daisugi-gate "${pkgdir}/usr/bin/daisugi-gate-rs"
+  install -Dm644 NOTICE-rust "${pkgdir}/usr/share/licenses/${pkgname}/NOTICE-daisugi-rs"
+  install -Dm644 README "${pkgdir}/usr/share/doc/${pkgname}/README-rust"
 }

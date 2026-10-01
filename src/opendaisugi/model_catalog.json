@@ -1,0 +1,70 @@
+{
+  "v": 1,
+  "capable_min_ram_gb": 8.0,
+  "capable_min_vram_gb": 6.0,
+  "weak_max_params": 2000000000,
+  "defaults": {
+    "capable": "ibm-granite/granite-4.1-3b",
+    "weak": "ibm-granite/granite-4.0-1b"
+  },
+  "search_max_params_b": {
+    "capable": 8.0,
+    "weak": 2.0
+  },
+  "models": [
+    {
+      "id": "ibm-granite/granite-4.1-3b",
+      "params": 3402836480,
+      "license": "apache-2.0",
+      "context_length": 131072,
+      "gguf": "ibm-granite/granite-4.1-3b-GGUF",
+      "suits": "capable",
+      "note": "Tool calling and following instructions."
+    },
+    {
+      "id": "ibm-granite/granite-4.0-1b",
+      "params": 1631750144,
+      "license": "apache-2.0",
+      "context_length": 131072,
+      "gguf": "ibm-granite/granite-4.0-1b-GGUF",
+      "suits": "weak",
+      "note": "Tool calling on a small memory budget."
+    },
+    {
+      "id": "mistralai/Ministral-3-3B-Instruct-2512",
+      "params": 3849090048,
+      "license": "apache-2.0",
+      "context_length": 262144,
+      "gguf": "mistralai/Ministral-3-3B-Instruct-2512-GGUF",
+      "suits": "capable",
+      "note": "Function calling and JSON output, with a long context."
+    },
+    {
+      "id": "google/gemma-4-E2B-it",
+      "params": 5123178051,
+      "license": "apache-2.0",
+      "context_length": 131072,
+      "gguf": "ggml-org/gemma-4-E2B-it-GGUF",
+      "suits": "capable",
+      "note": "Structured tool use; reads text, images and audio."
+    },
+    {
+      "id": "meta-llama/Llama-3.2-3B-Instruct",
+      "params": 3212749824,
+      "license": "Llama 3.2 Community License",
+      "context_length": 131072,
+      "gguf": "bartowski/Llama-3.2-3B-Instruct-GGUF",
+      "suits": "capable",
+      "note": "Multilingual dialogue, summaries and agent tasks."
+    },
+    {
+      "id": "meta-llama/Llama-3.2-1B-Instruct",
+      "params": 1235814400,
+      "license": "Llama 3.2 Community License",
+      "context_length": 131072,
+      "gguf": "bartowski/Llama-3.2-1B-Instruct-GGUF",
+      "suits": "weak",
+      "note": "Multilingual dialogue on a small memory budget."
+    }
+  ]
+}

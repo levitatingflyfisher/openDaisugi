@@ -35,11 +35,22 @@ type LivePane struct {
 	// quiet_for from here until the grid has seen its first byte.
 	started time.Time
 
+	// ptyStart is the pty child's start time when it spawned, from
+	// /proc/<pid>/stat. A process with the same pid and another start
+	// time is not this pane's.
+	ptyStart uint64
+
 	// harness is the record's harness at spawn, or "shell" when it had
 	// none. The process tick names it on every event it applies. It is set
 	// once before putLive and never written again, so the tick goroutine
 	// reads it without a lock.
 	harness string
+
+	// gone closes when the goroutine that reports this pane's end (watchExit
+	// for a pty pane, pumpAdapter for a headless one) has returned. Both
+	// write into the data dir, so a teardown waits for it. It is nil for a
+	// LivePane that no startPane built.
+	gone chan struct{}
 
 	// tickStop ends the process tick goroutine of a pty pane. removeLive
 	// closes it through tickOnce, so a second close is a no-op.
@@ -161,6 +172,12 @@ func (s *Server) teardownLivePanes() {
 				}
 				if lp.Adapter != nil {
 					_ = lp.Adapter.Stop()
+				}
+				// The pane's own end goroutine may be in the middle of a
+				// write into the data dir. The teardown is not done
+				// before it returns.
+				if lp.gone != nil {
+					<-lp.gone
 				}
 			}(lp)
 		}
@@ -824,8 +841,15 @@ func (s *Server) startPane(rec layout.Pane) error {
 			return err
 		}
 		lp.PTY = p
+		if st, ok := procStartTime(p.Pid()); ok {
+			lp.ptyStart = st
+		}
 		lp.tickStop = make(chan struct{})
-		go s.watchExit(rec.ID, p)
+		lp.gone = make(chan struct{})
+		go func() {
+			defer close(lp.gone)
+			s.watchExit(rec.ID, p)
+		}()
 	case layout.KindHeadless:
 		a, ok := adapters.Get(rec.Harness)
 		if !ok {
@@ -858,7 +882,11 @@ func (s *Server) startPane(rec layout.Pane) error {
 			return err
 		}
 		lp.Adapter = proc
-		go s.pumpAdapter(rec.ID, rec.Harness, proc, g)
+		lp.gone = make(chan struct{})
+		go func() {
+			defer close(lp.gone)
+			s.pumpAdapter(rec.ID, rec.Harness, proc, g)
+		}()
 	default:
 		g.Close()
 		return fmt.Errorf("%w %q", errUnknownPaneKind, rec.Kind)
@@ -878,6 +906,20 @@ func (s *Server) startPane(rec layout.Pane) error {
 // the wall clock plus clockSkew.
 func (s *Server) clock() time.Time {
 	return time.Now().Add(time.Duration(s.clockSkew.Load()))
+}
+
+// ptyGone reports whether the pane's process ended: its end watch has
+// returned, or the pty says so.
+func (lp *LivePane) ptyGone() bool {
+	if lp.gone == nil {
+		return false
+	}
+	select {
+	case <-lp.gone:
+		return true
+	default:
+		return false
+	}
 }
 
 // processQuiet is how long a pty pane may go without output and still count
@@ -979,13 +1021,15 @@ const stopDrainWait = time.Second
 // a closed grid is not the same as a dead pane, and state must keep flowing
 // to it either way.
 //
-// This goroutine can still be blocked in Events(), or in the drain
-// step above, well after Server.Close() has already released the start lock
-// - a headless adapter with a long-lived process, or simply one that has not
-// sent anything since shutdown. Once the server has closed, it no longer
-// owns the data directory - a new server may already hold it - so nothing
-// here may write layout.json past that point: neither the in-loop
-// HarnessSessionID record nor the terminal close. Unlike watchExit, the
+// Close's teardown stops the adapter and waits, bounded, for this goroutine
+// to return. An adapter that ignores Stop can still hold it in Events(), or
+// in the drain step above, past that bound. Once the server has closed, it
+// no longer owns the data directory - a new server may already hold it - so
+// nothing here may write layout.json past that point: neither the in-loop
+// HarnessSessionID record nor the terminal close. The isClosed checks skip
+// that work, and saveLayout's writeData refuses any save that starts after
+// Close, so a save that passed a check just before Close still ends before
+// Close returns. Unlike watchExit, the
 // in-loop ApplyState calls stay unguarded even so, on the same reasoning
 // scanOnce's own doc comment gives for finishing a scan already in flight
 // when Close runs: ApplyState touches only this Server's in-memory tree and
@@ -1139,12 +1183,12 @@ const drainWait = 500 * time.Millisecond
 // keeps both, so its final screen stays readable; only an operator
 // pane.close does that.
 //
-// This goroutine can still be waiting on Done()/Drained()
-// well after Server.Close() has already released the start lock (a child
-// that outlives the server, or simply hasn't exited yet at shutdown). Once
+// Close's teardown waits, bounded, for this goroutine to return. A child
+// that ignores the kill can still hold it on Done() past that bound. Once
 // the server has closed, it no longer owns the tree or the data directory -
 // a new server may already hold the lock - so nothing past this point may
-// write to either.
+// write to either. The isClosed check skips the close, and saveLayout's
+// writeData refuses any save that starts after Close.
 func (s *Server) watchExit(paneID string, p *pane.PTY) {
 	<-p.Done()
 	select {
@@ -1633,7 +1677,7 @@ func (s *Server) handleWaitOutput(c *Client, r *proto.Request) proto.Response {
 func (s *Server) saveLayout() {
 	// Best effort. A layout write failure must never fail a command that
 	// already succeeded in the world.
-	_ = s.tree.Save(layoutPath(s.cfg.DataDir))
+	s.writeData(func() { _ = s.tree.Save(layoutPath(s.cfg.DataDir)) })
 }
 
 func layoutPath(dataDir string) string { return filepath.Join(dataDir, "layout.json") }

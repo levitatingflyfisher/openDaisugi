@@ -231,6 +231,9 @@ type Step struct {
 	Raw       map[string]interface{}
 	// JointOrder is joint_targets' keys in their JSON order.
 	JointOrder []string
+	// JSON is the step as it was read, keys in their order: the
+	// model_dump an llm_check payload holds.
+	JSON json.RawMessage
 }
 
 func (s *Step) UnmarshalJSON(data []byte) error {
@@ -240,8 +243,9 @@ func (s *Step) UnmarshalJSON(data []byte) error {
 	if err := dec.Decode(&raw); err != nil {
 		return err
 	}
-	floatNumbers(raw)
+	exactNumbers(raw)
 	s.Raw = raw
+	s.JSON = append(json.RawMessage(nil), data...)
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err == nil {
 		s.JointOrder = objectKeys(fields["joint_targets"])
@@ -261,28 +265,6 @@ func (s *Step) UnmarshalJSON(data []byte) error {
 		}
 	}
 	return nil
-}
-
-// floatNumbers makes each number in v a float64, as a plain decode does,
-// in place. A number past the float64 range, which an int of any size can
-// be, stays a json.Number: nothing reads it as a float.
-func floatNumbers(v interface{}) interface{} {
-	switch x := v.(type) {
-	case json.Number:
-		if f, err := strconv.ParseFloat(string(x), 64); err == nil {
-			return f
-		}
-		return x
-	case map[string]interface{}:
-		for k, e := range x {
-			x[k] = floatNumbers(e)
-		}
-	case []interface{}:
-		for i, e := range x {
-			x[i] = floatNumbers(e)
-		}
-	}
-	return v
 }
 
 func (s Step) str(key string) (string, bool) {
@@ -317,8 +299,7 @@ func (s Step) stringSlice(key string) []string {
 }
 
 func (s Step) float(key string) (float64, bool) {
-	v, ok := s.Raw[key].(float64)
-	return v, ok
+	return pyFloat(s.Raw[key])
 }
 
 func (s Step) vec3(key string) ([3]float64, bool) {
@@ -328,7 +309,7 @@ func (s Step) vec3(key string) ([3]float64, bool) {
 	}
 	var out [3]float64
 	for i, v := range arr {
-		f, ok := v.(float64)
+		f, ok := pyFloat(v)
 		if !ok {
 			return [3]float64{}, false
 		}
@@ -357,7 +338,7 @@ func (s Step) JointTargets() map[string]float64 {
 	}
 	out := make(map[string]float64, len(m))
 	for k, v := range m {
-		if f, ok := v.(float64); ok {
+		if f, ok := pyFloat(v); ok {
 			out[k] = f
 		}
 	}

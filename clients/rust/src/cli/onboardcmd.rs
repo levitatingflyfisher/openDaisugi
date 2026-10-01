@@ -66,8 +66,10 @@ impl SplitCache {
         if std::fs::metadata(path).is_err() {
             return Ok(c);
         }
+        // sqlite3.connect takes the path as a plain file name; the bundled
+        // SQLite reads a name that starts with "file:" as a URI (PW-R-4).
         let db = Connection::open_with_flags(
-            path,
+            plain_name(path),
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(|e| e.to_string())?;
@@ -122,7 +124,11 @@ impl SplitCache {
         if let Some(parent) = std::path::Path::new(&self.path).parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let db = Connection::open(&self.path).map_err(|e| e.to_string())?;
+        let db = Connection::open_with_flags(
+            plain_name(&self.path),
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|e| e.to_string())?;
         db.execute_batch(SPLIT_CACHE_SCHEMA)
             .map_err(|e| e.to_string())?;
         db.execute(
@@ -519,7 +525,7 @@ impl Env {
         let dry = p.flag("--dry-run");
         let as_json = p.flag("--json");
         let model = p.str("--model", SPLIT_DEFAULT_MODEL);
-        let data_dir = path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         self.renamed_backend_at(CMD, &data_dir)?;
         if self.env.contains_key("OPENDAISUGI_CONFORMANCE_RECORD") && !dry {
             return self.not_yet("daisugi onboard with OPENDAISUGI_CONFORMANCE_RECORD set");
@@ -927,5 +933,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         assert_eq!(names.len(), 2, "{names:?}");
         assert!(names.contains(&"a.jsonl".to_string()) && names.contains(&"c.jsonl".to_string()));
+    }
+}
+
+/// A database path as sqlite3.connect names it: a plain file name, so a
+/// relative name that starts with "file:" is given as "./file:...".
+fn plain_name(path: &str) -> String {
+    if path.starts_with("file:") {
+        format!("./{path}")
+    } else {
+        path.to_string()
     }
 }

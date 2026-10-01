@@ -18,7 +18,8 @@ const railHint = "That key does nothing on the rail. ctrl-t types a line."
 // handle applies one keystroke while no window has the keys. quit is true
 // when the floor should close. ctrl-c quits. A question takes the key
 // first, then the picker, the rename field, the prompt line and the tree,
-// whichever is open. Then the rail keys in Table act through Bind, arrows
+// whichever is open. A mouse release or motion never answers a question.
+// Then the rail keys in Table act through Bind, arrows
 // move, and a click lands. Other keys only say how to type a line.
 func (f *floor) handle(k key) (quit bool, err error) {
 	m := f.m
@@ -27,6 +28,11 @@ func (f *floor) handle(k key) (quit bool, err error) {
 	}
 	switch {
 	case m.Confirm != "" || m.ClearAll:
+		// A terminal sends a release after the press that asked, and
+		// motion is not an answer either. Only a key or a new press is.
+		if k.kind == keyMouse && (k.click.Release || k.click.Button&32 != 0) {
+			return false, nil
+		}
 		return false, f.answerConfirm(k)
 	case m.Picker != nil:
 		return false, f.pickerKey(k)

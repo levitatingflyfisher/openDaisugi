@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use super::gateroot::{join, path_str};
+use super::gateroot::path_str;
 use super::{exit, parse_args, Env, Opt, Res};
 use crate::gate::py::text::{rstrip, splitlines};
 use crate::gate::pyjson::{dumps_indent, Object, Value};
@@ -31,15 +31,25 @@ fn strip_ansi(text: &str) -> String {
     RE.get_or_init(|| regex::Regex::new("\x1b\\[[;?0-9]*[a-zA-Z]").expect("a fixed pattern")).replace_all(text, "").into_owned()
 }
 
-/// The YAML a plan or envelope file holds, as `yaml.safe_load` reads it:
-/// text in the form `yaml.safe_dump` writes, or the config reader's
-/// subset. None for YAML this binary does not read.
-fn load_yaml(text: &str) -> Option<Value> {
-    if let Ok(v) = crate::pathways::dumped::load_dumped(text) {
-        return Some(v);
+/// `yaml.safe_load(path.read_text())` for a plan or envelope file: the
+/// value, the exception it raises, or a refusal (`Err(Err(why))`) for a
+/// value this binary does not model.
+pub(super) fn load_yaml(path: &str, text: &str) -> Result<Value, Result<crate::pyyaml::Exc, String>> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let v = match crate::pyyaml::load(&text) {
+        Ok(v) => v,
+        Err(crate::pyyaml::Fail::Unsupported(why)) => {
+            return Err(Err(format!("{path} holds YAML this binary does not read ({why})")))
+        }
+        Err(crate::pyyaml::Fail::Exc(e)) => return Err(Ok(e)),
+    };
+    // A mapping holding a date or a key that is not text is refused; a
+    // list is passed on by its type, for the caller's own error.
+    match crate::pyyaml::to_json(&v) {
+        Some(j) => Ok(j),
+        None if matches!(v, crate::pyyaml::Val::List(_)) => Ok(Value::List(vec![])),
+        None => Err(Err(format!("{path} holds a date or a key that is not text"))),
     }
-    let node = super::yaml::parse(text).ok()?;
-    super::gatecmds::yaml_to_json(&node).ok()
 }
 
 /// Whether the step outputs of a finished run go to a terminal.
@@ -106,14 +116,27 @@ impl Env {
     pub(super) fn load_model_yaml(path: &str, id: Id) -> Result<Object, Result<String, String>> {
         let raw = std::fs::read(path).map_err(|e| Err(format!("{path} cannot be read: {e}")))?;
         let text = String::from_utf8(raw).map_err(|_| Err(format!("{path} is not UTF-8")))?;
-        let v = load_yaml(&text).ok_or_else(|| Err(format!("{path} holds YAML this binary does not read")))?;
+        let v = match load_yaml(path, &text) {
+            Ok(v) => v,
+            Err(Err(why)) => return Err(Err(why)),
+            Err(Ok(e)) if crate::pyyaml::caught(&e) => return Err(Ok(crate::pyyaml::first_line(&e))),
+            Err(Ok(e)) => {
+                return Err(Err(format!(
+                    "{path} holds YAML the oracle rejects with a {}, which it does not catch",
+                    e.kind
+                )))
+            }
+        };
         if v.as_obj().is_none() {
             return Err(Err(format!("{path} does not hold a mapping")));
         }
         match validate_model(id, &v, Mode::Python) {
             Ok(Value::Obj(o)) => Ok(o),
             Ok(_) => Err(Err(format!("{path} does not hold a mapping"))),
-            Err(e) => Err(Ok(e.text().split('\n').next().unwrap_or("").to_string())),
+            Err(e) => match e.unreadable() {
+                Some(why) => Err(Err(format!("{path}: {why}"))),
+                None => Err(Ok(e.text().split('\n').next().unwrap_or("").to_string())),
+            },
         }
     }
 
@@ -129,6 +152,7 @@ impl Env {
             Opt::flag(&["--dry-run"], "Use DryRunExecutor — no real subprocesses."),
             Opt::flag(&["--yes", "-y"], "Auto-approve every step (sets DAISUGI_APPROVE=always for this run)."),
             Opt::flag(&["--json"], "Emit the run session as JSON on stdout."),
+            super::weavecmd::AGENT_OPT,
         ];
         let p = match parse_args(args, &opts, 1) {
             Ok(p) => p,
@@ -151,7 +175,8 @@ impl Env {
         if let Some(m) = Self::click_path("'--envelope' / '-e'", &env_path) {
             return self.usage_args(CMD, "PLAN_PATH", &m);
         }
-        let data_dir = path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")));
+        let agent = self.check_agent(&p)?;
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let env = match Self::load_model_yaml(&env_path, Id::Envelope) {
             Ok(o) => o,
             Err(Err(why)) => return self.refuse(CMD, &why),
@@ -196,13 +221,18 @@ impl Env {
         }
         let mut executors: BTreeMap<String, Box<dyn Executor>> = BTreeMap::new();
         if dry {
-            for k in ["shell", "file_read", "file_write", "network"] {
+            for k in ["shell", "file_read", "file_write", "network", "agentic"] {
                 executors.insert(k.into(), Box::new(DryRun));
             }
         } else {
             for (k, ex) in supervise::default_executors(self.env.clone()) {
                 executors.insert(k, ex);
             }
+            let agentic = match self.agentic(&env, &agent) {
+                Ok(a) => a,
+                Err(e) => return self.fail(CMD, &e),
+            };
+            executors.insert("agentic".into(), Box::new(agentic));
         }
         let terminal = tty(0) && tty(1);
         if terminal {

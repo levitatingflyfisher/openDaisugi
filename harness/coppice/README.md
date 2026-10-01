@@ -31,11 +31,13 @@ once. `scripts/install.sh` here only calls it. Then `daisugi install --gate` wir
 `coppice` opens the floor in the terminal, and `coppice web` opens it in the browser. The install
 stamps each binary with the checkout's `git describe`; a plain `go build` reports the commit.
 
-`toolchain.sh` installs Zig and CMake under `~/.local`, no sudo, and builds `libghostty-vt` from
-source into `~/.local/ghostty-vt`. Override that destination with `COPPICE_GHOSTTY_PREFIX`. It
-also writes a pkg-config wrapper at `~/.local/bin/coppice-pkg-config` and two global Go settings,
-`GOTOOLCHAIN=auto` and `PKG_CONFIG=coppice-pkg-config`, so a plain `go build` links. Undo both
-with `go env -u GOTOOLCHAIN PKG_CONFIG`.
+`toolchain.sh` installs Zig 0.16.0 and CMake 4.4.3, each checked by sha256, no sudo, and
+builds `libghostty-vt` from source, all under `${XDG_DATA_HOME:-~/.local/share}/opendaisugi`.
+A build an older version left at `~/.local/ghostty-vt` is kept and used. Override the
+destination with `COPPICE_GHOSTTY_PREFIX`. It writes nothing onto PATH and changes no global Go
+setting. It prints the lines a build needs in its environment: a `PATH` with the pinned zig and
+cmake first, `GOTOOLCHAIN=auto`, and a `PKG_CONFIG_PATH` that names the prefix's
+`share/pkgconfig`.
 
 There is one thing the installer cannot give you: pkg-config itself. If `preflight.sh` reports it
 missing, install `pkgconf` or `pkg-config` from your distribution's own package manager. That one
@@ -43,6 +45,23 @@ step needs sudo; nothing else here does, as long as `COPPICE_GHOSTTY_PREFIX` poi
 can already write.
 
 Pins and their reasons, including the unix-only build, are in `PINS.md`.
+
+### The Rust coppice
+
+`harness/coppice-rs` is a second coppice, written in Rust: the same command line, the same wire,
+the same floor on a terminal and in the browser, and the same pinned `libghostty-vt`, linked
+through its C API. Its binary is also named `coppice`. `clients/coppice_compare.py` replays every
+case against a Go and a Rust server side by side and counts each difference, and the floor on a
+terminal is compared as a screen (`clients/ADJUDICATIONS.md`, CP-R-1 to CP-R-45). Go stays the
+default. To build and install the Rust one in its place (you need cargo as well):
+
+```
+COPPICE_PORT=rust ../../scripts/install.sh
+```
+
+`COPPICE_PORT=rust scripts/release.sh VERSION` puts it in the release tarball in place of the Go
+one, with its own `NOTICE`. It links `libgcc_s` as well as libc. `harness/coppice-rs/PINS.md`
+lists its crates and why each is there.
 
 ## First run
 
@@ -161,7 +180,7 @@ you`. The count is the count inside the task. `Esc` pops back one level. A tree 
 pushed shows only that task's subtree.
 
 The floor has a foreman too: one agent you talk to about all your projects. Type a sentence at
-the prompt line (`ctrl-t`), type or say it on the phone's tell bar, or run `coppice floor talk
+the prompt line (`ctrl-t`), type or say it in the web page's chat bar, or run `coppice floor talk
 TEXT`. If no foreman runs, the first sentence starts one: your default harness, labelled
 `foreman`, in its own scratch directory `$XDG_STATE_HOME/coppice/foreman` (or
 `~/.local/state/coppice/foreman`), which never counts as a project. That directory is outside the
@@ -181,6 +200,16 @@ every ask stays yours. Type `foreman claude` at the prompt line to start one wit
 your choice instead; the server starts it and gives it the page the same way. Type `foreman`
 alone to see which pane it is, or that none runs yet. At most 32
 sentences wait for it.
+
+The server keeps the chat with the foreman. Each sentence you send goes first to
+`<data dir>/chat/YYYY-MM-DD.jsonl` (mode 0600), so it shows at once and outlives a foreman that
+ended. `floor.chat` reads your lines from there and the foreman's replies from its own
+transcript, merged by time; `pane.messages` reads one agent's transcript. Tool calls show as the
+tool's name and one line of its input, never its output. Only you read them: a pane reads only
+its own messages, and a named web token reads neither. A damaged chat file moves to
+`<name>.broken-<UTC time>` and the chat starts fresh, with one line that says where it went. The
+daisugi gate refuses an agent's read of the chat and journal files, as it refuses a read of the
+web token.
 
 A task can have a foreman: a pane that hears the asks of the task's panes before you do. Push
 into the task and type `foreman claude` at the prompt line to open one there, or run `coppice task set-foreman t1
@@ -369,9 +398,40 @@ command for one JSON object instead of a table or a line.
 | `coppice web [--no-open] [--listen ADDR]` | start the server if needed, serve the floor on this machine only, and open it in the browser, signed in |
 | `coppice web cert init [--name NAME]... [--ip ADDR]... [--ca-dir DIR] [--ca-listen ADDR] [--qr url\|pem\|off]` | make the local CA if there is none, issue a server certificate, and print a QR that installs the CA on a phone |
 | `coppice web cert show [--ca-dir DIR]` | print what the current certificate covers and when it expires |
-| `coppice web cert tailscale NAME.TAILNET.ts.net [--dir DIR]` | ask tailscale for a Let's Encrypt certificate and write it where `web serve --tls tailscale` looks for it |
-| `coppice web serve [--listen ADDR] [--tls tailscale\|localca\|files\|off] [--cert FILE --key FILE] [--ca-dir DIR] [--ca-listen ADDR] [--external-url URL] [--gate-root DIR] [--voice-url URL [--voice-token-file FILE]] [--ntfy URL --ntfy-topic NAME --ntfy-token-env VAR] [--persist\|--forget] [--web-push] [--qr]` | serve the phone client, minting a token on the first run |
+| `coppice web cert tailscale [NAME.TAILNET.ts.net] [--dir DIR]` | ask tailscale for a Let's Encrypt certificate, for this box's MagicDNS name when no name is given; with no `--dir`, into the pair the running or saved `web serve --tls tailscale` uses, else where it looks by default |
+| `coppice web serve [--listen ADDR] [--tls tailscale\|localca\|files\|off] [--cert FILE --key FILE] [--ca-dir DIR] [--ca-listen ADDR] [--external-url URL] [--gate-root DIR] [--voice-url URL [--voice-token-file FILE]] [--ntfy URL --ntfy-topic NAME --ntfy-token-env VAR] [--persist\|--forget] [--web-push] [--qr]` | serve the phone client, minting a token on the first run; with `--tls tailscale`, get and renew the certificate and listen on the tailnet and loopback only |
 | `coppice web token [--rotate] [--url URL] [--qr] [--listen ADDR]` | print the current bearer token, its sign-in URL, and a QR to scan |
+
+`coppice web serve --tls tailscale --persist` is the whole phone setup, one command on the box.
+It reads this box's MagicDNS name and tailnet address from `tailscale status --json`, runs
+`tailscale cert` when there is no certificate or it has under 30 days left, and checks again
+once a day while it serves; a renewed certificate is served from the next connection. If a
+renewal fails while the certificate on disk is still good, it says so once and serves that
+one. It never writes over a `--cert` or `--key` file that is not a PEM certificate or key: it
+refuses in one line. It listens on the tailnet address and on 127.0.0.1 only, never on the
+LAN. Only an address inside Tailscale's ranges (100.64.0.0/10, fd7a:115c:a1e0::/48) counts as
+a tailnet address; any other address tailscale reports is skipped with one log line. A
+`--listen` with no host, such as `:9443`, keeps that and sets the port; a `--listen` with a
+host, such as `0.0.0.0:8443`, listens there and nowhere else, and a host that is not loopback
+or a tailnet address gets a warning line. It prints the sign-in QR for
+`https://NAME.TAILNET.ts.net:8443` and one line that says where it listens. The first
+certificate also prints `This name is now in public certificate logs: NAME.`, because Let's
+Encrypt logs every name it signs; pick a MagicDNS name with no personal words. With
+`--persist` the next `coppice` start serves the phone the same way. A saved phone server that
+starts before tailscale is up serves 127.0.0.1 at once and binds the tailnet address once
+tailscale has it, trying again after 2 s, then 4 s, up to every 60 s, with one log line when
+it starts to wait and one when it binds; with no good certificate on disk yet it waits before
+it serves anything. A tailnet address the box will not bind, such as an IPv6 address on a box
+with IPv6 off, is skipped with one log line; a serve in the terminal stops only when no
+tailnet address binds. With no tailscale on PATH it says so in one line and exits 1. Under 7
+days left on the certificate of a phone server that runs now or is saved, `floor.facts`
+carries `phone_cert_days`, and the header (on a phone, the rail) warns with Renew, which types
+`coppice web cert tailscale` in a shell; with no `--dir` that command renews the pair the
+running or saved serve uses. When the phone cannot reach the box it says so, with `Turn on
+Tailscale on this phone.` on a `.ts.net` address, `The box may be asleep or off.`, and Retry.
+Over plain http from another machine the browser gives no microphone, so the mic says `The mic
+needs https here.` and names the fix on the box. MagicDNS and HTTPS must be on in the Tailscale
+admin console, once per tailnet.
 
 `coppice web` puts the floor on a phone over HTTPS. From 900 px the page is one screen: the
 rail on the left, and live windows filling the rest. The page makes as many windows as fit at a
@@ -409,6 +469,15 @@ harness near the selected agent in one click, and the new agent takes a window w
 keys. The `▾` beside it lists the projects, pinned first, and starts one there; `More...`
 opens the full form.
 
+The chat bar, `Tell the foreman`, sits at the foot of the rail, above Recent. Everything typed
+or said in it goes to the floor's foreman through `floor.talk`, which starts the foreman when
+none runs. Plumbing needs a leading slash: `/claude` (or another harness name) opens that
+harness, and `/close NAME` closes an agent by label or id. Only a slash and a harness name or
+a terminal floor verb is plumbing: any other line, "/etc/hosts looks wrong" too, goes to the
+foreman. A sentence led by `claude` is talk,
+so "claude, can you check trellis" never starts a new claude. The terminal floor's prompt
+line keeps its own words. The microphone only fills the bar.
+
 Each window header has two lines: the name and the last verdict, then a stack bar with the
 state word and the directory after it. The bar runs in steps: the loop (the harness), the
 daisugi mode (`enforcing`, `watching` or `off`), the router (`gateway`, `switchyard` or
@@ -445,10 +514,18 @@ the computer that runs coppice. While the page cannot reach the box it keeps the
 picture, dimmed, and retries.
 
 On a phone (under 600 px wide, or under 900 px wide and 500 px tall, which is a phone on
-its side) home is the overview: the colony strip when the server lists the colony, the
-agents that need you in a small queue at the top with Deny and Look, and the agent list
-grouped as the rail groups it. A tap on an agent slides its sheet in from the right over
-most of the screen. The overview stays live under it and in sight at the left edge. The
+its side) home is the overview, one column. From the top: the facts line (how many agents
+work and need you), the colony strip when the server lists the colony, the agents that need
+you as cards with Deny and Look, a fold such as `▸ 7 agents · 3 projects` that opens the
+agent list in place, grouped as the rail groups it, and then the chat with the foreman. The
+chat bar is docked at the bottom of the screen, above the on-screen keyboard. The chat shows
+what you said to the floor's foreman and what it said back, from `floor.chat`, and reads
+again when the server sends a `messages` event for it. A sentence you send shows at once,
+marked `sent` when the server takes it and `read` when `floor.chat` marks its line read: the
+foreman's transcript recorded the sentence, so its turn started. An agent a reply names, by label or id, is a chip. The chat is for the owner's own
+sign-in: a named web token sees `The chat is for the owner's own sign-in.` No chat text is
+stored on the phone. A tap on an agent (a card, a row in the fold, or a chip in the chat)
+slides its sheet in from the right over most of the screen. The overview stays live under it and in sight at the left edge. The
 sheet shows the agent's live terminal at a readable size (a cell at least 7 px wide; a
 wider terminal scrolls sideways), its stack bar and gate mark, and its ask with Deny and
 Allow or the name field. An ask a harness holds itself, such as OpenCode's permission
@@ -460,7 +537,8 @@ Nothing leaves the page, and the phone never resizes an agent.
 The sheet's bottom bar holds Keys, a text field, Mic and Enter. The keyboard's own Enter
 types the text into the agent's input and does not press Enter, so you can read it there
 first. The Enter button types what the field holds, if anything, and presses Enter, in
-one request. Keys opens a drawer with Esc, Tab, the four arrows, ctrl-c and Enter. A
+one request. The status line then says where the words went, such as `Sent to build.`, and
+opening a sheet clears an older line. Keys opens a drawer with Esc, Tab, the four arrows, ctrl-c and Enter. A
 headless agent has no terminal to type into, so it takes whole messages: on its sheet
 either Enter sends the field as one message and there is no key drawer, and its window on
 a wider page sends it no keys and has a line under it whose Enter sends the message. The

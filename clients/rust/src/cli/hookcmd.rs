@@ -69,7 +69,7 @@ impl Env {
         }
         let root = p.str(
             "--captures-root",
-            &format!("{}/.opendaisugi/captures", self.home),
+            &super::gateroot::join(&self.data_home(), "captures"),
         );
         let fmt = p.str("--format", "claude");
         let event = p.str("--event", "pre_tool_use");

@@ -101,7 +101,7 @@ func (s *Server) recordRecentDir(dir string) {
 	if len(out) > maxRecentDirs {
 		out = out[:maxRecentDirs]
 	}
-	_ = saveRecentDirs(s.cfg.DataDir, out)
+	s.writeData(func() { _ = saveRecentDirs(s.cfg.DataDir, out) })
 }
 
 // pinnedProjects reads coppice.toml's projects list. A missing or

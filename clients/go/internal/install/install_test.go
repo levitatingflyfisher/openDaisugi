@@ -180,3 +180,38 @@ func TestSelfKeepsTheInvokedPath(t *testing.T) {
 		t.Fatalf("by path: %q %v", got, err)
 	}
 }
+
+// The embedded skill and OpenClaw plugin must be the files Python ships,
+// every one of them.
+func TestLayerAssetsMatchPython(t *testing.T) {
+	for _, pair := range [][2]string{
+		{"../../../../src/opendaisugi/skills/opendaisugi-checklist", "assets/skill/opendaisugi-checklist"},
+		{"../../../../src/opendaisugi/install_assets/openclaw_plugin", "assets/openclaw_plugin"},
+	} {
+		var want []string
+		err := filepath.Walk(pair[0], func(p string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() || strings.Contains(p, "__pycache__") {
+				return err
+			}
+			rel, _ := filepath.Rel(pair[0], p)
+			want = append(want, rel)
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]string{}
+		for _, f := range SkillFiles(pair[1]) {
+			got[f.Rel] = f.Text
+		}
+		if len(got) != len(want) {
+			t.Errorf("%s: %d embedded files, %d shipped", pair[1], len(got), len(want))
+		}
+		for _, rel := range want {
+			b, _ := os.ReadFile(filepath.Join(pair[0], rel))
+			if got[rel] != string(b) {
+				t.Errorf("%s/%s drifted from the embedded copy", pair[0], rel)
+			}
+		}
+	}
+}

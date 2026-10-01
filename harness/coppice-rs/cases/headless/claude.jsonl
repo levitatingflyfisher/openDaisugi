@@ -1,0 +1,49 @@
+# A headless claude pane on the fake that replays a recorded stream-json
+# file for each line on its stdin. Before the first turn the pane has no
+# state and no session id, so a fork is refused. One prompt replays the
+# fixture: the screen shows the rows, the state ends idle with the
+# result, and the pane names the session the init line gave. A raw line
+# on stdin replays it again. A fork resumes that session with
+# --fork-session and borrows the id until its own first turn, so a fork
+# of the fork is refused. The fake's argv and stdin are shown in a pty
+# pane.
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/adapters/fake-claude.sh
+#!watch state,note,child
+#!settle 300
+{"id":"1","cmd":"pane.create","kind":"headless","harness":"claude","cwd":"{WORK}","label":"cl","env":{"COPPICE_CLAUDE_FIXTURE":"{FIXTURES}/adapters/claude-stream.jsonl","COPPICE_CLAUDE_ECHO_ARGV":"{WORK}/claude-argv.txt","COPPICE_CLAUDE_ECHO_STDIN":"{WORK}/claude-stdin.txt"}}
+{"id":"$id","ok":true,"result":{"pane":"$cl","workspace":"w1","tab":"w1:t1"}}
+{"id":"2","cmd":"agent.get","pane":"$cl"}
+{"id":"$id","ok":true,"result":{"pane":"$cl","kind":"headless","harness":"claude","state":"unknown","source":null,"closed":false}}
+{"id":"3","cmd":"pane.fork","pane":"$cl"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"claude has not reported a session id yet, wait for the first turn"}}
+{"id":"4","cmd":"agent.prompt","pane":"$cl","text":"list the files","wait":true,"until":"idle","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"pane":"$cl","state":"idle","source":"headless"}}
+{"id":"5","cmd":"pane.read","pane":"$cl"}
+{"id":"$id","ok":true,"result":{"source":"visible","text":"I will list the files.\nBash toolu_01 {\"command\":\"ls\"}\ntool result toolu_01: \"a.txt\"\n[idle] Listed one file."}}
+{"id":"6","cmd":"agent.get","pane":"$cl"}
+{"id":"$id","ok":true,"result":{"pane":"$cl","state":"idle","source":"headless","detail":"Listed one file.","harness_session_id":"11111111-2222-3333-4444-555555555555"}}
+{"id":"7","cmd":"pane.send_text","pane":"$cl","text":"{\"type\":\"user\"}\n"}
+{"id":"$id","ok":true,"result":{"sent":17}}
+{"id":"8","cmd":"agent.wait","pane":"$cl","until":"idle","timeout_ms":5000}
+{"id":"$id","ok":true,"result":{"pane":"$cl","state":"idle","source":"headless"}}
+{"id":"9","cmd":"pane.fork","pane":"$cl","label":"branch"}
+{"id":"$id","ok":true,"result":{"pane":"$branch","parent_pane":"$cl","workspace":"w1","tab":"w1:t1"}}
+{"id":"10","cmd":"pane.fork","pane":"$branch"}
+{"id":"$id","ok":false,"error":{"code":"adapter_error","message":"claude has not reported a session id yet, wait for the first turn"}}
+{"id":"11","cmd":"agent.list"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"12","cmd":"pane.create","cwd":"{WORK}","cmd_argv":["/bin/sh","-c","until grep -q fork-session claude-argv.txt 2>/dev/null && [ \"$(wc -l < claude-stdin.txt)\" -ge 2 ]; do sleep 0.1; done; cat claude-argv.txt claude-stdin.txt; echo shown; exec sleep 600"],"label":"show","cols":200}
+{"id":"$id","ok":true,"result":{"pane":"$show"}}
+{"id":"13","cmd":"pane.wait_output","pane":"$show","contains":"shown","timeout_ms":10000}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"14","cmd":"pane.read","pane":"$show"}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"15","cmd":"pane.send_text","pane":"$branch","text":"x"}
+{"id":"$id","ok":true,"result":{"sent":2}}
+{"id":"16","cmd":"pane.close","pane":"$cl"}
+{"id":"$id","ok":true,"result":{"pane":"$cl","closed":true}}
+{"id":"17","cmd":"agent.prompt","pane":"$cl","text":"again"}
+{"id":"$id","ok":false,"error":{"code":"no_such_pane","message":"*"}}
+{"id":"18","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":"*"}
+#!tree

@@ -16,7 +16,46 @@ import (
 // task in, one answer out — so it drops straight into cron, CI, and pipes.
 type CLI struct {
 	Version  string
-	NewModel func() (Model, error) // the pluggable backend; nil = an honest "not wired" error
+	NewModel func(ModelOptions) (Model, error) // the pluggable backend; nil = an honest "not wired" error
+}
+
+// ModelOptions is what the command line sets on the backend.
+type ModelOptions struct {
+	// Model is --model: the model to ask. Empty keeps the backend's default.
+	Model string
+	// Tools is the wall from --tools, in sprig's order: the only tools the
+	// backend offers the model.
+	Tools []string
+}
+
+// usageKeys are the --json usage keys, the names the Messages API and
+// claude -p give the four token counts.
+var usageKeys = []struct {
+	key string
+	get func(Usage) int
+}{
+	{"input_tokens", func(u Usage) int { return u.Fresh }},
+	{"output_tokens", func(u Usage) int { return u.Out }},
+	{"cache_read_input_tokens", func(u Usage) int { return u.CacheRead }},
+	{"cache_creation_input_tokens", func(u Usage) int { return u.CacheWrite }},
+}
+
+// usageSum adds the token counts of every assistant turn. A count no turn
+// reported (a zero sum) is left out.
+func usageSum(history []Message) map[string]int {
+	sum := map[string]int{}
+	for _, k := range usageKeys {
+		n := 0
+		for _, m := range history {
+			if m.Role == "assistant" {
+				n += k.get(m.Usage)
+			}
+		}
+		if n != 0 {
+			sum[k.key] = n
+		}
+	}
+	return sum
 }
 
 // Run executes one task and returns a process exit code (0 ok, non-zero fail).
@@ -34,6 +73,10 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	sessionID := fs.String("session", "", "session id to write under --session-dir (default: a fresh one)")
 	resume := fs.String("resume", "",
 		"resume this session id from --session-dir: reopen its file, rebuild history from its head, and append")
+	tools := fs.String("tools", strings.Join(AllToolNames, ","),
+		"the tools the model may call, a comma list of read, write, edit and bash")
+	modelName := fs.String("model", "",
+		"the model to ask (default: haiku on claude -p; SPRIG_MODEL, else claude-haiku-4-5, on the API)")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, `usage: sprig [flags] "<task>"     (or:  echo "<task>" | sprig -)`)
 		fmt.Fprintln(stderr, "a minimal coding-agent harness — the answer goes to stdout, logs to stderr.")
@@ -49,6 +92,11 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	if *showVersion {
 		fmt.Fprintln(stdout, c.Version)
 		return 0
+	}
+	wall, err := ParseToolWall(*tools)
+	if err != nil {
+		fmt.Fprintln(stderr, "sprig:", err)
+		return 2
 	}
 
 	if *resume != "" && *sessionDir == "" {
@@ -73,11 +121,11 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 
 	newModel := c.NewModel
 	if newModel == nil {
-		newModel = func() (Model, error) {
+		newModel = func(ModelOptions) (Model, error) {
 			return nil, fmt.Errorf("no model backend configured")
 		}
 	}
-	model, err := newModel()
+	model, err := newModel(ModelOptions{Model: *modelName, Tools: wall})
 	if err != nil {
 		fmt.Fprintln(stderr, "sprig:", err)
 		return 1
@@ -125,7 +173,7 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "sprig: session %s at %s\n", sid, w.Path())
 	}
 
-	exec := NewExecutor(DefaultTools(), gate)
+	exec := NewExecutor(ToolsFor(wall), gate)
 	exec.SessionObserver = obs
 	agent := &Agent{
 		Model: model, Exec: exec, MaxTurns: *maxTurns,
@@ -138,7 +186,12 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	}
 
 	if *jsonOut {
-		_ = json.NewEncoder(stdout).Encode(map[string]any{"answer": answer, "turns": len(agent.History)})
+		name := ""
+		if n, ok := model.(interface{ ModelName() string }); ok {
+			name = n.ModelName()
+		}
+		_ = json.NewEncoder(stdout).Encode(map[string]any{"answer": answer, "turns": len(agent.History),
+			"model": name, "usage": usageSum(agent.History)})
 	} else {
 		fmt.Fprintln(stdout, answer)
 	}

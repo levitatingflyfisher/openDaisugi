@@ -65,10 +65,37 @@ function callCwd(directory: string, tool: unknown, args: any): string {
   return args.workdir;
 }
 
+// The data home, as opendaisugi.datahome picks it: OPENDAISUGI_HOME, else
+// $XDG_DATA_HOME/opendaisugi when ~/.opendaisugi does not exist, else
+// ~/.opendaisugi. The gate's socket sits under it, in gate/. "" when there
+// is no HOME and no OPENDAISUGI_HOME.
+function dataHome(env: NodeJS.ProcessEnv): string {
+  const home = env.HOME && path.isAbsolute(env.HOME) ? env.HOME : "";
+  const od = usable(env.OPENDAISUGI_HOME, home);
+  if (od) return od;
+  if (!home) return "";
+  const dot = path.join(home, ".opendaisugi");
+  const xdg = usable(env.XDG_DATA_HOME, home);
+  if (xdg && !fs.existsSync(dot)) return path.join(xdg, "opendaisugi");
+  return dot;
+}
+
+// A data home variable as opendaisugi.datahome reads it: a leading ~ or ~/
+// is the home directory, and a value that is still not absolute is
+// ignored (""), so the socket is never looked for relative to the cwd.
+function usable(v: string | undefined, home: string): string {
+  if (!v) return "";
+  if ((v === "~" || v.startsWith("~/")) && !home) return "";
+  if (v === "~") v = home;
+  else if (v.startsWith("~/")) v = home + v.slice(1);
+  return path.isAbsolute(v) ? path.normalize(v) : "";
+}
+
 function gateSocketPath(env: NodeJS.ProcessEnv): string {
   if (env.OPENDAISUGI_GATE_SOCK) return env.OPENDAISUGI_GATE_SOCK;
-  if (!env.HOME) return "";
-  return path.join(env.HOME, ".opendaisugi", "gate", "gate.sock");
+  const home = dataHome(env);
+  if (!home) return "";
+  return path.join(home, "gate", "gate.sock");
 }
 
 // This process's own coppice/Herdr pane identity, read from ITS OWN

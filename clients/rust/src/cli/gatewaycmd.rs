@@ -105,7 +105,7 @@ impl Env {
         let host = p.str("--host", "127.0.0.1");
         let mut upstream = p.str("--upstream", "https://api.anthropic.com");
         let cheap = p.str("--cheap-model", "claude-haiku-4-5");
-        let data_dir = path_str(&p.str("--data-dir", &format!("{}/.opendaisugi", self.home)));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         let capture = p.flag("--capture-answers");
         let local_flag = p.str("--local-model", "");
         let openai_up = p.str("--openai-upstream", "https://api.openai.com");
@@ -137,7 +137,7 @@ impl Env {
         }
         if !p.has("--upstream-kind") {
             // The recorded kind counts only when --upstream names that host.
-            let home_cfg = self.load_cfg(CMD, &format!("{}/.opendaisugi/config.yaml", self.home))?;
+            let home_cfg = self.load_cfg(CMD, &super::gateroot::join(&self.data_home(), "config.yaml"))?;
             kind = "anthropic".into();
             if let (Some(base), Some(k)) = (&home_cfg.llm_base_url, &home_cfg.llm_host_kind) {
                 if !base.is_empty() && !k.is_empty() && upstream.trim_end_matches('/') == base.trim_end_matches('/') {

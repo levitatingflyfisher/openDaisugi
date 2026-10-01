@@ -1,0 +1,21 @@
+pkgbase = daisugi-ml
+	pkgdesc = LoRA training for the daisugi binaries with the system PyTorch (the train pack)
+	pkgver = 0.43.0
+	pkgrel = 1
+	url = https://github.com/levitatingflyfisher/openDaisugi
+	arch = any
+	license = MIT
+	makedepends = git
+	depends = opendaisugi
+	depends = python
+	depends = python-numpy
+	depends = python-pytorch
+	depends = python-transformers
+	depends = python-peft
+	depends = python-trl
+	depends = python-datasets
+	depends = python-accelerate
+	source = openDaisugi::git+https://github.com/levitatingflyfisher/openDaisugi.git#commit=
+	sha256sums = SKIP
+
+pkgname = daisugi-ml

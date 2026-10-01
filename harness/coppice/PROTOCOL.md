@@ -87,6 +87,37 @@ allow an ask. A foreman pane may deny an ask it holds, and no other.
 - A pane, or a peer the server cannot place, gets the pane refusal for
   `task.move`, since a move can put a task under a foreman the operator did
   not choose.
+- The chat and the transcripts hold the owner's whole working life. A
+  pane, a plugin, or a peer the server cannot place gets `unauthorized`
+  with `only the operator talks to the floor's foreman.` for `floor.chat`.
+  It gets `a pane may read only its own messages. The operator reads any
+  pane's.` for `pane.messages`, except a pane's own connection reading its
+  own pane: a connection whose role is pane with that pane's id, which is
+  no plugin and no peer the kernel could not place, the same rule as for a
+  `transcript_path`. A connection whose `hello` said `name_from` `token`
+  and gave a name, that is a named web token, gets `unauthorized` with
+  `the chat is for the owner's own sign-in.` for both verbs. The owner's
+  own web token carries no name and reads both.
+- The kernel places a peer by its process tree and session, and a pane's
+  pid counts only while it is that pane's own process: a pty pane whose
+  process ended drops out at once, and a pid the kernel gave to a new
+  process does not count, told by its start time (field 22 of
+  `/proc/<pid>/stat`, kept when the pane spawned). A process that leaves
+  its pane's session and tree (`setsid -f`, `systemd-run`, a daemon) is
+  seen as the operator and could read the chat. The gate's rule denies
+  the chat verbs on the wire from a gated agent, as it denies
+  `agent.allow`, as typed and with JSON string escapes decoded, with the
+  reason `the chat and an agent's messages are the operator's to read.`;
+  a command built at run time passes it. A cgroup per pane
+  is the follow-up that closes this.
+- A pane, a plugin or a peer the server cannot place gets `unauthorized`
+  with `that sprig session belongs to another pane. Only the operator
+  resumes or forks it.` for a `pane.create` of a sprig pane whose resume
+  names a session tree another pane's record names (live or ended,
+  compared by real path), the flags read as sprig's own parser reads them:
+  `-name` or `--name`, `=value` or the next word, the last value winning,
+  up to `--`; the adapter strips every such spelling and passes its own, and for a `pane.fork` of another pane's
+  sprig pane. The new pane would read that tree as its own messages.
 - Each pane names the root pid of every process the server starts for it:
   the pty child, the headless harness, and each turn of a harness that
   runs one process per turn. A descendant of any of them is that pane.
@@ -634,7 +665,7 @@ foreman up the chain of tasks wins.
 |---|---|---|---|
 | `pane.attach` | `pane`; `cols` and `rows`, both positive, resize the pane first; `view_only`, default false, makes the server ignore `cols` and `rows` | `pane` id, `attached` true | Attaching also subscribes this connection to `frame` and `state` for that pane. With `view_only` true, `pane.send_text`, `pane.send_keys`, `pane.run`, `pane.resize` and `agent.prompt` on this connection answer `not_attached` |
 | `pane.detach` | `pane` | `pane` id, `attached` false | `not_attached` |
-| `events.subscribe` | `kinds` list of `state`, `layout`, `frame`, `note`, `child`, `presence`, default `state` and `layout`; `panes` is `"*"` or a non-empty list of pane ids, default `"*"` | `kinds`, `panes` | Subscribing to `frame` sends nothing until `pane.attach` starts a frame pump for that pane |
+| `events.subscribe` | `kinds` list of `state`, `layout`, `frame`, `note`, `child`, `presence`, `messages`, default `state` and `layout`; `panes` is `"*"` or a non-empty list of pane ids, default `"*"` | `kinds`, `panes` | Subscribing to `frame` sends nothing until `pane.attach` starts a frame pump for that pane |
 | `events.pause` | `pane` | `pane` id, `paused` true | `not_attached`. Stops `frame` events for that pane on this connection only. Once the reply is sent, no frame for the pane follows until `events.resume` |
 | `events.resume` | `pane` | `pane` id, `paused` false | `not_attached`. The next frame is a full one. Deltas follow it |
 
@@ -647,7 +678,8 @@ foreman up the chain of tasks wins.
 | `floor.notes` | none | `notes` list of the last 200 notes, oldest first, each the `note` event object, with `to` when the note has an addressee | |
 | `floor.foreman` | `harness` name, optional, default the `default` harness | `pane` the new foreman's id; `label`; `started` true. The foreman gets its page as with `floor.talk`. See The floor's foreman | `bad_request` while the foreman runs: `the foreman <label> (<id>) runs already. Close it first, or talk to it.`, and for no default harness as with `floor.talk`. `unauthorized` from any connection but the operator |
 | `floor.talk` | `text` required, one sentence for the floor's foreman | `pane` the foreman's id; `label`; `started` true when this talk started the foreman; `queued` how many sentences wait, this one included; optional `note`, one line, when the old foreman had ended or the foreman waits on a question. The reply comes at once, before the words are typed. See The floor's foreman | `bad_request` for empty text, for a full queue, and when no foreman runs and `coppice.toml` names no `default` harness: `no default harness in <path>, so no foreman can start. Run coppice open HARNESS once to set one.` `unauthorized` from any connection but the operator. A refusal from `pane.create` when the foreman cannot start |
-| `floor.facts` | none | `daisugi` object: `mode`, `armed`, and `enforcing`, `watching` and `off`, the number of live harness panes in each mode, and `installed`, true when the Claude Code or Codex settings in the home hold a daisugi gate hook; `working` and `needing_you`, the number of live panes whose state is `working` and `blocked`, where a blocked pane whose ask a foreman holds counts as working, as every floor counts it from `pane.list`; `tokens_today`, a `tokens` object; optional `gateway` object with `url` and optional `answers` bool; optional `foreman` object with `pane` and `label`, the floor's tracked foreman while it runs. See Agent facts | |
+| `floor.chat` | `since`, optional, the `id` of the last message the client has; `limit`, optional, default 100; below 1 counts as 100 and above 500 as 500 | `messages` list, oldest first, each with `id`, `at`, `role`, `text`, optional `tool` and `pane`, and on each `owner` line `read` bool; `source` `transcript`; `more` bool. See The chat | `unauthorized` from any connection but the operator, and for a named web token. A chat file or a foreman's transcript that cannot be read is left out with one note, and `more` is true. `internal` only when a damaged file cannot be moved aside |
+| `floor.facts` | none | `daisugi` object: `mode`, `armed`, and `enforcing`, `watching` and `off`, the number of live harness panes in each mode, and `installed`, true when the Claude Code or Codex settings in the home hold a daisugi gate hook; `working` and `needing_you`, the number of live panes whose state is `working` and `blocked`, where a blocked pane whose ask a foreman holds counts as working, as every floor counts it from `pane.list`; `tokens_today`, a `tokens` object; optional `gateway` object with `url` and optional `answers` bool; optional `foreman` object with `pane` and `label`, the floor's tracked foreman while it runs; optional `phone_cert_days`, the whole days, rounded down, left on the phone server's tailscale certificate (the one a running `coppice web serve --tls tailscale` names in `web/serving.json`, else, when web.json is enabled under `--tls tailscale`, its `cert_file` or the default pair; nothing for a phone server that neither runs nor is saved), present only under 7 days and negative once it has run out. See Agent facts | |
 
 #### The floor's foreman
 
@@ -714,19 +746,93 @@ never read as the foreman.
 - The floor's foreman is no task's foreman, so it holds no asks. See
   Holds.
 
+#### The chat
+
+The chat is what the owner said to the floor's foreman and what the
+foremen said back. Two verbs read it: `floor.chat` reads the whole chat,
+and `pane.messages` reads one pane's transcript.
+
+- The server writes each `floor.talk` sentence, after it accepts it and
+  before it types it, as one line of `<data dir>/chat/YYYY-MM-DD.jsonl`,
+  the day in UTC. The line is `{"kind":"user","date":"<UTC time as
+  2006-01-02T15:04:05.000Z>","pane":"<foreman id>","text":"<the words as
+  typed>"}`. The date always has the same length, so no id hangs on the
+  clock. So the owner's
+  words show at once, while the foreman starts, and outlive a foreman that
+  ended. When the server starts a foreman and it had tracked an earlier
+  one, it first writes a line of kind `note` with the text `A new foreman
+  started.` and the new foreman's id. The kinds are the foreman log's own
+  (`user`, `note`), so a later reader of that log maps the same way. The
+  directory is mode 0700 and each file 0600. A write that fails leaves the
+  talk as it is, and the server writes one note that names the file.
+- Each write sends a `messages` event for the foreman's pane with `chat`
+  true.
+- `floor.chat` reads the newest chat files, at most 4 MiB in all, and the
+  transcripts of the tracked foreman, even when no line names it yet (as
+  for one that `floor.foreman` or the terminal floor started), and of each
+  foreman the lines name, newest four foremen at most, the tracked one
+  first:
+  a sprig foreman's session tree, else the newest four transcripts the
+  foreman's own process claimed (see Agent facts). The claims are kept in
+  the data dir, so after a restart the chat still holds the replies of a
+  foreman that ended. A chat file or a transcript that cannot be read is
+  left out, `more` is true, and the server writes one note that names it,
+  once per server, however often the chat is read. From the chat files it takes
+  `user` lines as role `owner` and `note` lines as role `note`. From a
+  transcript it takes only role `agent` messages: the owner's lines there
+  are the same words, and the first one is the foreman's page. It merges
+  them by `at`. At the same `at`, chat lines come before transcript
+  messages, and each source keeps its own order. A chat line's `id` is
+  `chat/<day>/<byte offset of its line>`. A transcript message's `id` is
+  `<pane>/<n>/<its pane.messages id>`, where `n` numbers the foreman's
+  claimed transcripts, oldest 0. Each message carries `pane`, the
+  foreman's id.
+- Each `owner` line carries `read`. It is true when that foreman's
+  transcripts record the same words as an owner message (each run of white
+  space read as one space) whose `at` is at or after the line's `at`: the
+  foreman's turn for that sentence has started. The chat lines of each
+  foreman are matched oldest first, and each recorded message reads one
+  line at most, in order. So a sentence typed while an earlier turn runs,
+  which the harness has not taken yet, stays `false`, and an older message
+  with the same words never reads a new line. A line whose foreman's
+  transcript is not read is `false`. Other panes can type into the
+  foreman, so an agent that types the owner's exact words while the
+  owner's line waits can make that line read early; it cannot read the
+  chat to learn them. A line that never reached the foreman can take the
+  mark of a later line with the same words.
+- A chat file with a complete line that is not a JSON object is damaged.
+  The server moves it to `<name>.broken-<UTC time as 20060102T150405Z>`,
+  mode 0600, never deletes it, and writes one note that names where it
+  went. The chat starts fresh: the reply holds the other files, and the
+  next talk makes a new file for that day. A last line with no line feed
+  is half written and is left out. Before its first write to a file, the
+  server moves such a line to `<name>.broken-<UTC time>` (0600), syncs
+  that copy and its directory to disk, and only then cuts the line from
+  the file, with one note that names where it went: no byte is ever lost.
+  A file that cannot be read for any other reason moves nowhere. A
+  damaged file that cannot be moved aside stays where it is: the reply
+  holds the rest, `more` is true, and one note names the file.
+- `since`, `limit` and `more` work the same in both verbs. The reply holds
+  the messages after the one whose `id` is `since`, or all the messages
+  read when `since` is absent or names none of them. Of those it keeps the
+  newest `limit`. `more` is true when messages older than the first one
+  kept were left out: by `limit`, or, with no `since` found, because the
+  read did not reach the start of a file.
+
 ### Agents
 
 | verb | params | result | errors |
 |---|---|---|---|
 | `agent.allow` | `pane`; `ask` id of the gate's ask; `reason`; `confirm`, the pane name, needed for a permanent ask; `scope` `once` or `task`, default `once` | `pane`, `ask`, `decision` `allow` | `unauthorized` on a pane connection. `bad_request` when the pane never reported that ask in a blocked state, or its deadline has passed, or when no ask is pending under that id, or for an allow with any other `scope`. Then the permanent rule: `unauthorized` with `this cannot be undone. Type the pane name to allow: <name>` when the ask is permanent and `confirm` is not the pane name, and `unauthorized` for `scope` `task` on a permanent ask. The pane name is its label, or its id when it has no label. The ask is undoable only when both the tier the pane reported and the tier in the gate's ask file say `undoable`. A missing tier on either side is permanent. `scope` `task` rides in the answer file, and the gate records it as a proposed envelope edit that nothing applies. Any live ask of the pane may be answered, not only the one its state shows now. The server keeps its record of asks in memory only. After a server restart, an ask raised before it can be answered here only once the pane reports that ask again. `internal` when the answer cannot be written. The answer is the same file the phone writes in the gate directory. The phone's answer route holds the same rule: for an allow it reads the tier and the pane name from `agent.list`, and an ask no pane shows is gone |
 | `agent.deny` | `pane`; `ask`; `reason` | `pane`, `ask`, `decision` `deny` | the role refusal and the checks that the ask exists, the same as `agent.allow`. A deny never needs `confirm`, and it ignores `scope`. The foreman that holds the ask may deny it from its pane; the reason is then `denied by the foreman <label>` |
-| `pane.report_state` | `pane`; `event` is one PaneStateEvent object, see Events. The event may also carry the gate report fields `transcript_path`, `verdict` and `mode`, see Agent facts | `pane`, `source`, `state`, `detail`; optional `ask`, `note` | A `source` of `operator` from a connection not attached to the pane becomes `gate`, and `note` says so. `bad_request` for a gate report field of the wrong type, a `transcript_path` that is not absolute, a `mode` other than `enforcing` or `watching`, or a `verdict` whose `decision` is not `allow`, `deny` or `ask` |
+| `pane.report_state` | `pane`; `event` is one PaneStateEvent object, see Events. The event may also carry the gate report fields `transcript_path`, `verdict` and `mode`, see Agent facts | `pane`, `source`, `state`, `detail`; optional `ask`, `note`; optional `transcript`, the refusal of a `transcript_path` the server does not take (see Agent facts) | A `source` of `operator` from a connection not attached to the pane becomes `gate`, and `note` says so. `bad_request` for a gate report field of the wrong type, a `transcript_path` that is not absolute, a `mode` other than `enforcing` or `watching`, or a `verdict` whose `decision` is not `allow`, `deny` or `ask` |
 | `pane.report_child` | `pane`; `child` id of a subagent inside the pane's harness; `state` is `working` or `done`; `label`, cleaned and cut the same way as a note | `pane`, `child`, `state` | `bad_request` when `child` is missing or `state` is anything else. A subagent is read only: no verb acts on it. A report sends a `child` event. A pane connection may send it, and it makes no note |
 | `agent.list` | none | `agents` list of rows. Each row has `pane`, `label`, `cwd`, `kind`, `harness`, `closed`, `state`, `source`, `detail`; optional `ts`, `session_id`, `ask`, `harness_session_id`, `parent_pane` | |
 | `agent.get` | `pane` | one `agent.list` row | `no_such_pane` |
 | `agent.prompt` | `pane`; `text` required; `wait` default false; `until` state name, default `idle`; `timeout_ms` default 120000 | without `wait`: `pane`, `sent`. A prompt that waits, see Ready prompts, adds `queued` and `note` and has `sent` 0. With `wait`: `pane`, `state`, `source`, optional `ask`. A prompt that waits is sent first, within `timeout_ms`, and then the wait for `until` starts | `adapter_error`, `timeout`. `bad_request` for a prompt to a pty pane that waits on a question, and past the queue cap, see Ready prompts |
 | `agent.wait` | `pane`; `until` default `idle`; `timeout_ms` default 120000 | `pane`, `state`, `source`, optional `ask` | `timeout` |
 | `agent.read` | `pane`; `region` is `visible`, `recent` or `detection`, default `recent`. `source` is accepted as an older name for `region` | one `agent.list` row plus `text` and `region` | `pane_closed` when the screen is freed |
+| `pane.messages` | `pane`; `since` and `limit` as for `floor.chat` | `messages` list, oldest first, each with `id`, `at`, `role` (`owner` or `agent`), `text`, optional `tool`; `source` `transcript`; `more` bool. See Agent facts | `no_such_pane`. `bad_request` with `<label> (<id>) has no transcript to read. Its hook reported none.` when the server reads no file for the pane. `unauthorized` as in Roles. `internal` when the file cannot be read |
 
 ### Agent facts
 
@@ -739,23 +845,51 @@ no `state` event and no row carries them as sent.
 
 - `transcript_path`: the absolute path of the harness's own transcript file.
   The server reads it only when all of these hold:
-  - The report comes from the pane's own connection. That is a connection
-    whose role is pane with this pane's id, and which is not a plugin and
-    not a peer the kernel could not place. On Linux the kernel places a
-    peer in a pty pane when the peer runs under that pane's process (see
-    Roles). A connection the kernel did not place in any pane becomes that
-    pane by sending `hello` with `role` `pane` and the pane's id. Any
-    process of the socket's uid can do that, so this rule keeps one pane
-    from naming files for another. It is not a boundary against the user's
-    own processes.
+  - The report comes from a process inside the pane: the kernel placed
+    the connection's peer (SO_PEERCRED, then its parent chain in /proc)
+    in this pty pane, and it is no plugin. A `hello` that says it is the
+    pane does not count. From anywhere else the reply's `transcript` says
+    `only a process inside the pane names its transcript.`
   - The event's `harness` is `claude-code` or `claude`, and the pane's
     record names the same harness.
   - The path ends in `.jsonl` and lies under the `projects` directory of
     the Claude config directory the pane sees: its `CLAUDE_CONFIG_DIR`, or
     `$HOME/.claude`, taken from the pane's env over the server's.
-  - No other live pane reported the same path first. An ended pane's path
-    moves to the pane that reports it next, and the ended pane stops
-    counting it.
+  The path's real path, every symlink resolved, must lie under the real
+  `projects` directory too. The real path is then the pane's claim, for
+  good: the server keeps every claim in `<data dir>/transcripts.json`
+  (0600) across restarts. A path the pane claimed before is taken again
+  with no more checks. `pane.resume` of a pane hands its claims to the
+  new pane, since the resumed session writes on in the same file. Else
+  the transcript is refused, and only the transcript: the rest of the
+  report (the state, the ask, the verdict, the session id) still counts,
+  and the reply's `transcript` names the refusal, when:
+  - another pane claimed that real path first, live or ended, the ended
+    foreman included, before or after a restart: `another pane named that
+    transcript first. A pane reads only its own.`;
+  - its first record, the first `user` or `assistant` entry in its first
+    64 KiB, has no `timestamp` or no `cwd`: `that transcript's first record
+    has no time or no working directory. A pane reads only its own.`; a
+    file of 64 KiB or more with no such record in them: `that transcript's
+    first line is too long to check. A pane reads only its own.`; a file
+    with no record yet passes, since a hook may report it before its first
+    line;
+  - that record's time is more than a second before the pane's start:
+    `that transcript began before the pane started. A pane reads only its
+    own.`;
+  - that record's `cwd` is not the pane's working directory or under it,
+    such as the owner's own Claude session in another terminal: `that
+    transcript began in another directory. A pane reads only its own.`
+    A pane that works in `/` or in its home dir takes only a `cwd` that is
+    that directory itself, since every directory is under it;
+  - the pane claimed 72 transcripts already: `this pane named too many
+    transcripts. Start a new pane.`
+  Every read resolves the claimed path again: when its real path is no
+  longer the claim (a directory on the way was swapped for a symlink), the
+  read fails with `that transcript's path now leads to another file. A
+  pane reads only its own.`
+  A claims file that does not parse moves aside as a chat file does. One
+  that cannot be read refuses every new claim until a restart reads it.
   The server never follows a symlink at the path, never reads a path that
   is not a regular file, and reads only the bytes added since its last
   read, at most 4 MiB at a time. A line longer than that is skipped.
@@ -772,6 +906,44 @@ no `state` event and no row carries them as sent.
   `claude`), the server stores it as the record's harness session id, so
   `pane.resume` can resume that session. An id of anything but letters, digits, `.`, `_`, `:` and `-`, or
   one led by `-` or longer than 128 bytes, is not stored.
+
+`pane.messages` reads the same file the facts read, under the same rules:
+for a Claude pane the transcript its own process claimed last (after a
+restart, its newest claim), for a sprig pane its session tree. A path no
+process inside the pane named is never read, and a path another pane
+claimed first is not this pane's. A pane reading its own messages gets
+the first-record checks above again, and their refusal, so a file it
+claimed empty and filled from an older one is not its own. The read takes the
+last 4 MiB of the file and skips the first line when the read starts inside
+it. A missing file reads as no messages.
+
+- Claude: a `user` entry gives role `owner` messages, an `assistant` entry
+  gives role `agent` messages. `message.content` is a string, or a list of
+  blocks: a `text` block is one message, a `tool_use` block is one message
+  with `tool` its name, and every other block (`thinking`, `tool_result`,
+  an image) is left out. An entry is left out whole when it carries
+  `isMeta`, `isSidechain` or `isCompactSummary` true, or a
+  `toolUseResult` key. An owner text that starts with `<local-command-`,
+  `<bash-` or `<command-` is the record of a command and its output, and
+  is left out. `at` is the entry's `timestamp`.
+- sprig: a `prompt` entry gives an `owner` message, an `assistant` entry
+  with `text` an `agent` message, and a `tool_call` entry an `agent`
+  message with `tool` its `name`. `at` is the entry's `ts`.
+- A tool's message `text` is a one-line summary of its input: the first
+  string, of `command`, `file_path`, `path`, `pattern`, `url`, `query` and
+  `description`, that is not empty, else sprig's `detail`. Each run of
+  white space is one space, and the line is cut at 200 runes with `…`. A
+  tool's output never appears, since output can hold secrets.
+- A message's text loses its control characters (below U+0020 but the
+  line feed, U+007F, and U+0080 to U+009F), the Unicode format characters
+  (Cf: bidi marks, zero-width characters), and U+2028 and U+2029. A tab
+  becomes a space. It is
+  trimmed of white space at both ends and cut at 2000 runes with `…`. A
+  message with no text and no tool is left out.
+- `id` is the byte offset of the message's line in the file, as a decimal
+  string. A line that gives more than one message names the second
+  `<offset>.1`, the third `<offset>.2`, and so on. `at` is unix seconds, 0
+  when the entry has no time the server can read.
 
 A `pane.list` row carries:
 
@@ -934,6 +1106,21 @@ as its harness names it.
 
 ```
 {"event":"child","pane":"w1:p1","child":"a1","state":"working","label":"Explore","ts":1757300000.5}
+```
+
+### `messages`
+
+New messages may exist for a pane: `pane.messages` would read more, or,
+with `chat` true, `floor.chat` would. The event carries no text. A client
+that wants the messages asks for them. The server sends it when it writes
+a chat line, and when it sees a transcript file the server reads change
+in size or time, or a pane get or change its file. It looks at each such
+file every half second, from the first `events.subscribe` that names
+`messages` until the server stops. `chat` is true when the pane is the
+floor's tracked foreman.
+
+```
+{"event":"messages","pane":"w1:p1","chat":true,"ts":1757300000.5}
 ```
 
 ### `layout`

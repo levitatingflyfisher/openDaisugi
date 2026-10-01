@@ -13,13 +13,10 @@ Every path in a case is fake. The scratch HOME is written ``{HOME}``, the
 Python interpreter ``{PYTHON}``. The cases hold no content from any real
 session and may be committed.
 
-Two command kinds need an oracle other than the plain CLI:
-
-- ``install --gate``: Python's install also writes the skill, MCP, capture
-  and instruction layers. The Go binary writes only the gate layer, so the
-  oracle runs the Python CLI with ``DEFAULT_LAYERS`` emptied.
-- ``install --gate --uninstall``: Python's uninstall reverses every layer.
-  The oracle runs it with every reversal but the gate's own made a no-op.
+``install`` writes every layer in both: the ports carry the skill, MCP,
+capture and instruction layers (IN-1). The oracle's skill is a symlink to
+its package directory; a port copies the files, and the compare reads the
+link as that copy.
 
 A case marked ``go_refuses`` holds a flag the Go binary does not handle.
 There the check is only that Go exits non-zero, prints one line naming the
@@ -78,69 +75,6 @@ def as_daisugi(binary: str | Path, scratch: Path = SCRATCH, name: str = "daisugi
 
 GATE_SOCK = ".opendaisugi/gate/gate.sock"
 
-# The oracle, with the install layers the Go binary does not write turned
-# off. Both shims then run the real CLI entry.
-_GATE_ONLY_INSTALL = """
-import sys
-import opendaisugi.install as i
-i.DEFAULT_LAYERS = frozenset()
-from opendaisugi.cli import main
-sys.argv = ["daisugi"] + sys.argv[1:]
-main()
-"""
-
-_GATE_ONLY_UNINSTALL = """
-import sys
-import opendaisugi.install as i
-_pop = i._pop_json_hook
-def _gate_pop(path, *, match, events=("PreToolUse",)):
-    if match is i.is_record_hook and tuple(events) == ("PreToolUse",):
-        return []
-    return _pop(path, match=match, events=events)
-i._pop_json_hook = _gate_pop
-none = lambda *a, **k: []
-for name in ("_remove_skill_both", "_remove_skill", "_pop_json_mcp", "_unpatch_instructions"):
-    setattr(i, name, none)
-i.HermesRuntime.reverse = lambda self, home: []
-
-
-def _openclaw_providers_only(self, home):
-    # The provider half of OpenClawRuntime.reverse: the gateway layer the
-    # Go binary also reverses. Its MCP and plugin layers are not the Go
-    # binary's.
-    import json as _json
-    cfg_path = home / ".openclaw" / "openclaw.json"
-    if not cfg_path.exists():
-        return []
-    try:
-        cfg = _json.loads(cfg_path.read_text())
-    except _json.JSONDecodeError:
-        try:
-            cfg = _json.loads(i._strip_json5_comments(cfg_path.read_text()))
-        except _json.JSONDecodeError:
-            cfg = None
-    if not isinstance(cfg, dict):
-        return []
-    providers = cfg.get("models", {}).get("providers", {})
-    if "opendaisugi" not in providers:
-        return []
-    del providers["opendaisugi"]
-    if not providers:
-        cfg["models"].pop("providers", None)
-        if not cfg["models"]:
-            del cfg["models"]
-    i._backup(cfg_path)
-    cfg_path.write_text(_json.dumps(cfg, indent=2) + "\\n")
-    return [cfg_path]
-
-
-i.OpenClawRuntime.reverse = _openclaw_providers_only
-from opendaisugi.cli import main
-sys.argv = ["daisugi"] + sys.argv[1:]
-main()
-"""
-
-
 # `daisugi start` detaches `python -m opendaisugi.cli gate serve` and then
 # opens the view. The oracle runs with the spawn replaced by a fake that
 # logs the argv it was given and makes the socket the server would make,
@@ -165,10 +99,6 @@ def python_cmd(case: dict[str, Any]) -> list[str]:
     oracle = case.get("oracle", "cli")
     if oracle == "start-shim":
         return [sys.executable, "-c", _START_SHIM]
-    if oracle == "gate-only-install":
-        return [sys.executable, "-c", _GATE_ONLY_INSTALL]
-    if oracle == "gate-only-uninstall":
-        return [sys.executable, "-c", _GATE_ONLY_UNINSTALL]
     return [sys.executable, "-m", "opendaisugi.cli"]
 
 
@@ -230,7 +160,9 @@ def norm_command(cmd: str) -> str:
         return cmd
     while toks and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]):
         toks = toks[1:]
-    if len(toks) >= 3 and toks[1] == "-m" and toks[2].startswith("opendaisugi.gate"):
+    if len(toks) >= 4 and toks[1:3] == ["-I", "-m"] and toks[3].startswith("opendaisugi.gate"):
+        toks = ["{GATE}"] + toks[4:]  # the hook's isolated form (SX-R-9)
+    elif len(toks) >= 3 and toks[1] == "-m" and toks[2].startswith("opendaisugi.gate"):
         toks = ["{GATE}"] + toks[3:]
     elif len(toks) >= 3 and toks[1:3] == ["gate", "check"]:
         toks = ["{GATE}"] + toks[3:]
@@ -327,8 +259,22 @@ def read_tree(home: Path) -> dict[str, Any]:
     return out
 
 
+def _zero_elapsed(v: Any) -> Any:
+    if isinstance(v, list):
+        return [_zero_elapsed(x) for x in v]
+    if isinstance(v, dict):
+        return {k: (0 if k == "elapsed_ms" else _zero_elapsed(x)) for k, x in v.items()}
+    return v
+
+
 def norm_stdout(s: str, home: str, argv: list[str]) -> Any:
     s = norm_text(s, home)
+    # gate replay --json carries each call's time; compare it as 0.
+    if argv[:2] == ["gate", "replay"] and "--json" in argv:
+        try:
+            return {"json": _zero_elapsed(norm_json(json.loads(s), home))}
+        except ValueError:
+            return s
     # gate settings prints one JSON document; compare it parsed.
     if argv[:2] == ["gate", "settings"]:
         try:
@@ -393,6 +339,8 @@ def prepare(case: dict[str, Any], work: Path) -> tuple[Path, list[str], dict[str
         "LANG": "C.UTF-8",
         "NO_COLOR": "1",
         "COLUMNS": "100",
+        # The voice engine choice reads this, never the real box (VO-17).
+        "OPENDAISUGI_VOICE_HARDWARE": "16,8,0",
     }
     env.update({k: _sub(v, h) for k, v in (case.get("env") or {}).items()})
     cwd = home / case.get("cwd", "")
@@ -409,6 +357,18 @@ def run_case(
         env.update(extra_env)
     old = os.umask(0o022)
     try:
+        # Earlier runs of the same CLI, as a user made them before (pre):
+        # their output is not recorded, only the tree they leave.
+        for pre in case.get("pre") or []:
+            subprocess.run(  # noqa: S603 - the CLI under test
+                cmd + [_sub(a, str(home)) for a in pre],
+                input=b"",
+                capture_output=True,
+                env=env,
+                cwd=cwd,
+                timeout=120,
+                check=False,
+            )
         t0 = time.perf_counter()
         proc = subprocess.run(  # noqa: S603 - the CLI under test
             cmd + argv,
@@ -954,10 +914,19 @@ def build_cases() -> list[dict[str, Any]]:
 
     # -- install --gate -----------------------------------------------------
     claude_dir = {".claude": d()}
-    gi = {"oracle": "gate-only-install"}
+    gi: dict[str, Any] = {}
     # Enforce installs only with a registered envelope; with none it refuses.
     policy = {".opendaisugi/gate/envelopes/default.json": f(envelope_json(id="env_fixed01"))}
     add(mk("install gate claude", ["install", "--gate", "--yes"], before=claude_dir, **gi))
+    # The message names the captures dir under the data home in use.
+    add(
+        mk(
+            "install gate data home",
+            ["install", "--gate", "--yes"],
+            before=claude_dir,
+            env={"OPENDAISUGI_HOME": "{HOME}/od"},
+        )
+    )
     add(
         mk(
             "install gate enforce",
@@ -1010,7 +979,6 @@ def build_cases() -> list[dict[str, Any]]:
             "install gate ask",
             ["install", "--gate", "--enforce", "--ask", "--yes"],
             before=claude_dir,
-            go_refuses=True,
         )
     )
     add(
@@ -1018,7 +986,6 @@ def build_cases() -> list[dict[str, Any]]:
             "install gate ask audit",
             ["install", "--gate", "--ask", "--yes"],
             before=claude_dir,
-            go_refuses=True,
         )
     )
     add(
@@ -1034,7 +1001,6 @@ def build_cases() -> list[dict[str, Any]]:
             "install enforce no gate",
             ["install", "--enforce", "--yes"],
             before=claude_dir,
-            go_refuses=True,
         )
     )
     other = json.dumps(
@@ -1611,24 +1577,22 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install report refused",
+            "install report herdr",
             ["install", "--gate", "--report", "herdr", "--yes"],
             before=claude_dir,
-            go_refuses=True,
         )
     )
-    add(mk("install plain refused", ["install", "--yes"], before=claude_dir, go_refuses=True))
+    add(mk("install plain", ["install", "--yes"], before=claude_dir))
     add(
         mk(
-            "install decomposition refused",
+            "install decomposition",
             ["install", "--gate", "--allow-shell-decomposition", "--yes"],
             before=claude_dir,
-            go_refuses=True,
         )
     )
 
     # -- uninstall ----------------------------------------------------------
-    gu = {"oracle": "gate-only-uninstall"}
+    gu: dict[str, Any] = {}
     installed = json.dumps(
         {
             "env": {"A": "1"},
@@ -2203,13 +2167,14 @@ def build_cases() -> list[dict[str, Any]]:
 
     # -- the root and the commands this binary does not carry -------------
     add(mk("version", ["--version"]))
-    add(mk("replay not ported", ["gate", "replay", "x", "--envelope", "y"], go_refuses=True))
+    replay_cases(add)
+    help_cases(add)
+    layer_cases(add)
     add(
         mk(
-            "uninstall all not ported",
+            "uninstall all",
             ["install", "--uninstall"],
             before=claude_dir,
-            go_refuses=True,
         )
     )
     add(mk("status unknown option", ["gate", "status", "--bogus"]))
@@ -2518,6 +2483,327 @@ def build_cases() -> list[dict[str, Any]]:
     return C
 
 
+# The commands no port carries, as `daisugi help --all` names them: a
+# top-level command, or a group's subcommand ("group sub"). A port prints
+# the oracle's help --all text with these lines left out (ruling HP-1).
+HELP_NOT_PORTED = (
+    "bench",
+    "conformance",
+    "coppice",
+    "gate audit",
+)
+
+
+def help_for_port(text: str) -> str:
+    """The oracle's help --all text as a port prints it."""
+    out = []
+    for line in text.splitlines(keepends=True):
+        words = line.split()
+        if line.startswith("    ") and len(words) >= 2:
+            if words[0] in HELP_NOT_PORTED or f"{words[0]} {words[1]}" in HELP_NOT_PORTED:
+                continue
+        elif line.startswith("  ") and words and words[0] in HELP_NOT_PORTED:
+            continue
+        out.append(line)
+    return "".join(out)
+
+
+def help_cases(add: Any) -> None:
+    """`daisugi help`: the start-here text, or every command with --all."""
+    add(mk("help", ["help"]))
+    add(mk("help all", ["help", "--all"]))
+    add(mk("help quiet all", ["-q", "help", "--all"]))
+    add(mk("help bad option", ["help", "--bogus"]))
+    add(mk("help extra argument", ["help", "x"]))
+
+
+def layer_cases(add: Any) -> None:
+    """The four default layers of `install` and their reverse, per harness."""
+    claude = {".claude": d()}
+    codex = {".codex": d()}
+    hermes = {".hermes": d()}
+    openclaw = {".openclaw": d()}
+    every = {**claude, **codex, **hermes, **openclaw}
+    y = ["install", "--yes"]
+    add(mk("layers claude", y, before=claude))
+    add(mk("layers codex", y, before=codex))
+    add(mk("layers hermes", y, before=hermes))
+    add(mk("layers openclaw", y, before=openclaw))
+    add(mk("layers every harness", y, before=every))
+    add(mk("layers every harness dry run", ["install", "--dry-run"], before=every))
+    add(mk("layers every harness gate gateway", [*y, "--gate", "--gateway"], before=every))
+    add(mk("layers twice", y, before=every, pre=[y]))
+    add(mk("layers claude skills dir", y, before={**claude, ".claude/skills": d()}))
+    add(mk("layers agents dir", y, before={**claude, ".agents/skills": d()}))
+    add(mk("layers codex skills dir", y, before={**codex, ".codex/skills": d()}))
+    add(mk("layers runtime claude no dir", ["install", "--runtime", "claude", "--yes"]))
+    add(
+        mk(
+            "layers existing configs",
+            y,
+            before={
+                **every,
+                ".claude.json": f(
+                    json.dumps({"numStartups": 3, "mcpServers": {"x": {"command": "x"}}})
+                ),
+                ".claude/settings.json": f(
+                    json.dumps(
+                        {
+                            "env": {"A": "1"},
+                            "hooks": {"PreToolUse": [{"matcher": "*", "hooks": []}]},
+                        }
+                    )
+                ),
+                ".claude/CLAUDE.md": f("# mine\n\n"),
+                ".codex/config.toml": f('model = "x"\n'),
+                ".codex/AGENTS.md": f("notes"),
+                ".hermes/config.yaml": f("model: x\nhooks:\n  other:\n  - a\n"),
+                ".openclaw/openclaw.json": f('{\n  // a comment\n  "mcp": {"servers": {}},\n}\n'),
+                ".openclaw/workspace/AGENTS.md": f("ws\n"),
+            },
+        )
+    )
+    add(
+        mk(
+            "layers bad configs",
+            y,
+            before={
+                **every,
+                ".claude.json": f("{not json"),
+                ".claude/settings.json": f("[1, 2"),
+                ".hermes/config.yaml": f("a: [\n"),
+                ".openclaw/openclaw.json": f("{nope"),
+            },
+        )
+    )
+    add(
+        mk(
+            "layers already there",
+            y,
+            before={
+                **every,
+                ".claude.json": f(json.dumps({"mcpServers": {"opendaisugi": {"command": "old"}}})),
+                ".claude/CLAUDE.md": f(
+                    "<!-- opendaisugi-managed -->\nold\n<!-- opendaisugi-managed -->\n"
+                ),
+                ".claude/settings.json": f(
+                    json.dumps(
+                        {
+                            "hooks": {
+                                "PreToolUse": [
+                                    {
+                                        "hooks": [
+                                            {
+                                                "type": "command",
+                                                "command": "daisugi hook record --format claude",
+                                            }
+                                        ]
+                                    }
+                                ],
+                                "SessionStart": [
+                                    {
+                                        "hooks": [
+                                            {
+                                                "type": "command",
+                                                "command": "daisugi install --print-skill",
+                                            }
+                                        ]
+                                    }
+                                ],
+                            }
+                        }
+                    )
+                ),
+                ".codex/config.toml": f('[mcp_servers.opendaisugi]\ncommand = "x"\n'),
+            },
+        )
+    )
+    add(
+        mk(
+            "layers skill was a file",
+            y,
+            before={**claude, ".agents/skills/opendaisugi-checklist": f("x")},
+        )
+    )
+    add(mk("layers print skill", ["install", "--print-skill"]))
+    add(mk("layers confirm yes", ["install"], before=claude, stdin="y\ny\n"))
+    add(mk("layers confirm yes then no", ["install"], before=claude, stdin="y\nn\n"))
+    add(mk("layers confirm yes then default", ["install"], before=claude, stdin="y\n\n"))
+    add(
+        mk(
+            "layers confirm consent asked before",
+            ["install"],
+            before={**claude, ".opendaisugi/config.yaml": f("auto_tend: false\n")},
+            stdin="y\n",
+        )
+    )
+    add(mk("layers decomposition off", [*y, "--no-allow-shell-decomposition"], before=claude))
+    add(mk("layers report coppice", [*y, "--gate", "--report", "coppice"], before=claude))
+    add(mk("layers report without gate", [*y, "--report", "coppice"], before=claude))
+    add(mk("layers report bad", [*y, "--gate", "--report", "tmux"], before=claude))
+    for name, before in [
+        ("claude", claude),
+        ("codex", codex),
+        ("hermes", hermes),
+        ("openclaw", openclaw),
+        ("every harness", every),
+    ]:
+        add(
+            mk(
+                f"uninstall layers {name}",
+                ["install", "--uninstall"],
+                before=before,
+                pre=[[*y, "--gate", "--gateway"]],
+            )
+        )
+    add(mk("uninstall nothing installed", ["install", "--uninstall"], before=every))
+    add(
+        mk(
+            "uninstall keeps other config",
+            ["install", "--uninstall"],
+            before={
+                **every,
+                ".claude.json": f(json.dumps({"numStartups": 3})),
+                ".hermes/config.yaml": f("model: x\n"),
+            },
+            pre=[y],
+        )
+    )
+
+
+def replay_cases(add: Any) -> None:
+    """`gate replay`: a captured session through the gate, offline."""
+
+    def cap(**kw: Any) -> str:
+        r: dict[str, Any] = {"captured_at": 1.5, "session_id": "s1"}
+        r.update(kw)
+        return json.dumps(r)
+
+    mixed = (
+        "\n".join(
+            [
+                cap(tool_name="Bash", step_type="shell", command="git status"),
+                cap(tool_name="Bash", step_type="shell", command="rm -rf /"),
+                cap(tool_name="Bash", step_type="shell", command="ls && git log"),
+                cap(tool_name="Read", step_type="file_read", path="/work/a.txt"),
+                cap(tool_name="Read", step_type="file_read", path="/etc/passwd"),
+                cap(tool_name="Write", step_type="file_write", path="/work/b.txt", content_len=3),
+                cap(tool_name="Write", step_type="file_write", path='/tmp/it\'s "q" é'),
+                cap(tool_name="WebFetch", step_type="network", url="https://example.com/x"),
+                cap(
+                    tool_name="mcp__fs__read",
+                    step_type="mcp",
+                    mcp_server="fs",
+                    mcp_tool="read",
+                    arguments={"p": 1},
+                ),
+                "",
+                "   ",
+                "not json",
+            ]
+        )
+        + "\n"
+    )
+    import yaml
+
+    # The envelope in the form yaml.safe_dump writes, which every reader
+    # takes; a JSON envelope is a row-12 input (see "replay json envelope").
+    env = yaml.safe_dump(json.loads(envelope_json()), sort_keys=False)
+    base = {"caps.jsonl": f(mixed), "env.json": f(env)}
+    argv = ["gate", "replay", "caps.jsonl", "--envelope", "env.json"]
+    add(mk("replay mixed", argv, before=base))
+    add(mk("replay mixed json", [*argv, "--json"], before=base))
+    yaml_env = (
+        "generated_by: cli_cases\ntask: synthetic\npermissions:\n  file_read: ['/work/**']\n  shell: true\n"
+        "  shell_allowlist: [git]\n  network: true\n  network_allowlist: [example.com]\n"
+    )
+    add(mk("replay yaml envelope", argv, before={"caps.jsonl": f(mixed), "env.json": f(yaml_env)}))
+    add(
+        mk(
+            "replay json envelope",
+            argv,
+            before={"caps.jsonl": f(mixed), "env.json": f(envelope_json())},
+        )
+    )
+    odd = (
+        "\n".join(
+            [
+                cap(tool_name="Bash", command="ls"),
+                cap(tool_name="Todo", step_type="todo"),
+                cap(tool_name=None, step_type=5),
+                cap(tool_name="Bash", step_type="shell", command=7),
+                cap(tool_name="Bash", step_type="shell"),
+                cap(tool_name="Read", step_type="file_read", path=None),
+                cap(tool_name="WebFetch", step_type="network", url=["x"]),
+                cap(tool_name="m", step_type="mcp", arguments="no"),
+                json.dumps({"tool_name": "Bash", "step_type": "shell", "command": "ls"}),
+                json.dumps(
+                    {
+                        "tool_name": "Bash",
+                        "step_type": "shell",
+                        "command": "ls",
+                        "captured_at": "t",
+                        "session_id": 3,
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    add(mk("replay odd records", argv, before={"caps.jsonl": f(odd), "env.json": f(env)}))
+    add(
+        mk(
+            "replay odd records json",
+            [*argv, "--json"],
+            before={"caps.jsonl": f(odd), "env.json": f(env)},
+        )
+    )
+    add(mk("replay empty", argv, before={"caps.jsonl": f(""), "env.json": f(env)}))
+    add(
+        mk("replay empty json", [*argv, "--json"], before={"caps.jsonl": f(""), "env.json": f(env)})
+    )
+    add(mk("replay array line", argv, before={"caps.jsonl": f("[1]\n"), "env.json": f(env)}))
+    add(mk("replay no captures file", argv, before={"env.json": f(env)}))
+    add(mk("replay no envelope file", argv, before={"caps.jsonl": f(mixed)}))
+    add(
+        mk(
+            "replay bad envelope",
+            argv,
+            before={"caps.jsonl": f(mixed), "env.json": f('{"task": "t"}')},
+        )
+    )
+    add(
+        mk(
+            "replay envelope not a mapping",
+            argv,
+            before={"caps.jsonl": f(mixed), "env.json": f("- 1\n")},
+        )
+    )
+    add(
+        mk(
+            "replay no envelope option",
+            ["gate", "replay", "caps.jsonl"],
+            before={"caps.jsonl": f(mixed)},
+        )
+    )
+    add(mk("replay no argument", ["gate", "replay"]))
+    add(
+        mk(
+            "replay many denies",
+            argv,
+            before={
+                "caps.jsonl": f(
+                    "".join(
+                        cap(tool_name="Bash", step_type="shell", command=f"rm {i}") + "\n"
+                        for i in range(30)
+                    )
+                ),
+                "env.json": f(env),
+            },
+        )
+    )
+
+
 def graft_cases(add: Any) -> None:
     """`daisugi graft install|status|remove`: the rule file in the gate
     root, and the refusal beside a PreToolUse hook that may rewrite input
@@ -2603,6 +2889,17 @@ def graft_cases(add: Any) -> None:
         ["install"],
         before={CLAUDE: f(hook_settings("eval python -m opendaisugi.gate"))},
     )
+    g("install trial", ["install", "--state", "trial"])
+    g("install trial seed", ["install", "--state", "trial", "--seed", "42"])
+    g("install trial seed max", ["install", "--state", "trial", "--seed", "9007199254740992"])
+    g("install trial seed over", ["install", "--state", "trial", "--seed", "9007199254740993"])
+    g(
+        "install trial seed huge",
+        ["install", "--state", "trial", "--seed", "99999999999999999999999"],
+    )
+    g("install trial seed negative", ["install", "--state", "trial", "--seed", "-1"])
+    g("install trial seed not int", ["install", "--state", "trial", "--seed", "x"])
+    g("install seed without trial", ["install", "--seed", "3"])
     g("status none", ["status"])
     g("status none json", ["status", "--json"])
     for label, fmt in (("text", []), ("json", ["--json"])):
@@ -2615,6 +2912,16 @@ def graft_cases(add: Any) -> None:
                 f"{grafts}/c.json": f(json.dumps({**rule, "id": "c", "state": "audit"})),
                 f"{grafts}/d.json": f("[]"),
                 CLAUDE: f(hook_settings("rtk rewrite")),
+            },
+        )
+        g(
+            f"status trial {label}",
+            ["status", *fmt],
+            before={
+                f"{grafts}/t.json": f(
+                    json.dumps({**rule, "id": "t", "state": "trial", "trial": {"seed": 5}})
+                ),
+                f"{grafts}/u.json": f(json.dumps({**rule, "id": "u", "state": "trial"})),
             },
         )
     g("remove", ["remove"], before={f"{grafts}/big-read.json": f(json.dumps(rule))})
@@ -2646,6 +2953,8 @@ def graft_cases(add: Any) -> None:
 RICH_CONFIG = ".opendaisugi/config.yaml"
 _WARN_LINE = re.compile(r"^.*?:\d+: \w*Warning: (.*)$")
 _MS_JSON = re.compile(r'("duration_ms": )-?[0-9][0-9.e+-]*')
+# `daisugi verify` prints how long the check took.
+_MS_LINE = re.compile(r"(?m)^(  duration: )[0-9.]+ms$")
 
 
 def _cwd8(home: Path, cwd: str) -> str:
@@ -2678,6 +2987,7 @@ def rich_normalize(res: dict[str, Any], work: Path, case: dict[str, Any]) -> dic
     res["stderr"] = out
     if isinstance(res["stdout"], str):
         res["stdout"] = _MS_JSON.sub(r"\1{MS}", res["stdout"])
+        res["stdout"] = _MS_LINE.sub(r"\1{MS}ms", res["stdout"])
     tree = {}
     for rel, entry in res["tree"].items():
         rel = _BAK.sub(".bak", rel)
@@ -2960,6 +3270,60 @@ def build_rich_cases() -> list[dict[str, Any]]:
             "config env backend renamed",
             ["config", "--json"],
             env={"OPENDAISUGI_LLM_BACKEND": " litellm "},
+        )
+    )
+    # DH-R-1: the data home rule. Each branch reads config.yaml from the
+    # directory the rule picks, and models use writes there.
+    od_env = {"OPENDAISUGI_HOME": "{HOME}/od", "XDG_DATA_HOME": "{HOME}/xdg"}
+    xdg_env = {"XDG_DATA_HOME": "{HOME}/xdg"}
+    enforce = {"text": "gate_mode: enforce\n"}
+    add(rich("data home neither", ["config", "--json"]))
+    add(rich("data home od", ["config", "--json"], env=od_env, before={"od/config.yaml": enforce}))
+    add(
+        rich(
+            "data home xdg no dot",
+            ["config", "--json"],
+            env=xdg_env,
+            before={"xdg/opendaisugi/config.yaml": enforce},
+        )
+    )
+    add(
+        rich(
+            "data home xdg with dot",
+            ["config", "--json"],
+            env=xdg_env,
+            before={
+                RICH_CONFIG: {"text": "gate_mode: audit\n"},
+                "xdg/opendaisugi/config.yaml": enforce,
+            },
+        )
+    )
+    add(rich("data home od models use", ["models", "use", "acme/m"], env=od_env))
+    add(rich("data home xdg models use", ["models", "use", "acme/m"], env=xdg_env))
+    # A leading ~ is the home; a value still not absolute is ignored and the
+    # next rule applies.
+    for label, value in (("tilde", "~/od"), ("relative", "od"), ("dot", "./od"), ("empty", "")):
+        add(
+            rich(
+                f"data home od {label}",
+                ["config", "--json"],
+                env={"OPENDAISUGI_HOME": value},
+                before={"od/config.yaml": enforce},
+            )
+        )
+        add(
+            rich(
+                f"data home xdg {label}",
+                ["config", "--json"],
+                env={"XDG_DATA_HOME": value.replace("od", "xdg")},
+                before={"xdg/opendaisugi/config.yaml": enforce},
+            )
+        )
+    add(
+        rich(
+            "data home od relative models use",
+            ["models", "use", "acme/m"],
+            env={"OPENDAISUGI_HOME": "od"},
         )
     )
     values = (
@@ -4168,6 +4532,356 @@ def build_rich_cases() -> list[dict[str, Any]]:
         )
     )
     add(rich("journal ingest missing file", ["journal", "ingest", "nope.yaml"]))
+
+    # `daisugi verify PLAN --envelope ENV`: the verifier on two files.
+    def vdoc(name: str, obj: dict[str, Any]) -> dict[str, Any]:
+        return {name: {"text": _yaml.safe_dump(obj, sort_keys=False)}}
+
+    v_plan = {
+        "id": "plan_00000001",
+        "source": "script",
+        "task": "list the files",
+        "steps": [
+            {"id": "s1", "type": "shell", "command": "ls -la", "depends_on": []},
+            {"id": "s2", "type": "file_read", "path": "/work/a.txt", "depends_on": ["s1"]},
+        ],
+    }
+    v_perm = {
+        "file_read": ["/work/**"],
+        "file_write": [],
+        "network": False,
+        "shell": True,
+        "shell_allowlist": ["ls"],
+    }
+    v_env = {"id": "env_00000001", "generated_by": "test", "task": "t", "permissions": v_perm}
+    v_tight = {**v_env, "permissions": {**v_perm, "shell_allowlist": ["cat"], "file_read": []}}
+    exists = {"op": "exists", "path": "a"}
+    v_taut = {
+        **v_env,
+        "invariants": [
+            {
+                "type": "always",
+                "description": "d",
+                "expr": {"op": "or", "children": [exists, {"op": "not", "child": exists}]},
+            }
+        ],
+    }
+    v_alias = {
+        **v_env,
+        "invariants": [
+            {"type": "named", "description": "d", "expr": {"op": "alias", "name": "no_secrets"}}
+        ],
+    }
+    both = {**vdoc("p.yaml", v_plan), **vdoc("e.yaml", v_env)}
+    # PW-6: steps given as strings, decoded as coerce_step decodes them.
+    v_str = {
+        **v_plan,
+        "steps": [
+            '{"id": "s1", "type": "shell", "command": "ls -la", "depends_on": []}',
+            r"""{'id': 's2', 'type': 'file_read', 'path': '/work/' "a.txt", 'depends_on': ('s1',),"""
+            r""" 'metadata': {'n': 0x1F, 'big': 123456789012345678901234567890, 'ok': True}}""",
+        ],
+    }
+    v_str_bad = {**v_plan, "steps": ["ls -la"]}
+    # B1: an int of more than 4300 decimal digits does not decode (Python's
+    # int limit), so the step stays a str.
+    many = "1" * 5000
+    v_str_long = {
+        **v_plan,
+        "steps": [
+            "{'id': 's1', 'type': 'shell', 'command': 'ls -la', 'metadata': {'n': " + many + "}}"
+        ],
+    }
+    v_json_long = {
+        **v_plan,
+        "steps": [
+            '{"id": "s1", "type": "shell", "command": "ls -la", "metadata": {"n": ' + many + "}}"
+        ],
+    }
+    v_str_warn = {**v_plan, "steps": [r"{'id': 's1', 'type': 'shell', 'command': 'ls \d'}"]}
+    # PW-6: numbers past 64 bits in a plan and an envelope.
+    big = 123456789012345678901234567890
+    v_big_plan = {
+        **v_plan,
+        "steps": [
+            {**v_plan["steps"][0], "metadata": {"n": big, "l": [-big, 1]}},
+            {"id": "s3", "type": "sim_reset", "seed": big, "depends_on": []},
+            {"id": "s4", "type": "vla", "task": "pick", "max_actions": big, "depends_on": []},
+        ],
+    }
+    v_big_env = {
+        **v_env,
+        "permissions": {**v_perm, "max_output_size_mb": big, "max_execution_time_s": big},
+        "postconditions": [
+            {"type": "exit_code", "expected": -big},
+            {"type": "file_size_range", "path": "/work/a", "min": big, "max": -big},
+        ],
+    }
+    for name, before, extra in [
+        ("big ints", {**vdoc("p.yaml", v_big_plan), **vdoc("e.yaml", v_big_env)}, []),
+        ("big ints json", {**vdoc("p.yaml", v_big_plan), **vdoc("e.yaml", v_big_env)}, ["--json"]),
+        ("string steps", {**both, **vdoc("p.yaml", v_str)}, ["--json"]),
+        ("string step not a step", {**both, **vdoc("p.yaml", v_str_bad)}, []),
+        ("string step int too long", {**both, **vdoc("p.yaml", v_str_long)}, []),
+        ("json step int too long", {**both, **vdoc("p.yaml", v_json_long)}, []),
+        ("ok", both, []),
+        ("ok json", both, ["--json"]),
+        ("violations", {**both, **vdoc("e.yaml", v_tight)}, []),
+        ("violations json", {**both, **vdoc("e.yaml", v_tight)}, ["--json"]),
+        ("tautology warning", {**both, **vdoc("e.yaml", v_taut)}, []),
+        ("alias", {**both, **vdoc("e.yaml", v_alias)}, []),
+        ("plan does not parse", {**both, "p.yaml": {"text": "id: x\nsteps: 3\n"}}, []),
+        ("envelope does not parse", {**both, "e.yaml": {"text": "id: x\n"}}, []),
+        ("plan missing", vdoc("e.yaml", v_env), []),
+        ("plan is a directory", {**vdoc("e.yaml", v_env), "p.yaml": {"dir": True}}, []),
+        ("envelope missing", vdoc("p.yaml", v_plan), []),
+    ]:
+        add(
+            rich(
+                f"verify {name}",
+                ["verify", "p.yaml", "--envelope", "e.yaml", *extra],
+                before=before,
+            )
+        )
+    add(rich("verify no envelope option", ["verify", "p.yaml"], before=both))
+    # B2: PyYAML's int() reads at most 4300 decimal digits; past that the
+    # plan or envelope does not parse (a plan file in JSON is read as YAML).
+    many = "1" * 5000
+
+    def with_n(obj: dict[str, Any], text: str) -> str:
+        return _yaml.safe_dump(obj, sort_keys=False).replace("NNN", text)
+
+    n_plan = {**v_plan, "steps": [{**v_plan["steps"][0], "metadata": {"n": "NNN"}}]}
+    for name, files, argv in [
+        ("yaml plan int too long", {"p.yaml": {"text": with_n(n_plan, many)}}, "p.yaml"),
+        (
+            "yaml plan int too long underscores",
+            {"p.yaml": {"text": with_n(n_plan, "1_" + many)}},
+            "p.yaml",
+        ),
+        ("yaml plan int at the limit", {"p.yaml": {"text": with_n(n_plan, "1" * 4300)}}, "p.yaml"),
+        (
+            "yaml plan hex int long",
+            {"p.yaml": {"text": with_n(n_plan, "0x" + "f" * 5000)}},
+            "p.yaml",
+        ),
+        (
+            "json plan int too long",
+            {"p.json": {"text": json.dumps(n_plan).replace('"NNN"', many)}},
+            "p.json",
+        ),
+        (
+            "yaml envelope int too long",
+            {
+                "e.yaml": {
+                    "text": with_n({**v_env, "max_execution_time_s": "NNN"}, many),
+                }
+            },
+            "p.yaml",
+        ),
+    ]:
+        add(
+            rich(
+                f"verify {name}",
+                ["verify", argv, "--envelope", "e.yaml"],
+                before={**both, **files},
+            )
+        )
+    # B3: Python compares ints exactly, and an int with a float exactly.
+    p53, p64 = 2**53, 2**64
+
+    def inv_on_n(pred: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **v_env,
+            "invariants": [
+                {
+                    "type": "big_n",
+                    "description": "n holds",
+                    "expr": {"op": "forall_steps", "pred": {**pred, "path": "metadata.n"}},
+                }
+            ],
+        }
+
+    for name, n, pred in [
+        ("2^64+5 equals 2^64", p64 + 5, {"op": "equals", "value": p64}),
+        ("2^64+5 in set 2^64", p64 + 5, {"op": "in_set", "values": [p64]}),
+        ("-(2^64+5) equals -2^64", -(p64 + 5), {"op": "equals", "value": -p64}),
+        ("2^53+1 equals 2^53", p53 + 1, {"op": "equals", "value": p53}),
+        ("-(2^53+1) equals -2^53", -(p53 + 1), {"op": "equals", "value": -p53}),
+        ("2^64 not equals 2^64+5", p64, {"op": "not_equals", "value": p64 + 5}),
+        ("2^64 not in set 2^64+5", p64, {"op": "not_in_set", "values": [p64 + 5]}),
+        ("2^64 equals 2^63-1", p64, {"op": "equals", "value": 2**63 - 1}),
+        ("2^53+1 equals float 2^53", p53 + 1, {"op": "equals", "value": float(p53)}),
+        ("2^53 equals float 2^53", p53, {"op": "equals", "value": float(p53)}),
+        ("2^53+1 not equals float 2^53", p53 + 1, {"op": "not_equals", "value": float(p53)}),
+        ("2^64+5 in set float 2^64", p64 + 5, {"op": "in_set", "values": [float(p64)]}),
+        ("2^64 equals float 2^64", p64, {"op": "equals", "value": float(p64)}),
+        ("float 2^53 equals 2^53+1", float(p53), {"op": "equals", "value": p53 + 1}),
+    ]:
+        plan = {**v_plan, "steps": [{**v_plan["steps"][0], "metadata": {"n": n}}]}
+        add(
+            rich(
+                f"verify big int {name}",
+                ["verify", "p.yaml", "--envelope", "e.yaml"],
+                before={**vdoc("p.yaml", plan), **vdoc("e.yaml", inv_on_n(pred))},
+            )
+        )
+
+    # RF-14: a skill's contract is proved inside the caller's envelope by
+    # Z3, whose numerals Python builds exactly (IntVal(int), RealVal(str(f))).
+    def deleg(outer_pred: dict[str, Any], inner_pred: dict[str, Any]) -> dict[str, Any]:
+        def inv(pred: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "type": "n_rule",
+                "description": "d",
+                "expr": {
+                    "op": "forall_steps",
+                    "pred": {
+                        "op": "implies",
+                        "a": {"op": "equals", "path": "type", "value": "shell"},
+                        "b": {**pred, "path": "metadata.n"},
+                    },
+                },
+            }
+
+        inner = {**v_env, "id": "env_skill", "invariants": [inv(inner_pred)]}
+        plan = {
+            **v_plan,
+            "steps": [{"id": "s1", "type": "skill", "skill_id": "k", "contract_envelope": inner}],
+        }
+        return {
+            **vdoc("p.yaml", plan),
+            **vdoc("e.yaml", {**v_env, "invariants": [inv(outer_pred)]}),
+        }
+
+    p53, p60 = 2**53, 2**60
+    big = 1000000000000000019884624838656  # the float 1e30's exact value
+    for name, outer, inner in [
+        (
+            "equals 2^53 vs 2^53+1",
+            {"op": "equals", "value": p53},
+            {"op": "equals", "value": p53 + 1},
+        ),
+        ("equals same", {"op": "equals", "value": p53 + 1}, {"op": "equals", "value": p53 + 1}),
+        (
+            "in set 2^53 vs 2^53+1",
+            {"op": "in_set", "values": [p53]},
+            {"op": "in_set", "values": [p53 + 1]},
+        ),
+        (
+            "not in set 2^53+1 vs 2^53",
+            {"op": "not_in_set", "values": [p53 + 1]},
+            {"op": "not_in_set", "values": [p53]},
+        ),
+        (
+            "numeric range max 2^53 vs 2^53+1",
+            {"op": "numeric_range", "min": 0, "max": p53},
+            {"op": "numeric_range", "min": 0, "max": p53 + 1},
+        ),
+        (
+            "numeric range max 2^53 vs 2^53+2",
+            {"op": "numeric_range", "min": 0, "max": p53},
+            {"op": "numeric_range", "min": 0, "max": p53 + 2},
+        ),
+        (
+            "in set float 2^60 text vs 2^60",
+            {"op": "in_set", "values": [1152921504606847000]},
+            {"op": "equals", "value": p60},
+        ),
+        (
+            "range 1e30 vs 2^63-1",
+            {"op": "numeric_range", "min": 0, "max": 1e30},
+            {"op": "equals", "value": 2**63 - 1},
+        ),
+        (
+            "range 1e19 vs 2^64-1",
+            {"op": "numeric_range", "min": 0, "max": 1e19},
+            {"op": "equals", "value": 2**64 - 1},
+        ),
+        (
+            "range 1e30 vs past 64 bits",
+            {"op": "numeric_range", "min": 0, "max": 1e30},
+            {"op": "equals", "value": big},
+        ),
+    ]:
+        add(
+            rich(
+                f"verify delegation {name}",
+                ["verify", "p.yaml", "--envelope", "e.yaml"],
+                before=deleg(outer, inner),
+            )
+        )
+    # A length_range bound with a fractional part is pydantic's
+    # ValidationError (a traceback); the ports refuse it (K2-8, RF-13).
+    for name, pred in [
+        ("min", {"op": "length_range", "path": "command", "min": 2.5}),
+        ("max", {"op": "length_range", "path": "command", "min": 0, "max": 1.5}),
+    ]:
+        env = {
+            **v_env,
+            "invariants": [
+                {
+                    "type": "len",
+                    "description": "d",
+                    "expr": {"op": "forall_steps", "pred": pred},
+                }
+            ],
+        }
+        add(
+            rich(
+                f"verify length range fractional {name}",
+                ["verify", "p.yaml", "--envelope", "e.yaml"],
+                before={**both, **vdoc("e.yaml", env)},
+                go_refuses=True,
+            )
+        )
+    add(
+        rich(
+            "verify string step warns",
+            ["verify", "p.yaml", "--envelope", "e.yaml"],
+            before={**both, **vdoc("p.yaml", v_str_warn)},
+            go_refuses=True,
+        )
+    )
+
+    # `daisugi hook report`: one pane state event on stdin. The gate root's
+    # parent is a file here, so the session tree is not written (it is
+    # best effort); the gate_server suite cases the tree through gate.sock.
+    blocked = {"blocked": {"text": "not a directory\n"}}
+    root = ["--root", "{HOME}/blocked/gate"]
+    ev = {
+        "session_id": "s1",
+        "harness": "claude",
+        "state": "working",
+        "source": "headless",
+        "ts": 1.5,
+    }
+    for name, stdin, extra in [
+        ("event", json.dumps(ev), []),
+        ("event with pane", json.dumps(ev), ["--pane", "w1:p2"]),
+        ("gate source", json.dumps({**ev, "source": "gate"}), []),
+        ("done from operator", json.dumps({**ev, "state": "done", "source": "operator"}), []),
+        ("done from manifest", json.dumps({**ev, "state": "done", "source": "manifest"}), []),
+        ("missing field", json.dumps({k: v for k, v in ev.items() if k != "ts"}), []),
+        ("ts a string", json.dumps({**ev, "ts": "1"}), []),
+        ("ts a bool", json.dumps({**ev, "ts": True}), []),
+        ("unknown state", json.dumps({**ev, "state": "napping"}), []),
+        ("detail too long", json.dumps({**ev, "detail": "x" * 201}), []),
+        ("pane not a string", json.dumps({**ev, "pane": 3}), []),
+        ("not json", "{nope", []),
+        ("not an object", "[1, 2]", []),
+        ("empty", "", []),
+    ]:
+        add(
+            rich(
+                f"hook report {name}",
+                ["hook", "report", *root, *extra],
+                before=blocked,
+                stdin=stdin,
+            )
+        )
+    add(rich("hook report bad option", ["hook", "report", "--nope"], before=blocked, stdin="{}"))
+    add(rich("verify no arguments", ["verify"], before=both))
     add(
         rich(
             "journal ingest conformance record",

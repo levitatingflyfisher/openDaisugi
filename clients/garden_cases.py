@@ -254,7 +254,8 @@ def _cell(v: Any) -> Any:
 
 
 def dump_db(path: Path) -> dict[str, Any]:
-    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    # The path as a URI, escaped: a "?", "#" or "%" in it is part of the name.
+    con = sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro", uri=True)
     try:
         schema = [r[0] for r in con.execute("SELECT sql FROM sqlite_master ORDER BY name")]
         names = [
@@ -388,14 +389,32 @@ def normalize(result: dict[str, Any], home: str, t0: float) -> dict[str, Any]:
     return json.loads(text)
 
 
+_WARN = re.compile(r"^.*?:\d+: (\w*Warning): (.*)$")
+
+
 def norm_stderr(s: str) -> list[str]:
-    """A traceback keeps only its last line; everything else its text."""
+    """A traceback keeps only its last line; a warning, printed as
+    `file:line: UserWarning: text` and the source line, keeps `UserWarning:
+    text` (the file is the oracle's); everything else its text."""
     lines = s.splitlines()
     if "Traceback (most recent call last):" in lines:
         start = lines.index("Traceback (most recent call last):")
         exc = next((ln for ln in lines[start + 1 :] if ln and not ln.startswith(" ")), "")
-        return lines[:start] + ["Traceback (most recent call last): ...", exc.split(":")[0]]
-    return lines
+        lines = lines[:start] + ["Traceback (most recent call last): ...", exc.split(":")[0]]
+    out: list[str] = []
+    skip = False
+    for line in lines:
+        if skip:
+            skip = False
+            if line.startswith("  "):
+                continue
+        m = _WARN.match(line)
+        if m:
+            out.append(f"{m.group(1)}: {m.group(2)}")
+            skip = True
+            continue
+        out.append(line)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +481,33 @@ class FakeServer:
                 else:
                     if ans.get("sleep"):
                         time.sleep(ans["sleep"])
+                    status, out = ans.get("status", 200), ans["body"].encode("utf-8")
+                try:
+                    self.send_response(status)
+                    self.send_header("content-type", "application/json")
+                    self.send_header("content-length", str(len(out)))
+                    self.end_headers()
+                    self.wfile.write(out)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def do_GET(self):  # noqa: N802 - http.server's name
+                # A GET has no body: its answer is keyed by its path.
+                key = hashlib.sha256(b"GET " + self.path.encode("utf-8")).hexdigest()
+                headers, key_ok = outer.redact(self.headers)
+                outer.log.append(
+                    {
+                        "kind": "http",
+                        "method": "GET",
+                        "path": self.path,
+                        "key": key,
+                        "headers": headers,
+                    }
+                )
+                ans = outer.table.get(key)
+                if ans is None:
+                    status, out = 597, b'{"error": "no recorded answer"}'
+                else:
                     status, out = ans.get("status", 200), ans["body"].encode("utf-8")
                 try:
                     self.send_response(status)
@@ -549,6 +595,8 @@ def base_env(home: Path, work: Path) -> dict[str, str]:
         "HF_HUB_OFFLINE": "1",
         "XDG_CACHE_HOME": str(home / ".cache"),
         "TMPDIR": str(work / "tmp"),
+        # The voice engine choice reads this, never the real box (VO-17).
+        "OPENDAISUGI_VOICE_HARDWARE": "16,8,0",
     }
 
 
@@ -1256,6 +1304,23 @@ def build_tend_cases() -> list[dict[str, Any]]:
         **claude,
     )
     add("tend claude creates", ["tend"], traces=same, replies=[{"claude": tmpl_ok}], **claude)
+    # PW-6: traces and a model reply whose steps are strings (a Python
+    # literal and JSON), decoded as coerce_step decodes them.
+    str_build = [repr(build[0]), json.dumps(build[1])]
+    add(
+        "tend string steps",
+        ["tend"],
+        traces=[trace(k, f"build the release {k}", str_build, hours=k + 1) for k in range(1, 4)],
+        replies=[
+            {
+                "claude": template(
+                    "build the release",
+                    [repr(sh("a", "make test")), json.dumps(rd("b", "/work/out.txt", ["a"]))],
+                )
+            }
+        ],
+        **claude,
+    )
     add(
         "tend claude dry run",
         ["tend", "--dry-run"],
@@ -1579,6 +1644,14 @@ def build_tend_cases() -> list[dict[str, Any]]:
             "forward",
             ok,
         ),
+        (
+            "names that differ in case",
+            {"HTTP_PROXY": "http://127.0.0.1:{DEAD}", "Http_Proxy": px},
+            "forward",
+            ok,
+        ),
+        ("port not a number", {"HTTP_PROXY": "http://127.0.0.1:x"}, "forward", []),
+        ("no_proxy bad port", {"HTTP_PROXY": px, "NO_PROXY": "a:b"}, "forward", []),
         ("407", {"HTTP_PROXY": px}, "deny", []),
         ("refused connect", {"HTTPS_PROXY": px, **tls_base}, "refuse", []),
         (
@@ -1924,7 +1997,6 @@ def build_tend_cases() -> list[dict[str, Any]]:
         ["tend"],
         traces=same,
         journal_extra={"yaml_text": {"t01": "{id: t01}\n"}},
-        go_refuses=True,
         **claude,
     )
     runs = [
@@ -2337,7 +2409,6 @@ def build_autotend_cases() -> list[dict[str, Any]]:
             },
         ),
         env=claude,
-        go_refuses=True,
     )
     add(
         "auto-tend then tend fails",
@@ -2475,6 +2546,22 @@ def build_repeats_cases() -> list[dict[str, Any]]:
         }
     }
     add("repeats reusable", [], base, extra=reusable)
+    # S9: a row embedded under another version makes find warn, once.
+    stale = {
+        ".opendaisugi/pathways.db": {
+            "db": {
+                "rows": [
+                    row_spec(
+                        put_row(pathway(1, "run the unit tests", lexical("run the unit tests")))
+                    ),
+                    row_spec(
+                        put_row(pathway(2, "deploy docs", lexical("deploy docs"), emb_version="2"))
+                    ),
+                ]
+            }
+        }
+    }
+    add("repeats stale store", [], base, extra=stale)
     add(
         "repeats data dir",
         ["--data-dir", "{HOME}/dd"],

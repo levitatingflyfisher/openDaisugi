@@ -90,3 +90,43 @@ func DefaultTools() map[string]Tool {
 		"bash":  BashTool{},
 	}
 }
+
+// AllToolNames is the four tools in sprig's own order: the order a prompt
+// lists them in, and the default of --tools.
+var AllToolNames = []string{"read", "write", "edit", "bash"}
+
+// ParseToolWall reads a --tools value: a comma list of tool names. It
+// returns the named tools once each, in sprig's order. An empty value or
+// a name that is not a tool is an error, worded for one line on stderr.
+func ParseToolWall(list string) ([]string, error) {
+	if list == "" {
+		return nil, fmt.Errorf("--tools is empty; name one or more of read, write, edit, bash")
+	}
+	want := map[string]bool{}
+	for _, name := range strings.Split(list, ",") {
+		if _, ok := DefaultTools()[name]; !ok {
+			return nil, fmt.Errorf("--tools: unknown tool %q; the tools are read, write, edit, bash", name)
+		}
+		want[name] = true
+	}
+	var wall []string
+	for _, name := range AllToolNames {
+		if want[name] {
+			wall = append(wall, name)
+		}
+	}
+	return wall, nil
+}
+
+// ToolsFor is the tool map for a wall: only the named tools. A call to any
+// other tool is then refused as an unknown tool.
+func ToolsFor(wall []string) map[string]Tool {
+	all := DefaultTools()
+	tools := map[string]Tool{}
+	for _, name := range wall {
+		if t, ok := all[name]; ok { // a name that is no tool is left out
+			tools[name] = t
+		}
+	}
+	return tools
+}

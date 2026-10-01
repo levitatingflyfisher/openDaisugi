@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, element } from './browser-stub.mjs';
 import { applyReply } from '../record.js';
-import { classifyTell, plumbingCommand, talkCommand, talkSay, mountTell } from '../newpane.js';
+import { classifyTell, plumbingCommand, talkCommand, talkSay, mountTell, SLASH_PLUMBING } from '../newpane.js';
 
-// Tell the floor: one bar on home. Plumbing runs first, the way the
-// terminal floor reads a prompt line: a harness name opens a pane, close
-// closes one. Any other sentence goes to floor.talk, which starts the
-// foreman when none runs. A transcription fills the bar and never sends.
+// Tell the floor: the chat bar. Everything typed or said goes to the
+// foreman through floor.talk, which starts the foreman when none runs.
+// Plumbing needs a leading slash: /claude opens a pane, /close docs closes
+// one. The terminal floor's prompt line keeps its words, and the old rule
+// stays behind the one switch. A transcription fills the bar and never
+// sends.
 
 const settle = () => new Promise((r) => setImmediate(r));
 
@@ -49,13 +51,57 @@ async function tell(text) {
   await settle();
 }
 
-test('plumbing reads the way the terminal floor reads it', () => {
-  assert.equal(classifyTell('claude'), 'plumbing');
-  assert.equal(classifyTell('codex --resume'), 'plumbing');
-  assert.equal(classifyTell('close docs'), 'plumbing');
-  assert.equal(classifyTell('close the old docs pane when it is done'), 'talk');
-  assert.equal(classifyTell('fix the flaky test'), 'talk');
+test('with the switch off, plumbing reads the way the terminal floor reads it', () => {
+  assert.equal(classifyTell('claude', false), 'plumbing');
+  assert.equal(classifyTell('codex --resume', false), 'plumbing');
+  assert.equal(classifyTell('close docs', false), 'plumbing');
+  assert.equal(classifyTell('close the old docs pane when it is done', false), 'talk');
+  assert.equal(classifyTell('fix the flaky test', false), 'talk');
+  assert.equal(classifyTell('   ', false), 'empty');
+});
+
+test('the slash rule is on: a plain sentence is always talk, and plumbing needs a leading slash', () => {
+  assert.equal(SLASH_PLUMBING, true);
+  // The old trap: a sentence led by a harness name started that harness.
+  assert.equal(classifyTell('claude can you check it'), 'talk');
+  assert.equal(classifyTell('claude'), 'talk');
+  assert.equal(classifyTell('close docs'), 'talk');
+  assert.equal(classifyTell('/claude'), 'plumbing');
+  assert.equal(classifyTell('/close docs'), 'plumbing');
+  assert.equal(classifyTell('/codex --resume'), 'plumbing');
+  assert.equal(classifyTell('  /close docs'), 'plumbing');
+  assert.equal(classifyTell('/'), 'empty');
   assert.equal(classifyTell('   '), 'empty');
+  assert.equal(classifyTell('fix the flaky test'), 'talk');
+});
+
+test('only a slash and a known word is plumbing: a path or any other slash line is talk', () => {
+  assert.equal(classifyTell('/etc/hosts looks wrong'), 'talk');
+  assert.equal(classifyTell('/tmp is full, can you look'), 'talk');
+  assert.equal(classifyTell('/claudette is not a harness'), 'talk');
+  assert.equal(classifyTell('/open codex'), 'plumbing');
+  // A terminal verb is still plumbing, so its line says where it works.
+  assert.equal(classifyTell('/layout all'), 'plumbing');
+});
+
+test('a sentence led by a path goes to the foreman whole', async () => {
+  const { rpcs } = stub();
+  await tell('/etc/hosts looks wrong');
+  assert.deepEqual(rpcs, [{ cmd: 'floor.talk', text: '/etc/hosts looks wrong' }]);
+});
+
+test('a slash line plans the same request as the bare words', () => {
+  assert.deepEqual(plumbingCommand('/close docs', { panes: PANES, cwd: '/repo' }).req, { cmd: 'pane.close', pane: 'w1:p2' });
+  assert.deepEqual(plumbingCommand('/claude', { panes: PANES, cwd: '/repo' }).req,
+    { cmd: 'pane.create', kind: 'pty', harness: 'claude', cwd: '/repo' });
+  assert.match(plumbingCommand('/layout all', { panes: PANES, cwd: '/repo' }).say, /^\/layout works on the terminal floor\. Here, type \/claude, \/close NAME, or a sentence for the foreman\.$/);
+  assert.match(plumbingCommand('/close', { panes: PANES, cwd: '/repo' }).say, /\/close docs/);
+});
+
+test('a sentence led by claude goes to the foreman and opens nothing', async () => {
+  const { rpcs } = stub();
+  await tell('claude can you check it');
+  assert.deepEqual(rpcs, [{ cmd: 'floor.talk', text: 'claude can you check it' }]);
 });
 
 test('a harness name opens a pane in the directory the phone knows, and close names a pane by label', () => {
@@ -99,13 +145,43 @@ test('a talk that starts the foreman opens its window', async () => {
   assert.match(element('status').textContent, /starts and gets its page/);
 });
 
-test('claude still opens a pane, and talk does not', async () => {
+test('/claude still opens a pane, and talk does not', async () => {
   const { rpcs } = stub();
   global.localStorage.setItem('coppice.cwds', JSON.stringify(['/repo']));
-  await tell('claude');
+  await tell('/claude');
   assert.equal(rpcs.length, 1);
   assert.equal(rpcs[0].cmd, 'pane.create');
   assert.equal(rpcs[0].cwd, '/repo');
+});
+
+test('on a phone a talk that starts the foreman stays on home, where the chat is', async () => {
+  stub({ talk: { pane: 'w1:p9', label: 'foreman', started: true, queued: 1 } });
+  global.window.coppice.phone = () => true;
+  global.location.hash = '#/roster';
+  await tell('start an agent in trellis');
+  assert.equal(global.location.hash, '#/roster');
+});
+
+test('a sentence shows in the chat at once and is marked sent when floor.talk answers', async () => {
+  const { rpcs } = stub();
+  const marks = [];
+  global.window.coppice.chat = { sent: (text) => { marks.push('show ' + text); return { ok: () => marks.push('ok'), fail: () => marks.push('fail') }; } };
+  await tell('fix the flaky test');
+  assert.equal(rpcs.length, 1);
+  assert.deepEqual(marks, ['show fix the flaky test', 'ok']);
+  // Plumbing is not chat.
+  marks.length = 0;
+  await tell('/close docs');
+  assert.deepEqual(marks, []);
+});
+
+test('a refused sentence leaves the chat and stays in the bar', async () => {
+  stub({ rpcFails: new Error('the foreman has 32 sentences waiting already. Look at its window, then talk again.') });
+  const marks = [];
+  global.window.coppice.chat = { sent: () => ({ ok: () => marks.push('ok'), fail: () => marks.push('fail') }) };
+  await tell('fix it');
+  assert.deepEqual(marks, ['fail']);
+  assert.equal(element('tell-text').value, 'fix it');
 });
 
 test('a talk the server refuses keeps the sentence and shows the reason', async () => {
@@ -155,7 +231,7 @@ test('close refuses a label that names more than one live pane, and asks for the
 // set here it sends none, and the server picks one by its one-click rule.
 test('a harness name never guesses a directory from the running panes', async () => {
   const { rpcs } = stub();
-  await tell('claude');
+  await tell('/claude');
   assert.equal(rpcs.length, 1);
   assert.equal(rpcs[0].cwd, undefined, 'the page guessed a directory');
   assert.match(element('status').textContent, /where you last worked/);

@@ -581,7 +581,10 @@ async function typeText(enter) {
   try {
     const res = await queue(req);
     const line = queuedLine(res);
+    // The status line names where the words went, so a line about the
+    // chat never sits over words typed to this agent.
     if (line) say(line);
+    else say('Sent to ' + (currentName || row.id) + '.');
   } catch (e) {
     if (!box.value) box.value = text;
     say(isQuestionRefusal(e) ? questionMessage(e.message, current && current.id) : e);

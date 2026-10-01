@@ -12,6 +12,7 @@ import (
 	"github.com/opendaisugi/coppice/internal/config"
 	"github.com/opendaisugi/coppice/internal/layout"
 	"github.com/opendaisugi/coppice/internal/proto"
+	"github.com/opendaisugi/coppice/internal/web"
 )
 
 // outsideTTL is how long the floor trusts what it read about the world
@@ -290,6 +291,37 @@ func (s *Server) gateInstalled() bool {
 	return false
 }
 
+// phoneCertWarnDays is how close to its end the phone's tailscale
+// certificate must be before floor.facts names it. The phone server
+// renews it under 30 days, so a certificate this close means renewal
+// failed.
+const phoneCertWarnDays = 7
+
+// phoneCertDays is the whole days left on the phone server's tailscale
+// certificate, and false when there is none to warn about. It reads only
+// a phone server that runs now (the pair it names in web/serving.json,
+// with a live pid) or a saved one (web.json enabled under --tls
+// tailscale: its cert_file, or the default pair when blank). A fact that
+// cannot be read is absent, never guessed.
+func (s *Server) phoneCertDays(now time.Time) (int, bool) {
+	certFile, ok := web.ServingCert(web.ServingPath(s.cfg.DataDir))
+	if !ok {
+		cfg, err := web.LoadConfig(web.ConfigPath(s.cfg.DataDir))
+		if err != nil || !cfg.Enabled || cfg.TLS != string(web.TLSTailscale) {
+			return 0, false
+		}
+		certFile = cfg.CertFile
+		if certFile == "" {
+			certFile, _ = web.TailscalePaths(s.cfg.DataDir)
+		}
+	}
+	leaf, err := web.LoadLeaf(certFile)
+	if err != nil {
+		return 0, false
+	}
+	return web.CertDays(leaf.NotAfter, now), true
+}
+
 // modeRank orders the daisugi modes by how much they guard.
 var modeRank = map[string]int{modeOff: 0, "watching": 1, "enforcing": 2}
 
@@ -360,6 +392,9 @@ func (s *Server) handleFloorFacts(_ *Client, r *proto.Request) proto.Response {
 	s.talkMu.Unlock()
 	if live, _ := s.foremanState(fid); live {
 		res["foreman"] = map[string]any{"pane": fid, "label": s.labelOf(fid)}
+	}
+	if days, ok := s.phoneCertDays(now); ok && days < phoneCertWarnDays {
+		res["phone_cert_days"] = days
 	}
 	if gateway, _ := s.gatewayFacts(); gateway != "" {
 		gw := map[string]any{"url": gateway}

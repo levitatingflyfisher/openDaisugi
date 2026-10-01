@@ -2,7 +2,6 @@
 //! its pathway validated as `CompiledPathway.model_validate` does,
 //! re-verified, checked storable, and written.
 
-use super::dumped::load_dumped;
 use super::export::BUNDLE_SCHEMA_VERSION;
 use super::pathway::{dump_json, py_dumps, Pathway};
 use super::pmodel::{self, Id, Mode};
@@ -67,7 +66,7 @@ fn from_bundle(bundle: &Value, source: &str) -> Result<Pathway, PwErr> {
     match pmodel::validate_model(Id::CompiledPathway, raw, Mode::Python) {
         Ok(Value::Obj(obj)) => Ok(Pathway::new(obj)),
         Ok(_) => Err(PwErr::Invalid("TypeError: the pathway is not a model".into())),
-        Err(e) if e.unreadable_step() => Err(PwErr::Unreadable("a plan step is a string".into())),
+        Err(e) if e.unreadable_step() => Err(PwErr::Unreadable(e.unreadable().unwrap_or_default())),
         // parse_bundle's refusal: a NaN or an infinity in the envelope or
         // plan (models.non_finite_error) is one of these.
         Err(e) => Err(PwErr::import("SCHEMA_INCOMPATIBLE", format!("the pathway is not valid: {}", e.text()))),
@@ -80,8 +79,9 @@ fn sv_negative(v: &Value) -> bool {
 
 /// `parse_bundle` for skill markdown: the frontmatter between the first
 /// "---\n" and the next "\n---\n", read as yaml.safe_load reads it, and
-/// its daisugi key taken as the bundle. A frontmatter not in the form
-/// yaml.safe_dump writes is not read by this binary.
+/// its daisugi key taken as the bundle. A frontmatter that makes the
+/// oracle crash, or holds a value the result model does not hold, is not
+/// read by this binary.
 pub fn parse_skill(text: &str, source: &str) -> Result<Pathway, PwErr> {
     let text = lstrip(text);
     let rest = match text.split_once("---\n") {
@@ -92,14 +92,23 @@ pub fn parse_skill(text: &str, source: &str) -> Result<Pathway, PwErr> {
         Some((f, _)) => f,
         None => return Err(PwErr::import("SCHEMA_INCOMPATIBLE", "unterminated YAML frontmatter")),
     };
-    let data = load_dumped(front).map_err(|u| PwErr::NotYet(u.0))?;
-    let o = match &data {
-        Value::Obj(o) => o,
-        _ => return Err(PwErr::NotYet("the frontmatter is not a mapping".into())),
+    let data = match crate::pyyaml::load(front) {
+        Ok(v) => v,
+        Err(crate::pyyaml::Fail::Unsupported(why)) => return Err(PwErr::NotYet(why)),
+        // safe_load's error goes up uncaught: the oracle crashes.
+        Err(crate::pyyaml::Fail::Exc(_)) => return Err(PwErr::NotYet("the frontmatter does not parse".into())),
     };
-    match o.get("daisugi") {
+    // `yaml.safe_load(...) or {}`
+    let data = if crate::pyyaml::truthy(&data) { data } else { crate::pyyaml::Val::Map(vec![]) };
+    if !matches!(data, crate::pyyaml::Val::Map(_)) {
+        return Err(PwErr::NotYet("the frontmatter is not a mapping".into()));
+    }
+    match data.get("daisugi") {
         None => Err(PwErr::import("SCHEMA_INCOMPATIBLE", "skill frontmatter is missing the 'daisugi' key")),
-        Some(b) => from_bundle(b, source),
+        Some(b) => match crate::pyyaml::to_json(b) {
+            Some(b) => from_bundle(&b, source),
+            None => Err(PwErr::NotYet("the frontmatter holds a date or a key that is not text".into())),
+        },
     }
 }
 

@@ -107,7 +107,7 @@ func (o TLSOptions) Resolve() (string, string, error) {
 
 // LoadLeaf parses the first certificate in a PEM file.
 func LoadLeaf(certFile string) (*x509.Certificate, error) {
-	raw, err := os.ReadFile(certFile)
+	raw, err := readSmall(certFile)
 	if err != nil {
 		return nil, err
 	}
@@ -144,6 +144,9 @@ func ExpiryWarning(c *x509.Certificate, now time.Time) string {
 	days := int(left.Hours() / 24)
 	return fmt.Sprintf("The certificate expires in %d %s. Renew it before then.", days, plural(days, "day"))
 }
+
+// Plural is plural for callers outside this package.
+func Plural(n int, unit string) string { return plural(n, unit) }
 
 // plural returns unit unchanged for a count of one, and unit with an added
 // s otherwise. "1 days" reads like a bug, not a deadline.

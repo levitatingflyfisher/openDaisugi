@@ -50,10 +50,12 @@ impl Scope {
         format!("{}__{}", self.prefix, path.replace('.', "__"))
     }
 
+    /// The SMT identifier of a string path: the one a caller seeded for it
+    /// (subsumption seeds `ctx__command` as `ctx_command`, the variable the
+    /// shell admission uses), else the path's own name.
     pub fn resolve_string(&mut self, path: &str) -> String {
         let smt_name = self.var_name(path);
-        self.vars.entry(smt_name.clone()).or_insert_with(|| (smt_name.clone(), Sort::Str));
-        smt_name
+        self.vars.entry(smt_name.clone()).or_insert_with(|| (smt_name.clone(), Sort::Str)).0.clone()
     }
 
     pub fn resolve_numeric(&mut self, path: &str) -> String {
@@ -108,18 +110,53 @@ fn smt_str_lit(v: &Value) -> String {
     format!("\"{}\"", python_str_of(v).replace('"', "\"\""))
 }
 
+/// `z3.RealVal(f)` of a float: Z3 reads `str(f)`, the shortest text that
+/// gives `f` back, so the numeral is that decimal (1e30 is 10^30), not
+/// the float's exact binary value. Rust's `{}` prints the same shortest
+/// digits, without an exponent.
 pub fn smt_real(n: f64) -> String {
     if n < 0.0 {
-        format!("(- {})", smt_real(-n))
-    } else if n.fract() == 0.0 {
-        format!("{n:.1}")
+        return format!("(- {})", smt_real(-n));
+    }
+    let t = format!("{n}");
+    if t.contains('.') {
+        t
     } else {
-        format!("{n}")
+        format!("{t}.0")
     }
 }
 
+/// The numeral of a JSON number as predicate_z3's `_z3_lit` builds it: an
+/// int exactly (`z3.IntVal`), a float as `z3.RealVal(str(f))`.
 fn smt_real_lit(v: &Value) -> String {
+    if let Value::Number(n) = v {
+        if n.is_i64() || n.is_u64() {
+            let t = n.to_string();
+            return match t.strip_prefix('-') {
+                Some(m) => format!("(- {m}.0)"),
+                None => format!("{t}.0"),
+            };
+        }
+    }
     smt_real(v.as_f64().unwrap_or(0.0))
+}
+
+#[cfg(test)]
+mod numeral_tests {
+    use super::*;
+
+    /// Ints are exact; a float is its shortest decimal, as str(f) is.
+    #[test]
+    fn numerals_are_python_s() {
+        let v = |t: &str| serde_json::from_str::<Value>(t).unwrap();
+        assert_eq!(smt_real_lit(&v("9007199254740993")), "9007199254740993.0");
+        assert_eq!(smt_real_lit(&v("18446744073709551615")), "18446744073709551615.0");
+        assert_eq!(smt_real_lit(&v("-9223372036854775808")), "(- 9223372036854775808.0)");
+        assert_eq!(smt_real(1e30), format!("1{}.0", "0".repeat(30)));
+        assert_eq!(smt_real(0.1), "0.1");
+        assert_eq!(smt_real(-2.5), "(- 2.5)");
+        assert_eq!(smt_real(1.5e-7), "0.00000015");
+    }
 }
 
 /// `predicate_z3._compile_scalar` — emits an SMT-LIB2 boolean term string

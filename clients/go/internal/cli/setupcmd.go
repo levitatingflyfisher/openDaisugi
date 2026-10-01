@@ -25,7 +25,7 @@ Options:
 
 Commands:
   setup  Detect hardware, recommend a local model, and optionally qualify and wire it.
-  stats  Not yet in this binary.
+  stats  Show per-tier call counts, estimated tokens, and pathway hit rate.
 `
 
 func (e *Env) tiers(args []string) error {
@@ -37,7 +37,7 @@ func (e *Env) tiers(args []string) error {
 	case "setup":
 		return e.tiersSetup(args[1:])
 	case "stats":
-		return e.notYet("daisugi tiers stats")
+		return e.tiersStats(args[1:])
 	}
 	e.errf("Usage: daisugi tiers [OPTIONS] COMMAND [ARGS]...\nTry 'daisugi tiers --help' for help.\n\n"+
 		"Error: No such command '%s'.\n", args[0])
@@ -187,9 +187,9 @@ func recommend(h hardware) recommendation {
 		"against the real envelope schema and check the pass rate) before trusting it as Tier-1; the model " +
 		"family is your pick, not a verified default."
 	if r.params >= 3 {
-		r.families = []string{"Qwen2.5", "Gemma", "Llama", "Phi"}
+		r.families = []string{"Granite", "Ministral", "Gemma", "Llama"}
 	} else {
-		r.families = []string{"Qwen2.5", "Gemma"}
+		r.families = []string{"Granite", "Llama"}
 	}
 	return r
 }
@@ -242,7 +242,7 @@ func (e *Env) tiersSetup(args []string) error {
 			return e.usage(cmd, err)
 		}
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	if p.has("--matcher") {
 		return e.setMatcher(cmd, gateroot.Join(dataDir, "config.yaml"), p.str("--matcher", ""))
 	}
@@ -254,7 +254,17 @@ func (e *Env) tiersSetup(args []string) error {
 			"run one at a time: --endpoint URL --model NAME, or --remote HOST[:PORT].", 1)
 	}
 	if remote != "" {
-		return e.notYet("daisugi tiers setup --remote")
+		var model *string
+		if p.has("--model") {
+			m := p.str("--model", "")
+			model = &m
+		}
+		var context *int64
+		if p.has("--context") {
+			n, _ := clickInt(p, "--context", 0)
+			context = &n
+		}
+		return e.setupRemote(cmd, dataDir, remote, p.str("--kind", "auto"), model, context)
 	}
 	model := p.str("--model", "")
 	if endpoint != "" && model == "" {
@@ -349,10 +359,11 @@ func (e *Env) tiersSetup(args []string) error {
 	e.out("  candidate families (your pick, none verified-best): %s\n", strings.Join(rec.families, ", "))
 	e.out("  %s\n\n", rec.rationale)
 	if qual == nil {
-		e.out("Get a local server running (one file, no install), then qualify + wire it:\n")
-		e.out("  1. Find a trusted, commit-pinned model llamafile:  daisugi models\n")
-		e.out("     (canonical engine repo: github.com/mozilla-ai/llamafile; model org: huggingface.co/mozilla-ai)\n")
-		e.out("  2. Serve it:  ./<model>.llamafile --server --port 8080 --nobrowser\n")
+		e.out("Get a local server running, then qualify + wire it:\n")
+		e.out("  1. Pick a model:  daisugi models list   (or any: daisugi models search QUERY)\n")
+		e.out("     Fetch its GGUF pinned to a commit:  daisugi models pin <gguf-repo> --pull\n")
+		e.out("  2. Serve it with llamafile (github.com/mozilla-ai/llamafile):\n")
+		e.out("     llamafile --server -m <model>.gguf --port 8080 --nobrowser\n")
 		e.out("  3. Qualify:   daisugi tiers setup --endpoint http://localhost:8080/v1 --model <name> --wire\n")
 		e.out("\nPathway matcher: lexical by default (no model, no download). For better recall:\n")
 		e.out("  daisugi tiers setup --matcher potion   (a one-time download of about 30 MB)\n")

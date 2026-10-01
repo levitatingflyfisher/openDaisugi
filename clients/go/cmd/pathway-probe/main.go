@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"daisugi-verify/internal/config"
+	"daisugi-verify/internal/datahome"
 	"daisugi-verify/internal/embed/potion"
 	"daisugi-verify/internal/pathways"
 )
@@ -56,7 +57,7 @@ func matcherKey() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cfg, err := config.Load(filepath.Join(home, ".opendaisugi", "config.yaml"))
+	cfg, err := config.Load(filepath.Join(datahome.Dir(os.Getenv, home, datahome.Exists), "config.yaml"))
 	if err != nil {
 		return "", err
 	}

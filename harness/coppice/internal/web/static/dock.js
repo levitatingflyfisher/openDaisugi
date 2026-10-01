@@ -1,8 +1,11 @@
 import { phoneSize } from './windows.js';
 
-// The phone. Home is the overview: the colony strip, the agents that need
-// you in a small queue at the top, and the agent list grouped as the rail
-// groups it. A tap on an agent slides its sheet in from the right over most
+// The phone. Home is the overview, one column. From the top: the facts
+// line, the agents that need you as cards with their answer buttons, a fold
+// with every agent grouped as the rail groups it, then the chat with the
+// foreman. The chat bar is docked at the bottom, above the on-screen
+// keyboard. A tap on an agent (a card, a row, a chip in the chat) slides
+// its sheet in from the right over most
 // of the screen, and the overview stays live under it and in sight at the
 // left edge. A swipe right on the sheet, or a tap on that edge, goes back.
 // Nothing here navigates away from the page: the sheet is the pane route
@@ -136,4 +139,41 @@ export function mountSheet(el, { edge, body, back, on }) {
       back();
     });
   }
+}
+
+// foldLine is the line on the phone's agents fold: how many live agents
+// there are, and in how many project directories. foreman, the floor's
+// tracked foreman's id when known, counts as an agent, and its scratch
+// directory never counts as a project.
+export function foldLine(rows, foreman) {
+  const live = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id && !r.closed && !r.parent_pane);
+  if (live.length === 0) return 'No agents yet';
+  const dirs = new Set(live.filter((r) => !foreman || r.id !== foreman).map((r) => String(r.cwd || '')));
+  const n = (count, word) => count + ' ' + word + (count === 1 ? '' : 's');
+  return n(live.length, 'agent') + ' · ' + n(dirs.size, 'project');
+}
+
+// mountFold wires the phone's agents fold. button opens and shuts it;
+// rail carries data-fold, open or shut, which the page's style reads. It
+// starts shut. It returns paint(rows, foreman), which writes the fold's line.
+export function mountFold(button, rail) {
+  let open = false;
+  const set = () => {
+    if (rail && typeof rail.setAttribute === 'function') rail.setAttribute('data-fold', open ? 'open' : 'shut');
+    if (button && typeof button.setAttribute === 'function') button.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  let line = '';
+  const paint = (rows, foreman) => {
+    line = foldLine(rows, foreman);
+    if (button) button.textContent = (open ? '▾ ' : '▸ ') + line;
+  };
+  if (button) {
+    button.addEventListener('click', () => {
+      open = !open;
+      set();
+      if (button) button.textContent = (open ? '▾ ' : '▸ ') + line;
+    });
+  }
+  set();
+  return { paint };
 }

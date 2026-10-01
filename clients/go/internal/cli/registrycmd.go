@@ -54,7 +54,7 @@ func (e *Env) registryCmd(args []string) error {
 	return exit(2)
 }
 
-func (e *Env) defaultRegistry() string { return gateroot.Join(e.home, ".opendaisugi/registry") }
+func (e *Env) defaultRegistry() string { return gateroot.Join(e.dataHome(), "registry") }
 
 var repoPathOpt = opt{names: []string{"--repo-path"}, value: true, metavar: "PATH", help: "The registry's local clone."}
 
@@ -177,7 +177,7 @@ func (e *Env) registryPublish(args []string) error {
 	if err != nil {
 		return e.raise(cmd, err)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", gateroot.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	local, err := pathways.Open(gateroot.Join(dataDir, "pathways.db"))
 	if err != nil {
 		return e.raise(cmd, err)
@@ -272,7 +272,7 @@ func (e *Env) registryPullAndTend(args []string) error {
 		return e.raise(cmd, err)
 	}
 	e.out("pulled; %d new pathway(s) cached\n", n)
-	dataDir := gateroot.PathStr(p.str("--data-dir", gateroot.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	rep, err := e.runTendQuiet(dataDir)
 	if err != nil {
 		return err

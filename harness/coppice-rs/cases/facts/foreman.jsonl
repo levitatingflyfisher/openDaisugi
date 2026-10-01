@@ -1,0 +1,30 @@
+# floor.talk starts the floor's foreman with the default harness, in the
+# foreman's own directory, labelled foreman. The words wait in a queue. The
+# foreman first gets its page, as one paste since its program turns on
+# bracketed paste, and then the words, in order. The fake harness is cat,
+# so the words come back on its screen.
+#!config default = "fake"
+#!config [harness.fake]
+#!config command = "{FIXTURES}/fake-foreman.sh"
+#!watch state,note
+#!settle 300
+{"id":"1","cmd":"floor.talk","text":"hello\tforeman\u0007"}
+{"id":"$id","ok":true,"result":{"pane":"$f","label":"foreman","started":true,"queued":1}}
+{"id":"2","cmd":"floor.foreman"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"the foreman foreman (w1:p1) runs already. Close it first, or talk to it."}}
+{"id":"3","cmd":"floor.talk","text":"second line"}
+{"id":"$id","ok":true,"result":{"pane":"$f","label":"foreman","started":false,"queued":2}}
+{"id":"4","cmd":"floor.facts"}
+{"id":"$id","ok":true,"result":{"foreman":{"pane":"$f","label":"foreman"}}}
+{"id":"5","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$f","label":"foreman","harness":"fake","cwd":"{HOME}/.local/state/coppice/foreman"}],"path":"*"}}
+{"id":"6","cmd":"pane.wait_output","pane":"$f","contains":"second line","timeout_ms":40000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"7","cmd":"pane.wait_output","pane":"$f","contains":"hello foreman","timeout_ms":1000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"8","cmd":"pane.close","pane":"$f"}
+{"id":"$id","ok":true,"result":{"pane":"$f","closed":true}}
+{"id":"9","cmd":"floor.foreman","harness":"fake"}
+{"id":"$id","ok":true,"result":{"pane":"$f2","label":"foreman","started":true}}
+{"id":"10","cmd":"floor.talk","text":"third"}
+{"id":"$id","ok":true,"result":{"pane":"$f2","started":false,"queued":1}}

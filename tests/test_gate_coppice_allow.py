@@ -793,3 +793,207 @@ def test_a_narrow_or_names_only_shell_search_is_left_to_the_envelope(
         _bash(command, cwd=cwd), envelope_that_allows_everything, mode="enforce"
     )
     assert decision.reason != SEARCH_REFUSAL, command
+
+
+# The chat and the journal hold the owner's whole working life: the chat
+# with the foreman, one file a day, and the gate's verdicts. Each is a
+# path relative to its coppice data directory.
+_COPPICE_PRIVATE = ["chat/2026-10-09.jsonl", "journal/verdicts.jsonl"]
+
+
+@pytest.mark.parametrize("private", _COPPICE_PRIVATE)
+def test_every_read_of_the_chat_and_the_journal_is_denied(envelope_that_allows_everything, private):
+    target = _DATA_DIR / private
+    for payload in (
+        _read(str(target)),
+        _bash(f"cat {target}"),
+        _bash(f"python steal.py < {target}"),
+        _bash(f"cp {target} /work/out"),
+        _bash(f"cat {private}", cwd=str(_DATA_DIR)),
+        _bash(f"cat ~/.opendaisugi/coppice/{private.split('/')[0]}/*"),
+        _read(str(_DATA_DIR) + "/" + private.replace("/", "//")),
+        {
+            "tool_name": "mcp__fs__read_file",
+            "tool_input": {"path": str(target)},
+            "session_id": "s1",
+            "cwd": "/work",
+        },
+    ):
+        decision = evaluate_call(payload, envelope_that_allows_everything, mode="enforce")
+        assert decision.allow is False, (private, payload)
+        assert decision.reason == REFUSAL, (private, payload)
+
+
+@pytest.mark.parametrize("sub", ["chat", "journal"])
+def test_a_grep_of_the_chat_or_journal_dir_is_denied(
+    envelope_that_allows_everything, sub, monkeypatch
+):
+    for target in (str(_DATA_DIR / sub), str(_DATA_DIR / sub) + "/"):
+        decision = evaluate_call(
+            _search("Grep", target), envelope_that_allows_everything, mode="enforce"
+        )
+        assert decision.allow is False, target
+    decision = evaluate_call(
+        _bash(f"rg secret ~/.opendaisugi/coppice/{sub}"),
+        envelope_that_allows_everything,
+        mode="enforce",
+    )
+    assert decision.allow is False, sub
+    monkeypatch.setenv("COPPICE_DATA_DIR", _CUSTOM_DATA_DIR)
+    decision = evaluate_call(
+        _search("Grep", f"{_CUSTOM_DATA_DIR}/{sub}"),
+        envelope_that_allows_everything,
+        mode="enforce",
+    )
+    assert decision.allow is False, sub
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat /work/src/chat/notes.md",
+        "cat chat/readme.md",
+        "cat harness/coppice/chat.go",
+        "cat /work/journal/2026.md",
+        "ls /work/coppice/chat",
+    ],
+)
+def test_a_chat_or_journal_elsewhere_is_left_to_the_envelope(
+    envelope_that_allows_everything, command
+):
+    decision = evaluate_call(_bash(command), envelope_that_allows_everything, mode="enforce")
+    assert decision.allow is True, command
+
+
+# Every pane has COPPICE_DATA_DIR, so the variable spells the data dir. A
+# read through it, or through OPENDAISUGI_HOME or XDG_DATA_HOME, is a read
+# of the data dir, custom or default.
+_VAR_READS = [
+    "cat $COPPICE_DATA_DIR/chat/*",
+    'cat "${COPPICE_DATA_DIR}"/chat/*',
+    "head -n 999 $COPPICE_DATA_DIR/chat/*.jsonl",
+    "cp -r $COPPICE_DATA_DIR/chat /work/x",
+    "cd $COPPICE_DATA_DIR/chat && cat *",
+    "cat $COPPICE_DATA_DIR/journal/*",
+    "cat $COPPICE_DATA_DIR/web/*",
+]
+
+
+@pytest.mark.parametrize("line", _VAR_READS)
+@pytest.mark.parametrize("data_dir", [_CUSTOM_DATA_DIR, str(_DATA_DIR)])
+def test_a_read_through_the_data_dir_variable_is_denied(
+    envelope_that_allows_everything, line, data_dir, monkeypatch
+):
+    monkeypatch.setenv("COPPICE_DATA_DIR", data_dir)
+    decision = evaluate_call(_bash(line), envelope_that_allows_everything, mode="enforce")
+    assert decision.allow is False, (line, data_dir)
+
+
+@pytest.mark.parametrize(
+    "var,value,line",
+    [
+        (
+            "OPENDAISUGI_HOME",
+            str(Path.home() / ".opendaisugi"),
+            "cat $OPENDAISUGI_HOME/coppice/chat/*",
+        ),
+        (
+            "XDG_DATA_HOME",
+            str(Path.home() / ".local" / "share"),
+            "cat ${XDG_DATA_HOME}/opendaisugi/coppice/chat/*",
+        ),
+    ],
+)
+def test_a_read_through_a_data_home_variable_is_denied(
+    envelope_that_allows_everything, var, value, line, monkeypatch
+):
+    monkeypatch.setenv(var, value)
+    decision = evaluate_call(_bash(line), envelope_that_allows_everything, mode="enforce")
+    assert decision.allow is False, line
+
+
+@pytest.mark.parametrize(
+    "line,cwd",
+    [
+        (f"cd {_CUSTOM_DATA_DIR}/chat && cat ./2026-10-09.jsonl", "/work"),
+        (f"cd {_CUSTOM_DATA_DIR}/chat && cat *", "/work"),
+        (f"cd {_CUSTOM_DATA_DIR}/journal && cat ./verdicts.jsonl", "/work"),
+        ("cat 2026-10-09.jsonl", f"{_CUSTOM_DATA_DIR}/chat"),
+    ],
+)
+def test_a_cd_into_a_custom_data_dirs_chat_is_denied(
+    envelope_that_allows_everything, line, cwd, monkeypatch
+):
+    monkeypatch.setenv("COPPICE_DATA_DIR", _CUSTOM_DATA_DIR)
+    decision = evaluate_call(_bash(line, cwd=cwd), envelope_that_allows_everything, mode="enforce")
+    assert decision.allow is False, line
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "cat ${COPPICE_DATA_DIR:-x}/chat/*",
+        "cat ${COPPICE_DATA_DIR-x}/chat/*",
+        "cat ${COPPICE_DATA_DIR:=x}/journal/*",
+        "cat ${COPPICE_DATA_DIR%/}/web/*",
+    ],
+)
+def test_a_parameter_expansion_of_the_data_dir_variable_is_the_variable(
+    envelope_that_allows_everything, line, monkeypatch
+):
+    monkeypatch.setenv("COPPICE_DATA_DIR", _CUSTOM_DATA_DIR)
+    decision = evaluate_call(_bash(line), envelope_that_allows_everything, mode="enforce")
+    assert decision.allow is False, line
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "cat $COPPICE_DATA_DIR/chat/*",
+        "cat ${COPPICE_DATA_DIR:-x}/chat/*",
+        "cp -r $COPPICE_DATA_DIR/journal /work/x",
+        "cat $COPPICE_DATA_DIR/web/*",
+    ],
+)
+def test_a_resident_call_expands_the_callers_data_dir(
+    envelope_that_allows_everything, line, monkeypatch
+):
+    from opendaisugi.gate import _resident
+
+    monkeypatch.delenv("COPPICE_DATA_DIR", raising=False)
+    monkeypatch.setattr(_resident, "caller", {"data_dir": _CUSTOM_DATA_DIR}, raising=False)
+    decision = evaluate_call(_bash(line), envelope_that_allows_everything, mode="enforce")
+    assert decision.allow is False, line
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        """printf '{"cmd":"floor.chat"}\\n' | nc -U $COPPICE_SOCK""",
+        """python -c 'send({"cmd": "pane.messages", "pane": "w1:p1"})'""",
+        """echo '{"id":"1","method":"floor.chat"}' | socat - UNIX:/run/c.sock""",
+        # JSON string escapes decode before the rule reads the line.
+        """printf '{"cmd":"floor\\u002echat"}' | nc -U $COPPICE_SOCK""",
+        """printf '{"cmd":"pane\\.messages","pane":"w1:p1"}' | nc -U s""",
+        """printf '{"cmd":"floor\\u002Echat"}' | nc -U s""",
+    ],
+)
+def test_the_chat_verbs_on_the_wire_are_denied(envelope_that_allows_everything, line):
+    from opendaisugi.pane_rule import CHAT_REFUSAL
+
+    decision = evaluate_call(_bash(line), envelope_that_allows_everything, mode="enforce")
+    assert decision.allow is False, line
+    assert decision.reason == CHAT_REFUSAL, line
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        """printf '{"cmd":"agent\\u002eallow","pane":"w1:p1"}' | nc -U s""",
+        """printf '{"cmd":"agent\\.allow"}' | nc -U s""",
+    ],
+)
+def test_an_escaped_allow_on_the_wire_is_denied(envelope_that_allows_everything, line):
+    decision = evaluate_call(_bash(line), envelope_that_allows_everything, mode="enforce")
+    assert decision.allow is False, line
+    assert decision.reason == REFUSAL, line

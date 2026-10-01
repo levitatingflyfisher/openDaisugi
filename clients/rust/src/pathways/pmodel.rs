@@ -38,8 +38,8 @@ pub struct ValidationError {
     pub errs: Vec<Err>,
 }
 
-/// The error type of a plan step this port does not read (a step given
-/// as a string, which `coerce_step` decodes).
+/// The error type of a step this port does not read the oracle's way; its
+/// message says why, and callers refuse.
 pub const UNREADABLE_STEP: &str = "unreadable_step";
 
 impl ValidationError {
@@ -66,9 +66,15 @@ impl ValidationError {
         out
     }
 
-    /// Whether a plan step given as a string stopped the validation.
+    /// Whether a step this port does not read the oracle's way stopped
+    /// the validation.
     pub fn unreadable_step(&self) -> bool {
         self.errs.iter().any(|e| e.typ == UNREADABLE_STEP)
+    }
+
+    /// The reason of the first `UNREADABLE_STEP` error.
+    pub fn unreadable(&self) -> Option<String> {
+        self.errs.iter().find(|e| e.typ == UNREADABLE_STEP).map(|e| e.msg.clone())
     }
 }
 
@@ -188,6 +194,9 @@ pub struct Field {
     pub schema: Schema,
     /// `None`: required.
     pub default: Option<fn() -> Value>,
+    /// Left out of the result when its value is None, as a pydantic field
+    /// with `exclude_if=lambda v: v is None` dumps.
+    pub omit_none: bool,
 }
 
 pub struct Model {
@@ -200,11 +209,15 @@ pub struct Model {
 }
 
 fn req(name: &'static str, schema: Schema) -> Field {
-    Field { name, schema, default: None }
+    Field { name, schema, default: None, omit_none: false }
 }
 
 fn def(name: &'static str, schema: Schema, d: fn() -> Value) -> Field {
-    Field { name, schema, default: Some(d) }
+    Field { name, schema, default: Some(d), omit_none: false }
+}
+
+fn omit_none(name: &'static str, schema: Schema) -> Field {
+    Field { name, schema, default: Some(null), omit_none: true }
 }
 
 fn list(s: Schema) -> Schema {
@@ -453,6 +466,7 @@ fn build() -> Models {
             def("cache_key", nullable(Str), null),
             def("stakes", Literal(&["low", "medium", "high", "physical"]), || Value::Str("low".into())),
             def("shell_interpreter_policy", Literal(&["surface", "strict", "allow"]), || Value::Str("surface".into())),
+            omit_none("deadline", nullable(Float)),
         ],
     };
     let action_plan = Model {
@@ -622,6 +636,7 @@ fn build() -> Models {
                 req("workspace", Str),
                 def("tools", list(Str), empty_list),
                 def("max_turns", nullable(Int), null),
+                omit_none("child_envelope", nullable(Schema::Model(Id::Envelope))),
             ],
         ),
         (
@@ -643,7 +658,7 @@ fn build() -> Models {
             def("metadata", dict(Any), empty_dict),
             def("postcondition", nullable(Schema::Model(Id::Postcondition)), null),
             def("preferred_model", nullable(Str), null),
-            Field { name: "type", schema: Literal(step_tag(tag)), default: Some(step_default(tag)) },
+            Field { name: "type", schema: Literal(step_tag(tag)), default: Some(step_default(tag)), omit_none: false },
         ];
         fields.extend(own);
         steps.order.push(tag);
@@ -1037,14 +1052,17 @@ impl Schema {
                 (Value::Null, err1(loc, "literal_error", msg, v))
             }
             Schema::Model(id) => model(*id).take(v, loc, mode),
-            Schema::Steps => validate_steps(v, loc, mode),
-            Schema::StepsReply => validate_reply_steps(v, loc, mode),
+            Schema::Steps | Schema::StepsReply => validate_steps(v, loc, mode),
             Schema::StepUnion => validate_step_union(v, loc, mode),
             Schema::StepField(nullable) => {
                 if v.is_null() && *nullable {
                     return (Value::Null, vec![]);
                 }
-                if let Value::Obj(o) = &v {
+                let item = match coerce_step(&v) {
+                    Ok((item, _)) => item,
+                    Err(why) => return (Value::Null, err1(loc, UNREADABLE_STEP, why, v)),
+                };
+                if let Value::Obj(o) = &item {
                     if let Some(m) = o.get("type").and_then(|t| t.as_str()).and_then(|t| steps().get(t)) {
                         let (out, errs) = m.fields(o, &Loc::Root, Mode::Python);
                         if errs.is_empty() {
@@ -1145,89 +1163,98 @@ fn validate_float(v: Value, loc: &Loc, mode: Mode) -> (Value, Vec<Err>) {
     }
 }
 
-/// `ActionPlan.steps`. A dict whose `type` is registered validates as
-/// that step model in Python mode (`subclass.model_validate`); its errors
-/// take the field's place, with no item index. A str item is
-/// `decode_dict_text`'s case, which this port does not read.
-fn validate_steps(v: Value, loc: &Loc, mode: Mode) -> (Value, Vec<Err>) {
-    let xs = match &v {
-        Value::List(xs) => xs,
-        _ => {
-            let msg = if mode == Mode::Json { "Input should be a valid array" } else { "Input should be a valid list" };
-            return (Value::Null, err1(loc, "list_type", msg, v));
-        }
-    };
-    // Each item is checked before any is consumed: an error reports the
-    // whole list as its input.
-    let mut ms = Vec::with_capacity(xs.len());
-    for x in xs {
-        if matches!(x, Value::Str(_)) {
-            return (Value::Null, err1(loc, UNREADABLE_STEP, "a plan step is a string", v));
-        }
-        let m = match x {
-            Value::Obj(o) => match o.get("type") {
-                Some(Value::Str(tag)) => steps().get(tag),
-                _ => None,
-            },
-            _ => None,
-        };
-        match m {
-            Some(m) => ms.push(m),
-            None => {
-                let r = py_repr(x).unwrap_or_else(|_| "...".into());
-                return (
-                    Value::Null,
-                    err1(
-                        loc,
-                        "value_error",
-                        format!(
-                            "Value error, ActionPlan.steps item {r} is not a StepBase subclass. If authoring a custom \
-                             step type, register it with @opendaisugi.step_type."
-                        ),
-                        v,
-                    ),
-                );
-            }
-        }
-    }
-    let Value::List(xs) = v else { unreachable!("checked above") };
-    let mut out = Vec::with_capacity(xs.len());
-    for (m, x) in ms.into_iter().zip(xs) {
-        let Value::Obj(o) = x else { unreachable!("checked above") };
-        let (y, errs) = m.take_fields(o, loc, Mode::Python);
-        if !errs.is_empty() {
-            return (Value::Null, errs);
-        }
-        out.push(y);
-    }
-    (Value::List(out), vec![])
+/// `decode_dict_text`'s answer. `dict` is None for None. `refuse` names
+/// what this port does not model: with no dict, the text makes Python's
+/// parser print a SyntaxWarning, so any caller that reaches it refuses;
+/// with a dict, the dict lost a value the literal reader does not model,
+/// and a caller refuses if it uses the dict (`opaque_type`: the lost
+/// value is its "type"). `tuple`: the dict held a tuple, read as a list.
+#[derive(Debug, Clone, Default)]
+pub struct Decoded {
+    pub dict: Option<Object>,
+    pub refuse: String,
+    pub tuple: bool,
+    pub opaque_type: bool,
 }
 
 /// `models.decode_dict_text`: text holding one dict, as JSON or as a
-/// Python literal (the subset `literal::literal_eval` reads).
-pub fn decode_dict_text(text: &str) -> Option<Object> {
+/// Python literal (`literal::literal_eval`).
+pub fn decode_dict_text(text: &str) -> Decoded {
+    use super::literal::{literal_eval, Status};
     if text.chars().count() > 65_536 {
-        return None;
+        return Decoded::default();
     }
     let body = crate::gate::py::text::strip(text);
     if !body.starts_with('{') {
-        return None;
+        return Decoded::default();
     }
     if let Ok(Value::Obj(o)) = crate::gate::pyjson::loads_py(body, 900) {
-        return Some(o);
+        return Decoded { dict: Some(o), ..Decoded::default() };
     }
-    match super::literal::literal_eval(body) {
-        Some(Value::Obj(o)) => Some(o),
-        _ => None,
+    let lit = literal_eval(body);
+    match (lit.status, lit.value) {
+        (Status::Value, Some(Value::Obj(o))) => Decoded { dict: Some(o), tuple: lit.tuple, ..Decoded::default() },
+        (Status::Refused, None) => Decoded { refuse: lit.why, ..Decoded::default() },
+        (Status::Refused, Some(Value::Obj(o))) => Decoded {
+            dict: Some(o),
+            refuse: lit.why,
+            tuple: lit.tuple,
+            opaque_type: lit.opaque_keys.iter().any(|k| k == "type"),
+        },
+        _ => Decoded::default(),
     }
 }
 
-/// `ActionPlan.steps` as a model's reply is read. `coerce_step` runs over
-/// every item first: a str that decodes to a dict of a registered type is
-/// that dict, and a dict of a registered type validates as that step (its
-/// errors take the field's place, with no item index). Then the
-/// after-validator names the first item that is not a step.
-fn validate_reply_steps(v: Value, loc: &Loc, mode: Mode) -> (Value, Vec<Err>) {
+const TYPE_UNHASHABLE: &str = "a step whose type is a list or a dict (Python raises TypeError)";
+
+/// `coerce_step` before the step model validates: a str that
+/// `decode_dict_text` reads as a dict of a registered type is that dict.
+/// Err is a refusal where Python's answer is one this port does not
+/// model: the text makes Python's parser warn on stderr, the decoded dict
+/// holds a value the literal reader does not model, or a "type" that is a
+/// list or a dict (the registry lookup raises TypeError). The flag is set
+/// when the decoded dict held a tuple, read as a list.
+pub fn coerce_step(x: &Value) -> Result<(Value, bool), String> {
+    let text = match x {
+        Value::Obj(o) => {
+            if matches!(o.get("type"), Some(Value::List(_) | Value::Obj(_) | Value::Tuple(_))) {
+                return Err(TYPE_UNHASHABLE.into());
+            }
+            return Ok((x.clone(), false));
+        }
+        Value::Str(t) => t,
+        _ => return Ok((x.clone(), false)),
+    };
+    let d = decode_dict_text(text);
+    let Some(dict) = d.dict else {
+        if !d.refuse.is_empty() {
+            return Err(format!("a step given as a string holds {}", d.refuse));
+        }
+        return Ok((x.clone(), false));
+    };
+    if d.opaque_type {
+        return Err(format!("a step given as a string holds {}", d.refuse));
+    }
+    match dict.get("type") {
+        Some(Value::Str(t)) if steps().get(t).is_some() => {}
+        Some(Value::List(_) | Value::Obj(_) | Value::Tuple(_)) => return Err(TYPE_UNHASHABLE.into()),
+        _ => return Ok((x.clone(), false)),
+    }
+    if !d.refuse.is_empty() {
+        return Err(format!("a step given as a string holds {}", d.refuse));
+    }
+    Ok((Value::Obj(dict), d.tuple))
+}
+
+/// `ActionPlan.steps`, wherever the plan comes from (a file, a store, a
+/// model's reply). `coerce_step` runs over every item first: a str that
+/// decodes to a dict of a registered type is that dict, and a dict of a
+/// registered type validates as that step (its errors take the field's
+/// place, with no item index). Then the after-validator names the first
+/// item that is not a step. A decoded step that held a tuple and fails
+/// its validation is refused: the error would name the tuple, which this
+/// port reads as a list.
+fn validate_steps(v: Value, loc: &Loc, mode: Mode) -> (Value, Vec<Err>) {
     let xs = match &v {
         Value::List(xs) => xs,
         _ => {
@@ -1237,14 +1264,10 @@ fn validate_reply_steps(v: Value, loc: &Loc, mode: Mode) -> (Value, Vec<Err>) {
     };
     let mut out: Vec<Result<Value, Value>> = Vec::with_capacity(xs.len());
     for x in xs {
-        let mut item = x.clone();
-        if let Value::Str(text) = x {
-            if let Some(d) = decode_dict_text(text) {
-                if d.get("type").and_then(|t| t.as_str()).is_some_and(|t| steps().get(t).is_some()) {
-                    item = Value::Obj(d);
-                }
-            }
-        }
+        let (item, tuple) = match coerce_step(x) {
+            Ok(r) => r,
+            Err(why) => return (Value::Null, err1(loc, UNREADABLE_STEP, why, v.clone())),
+        };
         let m = match &item {
             Value::Obj(o) => o.get("type").and_then(|t| t.as_str()).and_then(|t| steps().get(t)),
             _ => None,
@@ -1253,11 +1276,17 @@ fn validate_reply_steps(v: Value, loc: &Loc, mode: Mode) -> (Value, Vec<Err>) {
             (Some(m), Value::Obj(o)) => {
                 let (y, errs) = m.take_fields(o, loc, Mode::Python);
                 if !errs.is_empty() {
+                    if tuple {
+                        return (
+                            Value::Null,
+                            err1(loc, UNREADABLE_STEP, "a step given as a string holds a tuple, and its validation fails", v.clone()),
+                        );
+                    }
                     return (Value::Null, errs);
                 }
                 out.push(Ok(y));
             }
-            (_, item) => out.push(Err(item)),
+            _ => out.push(Err(x.clone())),
         }
     }
     let mut steps_out = Vec::with_capacity(out.len());
@@ -1327,12 +1356,19 @@ impl Model {
                         msg: "Field required".into(),
                         input: whole.clone().unwrap_or(Value::Null),
                     }),
-                    Some(d) => out.push_new(f.name.to_string(), d()),
+                    Some(d) => {
+                        let v = d();
+                        if !(f.omit_none && matches!(v, Value::Null)) {
+                            out.push_new(f.name.to_string(), v);
+                        }
+                    }
                 },
                 Some(x) => {
                     let (y, e) = f.schema.take(x, &Loc::Key(loc, f.name), mode);
                     errs.extend(e);
-                    out.push_new(f.name.to_string(), y);
+                    if !(f.omit_none && matches!(y, Value::Null)) {
+                        out.push_new(f.name.to_string(), y);
+                    }
                 }
             }
         }
@@ -1448,6 +1484,98 @@ pub fn validate_json(id: Id, text: &str) -> Result<Value, ValidationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A decoded value against clients/literal_cases.py's typed dump. A
+    /// tuple there is a list here; `saw` records one.
+    fn typed_eq(got: &Value, want: &Value, saw: &mut bool) -> bool {
+        let Value::Obj(w) = want else {
+            return match (got, want) {
+                (Value::Null, Value::Null) => true,
+                (Value::Bool(a), Value::Bool(b)) => a == b,
+                _ => false,
+            };
+        };
+        let k = w.keys()[0].as_str();
+        let inner = w.value(k);
+        match (k, got) {
+            ("int", Value::Int(t)) => inner.as_str() == Some(t.as_str()),
+            ("float", Value::Float(f)) => {
+                let r = crate::gate::pyjson::float_repr(*f);
+                let r = match r.as_str() {
+                    "Infinity" => "inf".to_string(),
+                    "-Infinity" => "-inf".to_string(),
+                    "NaN" => "nan".to_string(),
+                    _ => r,
+                };
+                inner.as_str() == Some(r.as_str())
+            }
+            ("str", Value::Str(s)) => inner.as_str() == Some(s.as_str()),
+            ("list" | "tuple", Value::List(xs)) => {
+                if k == "tuple" {
+                    *saw = true;
+                }
+                let Value::List(ws) = inner else { return false };
+                xs.len() == ws.len() && xs.iter().zip(ws).all(|(x, w)| typed_eq(x, w, saw))
+            }
+            ("dict", Value::Obj(o)) => {
+                let Value::List(ws) = inner else { return false };
+                o.len() == ws.len()
+                    && ws.iter().enumerate().all(|(i, kv)| {
+                        let Value::List(pair) = kv else { return false };
+                        let key = pair[0].as_str().unwrap_or("");
+                        o.keys()[i] == key && o.get(key).is_some_and(|v| typed_eq(v, &pair[1], saw))
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// clients/fixtures/literal (clients/literal_cases.py):
+    /// decode_dict_text's answer for thousands of texts. The port gives the
+    /// same dict or None, and refuses where Python prints a SyntaxWarning
+    /// or returns what the reader does not model.
+    #[test]
+    fn decode_dict_text_agrees_with_python() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/literal/cases.jsonl");
+        let text = std::fs::read_to_string(path).expect("clients/fixtures/literal (clients/literal_cases.py)");
+        let (mut n, mut over, mut bad) = (0, 0, vec![]);
+        for line in text.lines().filter(|l| !l.is_empty()) {
+            let c = crate::gate::pyjson::loads_py(line, 900).expect("a case line");
+            let c = c.as_obj().expect("a case object");
+            let t = c.value("text").as_str().expect("text").to_string();
+            let warn = matches!(c.value("warn"), Value::Bool(true));
+            let want = c.value("value");
+            let kind = want.as_obj().map(|o| o.keys()[0].clone()).unwrap_or_default();
+            let got = decode_dict_text(&t);
+            n += 1;
+            if warn {
+                if got.refuse.is_empty() || got.dict.is_some() {
+                    bad.push(format!("{t:?}: Python warns; got {:?} {:?}", got.dict, got.refuse));
+                }
+            } else if kind == "unmodeled" {
+                if got.refuse.is_empty() {
+                    bad.push(format!("{t:?}: Python returns what is not modelled; no refusal"));
+                }
+            } else if kind == "none" {
+                if got.refuse.is_empty() && got.dict.is_some() {
+                    bad.push(format!("{t:?}: Python returns None; got {:?}", got.dict));
+                } else if !got.refuse.is_empty() {
+                    over += 1;
+                }
+            } else {
+                let mut saw = false;
+                let ok = got.refuse.is_empty()
+                    && got.dict.as_ref().is_some_and(|d| typed_eq(&Value::Obj(d.clone()), want, &mut saw))
+                    && saw == got.tuple;
+                if !ok {
+                    bad.push(format!("{t:?}: want {want:?}; got {:?} {:?} tuple={}", got.dict, got.refuse, got.tuple));
+                }
+            }
+        }
+        assert!(n >= 3000, "only {n} cases");
+        assert!(bad.is_empty(), "{} disagreements ({over} refusals where Python returns None):\n{}", bad.len(), bad[..bad.len().min(20)].join("\n"));
+        assert!(over < 100, "{over} refusals where Python returns None");
+    }
 
     #[test]
     fn a_missing_field_reads_as_pydantics() {

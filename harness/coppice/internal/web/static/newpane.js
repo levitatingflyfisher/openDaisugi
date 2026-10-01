@@ -229,16 +229,40 @@ export const HARNESSES = ['claude', 'codex', 'pi', 'sprig', 'opencode'];
 const VERBS = ['list', 'read', 'close', 'open', 'swap', 'rotate', 'reset', 'lock', 'unlock', 'layout', 'tree', 'zoom', 'foreman'];
 const PLUMBING_WORDS = 4;
 
-// classifyTell tells plumbing from talk the way the terminal floor does. A
-// line led by a harness name is plumbing at any length. A line led by a
-// verb is plumbing when it has at most four words. Everything else is
-// talk.
-export function classifyTell(line) {
-  const words = String(line || '').trim().split(/\s+/).filter(Boolean);
+// SLASH_PLUMBING is the one switch for the chat bar's rule. On, a plain
+// sentence is always talk, and plumbing needs a leading slash: /claude,
+// /close docs. In a chat box under a thumb, "claude, can you check
+// trellis" must not start a new claude. Off, the bar reads a line the way
+// the terminal floor's prompt line does, which keeps its words.
+export const SLASH_PLUMBING = true;
+
+// classifyTell tells plumbing from talk. With slash on, a line led by a
+// slash and a harness name or a terminal verb is plumbing, and every other
+// line is talk, a path such as /etc/hosts too. With slash off it reads
+// the terminal floor's way: a line led by a harness name is plumbing at
+// any length, a line led by a verb is plumbing when it has at most four
+// words, and everything else is talk.
+export function classifyTell(line, slash = SLASH_PLUMBING) {
+  const text = String(line || '').trim();
+  if (slash) {
+    if (text === '/') return 'empty';
+    if (!text.startsWith('/')) return text ? 'talk' : 'empty';
+    // Only a slash and a known word is plumbing. A path such as
+    // /etc/hosts, or any other slash line, is a sentence for the foreman.
+    const first = text.slice(1).trim().split(/\s+/)[0] || '';
+    return HARNESSES.includes(first) || VERBS.includes(first) ? 'plumbing' : 'talk';
+  }
+  const words = text.split(/\s+/).filter(Boolean);
   if (words.length === 0) return 'empty';
   if (HARNESSES.includes(words[0])) return 'plumbing';
   if (VERBS.includes(words[0]) && words.length <= PLUMBING_WORDS) return 'plumbing';
   return 'talk';
+}
+
+// slashed is a word as the bar shows it: with its slash while the slash
+// rule is on.
+function slashed(word) {
+  return (SLASH_PLUMBING ? '/' : '') + word;
 }
 
 // createFor is the pane.create request for a harness. With no directory
@@ -269,15 +293,15 @@ function countWord(n) {
 // name, opens that harness in cwd. close closes a pane named by id or
 // label. Every other verb lives on the terminal floor.
 export function plumbingCommand(line, { panes, cwd }) {
-  const words = String(line || '').trim().split(/\s+/).filter(Boolean);
+  const words = String(line || '').trim().replace(/^\/\s*/, '').split(/\s+/).filter(Boolean);
   const [first, ...rest] = words;
   if (HARNESSES.includes(first)) return createFor(first, rest, cwd);
   if (first === 'open') {
-    if (!HARNESSES.includes(rest[0])) return { say: 'open needs a harness name, one of ' + HARNESSES.join(' ') + '.' };
+    if (!HARNESSES.includes(rest[0])) return { say: slashed('open') + ' needs a harness name, one of ' + HARNESSES.join(' ') + '.' };
     return createFor(rest[0], rest.slice(1), cwd);
   }
   if (first === 'close') {
-    if (!rest[0]) return { say: 'close needs a pane name, as in close docs.' };
+    if (!rest[0]) return { say: slashed('close') + ' needs a pane name, as in ' + slashed('close') + ' docs.' };
     const found = findPanes(panes, rest[0]);
     if (found.length === 0) return { say: 'No pane ' + rest[0] + '.' };
     // A label two panes share names neither. Closing the first could stop
@@ -288,6 +312,7 @@ export function plumbingCommand(line, { panes, cwd }) {
     const pane = found[0];
     return { req: { cmd: 'pane.close', pane: pane.id }, say: 'Closing ' + (pane.label || pane.id) + '.' };
   }
+  if (SLASH_PLUMBING) return { say: '/' + first + ' works on the terminal floor. Here, type /claude, /close NAME, or a sentence for the foreman.' };
   return { say: first + ' works on the terminal floor. Here, type a harness name, open, close, or a sentence for the foreman.' };
 }
 
@@ -319,11 +344,15 @@ function tellCwd() {
   return typeof last === 'string' ? last : '';
 }
 
-// mountTell wires the tell bar. Send runs the line: plumbing first, then
-// talk to the foreman through floor.talk. A line that sends nothing stays
-// in the bar with the reason on the status line. A talk that starts the
-// foreman opens its window, since a new harness may ask a question of its
-// own first. The microphone only fills the bar.
+// mountTell wires the chat bar. Send runs the line: plumbing, or talk to
+// the foreman through floor.talk. A line that sends nothing stays in the
+// bar with the reason on the status line. A talk shows in the chat at
+// once (window.coppice.chat), marked sent when floor.talk answers; a
+// refused talk leaves the chat and stays in the bar. A talk that starts
+// the foreman opens its window on a wide page, since a new harness may ask
+// a question of its own first; on a phone the owner stays with the chat,
+// and a question shows as a card that needs you. The microphone only
+// fills the bar.
 export function mountTell() {
   const form = document.getElementById('tell');
   const box = document.getElementById('tell-text');
@@ -334,6 +363,7 @@ export function mountTell() {
     const kind = classifyTell(line);
     if (kind === 'empty' || busy) return;
     busy = true;
+    let shown = null;
     try {
       let plan;
       if (kind === 'plumbing') {
@@ -346,17 +376,24 @@ export function mountTell() {
         return;
       }
       const { cmd, ...fields } = plan.req;
+      const chat = cmd === 'floor.talk' && window.coppice.chat ? window.coppice.chat : null;
+      shown = chat ? chat.sent(line) : null;
       const reply = await window.coppice.rpc(cmd, fields);
       box.value = '';
       if (cmd === 'floor.talk') {
+        if (shown) shown.ok();
+        shown = null;
         status(talkSay(reply));
-        if (reply && reply.started && reply.pane) location.hash = '#/pane/' + encodeURIComponent(reply.pane);
+        const phone = typeof window.coppice.phone === 'function' && window.coppice.phone();
+        if (reply && reply.started && reply.pane && !phone) location.hash = '#/pane/' + encodeURIComponent(reply.pane);
         return;
       }
       status(plan.say);
     } catch (e) {
+      if (shown) shown.fail();
       status(e);
     } finally {
+      shown = null;
       busy = false;
     }
   };

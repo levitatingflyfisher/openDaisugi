@@ -80,7 +80,7 @@ func (e *Env) generateEnvelope(args []string) error {
 	}
 	task := p.args[0]
 	model := p.str("--model", envgen.DefaultModel)
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	if v := p.str("--llm", ""); p.has("--llm") {
 		if err := e.checkLLMFlag(v); err != nil {
 			return err

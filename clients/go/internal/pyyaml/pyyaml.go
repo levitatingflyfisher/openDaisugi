@@ -1,21 +1,20 @@
-// Package pyyaml reads the YAML a config file holds the way PyYAML 6's
-// yaml.safe_load does, for a plain subset of YAML: a block mapping of
-// simple keys, one level of nested block mapping, and scalar values
-// (plain, single-quoted or double-quoted, on one line), with comments and
-// blank lines. Plain scalars resolve by PyYAML's YAML 1.1 rules, so yes
+// Package pyyaml reads YAML the way PyYAML 6's yaml.safe_load does (full.go
+// is a translation of its loader), and writes it the way yaml.safe_dump
+// does (dump.go). Plain scalars resolve by PyYAML's YAML 1.1 rules, so yes
 // and on are booleans and 0x10 is an int.
 //
 // Load answers in three ways: the value safe_load gives, the exception it
-// raises (only where the text is certain to make PyYAML raise), or
-// Unsupported, for text outside the subset. The caller must not guess at
-// an Unsupported text.
+// raises with str(exc) as its words, or Unsupported, for a value the result
+// model does not hold. The caller must not guess at an Unsupported text.
 package pyyaml
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"daisugi-verify/internal/lazyre"
 	"daisugi-verify/internal/pyjson"
@@ -30,7 +29,8 @@ func (u *Unsupported) Error() string { return u.Why }
 func unsupported(why string) { panic(&Unsupported{why}) }
 
 // Load is yaml.safe_load(text). v is nil, bool, string, pyjson.Int,
-// pyjson.Float or *pyjson.Object.
+// pyjson.Float, Timestamp, []any or *pyjson.Object (a key that is not a
+// str is marked with a leading NUL, see dictKey).
 func Load(text string) (v any, exc *pystr.Exception, why *Unsupported) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -39,7 +39,6 @@ func Load(text string) (v any, exc *pystr.Exception, why *Unsupported) {
 				return
 			}
 			if e, ok := p.(*pystr.Exception); ok {
-				// A constructor error: the whole load raises.
 				v, exc, why = nil, e, nil
 				return
 			}
@@ -48,14 +47,12 @@ func Load(text string) (v any, exc *pystr.Exception, why *Unsupported) {
 	}()
 	if i := nonPrintable(text); i >= 0 {
 		// yaml.reader.Reader.check_printable raises ReaderError.
-		return nil, pystr.NewException("ReaderError", "unacceptable character"), nil
+		r, _ := pystr.DecodeRune(text[i:])
+		return nil, pystr.NewException("ReaderError", fmt.Sprintf(
+			"unacceptable character #x%04x: special characters are not allowed\n  in \"<unicode string>\", position %d",
+			r, utf8.RuneCountInString(text[:i]))), nil
 	}
-	text = strings.TrimPrefix(text, "\ufeff")
-	p := &parser{}
-	for _, raw := range strings.Split(text, "\n") {
-		p.lines = append(p.lines, raw)
-	}
-	return p.document(), nil, nil
+	return loadFull(text), nil, nil
 }
 
 // nonPrintable is the index of the first character yaml.reader rejects:
@@ -72,202 +69,6 @@ func nonPrintable(s string) int {
 		i += n
 	}
 	return -1
-}
-
-type parser struct {
-	lines []string
-	i     int
-}
-
-// content skips blank and comment lines and reports the next line's
-// indent, or -1 at the end.
-func (p *parser) content() int {
-	for p.i < len(p.lines) {
-		l := p.lines[p.i]
-		if strings.ContainsAny(l, "\t\r") {
-			unsupported("a tab or a carriage return")
-		}
-		t := strings.TrimLeft(l, " ")
-		if t == "" || strings.HasPrefix(t, "#") {
-			p.i++
-			continue
-		}
-		return len(l) - len(t)
-	}
-	return -1
-}
-
-func (p *parser) document() any {
-	ind := p.content()
-	if ind < 0 {
-		return nil
-	}
-	if ind != 0 {
-		unsupported("an indented first line")
-	}
-	first := p.lines[p.i]
-	if strings.HasPrefix(first, "---") || strings.HasPrefix(first, "...") || strings.HasPrefix(first, "%") {
-		unsupported("a document marker or directive")
-	}
-	return p.mapping(0, true)
-}
-
-var keyRe = lazyre.New(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-// mapping reads the block mapping whose keys sit at indent ind.
-func (p *parser) mapping(ind int, top bool) *pyjson.Object {
-	out := pyjson.NewObject()
-	for {
-		at := p.content()
-		if at < 0 || at < ind {
-			return out
-		}
-		if at > ind {
-			unsupported("an indent the mapping does not open")
-		}
-		line := p.lines[p.i][ind:]
-		colon := strings.IndexByte(line, ':')
-		if colon < 0 {
-			unsupported("a line with no key")
-		}
-		key := line[:colon]
-		if !keyRe().MatchString(key) {
-			unsupported("a key that is not a plain name")
-		}
-		rest := line[colon+1:]
-		if rest != "" && rest[0] != ' ' {
-			unsupported("a key not followed by a space")
-		}
-		rest = strings.TrimLeft(rest, " ")
-		p.i++
-		var val any
-		if rest == "" || strings.HasPrefix(rest, "#") {
-			next := p.content()
-			if next > ind {
-				if !top {
-					unsupported("a mapping nested two levels deep")
-				}
-				val = p.mapping(next, false)
-			} else {
-				val = nil
-			}
-		} else {
-			val = scalar(rest)
-			if next := p.content(); next > ind {
-				unsupported("a value that goes on past its line")
-			}
-		}
-		// PyYAML's SafeLoader keeps the last of repeated keys. A resolved
-		// key such as true or null is not a str; the caller only looks up
-		// field names, so the text serves as the key.
-		out.Set(keyText(key), val)
-	}
-}
-
-// keyText marks a key that YAML resolves to something other than a str,
-// so it can never equal a field name.
-func keyText(k string) string {
-	switch v := resolve(k).(type) {
-	case string:
-		return k
-	case bool:
-		// True and False, as dict keys, are one key per value.
-		if v {
-			return "\x00True"
-		}
-		return "\x00False"
-	}
-	return "\x00None"
-}
-
-func scalar(rest string) any {
-	switch rest[0] {
-	case '\'':
-		return quoted(rest, false)
-	case '"':
-		return quoted(rest, true)
-	case '[', ']', '{', '}', ',', '#', '&', '*', '!', '|', '>', '%', '@', '`':
-		unsupported("a value that starts with an indicator")
-	case '?', ':', '-':
-		if len(rest) == 1 || rest[1] == ' ' {
-			unsupported("a value that starts with an indicator")
-		}
-	}
-	text := rest
-	if i := strings.Index(text, " #"); i >= 0 {
-		text = text[:i]
-	}
-	text = strings.TrimRight(text, " ")
-	if strings.Contains(text, ": ") || strings.HasSuffix(text, ":") {
-		unsupported("a colon inside a plain value")
-	}
-	return resolve(text)
-}
-
-// tail checks what follows a quoted scalar: spaces, then a comment or
-// nothing.
-func tail(s string) {
-	t := strings.TrimLeft(s, " ")
-	if t == "" {
-		return
-	}
-	if strings.HasPrefix(t, "#") && len(t) < len(s) {
-		return
-	}
-	unsupported("text after a quoted value")
-}
-
-var escapes = map[byte]string{
-	'0': "\x00", 'a': "\x07", 'b': "\x08", 't': "\t", '\t': "\t", 'n': "\n", 'v': "\x0b", 'f': "\x0c",
-	'r': "\r", 'e': "\x1b", ' ': " ", '"': "\"", '/': "/", '\\': "\\", 'N': "\u0085", '_': " ",
-	'L': " ", 'P': " ",
-}
-
-func quoted(s string, double bool) string {
-	var b strings.Builder
-	q := s[0]
-	for i := 1; i < len(s); i++ {
-		c := s[i]
-		if c == q {
-			if !double && i+1 < len(s) && s[i+1] == '\'' {
-				b.WriteByte('\'')
-				i++
-				continue
-			}
-			tail(s[i+1:])
-			return b.String()
-		}
-		if double && c == '\\' {
-			if i+1 >= len(s) {
-				unsupported("a line break inside a quoted value")
-			}
-			e := s[i+1]
-			if rep, ok := escapes[e]; ok {
-				b.WriteString(rep)
-				i++
-				continue
-			}
-			width := map[byte]int{'x': 2, 'u': 4, 'U': 8}[e]
-			if width == 0 || i+2+width > len(s) {
-				unsupported("an escape the subset does not read")
-			}
-			hex := s[i+2 : i+2+width]
-			n, err := strconv.ParseUint(hex, 16, 32)
-			if err != nil || strings.ContainsAny(hex, "+-") {
-				unsupported("an escape the subset does not read")
-			}
-			r := rune(n)
-			if r > 0x10ffff {
-				unsupported("an escape past the last code point")
-			}
-			b.Write(pystr.AppendRune(nil, r))
-			i += 1 + width
-			continue
-		}
-		b.WriteByte(c)
-	}
-	unsupported("a quoted value that does not close on its line")
-	return ""
 }
 
 var (
@@ -304,6 +105,9 @@ func resolve(v string) any {
 	return v
 }
 
+// maxIntDigits is Python 3.12's sys.int_info.default_max_str_digits.
+const maxIntDigits = 4300
+
 func yamlInt(v string) any {
 	v = strings.ReplaceAll(v, "_", "")
 	sign := ""
@@ -335,6 +139,12 @@ func yamlInt(v string) any {
 			n.Add(n, big.NewInt(d))
 		}
 	default:
+		// int(value) reads at most 4300 decimal digits (Python 3.12's
+		// sys.int_info.default_max_str_digits); past that it raises.
+		if len(v) > maxIntDigits {
+			panic(pystr.NewException("ValueError", fmt.Sprintf("Exceeds the limit (%d digits) for integer string "+
+				"conversion: value has %d digits; use sys.set_int_max_str_digits() to increase the limit", maxIntDigits, len(v))))
+		}
 		_, ok = n.SetString(v, 10)
 	}
 	if !ok {
@@ -401,6 +211,14 @@ func timestamp(v string) any {
 	}
 	year, month, day := atoi(m[1]), atoi(m[2]), atoi(m[3])
 	bad := func(msg string) { panic(pystr.NewException("ValueError", msg)) }
+	// construct_yaml_timestamp makes the timezone before the datetime, so
+	// a bad offset raises before a bad date.
+	if m[4] != "" && m[9] != "" {
+		if off := atoi(m[10])*60 + atoi(m[11]); off >= 24*60 {
+			bad("offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24), not " +
+				offsetRepr(off, m[9] == "-") + ".")
+		}
+	}
 	if year < 1 {
 		bad("year 0 is out of range")
 	}
@@ -426,8 +244,94 @@ func timestamp(v string) any {
 	if atoi(m[6]) > 59 {
 		bad("second must be in 0..59")
 	}
-	if m[9] != "" && atoi(m[10])*60+atoi(m[11]) >= 24*60 {
-		bad("offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24)")
-	}
 	return Timestamp{v}
+}
+
+// offsetRepr is repr(datetime.timedelta(minutes=sign*mins)).
+func offsetRepr(mins int, negative bool) string {
+	secs := mins * 60
+	if negative {
+		secs = -secs
+	}
+	days := secs / 86400
+	rem := secs % 86400
+	if rem < 0 {
+		rem += 86400
+		days--
+	}
+	var parts []string
+	if days != 0 {
+		parts = append(parts, "days="+strconv.Itoa(days))
+	}
+	if rem != 0 {
+		parts = append(parts, "seconds="+strconv.Itoa(rem))
+	}
+	if len(parts) == 0 {
+		return "datetime.timedelta(0)"
+	}
+	return "datetime.timedelta(" + strings.Join(parts, ", ") + ")"
+}
+
+// Plain reports whether v holds only what JSON holds: no Timestamp and no
+// key that is not a str, at any depth.
+func Plain(v any) bool {
+	switch x := v.(type) {
+	case Timestamp:
+		return false
+	case []any:
+		for _, e := range x {
+			if !Plain(e) {
+				return false
+			}
+		}
+	case *pyjson.Object:
+		for _, k := range x.Keys() {
+			if strings.HasPrefix(k, "\x00") || !Plain(x.Value(k)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Caught reports whether `except (yaml.YAMLError, ValueError)` catches
+// exc: PyYAML's own errors and a ValueError (a date out of range).
+func Caught(exc *pystr.Exception) bool {
+	switch exc.Type {
+	case "ScannerError", "ParserError", "ComposerError", "ConstructorError", "ReaderError", "ValueError":
+		return true
+	}
+	return false
+}
+
+// FirstLine is str(exc).splitlines()[0].
+func FirstLine(exc *pystr.Exception) string {
+	if lines := pystr.Splitlines(exc.Msg); len(lines) > 0 {
+		return lines[0]
+	}
+	return ""
+}
+
+// Qualified is the exception's class as a traceback's last line names it.
+func Qualified(exc *pystr.Exception) string {
+	switch exc.Type {
+	case "ScannerError":
+		return "yaml.scanner.ScannerError"
+	case "ParserError":
+		return "yaml.parser.ParserError"
+	case "ComposerError":
+		return "yaml.composer.ComposerError"
+	case "ConstructorError":
+		return "yaml.constructor.ConstructorError"
+	case "ReaderError":
+		return "yaml.reader.ReaderError"
+	}
+	return exc.Type
+}
+
+// escapes are the one-letter escapes of a double-quoted scalar (dumped.go).
+var escapes = map[byte]string{
+	'0': "\x00", 'a': "\x07", 'b': "\x08", 't': "\t", '\t': "\t", 'n': "\n", 'v': "\x0b", 'f': "\x0c",
+	'r': "\r", 'e': "\x1b", ' ': " ", '"': "\"", '/': "/", '\\': "\\", 'N': "\u0085", '_': " ",
+	'L': " ", 'P': " ",
 }

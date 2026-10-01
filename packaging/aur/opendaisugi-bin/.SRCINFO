@@ -1,0 +1,24 @@
+pkgbase = opendaisugi-bin
+	pkgdesc = Agent floor (coppice), loop (sprig) and tool-call gate (daisugi) for AI coding agents
+	pkgver = 0.43.0
+	pkgrel = 1
+	url = https://github.com/levitatingflyfisher/openDaisugi
+	arch = x86_64
+	license = MIT
+	depends = glibc
+	depends = libgcc
+	optdepends = daisugi-py: the Python daisugi, to check the Go and Rust ones against
+	optdepends = moonshine-cli: the Moonshine speech engine for daisugi voice
+	optdepends = parakeet-cli: the Parakeet speech engine for daisugi voice
+	provides = opendaisugi
+	provides = coppice
+	provides = sprig
+	conflicts = opendaisugi
+	options = !strip
+	options = !debug
+	source = https://github.com/levitatingflyfisher/openDaisugi/releases/download/v0.43.0/opendaisugi-0.43.0-linux-x86_64.tar.gz
+	source = https://github.com/levitatingflyfisher/openDaisugi/releases/download/v0.43.0/opendaisugi-rust-0.43.0-linux-x86_64.tar.gz
+	sha256sums = 0000000000000000000000000000000000000000000000000000000000000000
+	sha256sums = 0000000000000000000000000000000000000000000000000000000000000000
+
+pkgname = opendaisugi-bin

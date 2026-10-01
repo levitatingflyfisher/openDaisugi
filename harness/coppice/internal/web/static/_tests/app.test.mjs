@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bearerProtocols, route, nextRetry, WS_SUBPROTOCOL, WS_BEARER_PREFIX } from '../app.js';
+import { bearerProtocols, route, nextRetry, closeStatus, WS_SUBPROTOCOL, WS_BEARER_PREFIX } from '../app.js';
 
 // This import is itself a check. window and document are both absent
 // under plain Node, and it still succeeds. If the module touched either at
@@ -37,6 +37,25 @@ test('nextRetry grows an upstream backoff from 2000 to a 30000 ceiling, then hol
 
 test('nextRetry treats an unclassified close the same as an upstream one', () => {
   assert.deepEqual(nextRetry('unknown', 2000), { delayMs: 2000, retryMs: 4000 });
+});
+
+test('nextRetry grows the backoff for a box the page cannot reach', () => {
+  assert.deepEqual(nextRetry('unreachable', 2000), { delayMs: 2000, retryMs: 4000 });
+});
+
+// A drop the coppice server caused is no reason to wake the box or turn on
+// Tailscale: the page reached the box. Only a page that cannot reach the
+// box at all names the fixes on the phone.
+test('closeStatus says Reconnecting for the coppice server and the phone fixes only when the box is out of reach', () => {
+  for (const reason of ['upstream', 'unknown']) {
+    const m = closeStatus(reason, 'box.tail1.ts.net');
+    assert.equal(m.text, 'Reconnecting.', reason);
+    assert.deepEqual(m.actions, [{ kind: 'reconnect', label: 'Retry now' }]);
+  }
+  assert.equal(closeStatus('unreachable', 'box.tail1.ts.net').text,
+    'Cannot reach the box. Turn on Tailscale on this phone. The box may be asleep or off.');
+  assert.equal(closeStatus('unreachable', '127.0.0.1').text, 'Reconnecting.');
+  assert.equal(closeStatus('banned', 'box.tail1.ts.net').text, 'Too many bad tokens. Waiting one minute.');
 });
 
 test('nextRetry stops on a rejected token', () => {

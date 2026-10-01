@@ -172,6 +172,7 @@ type week struct {
 	pass, fail, unknown, tokensSaved              int64
 	dollarsSaved                                  float64
 	estimated                                     bool
+	delegateEstimated                             int64
 }
 
 func (w *week) object() *pyjson.Object {
@@ -188,6 +189,7 @@ func (w *week) object() *pyjson.Object {
 		Set("worker_unpriced", i(w.workerUnpriced)).Set("delegate_tokens_kept", i(w.kept)).
 		Set("delegate_dollars_kept", f(w.keptDollars)).Set("task_pass", i(w.pass)).
 		Set("task_fail", i(w.fail)).Set("task_unknown", i(w.unknown)).
+		Set("delegate_estimated", i(w.delegateEstimated)).
 		Set("tokens_saved", i(w.tokensSaved)).Set("dollars_saved", f(w.dollarsSaved)).
 		Set("estimated", w.estimated)
 }
@@ -287,6 +289,9 @@ func weekly(dataDir string) []*week {
 		r := row(name)
 		r.delegations++
 		ok := d.Value("ok") == true
+		if ok && d.Value("estimated") == true {
+			r.delegateEstimated++
+		}
 		if ok {
 			r.ok++
 			r.delegateMS += measureFloat(d.Value("elapsed_ms"))
@@ -325,7 +330,7 @@ func weekly(dataDir string) []*week {
 		r := weeks[n]
 		r.tokensSaved = r.turnSaved + r.kept
 		r.dollarsSaved = r.turnDollars + r.keptDollars - r.workerDollars
-		r.estimated = r.turnsEst > 0 || r.ok > 0
+		r.estimated = r.turnsEst > 0 || r.delegateEstimated > 0
 		out[i] = r
 	}
 	return out
@@ -424,8 +429,11 @@ func (e *Env) delegateState(dataDir string) (*pyjson.Object, []string, error) {
 		o.Set("rule", pyjson.NewObject().Set("file", rule.File).Set("id", rule.ID).Set("version", rule.Version).
 			Set("state", rule.State).Set("file_lines_over", rule.MinLines).Set("allow_remote", rule.AllowRemote))
 		verb := "would go to (audit: not denied)"
-		if rule.State == "active" {
+		switch rule.State {
+		case "active":
 			verb = "go to"
+		case "trial":
+			verb = "go to, in the trial's graft arm only,"
 		}
 		lines = append(lines, "  rule: "+rule.ID+" v"+rule.Version.Text+" ("+rule.File+"), "+rule.State+
 			": reads over "+rule.MinLines.Text+" lines "+verb+" the delegate tool")

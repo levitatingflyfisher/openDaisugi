@@ -9,7 +9,7 @@ packages hidden, as if they were not installed:
 
 - sentence_transformers (the MiniLM matcher, the [search] extra),
 - onnxruntime (the int8 matcher, the [int8] extra),
-- faster_whisper and sherpa_onnx (the voice engines),
+- faster_whisper (the voice engine the binaries cannot load),
 - textual (the interactive dashboard, the [tui] extra).
 
 model2vec (potion) and tree_sitter_bash (shell decomposition) stay
@@ -23,7 +23,7 @@ then the CLI.
 
 from __future__ import annotations
 
-HIDDEN = ("sentence_transformers", "onnxruntime", "faster_whisper", "sherpa_onnx", "textual")
+HIDDEN = ("sentence_transformers", "onnxruntime", "faster_whisper", "textual")
 
 PRELUDE = f"""
 import importlib.util as _iu, sys as _sys

@@ -1,0 +1,14 @@
+<mujoco model="grip_unbounded">
+  <!-- A gripper actuator with neither a joint range nor a control range. -->
+  <compiler angle="radian"/>
+  <option timestep="0.002" gravity="0 0 0"/>
+  <worldbody>
+    <body name="end_effector" pos="0 0 0">
+      <joint name="j_grip" type="slide" axis="0 1 0" damping="1.0"/>
+      <geom type="box" size="0.01 0.01 0.01" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="a_grip_left" joint="j_grip" kp="100"/>
+  </actuator>
+</mujoco>

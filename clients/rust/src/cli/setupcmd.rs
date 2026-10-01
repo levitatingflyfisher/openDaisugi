@@ -23,7 +23,7 @@ Options:
 
 Commands:
   setup  Detect hardware, recommend a local model, and optionally qualify and wire it.
-  stats  Not yet in this binary.
+  stats  Show per-tier call counts, estimated tokens, and pathway hit rate.
 ";
 
 /// `hardware.HardwareProfile` on Linux.
@@ -107,7 +107,7 @@ struct Recommendation {
 }
 
 /// `format(f, "g")`.
-fn py_g(f: f64) -> String {
+pub(super) fn py_g(f: f64) -> String {
     if f == 0.0 {
         return if f.is_sign_negative() {
             "-0".into()
@@ -175,9 +175,9 @@ fn recommend(h: &Hardware) -> Recommendation {
         py_fixed(b, 0)
     );
     let families = if params >= 3 {
-        vec!["Qwen2.5", "Gemma", "Llama", "Phi"]
+        vec!["Granite", "Ministral", "Gemma", "Llama"]
     } else {
-        vec!["Qwen2.5", "Gemma"]
+        vec!["Granite", "Llama"]
     };
     Recommendation {
         size,
@@ -208,6 +208,13 @@ struct Qualification {
 }
 
 impl Env {
+    /// The probe below, for the engine a box with no voice choice gets
+    /// (ruling VO-17).
+    pub(super) fn voice_hardware(&self) -> crate::voice::hardware::VoiceHardware {
+        let h = self.detect_hardware();
+        crate::voice::hardware::VoiceHardware { ram_gb: h.ram, cpus: h.cpus as i64, vram_gb: h.vram }
+    }
+
     fn detect_hardware(&self) -> Hardware {
         let (system, arch) = uname();
         let (mut vram, gpu) = self.gpu_probe();
@@ -231,7 +238,7 @@ impl Env {
         }
         match args[0].as_str() {
             "setup" => return self.tiers_setup(&args[1..]),
-            "stats" => return self.not_yet("daisugi tiers stats"),
+            "stats" => return self.tiers_stats(&args[1..]),
             _ => {}
         }
         self.errf(&format!(
@@ -352,7 +359,7 @@ impl Env {
         if p.has("--context") {
             self.click_int(CMD, &p, "--context", 0)?;
         }
-        let data_dir = path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         if p.has("--matcher") {
             return self.set_matcher(CMD, &join(&data_dir, "config.yaml"), &p.str("--matcher", ""));
         }
@@ -367,7 +374,17 @@ impl Env {
             ));
         }
         if !remote.is_empty() {
-            return self.not_yet("daisugi tiers setup --remote");
+            let model = p.has("--model").then(|| p.str("--model", ""));
+            let context = if p.has("--context") {
+                let n = self.click_int(CMD, &p, "--context", 0)?;
+                match i64::try_from(n) {
+                    Ok(n) => Some(n),
+                    Err(_) => return self.refuse(CMD, "a --context this binary does not hold"),
+                }
+            } else {
+                None
+            };
+            return self.setup_remote(CMD, &data_dir, &remote, &p.str("--kind", "auto"), model, context);
         }
         let model = p.str("--model", "");
         if !endpoint.is_empty() && model.is_empty() {
@@ -504,14 +521,11 @@ impl Env {
         ));
         b.push_str(&format!("  {}\n\n", rec.rationale));
         let Some(q) = qual else {
-            b.push_str(
-                "Get a local server running (one file, no install), then qualify + wire it:\n",
-            );
-            b.push_str("  1. Find a trusted, commit-pinned model llamafile:  daisugi models\n");
-            b.push_str(
-                "     (canonical engine repo: github.com/mozilla-ai/llamafile; model org: huggingface.co/mozilla-ai)\n",
-            );
-            b.push_str("  2. Serve it:  ./<model>.llamafile --server --port 8080 --nobrowser\n");
+            b.push_str("Get a local server running, then qualify + wire it:\n");
+            b.push_str("  1. Pick a model:  daisugi models list   (or any: daisugi models search QUERY)\n");
+            b.push_str("     Fetch its GGUF pinned to a commit:  daisugi models pin <gguf-repo> --pull\n");
+            b.push_str("  2. Serve it with llamafile (github.com/mozilla-ai/llamafile):\n");
+            b.push_str("     llamafile --server -m <model>.gguf --port 8080 --nobrowser\n");
             b.push_str(
                 "  3. Qualify:   daisugi tiers setup --endpoint http://localhost:8080/v1 --model <name> --wire\n",
             );

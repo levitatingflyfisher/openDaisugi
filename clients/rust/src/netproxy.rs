@@ -107,6 +107,39 @@ pub fn process_vars() -> Vec<(String, String)> {
     std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))).collect()
 }
 
+/// A map's variables in the process environment's order, and whether
+/// that order is the one Python's `os.environ` would give: true when
+/// every `*_proxy` variable of the map is in this process's environment
+/// with the same value (the map was read from it). A variable the process
+/// does not hold comes after, in name order.
+pub fn ordered_vars(env: &std::collections::HashMap<String, String>) -> (Vec<(String, String)>, bool) {
+    let mut out: Vec<(String, String)> = vec![];
+    for (k, v) in process_vars() {
+        if env.get(&k) == Some(&v) {
+            out.push((k, v));
+        }
+    }
+    let mut rest: Vec<(String, String)> =
+        env.iter().filter(|(k, v)| !out.iter().any(|(ok, ov)| ok == *k && ov == *v)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    rest.sort();
+    let proxy_name = |k: &str| k.len() > 5 && k.to_ascii_lowercase().ends_with("_proxy");
+    let ordered = !rest.iter().any(|(k, _)| proxy_name(k));
+    out.extend(rest);
+    (out, ordered)
+}
+
+/// The httpx routing for a map of variables (`ordered_vars`).
+pub fn httpx_for(env: &std::collections::HashMap<String, String>) -> Httpx {
+    let (v, ordered) = ordered_vars(env);
+    Httpx::from_vars(&v, ordered)
+}
+
+/// The urllib routing for a map of variables (`ordered_vars`).
+pub fn urllib_for(env: &std::collections::HashMap<String, String>) -> Urllib {
+    let (v, ordered) = ordered_vars(env);
+    Urllib::from_vars(&v, ordered)
+}
+
 /// A map's variables, in no order.
 pub fn map_vars(env: &std::collections::HashMap<String, String>) -> Vec<(String, String)> {
     env.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
@@ -154,6 +187,9 @@ pub enum Refusal {
     Fails(String),
     /// A shape of variable this binary does not model.
     Unported(String),
+    /// httpx.InvalidURL's text: the client cannot be built, and the error
+    /// is not one the callers' except clauses name.
+    Invalid(String),
 }
 
 /// The origin a request goes to: TLS or not, the host as the URL has it
@@ -228,53 +264,25 @@ struct Url {
     rest: String,
 }
 
-fn parse_url(s: &str) -> Result<Url, String> {
-    let no = || format!("the URL {s:?}");
-    let (scheme, after) = s.split_once("://").ok_or_else(no)?;
-    if scheme.is_empty() || !scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c)) {
-        return Err(no());
+fn parse_url(s: &str) -> Result<Url, UrlErr> {
+    let u = parse_httpx(s)?;
+    let rest = u.rest();
+    Ok(Url {
+        scheme: u.scheme,
+        userinfo: if u.userinfo.is_empty() { None } else { Some(u.userinfo) },
+        host: u.host,
+        port: u.port,
+        rest,
+    })
+}
+
+/// The refusal a parse error gives: httpx's InvalidURL fails every
+/// request, as the client cannot be built; anything else is not modelled.
+fn fails_or(e: UrlErr, why: &str) -> Httpx {
+    match e {
+        UrlErr::Invalid(msg) => Httpx { mounts: vec![], refusal: Some(Refusal::Invalid(msg)) },
+        UrlErr::Unported(w) => Httpx::unported(format!("{why}: {w}")),
     }
-    let end = after.find(['/', '?', '#']).unwrap_or(after.len());
-    let (authority, rest) = after.split_at(end);
-    let (userinfo, hostport) = match authority.rsplit_once('@') {
-        Some((u, h)) => (Some(u.to_string()), h),
-        None => (None, authority),
-    };
-    let (host, port_text) = if let Some(h) = hostport.strip_prefix('[') {
-        let (h, p) = h.split_once(']').ok_or_else(no)?;
-        if h.parse::<std::net::Ipv6Addr>().is_err() {
-            return Err(no());
-        }
-        let p = match p.strip_prefix(':') {
-            Some(p) => Some(p),
-            None if p.is_empty() => None,
-            None => return Err(no()),
-        };
-        (h.to_ascii_lowercase(), p)
-    } else {
-        match hostport.rsplit_once(':') {
-            Some((h, p)) => (h.to_string(), Some(p)),
-            None => (hostport.to_string(), None),
-        }
-    };
-    if !host.is_ascii() || host.contains(['%', ' ', '[', ']', '\\', '"', '<', '>', '^', '`', '{', '|', '}']) {
-        return Err(no());
-    }
-    let host = host.to_ascii_lowercase();
-    let port = match port_text {
-        None | Some("") => None,
-        Some(p) if p.chars().all(|c| c.is_ascii_digit()) && p.len() <= 5 => {
-            let n: u32 = p.parse().map_err(|_| no())?;
-            if n > 65535 {
-                return Err(no());
-            }
-            Some(n as u16)
-        }
-        Some(_) => return Err(no()),
-    };
-    let scheme = scheme.to_ascii_lowercase();
-    let port = if port.is_some() && port == default_port(&scheme) { None } else { port };
-    Ok(Url { scheme, userinfo, host, port, rest: rest.to_string() })
 }
 
 /// `ipaddress.IPv4Address(h.split("/")[0])` succeeds.
@@ -329,9 +337,6 @@ impl Httpx {
             if h.is_empty() {
                 continue;
             }
-            if h.contains('%') {
-                return Httpx::unported(format!("NO_PROXY entry {h:?}"));
-            }
             let key = if h.contains("://") {
                 h.to_string()
             } else if is_ipv4(h) {
@@ -352,7 +357,7 @@ impl Httpx {
                 None => None,
                 Some(v) => match parse_url(&v) {
                     Ok(u) => Some((u, v)),
-                    Err(why) => return Httpx::unported(format!("a proxy URL: {why}")),
+                    Err(e) => return fails_or(e, "a proxy URL"),
                 },
             };
             if let Some((u, v)) = &parsed {
@@ -369,7 +374,7 @@ impl Httpx {
         for (k, parsed) in proxies {
             let pat = match pattern(&k) {
                 Ok(p) => p,
-                Err(why) => return Httpx::unported(why),
+                Err(e) => return fails_or(e, "a NO_PROXY entry"),
             };
             let proxy = match parsed {
                 None => None,
@@ -377,7 +382,9 @@ impl Httpx {
                     if u.scheme.starts_with("socks5") {
                         return Httpx { mounts: vec![], refusal: Some(Refusal::Fails(SOCKS_TEXT.into())) };
                     }
-                    if u.host.is_empty() {
+                    if u.host.is_empty() || u.host.contains('%') {
+                        // No host, or one httpx sends percent-encoded: where
+                        // the connection fails is not modelled.
                         return Httpx::unported(format!("the proxy URL {v:?}"));
                     }
                     let auth = u.userinfo.as_ref().and_then(|ui| {
@@ -415,7 +422,9 @@ impl Httpx {
             return Err(r.clone());
         }
         let scheme = if o.tls { "https" } else { "http" };
-        let host = o.host.to_ascii_lowercase();
+        // encode_host lower-cases a name, and keeps an IPv6 address as
+        // written.
+        let host = if o.host.contains(':') { o.host.clone() } else { o.host.to_ascii_lowercase() };
         let port = if Some(o.port) == default_port(scheme) { None } else { Some(o.port) };
         for (pat, proxy) in &self.mounts {
             if pat.matches(scheme, &host, port) {
@@ -431,14 +440,16 @@ impl Httpx {
     }
 }
 
-/// `URLPattern(key)`.
-fn pattern(key: &str) -> Result<Pattern, String> {
+/// `URLPattern(key)`: the scheme, the host and the port, nothing else.
+fn pattern(key: &str) -> Result<Pattern, UrlErr> {
     if !key.is_empty() && !key.contains(':') {
-        return Err(format!("the proxy key {key:?}"));
+        return Err(UrlErr::Unported(format!("the proxy key {key:?}")));
     }
-    let u = parse_url(key).map_err(|w| format!("a NO_PROXY entry: {w}"))?;
-    if u.userinfo.is_some() || !(u.rest.is_empty() || u.rest.starts_with('/')) {
-        return Err(format!("a NO_PROXY entry {key:?}"));
+    let u = parse_url(key)?;
+    if u.host.contains("xn--") {
+        // URLPattern's host is the IDNA-decoded one: its length orders the
+        // mounts.
+        return Err(UrlErr::Unported(format!("the IDNA host in {key:?}")));
     }
     Ok(Pattern {
         scheme: if u.scheme == "all" { String::new() } else { u.scheme },
@@ -910,8 +921,418 @@ pub fn process_urllib() -> &'static Urllib {
     R.get_or_init(|| Urllib::from_vars(&process_vars(), true))
 }
 
+// ---------------------------------------------------------------------------
+// httpx's URL parser (httpx/_urlparse.py, httpx 0.28) for the URLs a proxy
+// setting holds. The Go client's `netproxy/urlparse.go` is the reference.
+// ---------------------------------------------------------------------------
+
+/// Why a URL gives no parts: httpx raises `InvalidURL` (its words), or
+/// this binary does not read the URL the way httpx does.
+#[derive(Clone, Debug, PartialEq)]
+enum UrlErr {
+    Invalid(String),
+    Unported(String),
+}
+
+/// `urlparse(url)` for the parts a proxy route reads; `port` is None
+/// when absent or the scheme's default.
+#[derive(Clone, Debug)]
+struct HttpxUrl {
+    scheme: String,
+    userinfo: String,
+    host: String,
+    port: Option<u16>,
+    path: String,
+    query: Option<String>,
+    fragment: Option<String>,
+}
+
+const UNRESERVED: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+const SUB_DELIMS: &str = "!$&'()*+,;=";
+
+fn safe_range(exclude: &[u8]) -> String {
+    (0x20u8..0x7f).filter(|b| !exclude.contains(b)).map(|b| b as char).collect()
+}
+
+fn url_res() -> &'static [regex::Regex; 5] {
+    static R: OnceLock<[regex::Regex; 5]> = OnceLock::new();
+    R.get_or_init(|| {
+        [
+            regex::Regex::new(r"^(?:(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*)?:)?(?://(?P<authority>[^/?#]*))?(?P<path>[^?#]*)(?:\?(?P<query>[^#]*))?(?:#(?P<fragment>(?s:.*)))?").expect("pattern"),
+            regex::Regex::new(r"^(?:(?P<userinfo>(?s:.*))@)?(?P<host>\[(?s:.*)\]|[^:@]*):?(?P<port>(?s:.*))?").expect("pattern"),
+            regex::Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$").expect("pattern"),
+            regex::Regex::new(r"%[A-Fa-f0-9]{2}").expect("pattern"),
+            regex::Regex::new(r"^ *[+-]?[0-9]+(?:_[0-9]+)* *$").expect("pattern"),
+        ]
+    })
+}
+
+impl HttpxUrl {
+    /// The path, query and fragment as str(URL) writes them.
+    fn rest(&self) -> String {
+        let mut s = self.path.clone();
+        if let Some(q) = &self.query {
+            s.push('?');
+            s.push_str(q);
+        }
+        if let Some(f) = &self.fragment {
+            s.push('#');
+            s.push_str(f);
+        }
+        s
+    }
+}
+
+/// `httpx._urlparse.urlparse(s)`.
+/// The digit zeros of Unicode 15.0 (Python 3.12's unicodedata): each
+/// starts a run of ten Nd characters with the values 0 to 9.
+const ND_ZEROS: &[u32] = &[0x30, 0x660, 0x6f0, 0x7c0, 0x966, 0x9e6, 0xa66, 0xae6, 0xb66, 0xbe6, 0xc66, 0xce6, 0xd66, 0xde6, 0xe50, 0xed0, 0xf20, 0x1040, 0x1090, 0x17e0, 0x1810, 0x1946, 0x19d0, 0x1a80, 0x1a90, 0x1b50, 0x1bb0, 0x1c40, 0x1c50, 0xa620, 0xa8d0, 0xa900, 0xa9d0, 0xa9f0, 0xaa50, 0xabf0, 0xff10, 0x104a0, 0x10d30, 0x11066, 0x110f0, 0x11136, 0x111d0, 0x112f0, 0x11450, 0x114d0, 0x11650, 0x116c0, 0x11730, 0x118e0, 0x11950, 0x11c50, 0x11d50, 0x11da0, 0x11f50, 0x16a60, 0x16ac0, 0x16b50, 0x1d7ce, 0x1d7d8, 0x1d7e2, 0x1d7ec, 0x1d7f6, 0x1e140, 0x1e2f0, 0x1e4f0, 0x1e950, 0x1fbf0];
+
+/// `text` with each decimal digit of another script written as its ASCII
+/// digit, as int() reads it.
+fn ascii_digits(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            let r = c as u32;
+            match ND_ZEROS.iter().find(|&&z| r >= z && r < z + 10) {
+                Some(&z) => char::from_digit(r - z, 10).unwrap_or(c),
+                None => c,
+            }
+        })
+        .collect()
+}
+
+fn parse_httpx(s: &str) -> Result<HttpxUrl, UrlErr> {
+    if s.chars().count() > 65536 {
+        return Err(UrlErr::Invalid("URL too long".into()));
+    }
+    if let Some((i, c)) = s.chars().enumerate().find(|&(_, c)| (c as u32) < 0x20 || c as u32 == 0x7f) {
+        return Err(UrlErr::Invalid(format!(
+            "Invalid non-printable ASCII character in URL, {} at position {i}.",
+            crate::gate::py::text::repr(&c.to_string())
+        )));
+    }
+    let [url_re, auth_re, ipv4_re, _, port_re] = url_res();
+    let m = url_re.captures(s).expect("the URL pattern matches every text");
+    let g = |n: &str| m.name(n).map(|x| x.as_str().to_string());
+    let scheme_raw = g("scheme").unwrap_or_default();
+    let authority = g("authority").unwrap_or_default();
+    let mut path = g("path").unwrap_or_default();
+    let (query, frag) = (g("query"), g("fragment"));
+    let a = auth_re.captures(&authority).expect("the authority pattern matches every text");
+    let ga = |n: &str| a.name(n).map(|x| x.as_str().to_string()).unwrap_or_default();
+    let (userinfo, host, port_text) = (ga("userinfo"), ga("host"), ga("port"));
+    let scheme = scheme_raw.to_lowercase();
+    let userinfo = quote_url(&userinfo, &safe_range(b"\x20\x22\x23\x3c\x3e\x3f\x60\x7b\x7d\x2f\x3b\x3d\x40\x5b\x5c\x5d\x5e\x7c"));
+    let host = encode_host(&host, ipv4_re)?;
+    let mut port = None;
+    if !port_text.is_empty() {
+        // int() reads a decimal digit of any script (Unicode Nd) as its
+        // value.
+        // An error quotes the port as the URL wrote it.
+        let digits = ascii_digits(&port_text);
+        if !digits.is_ascii() {
+            return Err(UrlErr::Unported(format!("the port {port_text:?}")));
+        }
+        if !port_re.is_match(&digits) {
+            return Err(UrlErr::Invalid(format!("Invalid port: {}", crate::gate::py::text::repr(&port_text))));
+        }
+        let n: i64 = digits.trim().replace('_', "").parse().map_err(|_| UrlErr::Unported(format!("the port {port_text:?}")))?;
+        if n <= 0 || n > 65535 {
+            return Err(UrlErr::Unported(format!("the port {port_text:?}")));
+        }
+        // normalize_port looks the default up under the scheme as written.
+        let def = match scheme_raw.as_str() {
+            "ftp" => Some(21),
+            "http" | "ws" => Some(80),
+            "https" | "wss" => Some(443),
+            _ => None,
+        };
+        if def != Some(n) {
+            port = Some(n as u16);
+        }
+    }
+    let has_scheme = !scheme.is_empty();
+    let has_authority = !userinfo.is_empty() || !host.is_empty() || port.is_some();
+    if has_authority && !path.is_empty() && !path.starts_with('/') {
+        return Err(UrlErr::Invalid("For absolute URLs, path must be empty or begin with '/'".into()));
+    }
+    if !has_scheme && !has_authority {
+        if path.starts_with("//") {
+            return Err(UrlErr::Invalid("Relative URLs cannot have a path starting with '//'".into()));
+        }
+        if path.starts_with(':') {
+            return Err(UrlErr::Invalid("Relative URLs cannot have a path starting with ':'".into()));
+        }
+    }
+    if has_scheme || has_authority {
+        path = normalize_path(&path);
+    }
+    Ok(HttpxUrl {
+        scheme,
+        userinfo,
+        host,
+        port,
+        path: quote_url(&path, &safe_range(b"\x20\x22\x23\x3c\x3e\x3f\x60\x7b\x7d")),
+        query: query.map(|q| quote_url(&q, &safe_range(b"\x20\x22\x23\x3c\x3e"))),
+        fragment: frag.map(|f| quote_url(&f, &safe_range(b"\x20\x22\x3c\x3e\x60"))),
+    })
+}
+
+/// `httpx._urlparse.encode_host`.
+fn encode_host(host: &str, ipv4_re: &regex::Regex) -> Result<String, UrlErr> {
+    let r = crate::gate::py::text::repr;
+    if host.is_empty() {
+        return Ok(String::new());
+    }
+    if ipv4_re.is_match(host) {
+        for part in host.split('.') {
+            let bad = part.len() > 3 || (part.len() > 1 && part.starts_with('0')) || part.parse::<u32>().map(|n| n > 255).unwrap_or(true);
+            if bad {
+                return Err(UrlErr::Invalid(format!("Invalid IPv4 address: {}", r(host))));
+            }
+        }
+        return Ok(host.into());
+    }
+    if host.len() >= 2 && host.starts_with('[') && host.ends_with(']') {
+        let inner = &host[1..host.len() - 1];
+        if inner.contains('%') {
+            return Err(UrlErr::Unported(format!("the IPv6 address {}", r(host))));
+        }
+        return match inner.parse::<std::net::Ipv6Addr>() {
+            Ok(_) => Ok(inner.into()),
+            Err(_) => Err(UrlErr::Invalid(format!("Invalid IPv6 address: {}", r(host)))),
+        };
+    }
+    if host.is_ascii() {
+        return Ok(quote_url(&host.to_ascii_lowercase(), &format!("{SUB_DELIMS}\"`{{}}%|\\")));
+    }
+    idna_encode(host)
+}
+
+/// `httpx._urlparse.normalize_path`.
+fn normalize_path(path: &str) -> String {
+    if !path.contains('.') {
+        return path.into();
+    }
+    let comps: Vec<&str> = path.split('/').collect();
+    if !comps.iter().any(|c| *c == "." || *c == "..") {
+        return path.into();
+    }
+    let mut out: Vec<&str> = vec![];
+    for c in comps {
+        match c {
+            "." => {}
+            ".." => {
+                if !out.is_empty() && out != [""] {
+                    out.pop();
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out.join("/")
+}
+
+fn percent_encoded(s: &str, safe: &str) -> String {
+    let ok = |c: char| UNRESERVED.contains(c) || safe.contains(c);
+    if s.chars().all(ok) {
+        return s.into();
+    }
+    let mut b = String::new();
+    for c in s.chars() {
+        if ok(c) {
+            b.push(c);
+        } else {
+            let mut buf = [0u8; 4];
+            for byte in c.encode_utf8(&mut buf).bytes() {
+                b.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    b
+}
+
+/// `httpx._urlparse.quote`: percent-encoding that keeps the '%xx'
+/// escapes already there.
+fn quote_url(s: &str, safe: &str) -> String {
+    let pct = &url_res()[3];
+    let mut b = String::new();
+    let mut cur = 0;
+    for m in pct.find_iter(s) {
+        if m.start() != cur {
+            b.push_str(&percent_encoded(&s[cur..m.start()], safe));
+        }
+        b.push_str(m.as_str());
+        cur = m.end();
+    }
+    if cur != s.len() {
+        b.push_str(&percent_encoded(&s[cur..], safe));
+    }
+    b
+}
+
+/// `idna.encode(host.lower()).decode("ascii")`, or the InvalidURL httpx
+/// raises for an IDNAError, for hosts whose letters this binary encodes:
+/// ASCII letters, digits and hyphens, and the lower-case Latin-1 letters
+/// (all PVALID).
+fn idna_encode(host: &str) -> Result<String, UrlErr> {
+    let bad = || UrlErr::Invalid(format!("Invalid IDNA hostname: {}", crate::gate::py::text::repr(host)));
+    let s = crate::gate::py::text::lower(host);
+    let mut labels: Vec<&str> = s.split('.').collect();
+    if labels.len() > 1 && labels.last() == Some(&"") {
+        labels.pop();
+    }
+    let mut out = vec![];
+    for label in labels {
+        if label.is_empty() {
+            return Err(bad());
+        }
+        for c in label.chars() {
+            if c.is_ascii() {
+                if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+                    return Err(bad());
+                }
+            } else if !((0xdf..=0xff).contains(&(c as u32)) && c != '\u{f7}') {
+                return Err(UrlErr::Unported(format!("the host {host:?}")));
+            }
+        }
+        if label.starts_with("xn--") {
+            return Err(UrlErr::Unported(format!("the host {host:?}")));
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(bad());
+        }
+        let cs: Vec<char> = label.chars().collect();
+        if cs.len() >= 4 && cs[2] == '-' && cs[3] == '-' {
+            return Err(bad());
+        }
+        let enc = if label.is_ascii() { label.to_string() } else { format!("xn--{}", punycode(label)) };
+        if enc.len() > 63 {
+            return Err(bad());
+        }
+        out.push(enc);
+    }
+    let mut res = out.join(".");
+    if s.ends_with('.') {
+        res.push('.');
+    }
+    if res.len() > 253 + usize::from(res.ends_with('.')) {
+        return Err(bad());
+    }
+    Ok(res)
+}
+
+/// RFC 3492's encoding of a label.
+fn punycode(label: &str) -> String {
+    const BASE: u32 = 36;
+    const TMIN: u32 = 1;
+    const TMAX: u32 = 26;
+    const SKEW: u32 = 38;
+    const DAMP: u32 = 700;
+    let cps: Vec<u32> = label.chars().map(|c| c as u32).collect();
+    let mut out: Vec<u8> = cps.iter().filter(|&&c| c < 0x80).map(|&c| c as u8).collect();
+    let b = out.len() as u32;
+    let mut h = b;
+    if b > 0 {
+        out.push(b'-');
+    }
+    let digit = |d: u32| if d < 26 { b'a' + d as u8 } else { b'0' + (d - 26) as u8 };
+    let adapt = |mut delta: u32, num: u32, first: bool| {
+        delta /= if first { DAMP } else { 2 };
+        delta += delta / num;
+        let mut k = 0;
+        while delta > ((BASE - TMIN) * TMAX) / 2 {
+            delta /= BASE - TMIN;
+            k += BASE;
+        }
+        k + (BASE - TMIN + 1) * delta / (delta + SKEW)
+    };
+    let (mut n, mut delta, mut bias) = (128u32, 0u32, 72u32);
+    while (h as usize) < cps.len() {
+        let m = *cps.iter().filter(|&&c| c >= n).min().unwrap_or(&n);
+        delta += (m - n) * (h + 1);
+        n = m;
+        for &c in &cps {
+            if c < n {
+                delta += 1;
+            }
+            if c == n {
+                let mut q = delta;
+                let mut k = BASE;
+                loop {
+                    let t = if k <= bias { TMIN } else if k >= bias + TMAX { TMAX } else { k - bias };
+                    if q < t {
+                        break;
+                    }
+                    out.push(digit(t + (q - t) % (BASE - t)));
+                    q = (q - t) / (BASE - t);
+                    k += BASE;
+                }
+                out.push(digit(q));
+                bias = adapt(delta, h + 1, h == b);
+                delta = 0;
+                h += 1;
+            }
+        }
+        delta += 1;
+        n += 1;
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
+    /// The answers httpx 0.28's urlparse gives (read off the oracle's httpx).
+    #[test]
+    fn parse_httpx_as_httpx() {
+        let ok: &[(&str, &str, &str, &str, Option<u16>, &str)] = &[
+            ("http://127.0.0.1:+8080", "http", "", "127.0.0.1", Some(8080), ""),
+            ("http://127.0.0.1: 8080", "http", "", "127.0.0.1", Some(8080), ""),
+            ("http://bücher.localhost:1", "http", "", "xn--bcher-kva.localhost", Some(1), ""),
+            ("http://Bücher.Example/", "http", "", "xn--bcher-kva.example", None, "/"),
+            ("all://*x%y", "all", "", "*x%y", None, ""),
+            ("http://p q:1", "http", "", "p%20q", Some(1), ""),
+            ("HTTP://h:80", "http", "", "h", Some(80), ""),
+            ("http://h:80", "http", "", "h", None, ""),
+            ("http://u:p@h/a/./b/../c?q#f", "http", "u:p", "h", None, "/a/c?q#f"),
+            ("http://münchen-straße.de", "http", "", "xn--mnchen-strae-v9a90b.de", None, ""),
+            ("http://ab--cd.de", "http", "", "ab--cd.de", None, ""),
+        ];
+        for (input, scheme, userinfo, host, port, rest) in ok {
+            let u = parse_httpx(input).unwrap_or_else(|e| panic!("{input}: {e:?}"));
+            assert_eq!((u.scheme.as_str(), u.userinfo.as_str(), u.host.as_str(), u.port, u.rest().as_str()), (*scheme, *userinfo, *host, *port, *rest), "{input}");
+        }
+        for (input, msg) in [
+            ("http://127.0.0.1:x", "Invalid port: 'x'"),
+            ("http://127.0.0.01:1", "Invalid IPv4 address: '127.0.0.01'"),
+            ("http://[::1:1", "Invalid port: ':1:1'"),
+            ("http://bü_cher:1", "Invalid IDNA hostname: 'bü_cher'"),
+            ("all://*a:b", "Invalid port: 'b'"),
+            ("all://*bücher.example", "Invalid IDNA hostname: '*bücher.example'"),
+        ] {
+            assert_eq!(parse_httpx(input).unwrap_err(), UrlErr::Invalid(msg.into()), "{input}");
+        }
+        // A port int() reads another way, or one no socket takes, is refused.
+        // A digit of another script is its value, as int() reads it.
+        assert_eq!(parse_httpx("http://h:\u{ff18}\u{ff10}\u{0668}\u{0660}").map(|u| u.port).ok(), Some(Some(8080)));
+        // An error quotes the port as written.
+        assert!(matches!(parse_httpx("http://h:\u{ff18}x"), Err(UrlErr::Invalid(m)) if m == "Invalid port: '\u{ff18}x'"));
+        for input in ["http://h:99999", "http://h:0", "http://h:-1", "http://h:\u{3000}80"] {
+            assert!(matches!(parse_httpx(input), Err(UrlErr::Unported(_))), "{input}");
+        }
+    }
+
+    /// A NO_PROXY entry httpx cannot parse stops the client; one with a
+    /// '%' matches no host.
+    #[test]
+    fn no_proxy_entry_invalid_url() {
+        let h = Httpx::from_vars(&v(&[("HTTP_PROXY", "http://127.0.0.1:1"), ("NO_PROXY", "a:b")]), true);
+        assert_eq!(h.refusal(), Some(&Refusal::Invalid("Invalid port: 'b'".into())));
+        let h = Httpx::from_vars(&v(&[("HTTP_PROXY", "http://127.0.0.1:1"), ("NO_PROXY", "x%y")]), true);
+        assert_eq!(h.refusal(), None);
+    }
+
     use super::*;
 
     fn v(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -987,7 +1408,10 @@ mod tests {
         assert!(!direct(&r, true, "example.com", 443));
         let r = with("http://example.com");
         assert!(direct(&r, false, "example.com", 80) && !direct(&r, true, "example.com", 443));
-        assert!(with("a%2eb").refusal().is_some());
+        // A '%' stays in the pattern's host, as httpx keeps it: no host
+        // matches it (PX-9).
+        let r = with("a%2eb");
+        assert!(r.refusal().is_none() && !direct(&r, false, "a.b", 80));
     }
 
     #[test]

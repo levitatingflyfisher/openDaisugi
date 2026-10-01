@@ -57,7 +57,8 @@ func CheckEnvelopeSelfConsistency(env Envelope, timeoutMs int) (violations []Vio
 		return nil, fmt.Sprintf("Z3 self-consistency check exceeded %dms", timeoutMs)
 	}
 	if result == "unsat" {
-		return []Violation{V("z3", "Envelope is internally inconsistent")}, ""
+		// z3's unsat_core() with no tracked assertions prints "[]".
+		return []Violation{V("z3", "Envelope is internally inconsistent").With(kv("unsat_core", "[]"), nil)}, ""
 	}
 	return nil, ""
 }
@@ -94,7 +95,7 @@ func CheckPlanAgainstEnvelope(plan ActionPlan, env Envelope, timeoutMs int) (vio
 		return nil, fmt.Sprintf("Z3 plan-vs-envelope check exceeded %dms", timeoutMs)
 	}
 	if result == "unsat" {
-		return []Violation{V("z3", "Plan requirements contradict envelope permissions")}, ""
+		return []Violation{V("z3", "Plan requirements contradict envelope permissions").With(kv("unsat_core", "[]"), nil)}, ""
 	}
 	return nil, ""
 }

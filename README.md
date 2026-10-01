@@ -64,8 +64,12 @@ None of these needs Python at run time.
   tarball with the Rust `daisugi`. Unpack with
   `tar -xzf opendaisugi-VERSION-linux-x86_64.tar.gz --strip-components=1 -C ~/.local/bin`.
 - **Omarchy and the AUR**: `omarchy-mise-install github:levitatingflyfisher/openDaisugi coppice`,
-  or the `opendaisugi-bin` package in `packaging/aur/`. Both need a published release. **There is
-  no published release yet.**
+  or the packages in `packaging/aur/`: `opendaisugi` (or `opendaisugi-bin`) puts `daisugi` (the
+  Go build), `daisugi-rs`, `daisugi-gate-rs`, `coppice` and `sprig` in `/usr/bin`, and
+  `daisugi-py` adds the Python one, so the three can check each other. `daisugi install` writes
+  hooks that run the Go `daisugi`; with `DAISUGI_PORT=rust` or `DAISUGI_PORT=python` it hands the
+  install to `daisugi-rs` or `daisugi-py`, whose hooks then run that port directly. Both routes
+  need a published release. **There is no published release yet.**
 
 ### The Python package
 
@@ -144,7 +148,7 @@ agreement.
 | CLI cases (`clients/fixtures/cli/`) | 472 | 451 agree, 12 not ported, 9 refused, 0 disagreements | last full run at 306 cases: 0 disagreements; `status`, `config`, `start`, `journal` not ported |
 | pathway commands, matcher queries, verify messages | 158, 380, 577 | 0 disagreements | 0 disagreements |
 | garden cases | 215 | 0 disagreements; at 200 cases: 188 agree, 12 refused | the same |
-| gateway cases | 223 | 0 disagreements; 2 refused (GW-8, GW-9) | the same |
+| gateway cases | 223 | 0 disagreements; 1 refused (GW-8) | the same |
 | weave cases (`clients/fixtures/weave/`, 2026-09-30) | 88 | 86 agree, 2 refused (WV-R-10), 0 disagreements | the same |
 
 - **Fuzz.** Seeded differential fuzz against the in-process oracle, for example 36,000 shell

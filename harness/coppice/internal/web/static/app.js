@@ -12,9 +12,10 @@ import { mountFloor, endedMessage } from './floor.js';
 import { mountPane, onEvent as paneEvent, detached, open as openPane, close as closePane, release as releasePane } from './pane.js';
 import { mountNew, mountNewButton } from './newpane.js';
 import { mountSettings, tokenFromHash, wsUrl } from './settings.js';
-import { isPhone, overviewShown, mountSheet, phoneAfter, keyboardInset } from './dock.js';
+import { isPhone, overviewShown, mountSheet, phoneAfter, keyboardInset, mountFold } from './dock.js';
+import { mountChat } from './chat.js';
 import { mountViews, mountViewHost, parseView } from './views.js';
-import { MESSAGES, toMessage, fixButtons, openShell, shellCwd } from './messages.js';
+import { MESSAGES, toMessage, fixButtons, openShell, shellCwd, cannotReach, pageHost } from './messages.js';
 import { mountFacts } from './stackbar.js';
 import { mountOverlay, escCloses, JOURNAL } from './overlay.js';
 import { retryVoice } from './record.js';
@@ -61,6 +62,8 @@ let phone = false;
 // viewHostRef is the mounted view host, or null before boot runs. The
 // socket's close drops its attaches the way it drops the floor's.
 let viewHostRef = null;
+// chatRef is the phone's chat with the foreman, or null before boot runs.
+let chatRef = null;
 
 const state = {
   token: null,
@@ -167,8 +170,9 @@ const UPSTREAM_CLOSE_REASONS = [
 // timer so it can be tested on its own. reason is 'upstream' for a close
 // naming one of the two reasons above, 'rejected' for a token the server no
 // longer accepts, 'banned' for an address the server is refusing for a
-// minute, or 'unknown' for anything else, including a network the phone
-// cannot reach at all. It returns the delay to use now and the delay to
+// minute, 'unreachable' when the page cannot reach the box at all, or
+// 'unknown' for anything else. The last two retry the same way. It
+// returns the delay to use now and the delay to
 // remember for next time, or a stop marker when no further retry belongs
 // on the schedule at all.
 export function nextRetry(reason, retryMs) {
@@ -177,13 +181,22 @@ export function nextRetry(reason, retryMs) {
   return { delayMs: retryMs, retryMs: Math.min(RETRY_MAX_MS, retryMs * 2) };
 }
 
+// closeStatus is what the status line says after a close the page will
+// retry. Only a page that cannot reach the box at all names the fixes on
+// the phone; a drop the coppice server caused only reconnects.
+export function closeStatus(reason, host) {
+  if (reason === 'banned') return MESSAGES.banned();
+  if (reason === 'unreachable') return cannotReach(host);
+  return MESSAGES.reconnecting();
+}
+
 // probeReason asks the server why the last close might have happened, for
 // the one case the close event itself does not say. A handshake the
 // server refuses outright reaches the browser as a blank reason, so the
 // only way left to tell a bad token from a box that is simply unreachable
 // is to ask the API directly. A plain network drop, the phone losing
 // signal, also reaches this function, and costs one doomed fetch before
-// the catch below turns it into 'unknown'. That fetch is accepted: without
+// the catch below turns it into 'unreachable'. That fetch is accepted: without
 // it there would be no way left to tell a refused handshake from a box
 // that is simply out of reach.
 async function probeReason() {
@@ -193,7 +206,9 @@ async function probeReason() {
       headers: { Authorization: 'Bearer ' + state.token },
     });
   } catch {
-    probe = null;   // the box is unreachable, which is a normal retry
+    // The page cannot reach the box at all, which is a normal retry, and
+    // the one case whose fixes are on the phone.
+    return 'unreachable';
   }
   if (probe && probe.status === 401) return 'rejected';
   if (probe && probe.status === 429) return 'banned';
@@ -221,7 +236,7 @@ async function afterClose(e) {
     window.dispatchEvent(new CustomEvent('coppice:route'));
     return;
   }
-  status(reason === 'banned' ? MESSAGES.banned() : MESSAGES.reconnecting());
+  status(closeStatus(reason, pageHost()));
   setOffline(true);
   retryMs = decision.retryMs;
   setTimeout(connect, decision.delayMs);
@@ -243,12 +258,15 @@ function connect() {
     // Presence says who else has a pane open. It comes on its own
     // subscribe too.
     rpc('events.subscribe', { panes: '*', kinds: ['presence'] }).catch(() => {});
+    // A messages event says the chat changed; the phone reads it again.
+    rpc('events.subscribe', { panes: '*', kinds: ['messages'] }).catch(() => {});
     rpc('floor.notes', {}).then((r) => { if (floor) floor.seedNotes(r.notes); }).catch(() => {});
-    // The page leaves its own name off the tiles it has open.
+    // The page leaves its own name off the tiles it has open. The chat is
+    // for the owner's own sign-in, so it is read once the name is known.
     api('/api/token/check').then((r) => {
       state.me = r && typeof r.name === 'string' ? r.name : '';
       if (floor) floor.paint(state.panes);
-    }).catch(() => {});
+    }).catch(() => {}).then(() => { if (chatRef) chatRef.read(); });
     window.dispatchEvent(new CustomEvent('coppice:open'));
   });
   ws.addEventListener('message', (e) => {
@@ -625,7 +643,9 @@ function boot() {
     },
   });
   const placeMinimap = () => {
-    const on = minimapOn && overview();
+    // A phone has the colony strip, with labels, at the top of home, so
+    // the minimap does not draw there.
+    const on = minimapOn && overview() && !phone;
     minimapFrame.hidden = !on;
     if (on) minimap.show('minimap', []);
     else minimap.hide();
@@ -862,6 +882,40 @@ function boot() {
   mountSettings();
   window.addEventListener('coppice:panes', () => floor.paint(state.panes));
 
+  // The phone's home: the agents fold, then the chat with the foreman. A
+  // chip in the chat opens its agent's sheet the way a row does, so going
+  // back steps back. The chat is read while it is on screen and the socket
+  // is up.
+  const fold = mountFold(document.getElementById('agents-fold'), document.getElementById('rail'));
+  // floor.facts names the tracked foreman; its scratch directory is no
+  // project.
+  const foremanId = () => {
+    const f = factsRow ? factsRow.facts() : null;
+    return f && f.foreman && typeof f.foreman.pane === 'string' ? f.foreman.pane : '';
+  };
+  fold.paint(state.panes, foremanId());
+  window.addEventListener('coppice:panes', () => fold.paint(state.panes, foremanId()));
+  const chatOn = () => phone && overview() && Boolean(state.ws && state.ws.readyState === WebSocket.OPEN);
+  chatRef = mountChat({
+    list: document.getElementById('chat-list'),
+    rpc,
+    panes: () => state.panes,
+    open: (pane) => { location.hash = '#/pane/' + encodeURIComponent(pane); },
+    me: () => state.me,
+    on: chatOn,
+  });
+  window.coppice.chat = chatRef;
+  // The chips name the live agents, so a new pane list draws the chat
+  // again.
+  window.addEventListener('coppice:panes', () => chatRef.paint());
+  // A page that turns into a phone, or comes back to home, reads the chat.
+  let chatWas = false;
+  window.addEventListener('coppice:route', () => {
+    const now = chatOn();
+    if (now && !chatWas) chatRef.read();
+    chatWas = now;
+  });
+
   // The sheet goes back on a swipe right, a tap on the edge of overview
   // beside it, or its own back control.
   mountSheet(document.getElementById('screen-pane'), {
@@ -931,10 +985,13 @@ function boot() {
     vv.addEventListener('scroll', inset);
   }
   // A view open over the overview closes when a sheet slides in, so the
-  // sheet is what the owner sees.
+  // sheet is what the owner sees. The status line moves into the sheet,
+  // so an older line, such as where a chat sentence went, is cleared: it
+  // would name the wrong place for the words typed in the sheet.
   let sheetWas = false;
   window.addEventListener('coppice:route', () => {
     const now = phone && route(location.hash).screen === 'pane';
+    if (now && !sheetWas) status('');
     if (now && !sheetWas && overlay.state().open) overlay.close();
     sheetWas = now;
   });
@@ -943,6 +1000,7 @@ function boot() {
     floor.onEvent(msg);
     viewHost.onEvent(msg);
     overlay.onEvent(msg);
+    chatRef.onEvent(msg);
   };
 
   connect();

@@ -1,0 +1,19 @@
+<chat>
+0+64|m c long entry 0: gate status and plan; ga | entry 8: spawn pane envelope coppice gat m entry 16: sprig report worker ledger spa | entry 24: envelope entry 25: ledger spaw m entry 32: worker ledger spawn pane envel | c split me across messages. split me acr m <b>html</b> & "quotes" \ back	slash  ent | entry 52: worker ledger spawn pane envel
+64+32|m entry 60: gate entry 61: pane envelope c | entry 68: spawn pane envelope coppice ga m entry 76: sprig report worker ledger spa | entry 84: envelope entry 85: ledger spaw
+96+32|m entry 92: worker ledger spawn pane envel | entry 100: gate brief sprig report worke m c long entry 108: spawn status and plan; | entry 116: sprig report worker ledger sp
+128+16|m entry 124: envelope coppice gate brief s | entry 132: worker entry 133: brief sprig
+144+4|entry 140: gate brief sprig report worker ledger spawn pane envelope entry 141: pane envelope coppice gate entry 142: worker ledger spawn pane envelope coppice gate brief sprig report worker entry 143: brief sprig report worker ledger spawn
+148+4|c long entry 144: envelope status and plan; envelope status an entry 145: ledger spawn pane envelope coppice gate brief sprig entry 146: sprig report worker entry 147: coppice gate brief sprig report worker ledger spawn pane envelope
+152+2|entry 148: spawn pane envelope coppice gate entry 149: report worker ledger spawn pane envelope coppice gate brief sprig report worker
+154+1|entry 150: gate brief sprig report worker ledger spawn
+155+1|entry 151: pane envelope
+156+1|entry 152: worker ledger spawn pane envelope coppice gate brief sprig
+157+1|c long entry 153: brief status and plan; brief status and plan
+158+1|entry 154: envelope coppice gate brief sprig report worker ledger spawn pane envelope
+159+1|entry 155: ledger spawn pane envelope coppice gate
+160+1|entry 156: sprig
+161+1|entry 157: coppice gate brief sprig report worker ledger spawn
+162+1|entry 158: spawn pane envelope
+163+1|entry 159: report worker ledger spawn pane envelope coppice gate brief sprig
+</chat>

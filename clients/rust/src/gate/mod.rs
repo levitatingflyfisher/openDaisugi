@@ -17,6 +17,7 @@ pub mod dispatch;
 pub mod effects;
 pub mod envelope;
 pub mod frames;
+pub mod gatestate;
 pub mod globs;
 pub mod graft;
 pub mod hook;
@@ -33,6 +34,7 @@ pub mod pyjson;
 pub mod pystr;
 pub mod rank;
 pub mod record;
+pub mod replay;
 pub mod resident;
 pub mod rules;
 pub mod search;
@@ -384,7 +386,7 @@ fn run_native(
         Ok(h) => h,
         Err(e) => return undecided(format!("Path.home() raises at import: {}", e.msg)),
     };
-    r.default_root = path_join(&path_join(&home_dir, ".opendaisugi"), "gate");
+    r.default_root = path_join(&r.data_home_at(&home_dir), "gate");
     r.root = match &args.root {
         Some(x) => path_str(x),
         None => r.default_root.clone(),
@@ -557,7 +559,7 @@ impl Runner {
         // gate._maybe_graft, on the evaluate_call branch only.
         if !d.ask && !too_big {
             if let (Some(env), Some(_), Some(p)) = (&env, &payload, obj) {
-                d = self.maybe_graft(p, d, env)?;
+                d = self.maybe_graft(p, d, env, &session_id)?;
             }
         }
         d.elapsed_ms = d.elapsed_ms.max(0.0);

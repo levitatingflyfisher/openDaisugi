@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  MESSAGES, NAMES_COMMAND, AWAY, TYPED_AS_IS, commandIn, typeable, fromText, toMessage, needsFix, shellCwd, openShell,
+  MESSAGES, NAMES_COMMAND, AWAY, TYPED_AS_IS, commandIn, typeable, fromText, toMessage, needsFix, shellCwd, openShell, cannotReach,
 } from '../messages.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -287,4 +287,35 @@ test('voiceDown types the install line, and a fix on the box says so', () => {
   const plain = MESSAGES.voiceDown('Voice is starting. Wait a moment, then press Retry.', '');
   assert.deepEqual(plain.actions, [{ kind: 'voice', label: 'Retry' }]);
   assert.ok(!needsFix(plain));
+});
+
+// The cannot-reach line on a phone names the two fixes that are on the
+// phone: Tailscale on, when the page came from a .ts.net name, and the box
+// asleep or off, with Retry. On the box itself there is no other machine
+// to wake, so it only says it reconnects.
+test('the cannot-reach line names the fixes on the phone', () => {
+  const ts = cannotReach('box.tail1.ts.net');
+  assert.equal(ts.text, 'Cannot reach the box. Turn on Tailscale on this phone. The box may be asleep or off.');
+  assert.deepEqual(ts.actions, [{ kind: 'reconnect', label: 'Retry now' }]);
+  const lan = cannotReach('192.168.1.20');
+  assert.equal(lan.text, 'Cannot reach the box. The box may be asleep or off.');
+  assert.deepEqual(lan.actions, [{ kind: 'reconnect', label: 'Retry now' }]);
+  for (const own of ['127.0.0.1', 'localhost', '[::1]', '']) {
+    assert.equal(cannotReach(own).text, 'Reconnecting.', own);
+  }
+  // reconnecting stays the plain line: app.js picks cannotReach only when
+  // the page itself cannot reach the box.
+  assert.equal(MESSAGES.reconnecting().text, 'Reconnecting.');
+});
+
+test('the mic in a page with no secure context names the fix on the box', () => {
+  const m = MESSAGES.micNeedsHttps();
+  assert.ok(m.text.startsWith('The mic needs https here. '), m.text);
+  assert.ok(m.text.includes('coppice web serve --tls tailscale'), m.text);
+  assert.ok(!needsFix(m));
+});
+
+test('Renew types the certificate command and nothing after it', () => {
+  assert.equal(commandIn('Run coppice web cert tailscale now.'), 'coppice web cert tailscale');
+  assert.ok(typeable('coppice web cert tailscale'));
 });

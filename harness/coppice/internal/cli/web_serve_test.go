@@ -311,21 +311,12 @@ func TestWebTokenFallsBackToTheSavedListenAndExternalURL(t *testing.T) {
 // coppice web cert tailscale always writes to the same pair TailscalePaths
 // names. --tls tailscale with no explicit --cert or --key must read that
 // same pair back, so an operator who ran cert tailscale first does not also
-// have to type the paths back in by hand. The files here only have to
-// exist for Resolve to accept them; the stub means Serve, which would parse
-// them as a certificate, is never reached.
+// have to type the paths back in by hand. The fake tailscale writes the
+// pair; the stub means Serve is never reached.
 func TestServeDefaultsTailscaleCertAndKeyToTheSharedPair(t *testing.T) {
+	useFakeTailscale(t)
 	dataDir := t.TempDir()
 	wantCert, wantKey := web.TailscalePaths(dataDir)
-	if err := os.MkdirAll(filepath.Dir(wantCert), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(wantCert, []byte("stub"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(wantKey, []byte("stub"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	runWithStubServe(t, dataDir, noopServe, "web", "serve", "--tls", "tailscale", "--listen", "127.0.0.1:0", "--persist")
 	body, err := os.ReadFile(web.ConfigPath(dataDir))
 	if err != nil {

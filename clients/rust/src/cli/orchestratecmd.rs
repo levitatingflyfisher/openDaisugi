@@ -87,18 +87,18 @@ impl Env {
         }
     }
 
-    /// Whether `PathwayStore.find(prompt)` would warn of stale embeddings,
-    /// read without writing. A store that is not there does not warn.
-    fn find_warning(&self, db: &str, prompt: &str, key: &str, pe: &crate::pathways::potion::Env) -> Result<bool, String> {
+    /// The stale-embeddings warning `PathwayStore.find(prompt)` would give,
+    /// or "", read without writing. A store that is not there does not warn.
+    fn find_warning(&self, db: &str, prompt: &str, key: &str, pe: &crate::pathways::potion::Env) -> Result<String, String> {
         if std::fs::metadata(db).is_err() {
-            return Ok(false);
+            return Ok(String::new());
         }
         let s = Store::open_read_only(db).map_err(|e| e.to_string())?;
         match s.find(prompt, key, pe, None, &mut FindCache::default()) {
-            Ok(r) => Ok(!r.warning.is_empty()),
+            Ok(r) => Ok(r.warning),
             Err(FindErr::NotCarried(nc)) => Err(nc.0),
             Err(FindErr::Err(PwErr::Unreadable(why))) => Err(why),
-            Err(FindErr::Err(_)) => Ok(false),
+            Err(FindErr::Err(_)) => Ok(String::new()),
         }
     }
 
@@ -120,6 +120,7 @@ impl Env {
             Opt::flag(&["--cost"], "Show a cost figure for the run."),
             Opt::val(&["--data-dir"], "PATH", "Daisugi data dir (pathway store + journal)."),
             Opt::flag(&["--json"], "Emit the orchestration result as JSON."),
+            super::weavecmd::AGENT_OPT,
         ];
         let p = match parse_args(args, &opts, 1) {
             Ok(p) => p,
@@ -139,16 +140,14 @@ impl Env {
             self.errf(&format!("Invalid --stakes {}; choose from ['high', 'low', 'medium'].\n", repr(&stakes)));
             return exit(2);
         }
+        let agent = self.check_agent(&p)?;
         if p.has("--llm") {
             let v = p.str("--llm", "");
             self.check_llm_flag(&v)?;
             self.env.insert("OPENDAISUGI_LLM_BACKEND".into(), v);
         }
-        if parallel > 1 {
-            return self.not_yet("daisugi orchestrate --max-parallel above 1");
-        }
         let model = p.str("--model", DEFAULT_DECOMPOSE_MODEL);
-        let data_dir = path_str(&p.str("--data-dir", &join(&self.home, ".opendaisugi")));
+        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
         self.renamed_backend_at(CMD, &data_dir)?;
         let client = self.llm_client();
         if let Err(why) = client.check(&model) {
@@ -156,7 +155,7 @@ impl Env {
         }
         let notes = Rc::new(RefCell::new(String::new()));
         let pe = self.potion_env(&notes);
-        let cfg = match super::config::load(&format!("{}/.opendaisugi/config.yaml", self.home)) {
+        let cfg = match super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
             Ok(c) => c,
             Err(e) => return self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")),
         };
@@ -191,16 +190,37 @@ impl Env {
                 return self.refuse(CMD, &why);
             }
         }
-        // A stored pathway embedded under another model makes find warn (a
-        // UserWarning this binary does not print): refused here, before
-        // anything is written.
+        // A stored pathway embedded under another model makes find warn: a
+        // UserWarning printed at the first find, as Python's warnings module
+        // prints it under PYTHONWARNINGS. A setting whose effect this binary
+        // does not model is refused here, before anything is written.
+        let pw = self.env.get("PYTHONWARNINGS").cloned().unwrap_or_default();
         match self.find_warning(&join(&data_dir, "pathways.db"), &prompt, &key, &pe) {
             Err(why) => return self.refuse(CMD, &why),
-            Ok(true) => {
-                return self.refuse(CMD, "the pathway store warns of stale embeddings, a warning this binary does not print yet")
+            Ok(w) if !w.is_empty() && super::pywarn::user_warning_shown(&pw, &w).is_none() => {
+                return self.refuse(
+                    CMD,
+                    &format!(
+                        "the pathway store warns of stale embeddings under PYTHONWARNINGS={}, a filter this binary does not read the oracle's way",
+                        crate::gate::py::text::repr(&pw)
+                    ),
+                )
             }
-            Ok(false) => {}
+            Ok(_) => {}
         }
+        let stale_done = Rc::new(std::cell::Cell::new(false));
+        let warn: Rc<dyn Fn(&str)> = {
+            let (notes, done, pw) = (notes.clone(), stale_done.clone(), pw.clone());
+            Rc::new(move |m: &str| {
+                if m.is_empty() || done.get() {
+                    return;
+                }
+                done.set(true);
+                if super::pywarn::user_warning_shown(&pw, m) == Some(true) {
+                    notes.borrow_mut().push_str(&format!("UserWarning: {m}\n"));
+                }
+            })
+        };
         self.drain_notes(&notes);
         if let Err(why) = self.echo_resolved_at(&data_dir) {
             return self.refuse(CMD, &why);
@@ -244,6 +264,7 @@ impl Env {
                     ..Default::default()
                 };
                 let g = envgen::generate(&o, &mut client.borrow_mut());
+                warn(&g.find_warning);
                 self.drain_notes(&notes);
                 match g.envelope {
                     Ok(e) => e,
@@ -270,7 +291,12 @@ impl Env {
             _ => None,
         };
         let json = p.flag("--json");
+        let agentic = match self.agentic(&env, &agent) {
+            Ok(a) => a,
+            Err(e) => return self.fail(CMD, &e),
+        };
         let res = orchestrate::run(orchestrate::Options {
+            max_parallel: usize::try_from(parallel).unwrap_or(usize::MAX),
             llm: client.clone(),
             prompt: prompt.clone(),
             env,
@@ -288,6 +314,8 @@ impl Env {
             fallback,
             shell_env: self.env.clone(),
             check,
+            warn: Some(warn.clone()),
+            agentic: Some(Box::new(agentic)),
         });
         self.drain_notes(&notes);
         let res = match res {

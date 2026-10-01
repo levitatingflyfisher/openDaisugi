@@ -24,6 +24,7 @@ import (
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/rank"
 	"daisugi-verify/internal/supervise"
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/verify"
@@ -419,6 +420,9 @@ type weaveHook struct {
 	dataDir, digest, project, runID string
 	choices                         *pyjson.Object
 	answered                        map[string]bool
+	// resumedCards are the open cards this run picked up on resume, as
+	// {choice id, ranking id}; their resumed rows wait for the run id.
+	resumedCards [][2]string
 }
 
 // Checked is WeaveHook.checked: a filled step that passed its per-step
@@ -486,6 +490,14 @@ func (h *weaveHook) verdict(step *pyjson.Object) string {
 		return "ask"
 	}
 	return "run"
+}
+
+// Prefetchable is WeaveHook.prefetchable: no step of a plan with
+// attempts, no step that reads a slot, and only a step that runs on
+// resume is prefetched.
+func (h *weaveHook) Prefetchable(step *pyjson.Object) bool {
+	_, reads := h.spec.inputs[str(step, "id")]
+	return len(h.spec.attempts) == 0 && !reads && h.verdict(step) == "run"
 }
 
 func (h *weaveHook) Prepare(step *pyjson.Object) (*pyjson.Object, *supervise.Outcome, *supervise.Outcome, string) {
@@ -561,6 +573,18 @@ func (h *weaveHook) Prepare(step *pyjson.Object) (*pyjson.Object, *supervise.Out
 // not, when the mark failed.
 func (h *weaveHook) Started(step *pyjson.Object, runID string) string {
 	h.runID = runID
+	if len(h.resumedCards) > 0 && h.dataDir != "" {
+		t := rankNow()
+		var rows []*pyjson.Object
+		for _, c := range h.resumedCards {
+			rows = append(rows, pyjson.NewObject().Set("choice_id", c[0]).Set("ranking_id", c[1]).
+				Set("event", "resumed").Set("run_id", runID).Set("ts", t))
+		}
+		if err := rank.AppendRows(h.dataDir, rows); err != nil {
+			return "the resume of the open choice was not recorded: " + err.Error()
+		}
+		h.resumedCards = nil
+	}
 	fail := func(err error) string { return "the start mark was not written: " + err.Error() }
 	if err := os.MkdirAll(filepath.Dir(h.state), 0o777); err != nil {
 		return fail(err)
@@ -649,6 +673,7 @@ func (e *Env) weaveCmd(args []string) error {
 		{names: []string{"--resume"}, help: "Skip steps an earlier run of this plan file finished."},
 		{names: []string{"--rerun"}, value: true, multiple: true, metavar: "TEXT", help: "On resume, run this started step again (repeatable)."},
 		{names: []string{"--max-parallel"}, value: true, metavar: "INTEGER", help: "Run up to this many independent steps of a level at once."},
+		agentOpt,
 	}
 	p, err := parseArgs(args, opts, 1)
 	if err != nil {
@@ -675,7 +700,11 @@ func (e *Env) weaveCmd(args []string) error {
 	if err := clickPath("'--envelope' / '-e'", envPath); err != nil {
 		return e.usageArgs(cmd, "PLAN_PATH", err)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", filepath.Join(e.home, ".opendaisugi")))
+	agent, err := e.checkAgent(p)
+	if err != nil {
+		return err
+	}
+	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
 	env, perr, refusal := loadModelYAML(envPath, "Envelope", pmodel.Envelope)
 	if refusal != "" {
 		return e.refuse(cmd, fmt.Errorf("%s", refusal))
@@ -707,6 +736,9 @@ func (e *Env) weaveCmd(args []string) error {
 	}
 	dumped, verr := pmodel.Validate("ActionPlan", pmodel.ActionPlan, po, pmodel.Python)
 	if verr != nil {
+		if why := verr.Unreadable(); why != "" {
+			return e.refuse(cmd, fmt.Errorf("%s: %s", planPath, why))
+		}
 		return planFail(strings.SplitN(verr.String(), "\n", 2)[0])
 	}
 	plan := dumped.(*pyjson.Object)
@@ -723,14 +755,6 @@ func (e *Env) weaveCmd(args []string) error {
 	if maxPar < 1 {
 		e.echoErr("Error: --max-parallel must be 1 or more.\n")
 		return exit(2)
-	}
-	if maxPar > 1 {
-		return e.refuse(cmd, errors.New("--max-parallel above 1 is not in this binary yet (K2-4)"))
-	}
-	for _, s := range steps {
-		if str(s, "type") == "agentic" {
-			return e.refuse(cmd, errors.New("an agentic step: this binary does not run one (K2-7)"))
-		}
 	}
 	models := pyjson.NewObject()
 	for _, s := range steps {
@@ -789,9 +813,14 @@ func (e *Env) weaveCmd(args []string) error {
 	executors := supervise.DefaultExecutors()
 	executors["shell"] = supervise.Shell{Environ: e.Environ}
 	executors["task"] = weaveTask{llm: e.llmClient(), spec: spec, hook: hook}
+	agentic, err := e.agentic(pre.env, agent)
+	if err != nil {
+		return e.fail(cmd, err)
+	}
+	executors["agentic"] = agentic
 	approval := supervise.Default{Getenv: e.lookup, Stdin: e.Stdin, Stdout: e.Stdout, Terminal: e.terminal}
 	sup := &supervise.Supervisor{Executors: executors, Journal: j, Z3TimeoutMs: 500, StepTimeoutS: 30,
-		MaxOutputBytes: 10 * 1024 * 1024, Fallback: fallback, Hook: hook,
+		MaxOutputBytes: 10 * 1024 * 1024, Fallback: fallback, Hook: hook, MaxParallel: int(maxPar),
 		Approval: weaveChoiceAsk{inner: approval, hook: hook, cwd: cwd, stdin: e.Stdin, stdout: e.Stdout,
 			terminal: e.terminal}}
 	sess := sup.Run(pre.plan, pre.env, pre.venv, pre.verification)

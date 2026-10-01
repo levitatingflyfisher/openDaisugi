@@ -199,6 +199,14 @@ export function mountRecord(buttonId = 'record', boxId = 'text', where = 'prompt
 
   const idleText = button.textContent || 'Record';
   button.addEventListener('click', async () => {
+    // Over plain http from another machine the browser gives no
+    // microphone at all. Say that this is why, and where the fix is,
+    // before the browser is blamed. An older browser with no
+    // isSecureContext is taken as secure.
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      window.coppice.status(MESSAGES.micNeedsHttps());
+      return;
+    }
     if (!canRecord()) {
       window.coppice.status('This browser cannot record audio. Try a newer browser or device.');
       return;

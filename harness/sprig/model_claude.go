@@ -24,7 +24,9 @@ type ClaudeCodeModel struct {
 	Binary  string
 	Model   string
 	Timeout time.Duration
-	run     func(prompt string) (string, error) // overridable for tests (no live call)
+	// Tools is the wall: the tools the prompt offers. Empty offers all four.
+	Tools []string
+	run   func(prompt string) (string, error) // overridable for tests (no live call)
 }
 
 // NewClaudeCodeModel returns a model wired to the real `claude -p` subprocess.
@@ -34,12 +36,19 @@ func NewClaudeCodeModel() *ClaudeCodeModel {
 	return m
 }
 
+// ModelName is the model this backend asks for.
+func (m *ClaudeCodeModel) ModelName() string { return m.Model }
+
 func (m *ClaudeCodeModel) Next(history []Message) (Message, error) {
 	runner := m.run
 	if runner == nil {
 		runner = m.callClaude
 	}
-	out, err := runner(formatPrompt(history))
+	tools := m.Tools
+	if len(tools) == 0 {
+		tools = AllToolNames
+	}
+	out, err := runner(formatPromptFor(history, tools))
 	if err != nil {
 		return Message{}, err
 	}
@@ -144,19 +153,42 @@ const _toolFence = "```sprig-tool"
 // these, so a final answer that merely contains some JSON is never misread.
 var knownTools = map[string]bool{"read": true, "write": true, "edit": true, "bash": true}
 
-// formatPrompt renders the conversation plus the tool protocol into one prompt.
-func formatPrompt(history []Message) string {
+// promptToolLines is each tool's line in the prompt's tool list, and
+// promptExamples a call of it for the prompt's example.
+var promptToolLines = map[string]string{
+	"read":  "  read  {\"path\"}          — return a file's contents\n",
+	"write": "  write {\"path\",\"content\"} — write a file\n",
+	"edit":  "  edit  {\"path\",\"old\",\"new\"} — replace a unique string\n",
+	"bash":  "  bash  {\"cmd\"}           — run a shell command\n",
+}
+
+var promptExamples = map[string]string{
+	"read":  `{"tool":"read","input":{"path":"main.go"}}`,
+	"write": `{"tool":"write","input":{"path":"notes.txt","content":"hi"}}`,
+	"edit":  `{"tool":"edit","input":{"path":"main.go","old":"Run","new":"Start"}}`,
+	"bash":  `{"tool":"bash","input":{"cmd":"ls"}}`,
+}
+
+var countWords = []string{"no tools", "one tool", "two tools", "three tools", "four tools"}
+
+// formatPrompt renders the conversation plus the tool protocol into one
+// prompt, offering all four tools.
+func formatPrompt(history []Message) string { return formatPromptFor(history, AllToolNames) }
+
+// formatPromptFor renders the prompt offering only the tools of the wall,
+// in sprig's order. The example call uses the wall's first tool.
+func formatPromptFor(history []Message, wall []string) string {
 	var b strings.Builder
-	b.WriteString("You are sprig, a minimal coding agent. You have four tools:\n")
-	b.WriteString("  read  {\"path\"}          — return a file's contents\n")
-	b.WriteString("  write {\"path\",\"content\"} — write a file\n")
-	b.WriteString("  edit  {\"path\",\"old\",\"new\"} — replace a unique string\n")
-	b.WriteString("  bash  {\"cmd\"}           — run a shell command\n\n")
+	fmt.Fprintf(&b, "You are sprig, a minimal coding agent. You have %s:\n", countWords[len(wall)])
+	for _, name := range wall {
+		b.WriteString(promptToolLines[name])
+	}
+	b.WriteString("\n")
 	b.WriteString("To CALL a tool, reply with ONLY this and nothing else:\n")
 	b.WriteString(_toolFence + "\n{\"tool\":\"<name>\",\"input\":{...}}\n```\n")
 	b.WriteString("To FINISH, reply with your final answer as plain text (no block).\n\n")
 	b.WriteString("Example — call a tool:\n")
-	b.WriteString(_toolFence + "\n{\"tool\":\"read\",\"input\":{\"path\":\"main.go\"}}\n```\n")
+	b.WriteString(_toolFence + "\n" + promptExamples[wall[0]] + "\n```\n")
 	b.WriteString("Example — finish (plain text, no block):\n")
 	b.WriteString("main.go defines three functions: New, Run, and Close.\n\n")
 	b.WriteString("Conversation so far:\n")

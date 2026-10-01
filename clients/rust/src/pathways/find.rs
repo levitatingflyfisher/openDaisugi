@@ -183,17 +183,35 @@ impl Store {
                 n += 1;
                 let rowid: i64 = r.get(0).map_err(sql_err)?;
                 use rusqlite::types::ValueRef;
-                let (ms, vs) = match (r.get_ref(1).map_err(sql_err)?, r.get_ref(2).map_err(sql_err)?) {
-                    (ValueRef::Text(a), ValueRef::Text(b)) => (a, b),
-                    _ => return Err(PwErr::Unreadable("a provenance column is not text".into())),
+                // `not row_model and not row_version` admits a legacy row;
+                // otherwise only str values equal the current ones.
+                let falsy = |v: &ValueRef| match v {
+                    ValueRef::Null => true,
+                    ValueRef::Text(t) | ValueRef::Blob(t) => t.is_empty(),
+                    ValueRef::Integer(i) => *i == 0,
+                    ValueRef::Real(f) => *f == 0.0,
                 };
-                let compatible = (ms.is_empty() && vs.is_empty())
-                    || (ms == identity.as_bytes() && vs == EMBEDDING_MODEL_VERSION.as_bytes());
+                let (m, v) = (r.get_ref(1).map_err(sql_err)?, r.get_ref(2).map_err(sql_err)?);
+                let compatible = (falsy(&m) && falsy(&v))
+                    || matches!((m, v), (ValueRef::Text(a), ValueRef::Text(b))
+                        if a == identity.as_bytes() && b == EMBEDDING_MODEL_VERSION.as_bytes());
                 if !compatible {
                     continue;
                 }
                 let mut sc = Scored { rowid, score: 0.0, keep: false, invalid: false };
-                match r.get_ref(3).map_err(sql_err)? {
+                // json.loads(bytes) reads the text in the encoding it detects.
+                let decoded;
+                let emb = match r.get_ref(3).map_err(sql_err)? {
+                    ValueRef::Blob(b) => match super::jsonbytes::json_text(b) {
+                        Ok(t) => {
+                            decoded = t;
+                            ValueRef::Text(decoded.as_bytes())
+                        }
+                        Err(_) => ValueRef::Null,
+                    },
+                    other => other,
+                };
+                match emb {
                     ValueRef::Text(t) => match scan_embedding(t) {
                         None => sc.invalid = true,
                         Some(sp) => {

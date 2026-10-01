@@ -62,7 +62,9 @@ func checkWorkspaceContainment(plan ActionPlan, env Envelope) []Violation {
 		}
 		if !inBounds {
 			violations = append(violations, VStep("z3", step.ID, fmt.Sprintf(
-				"Step '%s' target %s outside workspace bounds (%s, %s)", step.ID, tuple(target[:]), tuple(lo[:]), tuple(hi[:]))))
+				"Step '%s' target %s outside workspace bounds (%s, %s)", step.ID, tuple(target[:]), tuple(lo[:]), tuple(hi[:]))).
+				With(pyjson.NewObject().Set("invariant", "end_effector_in_workspace").Set("step", step.ID).
+					Set("target", floatList(target[:])).Set("bounds", []any{floatList(lo[:]), floatList(hi[:])}), nil))
 		}
 	}
 	return violations
@@ -87,13 +89,16 @@ func checkJointLimits(plan ActionPlan, env Envelope) []Violation {
 			rng, ok := limits[joint]
 			if !ok {
 				violations = append(violations, VStep("z3", step.ID, fmt.Sprintf(
-					"Step '%s' joint %s not declared in envelope joint_limits %s", step.ID, pystr.Repr(joint), pystr.ReprList(env.Permissions.JointLimitOrder))))
+					"Step '%s' joint %s not declared in envelope joint_limits %s", step.ID, pystr.Repr(joint), pystr.ReprList(env.Permissions.JointLimitOrder))).
+					With(pyjson.NewObject().Set("invariant", "joint_limits_respected").Set("step", step.ID).Set("joint", joint), nil))
 				continue
 			}
 			if target < rng[0] || target > rng[1] {
 				violations = append(violations, VStep("z3", step.ID, fmt.Sprintf(
 					"Step '%s' joint %s target %s outside [%s, %s]", step.ID, pystr.Repr(joint),
-					pyjson.FloatRepr(target), pyjson.FloatRepr(rng[0]), pyjson.FloatRepr(rng[1]))))
+					pyjson.FloatRepr(target), pyjson.FloatRepr(rng[0]), pyjson.FloatRepr(rng[1]))).
+					With(pyjson.NewObject().Set("invariant", "joint_limits_respected").Set("step", step.ID).Set("joint", joint).
+						Set("target", pyjson.Float(target)).Set("range", floatList(rng[:])), nil))
 			}
 		}
 	}
@@ -129,12 +134,23 @@ func checkVelocityBounds(plan ActionPlan, env Envelope) []Violation {
 			peak := delta / duration * step.VelocityScale()
 			if peak > *limit {
 				violations = append(violations, VStep("z3", step.ID, fmt.Sprintf(
-					"Step '%s' joint %s peak velocity %.3f rad/s > limit %s", step.ID, pystr.Repr(joint), peak, pyjson.FloatRepr(*limit))))
+					"Step '%s' joint %s peak velocity %.3f rad/s > limit %s", step.ID, pystr.Repr(joint), peak, pyjson.FloatRepr(*limit))).
+					With(pyjson.NewObject().Set("invariant", "velocity_bounded").Set("step", step.ID).Set("joint", joint).
+						Set("peak_rad_s", pyjson.Float(peak)).Set("limit_rad_s", pyjson.Float(*limit)), nil))
 			}
 			state[joint] = target
 		}
 	}
 	return violations
+}
+
+// floatList is a list of floats for a violation's detail.
+func floatList(xs []float64) []any {
+	out := make([]any, len(xs))
+	for i, x := range xs {
+		out[i] = pyjson.Float(x)
+	}
+	return out
 }
 
 const obstacleMidpointSamples = 8
@@ -194,7 +210,9 @@ func checkObstacleAvoidance(plan ActionPlan, env Envelope) []Violation {
 				s.pt[1] >= lo[1] && s.pt[1] <= hi[1] &&
 				s.pt[2] >= lo[2] && s.pt[2] <= hi[2] {
 				violations = append(violations, VStep("z3", s.stepID, fmt.Sprintf(
-					"Step '%s' trajectory sample (%.3f, %.3f, %.3f) inside obstacle #%d", s.stepID, s.pt[0], s.pt[1], s.pt[2], idx)))
+					"Step '%s' trajectory sample (%.3f, %.3f, %.3f) inside obstacle #%d", s.stepID, s.pt[0], s.pt[1], s.pt[2], idx)).
+					With(pyjson.NewObject().Set("invariant", "no_obstacle_penetration").Set("step", s.stepID).
+						Set("obstacle_index", idx).Set("sample_point", floatList(s.pt[:])), nil))
 				flaggedKeys[key] = true
 			}
 		}
